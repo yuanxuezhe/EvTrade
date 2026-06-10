@@ -1,47 +1,102 @@
 <template>
-  <div class="trade-page">
-    <h2>交易面板</h2>
+  <div class="trade-view fade-in-up">
+    <div class="trade-grid">
+      <!-- 左侧：下单表单 -->
+      <div class="trade-form-col">
+        <OrderForm :on-submit="handleOrderSubmit" :default-stock-code="quickStock" />
 
-    <div class="trade-content">
-      <OrderForm :on-submit="handleOrderSubmit" />
+        <!-- 快捷股票 -->
+        <div class="content-card quick-stocks">
+          <div class="qs-header">
+            <span class="qs-title">快捷选股</span>
+            <span class="qs-sub">点击填入代码</span>
+          </div>
+          <div class="qs-list">
+            <button
+              v-for="s in quickStocks"
+              :key="s.code"
+              class="qs-item"
+              @click="quickStock = s.code"
+            >
+              <div class="qs-code">{{ s.code }}</div>
+              <div class="qs-name">{{ s.name }}</div>
+            </button>
+          </div>
+        </div>
+      </div>
 
-      <div class="order-list">
-        <h3>今日委托</h3>
-        <el-table :data="orderStore.orders" style="width: 100%">
-          <el-table-column prop="order_time" label="时间" width="100" />
-          <el-table-column prop="stock_code" label="股票" width="120" />
+      <!-- 右侧：今日委托 -->
+      <div class="trade-orders-col content-card">
+        <div class="orders-header">
+          <div>
+            <h3 class="orders-title">今日委托</h3>
+            <p class="orders-sub">共 {{ orderStore.orders.length }} 笔，{{ pendingCount }} 笔待成交</p>
+          </div>
+          <div class="orders-actions">
+            <el-radio-group v-model="filter" size="small">
+              <el-radio-button value="all">全部</el-radio-button>
+              <el-radio-button value="pending">未完成</el-radio-button>
+              <el-radio-button value="filled">已成交</el-radio-button>
+            </el-radio-group>
+            <el-button size="small" :icon="Refresh" @click="refresh" :loading="loading" circle />
+          </div>
+        </div>
+
+        <el-table :data="filteredOrders" v-loading="loading" style="width: 100%" max-height="640">
+          <el-table-column prop="order_time" label="时间" width="90">
+            <template #default="{ row }">
+              <span class="text-mono text-secondary">{{ row.order_time }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column prop="stock_code" label="股票" width="100">
+            <template #default="{ row }">
+              <span class="stock-code-cell">{{ row.stock_code }}</span>
+            </template>
+          </el-table-column>
           <el-table-column prop="direction" label="方向" width="60">
             <template #default="{ row }">
-              <span :class="row.direction === 'BUY' ? 'text-buy' : 'text-sell'">
-                {{ row.direction === 'BUY' ? '买入' : '卖出' }}
+              <span class="dir-chip" :class="row.direction === 'BUY' ? 'buy' : 'sell'">
+                {{ row.direction === 'BUY' ? '买' : '卖' }}
               </span>
             </template>
           </el-table-column>
-          <el-table-column prop="volume" label="数量" width="100" align="right" />
-          <el-table-column prop="price" label="价格" width="100" align="right">
+          <el-table-column prop="volume" label="数量" align="right" width="100">
             <template #default="{ row }">
-              {{ row.price.toFixed(2) }}
+              <span class="text-mono">{{ formatNumber(row.volume) }}</span>
             </template>
           </el-table-column>
-          <el-table-column prop="status" label="状态" width="80">
+          <el-table-column prop="price" label="价格" align="right" width="100">
             <template #default="{ row }">
-              <el-tag :type="getStatusType(row.status)" size="small">
-                {{ row.status }}
-              </el-tag>
+              <span class="text-mono">{{ formatMoney(row.price) }}</span>
             </template>
           </el-table-column>
-          <el-table-column label="操作" width="80">
+          <el-table-column prop="traded_volume" label="已成" align="right" width="80">
+            <template #default="{ row }">
+              <span class="text-mono">{{ formatNumber(row.traded_volume || 0) }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column prop="status" label="状态" width="100">
+            <template #default="{ row }">
+              <OrderStatusBadge :status="row.status" />
+            </template>
+          </el-table-column>
+          <el-table-column label="操作" width="80" fixed="right">
             <template #default="{ row }">
               <el-button
-                v-if="row.status === 'pending'"
+                v-if="canCancel(row.status)"
                 type="danger"
+                link
                 size="small"
                 @click="handleCancel(row.order_id)"
               >
                 撤单
               </el-button>
+              <span v-else class="text-secondary">—</span>
             </template>
           </el-table-column>
+          <template #empty>
+            <el-empty description="今日暂无委托" :image-size="80" />
+          </template>
         </el-table>
       </div>
     </div>
@@ -49,57 +104,233 @@
 </template>
 
 <script setup>
-import { onMounted } from 'vue'
-import { useOrderStore } from '../stores/order'
-import { ElMessage } from 'element-plus'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { Refresh } from '@element-plus/icons-vue'
 import OrderForm from '../components/OrderForm.vue'
+import { useOrderStore } from '../stores/order'
+import {
+  formatMoney, formatNumber, STATUS_LABEL, STATUS_TYPE
+} from '../utils/format'
+import OrderStatusBadge from '../components/OrderStatusBadge.vue'
 
 const orderStore = useOrderStore()
+const filter = ref('all')
+const quickStock = ref('')
+const loading = ref(false)
 
-onMounted(async () => {
-  await orderStore.fetchOrders()
+const quickStocks = [
+  { code: '000001.SZ', name: '平安银行' },
+  { code: '600519.SH', name: '贵州茅台' },
+  { code: '600036.SH', name: '招商银行' },
+  { code: '000858.SZ', name: '五粮液' },
+  { code: '601318.SH', name: '中国平安' },
+  { code: '000333.SZ', name: '美的集团' }
+]
+
+const pendingCount = computed(() =>
+  orderStore.orders.filter((o) => o.status === 'pending' || o.status === 'partial').length
+)
+
+const filteredOrders = computed(() => {
+  const list = orderStore.orders
+  if (filter.value === 'pending') {
+    return list.filter((o) => o.status === 'pending' || o.status === 'partial')
+  }
+  if (filter.value === 'filled') {
+    return list.filter((o) => o.status === 'filled')
+  }
+  return list
 })
+
+function canCancel(status) {
+  // 已报到部成之间可撤；已成/已撤/废单 不可撤
+  return [
+    'unreported', 'pending_report', 'reported', 'reported_cancel',
+    'partial', 'partial_pending_cancel', 'pending'
+  ].includes(status)
+}
 
 async function handleOrderSubmit(orderData) {
   try {
-    await orderStore.createOrder(orderData)
-    ElMessage.success('下单成功')
-  } catch (error) {
-    ElMessage.error('下单失败')
+    await orderStore.placeOrder(orderData)
+    ElMessage.success({ message: '下单已提交', duration: 2000 })
+    await orderStore.fetchOrders()
+  } catch (e) {
+    ElMessage.error('下单失败: ' + (e.message || ''))
   }
 }
 
 async function handleCancel(orderId) {
   try {
+    await ElMessageBox.confirm('确定要撤销此委托？', '撤单确认', {
+      confirmButtonText: '撤单',
+      cancelButtonText: '取消',
+      type: 'warning'
+    })
     await orderStore.cancelOrder(orderId)
     ElMessage.success('撤单成功')
-  } catch (error) {
-    ElMessage.error('撤单失败')
+  } catch (e) {
+    if (e !== 'cancel') ElMessage.error('撤单失败')
   }
 }
 
-function getStatusType(status) {
-  const map = {
-    pending: 'warning',
-    filled: 'success',
-    cancelled: 'info',
-    rejected: 'danger'
+async function refresh() {
+  loading.value = true
+  try {
+    await orderStore.fetchOrders()
+  } finally {
+    loading.value = false
   }
-  return map[status] || 'info'
 }
+
+let timer = null
+onMounted(async () => {
+  loading.value = true
+  try {
+    await orderStore.fetchOrders()
+  } finally {
+    loading.value = false
+  }
+  // 5s 自动刷新
+  timer = setInterval(() => orderStore.fetchOrders(), 5000)
+})
+
+onUnmounted(() => {
+  if (timer) clearInterval(timer)
+})
 </script>
 
 <style scoped>
-.trade-page {
-  max-width: 1000px;
+.trade-grid {
+  display: grid;
+  grid-template-columns: 360px 1fr;
+  gap: var(--space-5);
 }
-.trade-content {
+
+.trade-form-col {
   display: flex;
-  gap: 20px;
+  flex-direction: column;
+  gap: var(--space-4);
 }
-.order-list {
-  flex: 1;
+
+.quick-stocks {
+  padding: var(--space-4);
 }
-.text-buy { color: #f56c6c; }
-.text-sell { color: #67c23a; }
+
+.qs-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: var(--space-3);
+}
+
+.qs-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.qs-sub {
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.qs-list {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: var(--space-2);
+}
+
+.qs-item {
+  text-align: left;
+  padding: var(--space-2) var(--space-3);
+  background: var(--bg-soft);
+  border: 1px solid var(--border-base);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.qs-item:hover {
+  border-color: var(--brand-primary);
+  background: var(--bg-hover);
+}
+
+.qs-code {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--brand-primary);
+}
+
+.qs-name {
+  font-size: 12px;
+  color: var(--text-regular);
+  margin-top: 2px;
+}
+
+.trade-orders-col {
+  padding: var(--space-5);
+  display: flex;
+  flex-direction: column;
+}
+
+.orders-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: var(--space-4);
+}
+
+.orders-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.orders-sub {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-top: 2px;
+}
+
+.orders-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.stock-code-cell {
+  font-family: var(--font-mono);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.dir-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 28px;
+  padding: 2px 8px;
+  border-radius: var(--radius-xs);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.dir-chip.buy {
+  background: var(--color-up-bg);
+  color: var(--color-up);
+}
+
+.dir-chip.sell {
+  background: var(--color-down-bg);
+  color: var(--color-down);
+}
+
+@media (max-width: 1100px) {
+  .trade-grid {
+    grid-template-columns: 1fr;
+  }
+}
 </style>

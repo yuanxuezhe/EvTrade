@@ -1,0 +1,40 @@
+# Build
+build/
+library/
+Testing/
+
+# Binaries
+*.exe
+*.dll
+*.so
+*.a
+*.dylib
+bin/
+
+# Python
+__pycache__/
+*.pyc
+*.egg-info/
+*.pyo
+*.pyd
+.env
+.venv
+
+# Rust
+target/
+
+# IDE
+.vs/
+.svn/
+.claude/
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+node_modules/
+dist/

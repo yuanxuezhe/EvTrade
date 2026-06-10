@@ -1,7 +1,9 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from typing import List
 from pydantic import BaseModel
-from services.trading import get_positions, init_position, get_position
+from rpc.client import qry_positions
+from services.trading import init_position
+from auth.deps import require_trader
 
 router = APIRouter()
 
@@ -16,22 +18,25 @@ class PositionResponse(BaseModel):
 
 @router.get("", response_model=List[PositionResponse])
 async def list_positions():
-    positions = get_positions()
+    try:
+        positions = await qry_positions()
+    except Exception:
+        positions = []
     return [
         PositionResponse(
-            stock_code=p.stock_code,
-            stock_name=p.stock_name,
-            initial_position=p.initial_position,
-            today_buy=p.today_buy,
-            today_sell=p.today_sell,
-            available=p.available,
-            total=p.total
+            stock_code=p.get("stock_code", ""),
+            stock_name=p.get("stock_name", ""),
+            initial_position=p.get("initial_position", 0),
+            today_buy=p.get("today_buy", 0),
+            today_sell=p.get("today_sell", 0),
+            available=p.get("available", 0),
+            total=p.get("total", 0)
         )
         for p in positions
     ]
 
 @router.post("/{stock_code}/init", response_model=PositionResponse)
-async def init_stock_position(stock_code: str):
+async def init_stock_position(stock_code: str, _=Depends(require_trader)):
     pos = init_position(stock_code)
     if not pos:
         return {"error": "position not found"}

@@ -3,10 +3,46 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>EvTrade - 交易系统</title>
+  <meta name="theme-color" content="#4f7cff">
+  <meta name="description" content="EvTrade - 现代化智能交易终端">
+  <title>EvTrade · 智能交易终端</title>
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><defs><linearGradient id='g' x1='0%25' y1='0%25' x2='100%25' y2='100%25'><stop offset='0%25' stop-color='%234f7cff'/><stop offset='100%25' stop-color='%237c5cff'/></linearGradient></defs><rect width='32' height='32' rx='8' fill='url(%23g)'/><path d='M8 22 L13 14 L18 18 L24 10' stroke='white' stroke-width='2.5' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>">
+  <style>
+    /* 首屏 Loading */
+    html, body { margin: 0; padding: 0; background: #f4f6fb; }
+    .app-loader {
+      position: fixed; inset: 0;
+      display: grid; place-items: center;
+      background: linear-gradient(135deg, #f4f6fb 0%, #eef2ff 100%);
+      z-index: 9999;
+    }
+    .app-loader__spinner {
+      width: 48px; height: 48px;
+      border: 3px solid rgba(79, 124, 255, 0.15);
+      border-top-color: #4f7cff;
+      border-radius: 50%;
+      animation: appspin 0.8s linear infinite;
+    }
+    .app-loader__brand {
+      margin-top: 16px;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+      font-size: 14px; font-weight: 600;
+      background: linear-gradient(135deg, #4f7cff 0%, #7c5cff 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+    @keyframes appspin { to { transform: rotate(360deg); } }
+  </style>
 </head>
 <body>
-  <div id="app"></div>
+  <div id="app">
+    <div class="app-loader">
+      <div style="text-align:center">
+        <div class="app-loader__spinner"></div>
+        <div class="app-loader__brand">EvTrade 正在加载...</div>
+      </div>
+    </div>
+  </div>
   <script type="module" src="/src/main.js"></script>
 </body>
 </html>

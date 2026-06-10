@@ -1,0 +1,15 @@
+INFO:     Will watch for changes in these directories: ['D:\\workspace\\EvTrade\\server']
+INFO:     Uvicorn running on http://0.0.0.0:8002 (Press CTRL+C to quit)
+INFO:     Started reloader process [28332] using watchgod
+D:\software\tools\Scoop\apps\pyenv\current\pyenv-win\versions\3.6.8\lib\site-packages\jose\backends\cryptography_backend.py:4: CryptographyDeprecationWarning: Python 3.6 is no longer supported by the Python core team. Therefore, support for it is deprecated in cryptography. The next release of cryptography will remove support for Python 3.6.
+  from cryptography.exceptions import InvalidSignature, InvalidTag
+INFO:     Started server process [49916]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+[RPClient] connected, listening on reply=EvTrade.Test.Reply push=EvTrade.Test.Push
+[RPClient] reply listener started
+[RPClient] push listener started, queue=EvTrade.Test.Push
+INFO:     127.0.0.1:52773 - "GET /api/health HTTP/1.1" 200 OK
+INFO:     ('127.0.0.1', 44524) - "WebSocket /ws/order_update" [accepted]
+INFO:     ('127.0.0.1', 43310) - "WebSocket /ws/position_update" [accepted]
+INFO:     ('127.0.0.1', 30751) - "WebSocket /ws/asset_update" [accepted]

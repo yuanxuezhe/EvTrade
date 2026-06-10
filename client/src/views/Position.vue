@@ -1,71 +1,243 @@
 <template>
-  <div class="position-page">
-    <div class="header">
-      <h2>持仓管理</h2>
-      <el-button type="warning" @click="handleInit">日初初始化</el-button>
+  <div class="position-view fade-in-up">
+    <!-- 顶部统计 -->
+    <section class="pos-stats">
+      <div class="stat-pill">
+        <div class="pill-label">持仓数</div>
+        <div class="pill-value text-mono">{{ positionStore.positions.length }}</div>
+      </div>
+      <div class="stat-pill">
+        <div class="pill-label">总持仓量</div>
+        <div class="pill-value text-mono">{{ formatNumber(totalShares) }}</div>
+      </div>
+      <div class="stat-pill">
+        <div class="pill-label">可用量</div>
+        <div class="pill-value text-mono">{{ formatNumber(totalAvailable) }}</div>
+      </div>
+      <div class="stat-pill">
+        <div class="pill-label">今日净变动</div>
+        <div class="pill-value text-mono" :class="netChangeClass">
+          {{ netChange >= 0 ? '+' : '' }}{{ formatNumber(netChange) }}
+        </div>
+      </div>
+    </section>
+
+    <!-- 工具栏 -->
+    <div class="toolbar content-card">
+      <div class="toolbar-left">
+        <el-input
+          v-model="searchKeyword"
+          placeholder="搜索股票代码或名称"
+          clearable
+          :prefix-icon="Search"
+          style="width: 280px"
+        />
+      </div>
+      <div class="toolbar-right">
+        <el-button :icon="Refresh" @click="refresh" :loading="loading">刷新</el-button>
+        <el-dropdown @command="handleInitCommand">
+          <el-button type="warning">
+            日初初始化 <el-icon class="el-icon--right"><ArrowDown /></el-icon>
+          </el-button>
+          <template #dropdown>
+            <el-dropdown-menu>
+              <el-dropdown-item command="all" :icon="Refresh">全部标的</el-dropdown-item>
+              <el-dropdown-item command="selected" :icon="Check" :disabled="!positionStore.selectedStockCode">
+                仅选中标的
+              </el-dropdown-item>
+            </el-dropdown-menu>
+          </template>
+        </el-dropdown>
+      </div>
     </div>
 
-    <PositionTable :positions="positionStore.positions" @select="handleSelect" />
+    <!-- 持仓表 -->
+    <div class="content-card pos-table-wrap">
+      <PositionTable
+        :positions="filteredPositions"
+        :loading="loading"
+        @select="handleSelect"
+        :selected="positionStore.selectedStockCode"
+      />
+    </div>
 
-    <PositionDetail
-      v-if="positionStore.selectedStockCode"
-      :stock-code="positionStore.selectedStockCode"
-      :position="positionStore.selectedPosition"
-      :orders="orderStore.orders"
-      :trades="orderStore.trades"
-    />
+    <!-- 持仓明细抽屉 -->
+    <el-drawer
+      v-model="drawerVisible"
+      :title="`${positionStore.selectedStockCode || ''} - 持仓明细`"
+      direction="rtl"
+      size="600px"
+    >
+      <PositionDetail
+        v-if="positionStore.selectedStockCode"
+        :stock-code="positionStore.selectedStockCode"
+        :position="positionStore.selectedPosition"
+        :orders="orderStore.orders"
+        :trades="orderStore.trades"
+      />
+    </el-drawer>
   </div>
 </template>
 
 <script setup>
-import { onMounted } from 'vue'
-import { usePositionStore } from '../stores/position'
-import { useOrderStore } from '../stores/order'
+import { computed, onMounted, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { Search, Refresh, ArrowDown, Check } from '@element-plus/icons-vue'
 import PositionTable from '../components/PositionTable.vue'
 import PositionDetail from '../components/PositionDetail.vue'
+import { usePositionStore } from '../stores/position'
+import { useOrderStore } from '../stores/order'
+import { formatNumber } from '../utils/format'
 
 const positionStore = usePositionStore()
 const orderStore = useOrderStore()
 
-onMounted(async () => {
-  await positionStore.fetchPositions()
+const loading = ref(false)
+const searchKeyword = ref('')
+const drawerVisible = ref(false)
+
+const filteredPositions = computed(() => {
+  const kw = searchKeyword.value.trim().toLowerCase()
+  if (!kw) return positionStore.positions
+  return positionStore.positions.filter(
+    (p) =>
+      p.stock_code.toLowerCase().includes(kw) ||
+      (p.stock_name || '').toLowerCase().includes(kw)
+  )
 })
+
+const totalShares = computed(() =>
+  positionStore.positions.reduce((sum, p) => sum + (p.total || 0), 0)
+)
+
+const totalAvailable = computed(() =>
+  positionStore.positions.reduce((sum, p) => sum + (p.available || 0), 0)
+)
+
+const netChange = computed(() =>
+  positionStore.positions.reduce(
+    (sum, p) => sum + (p.today_buy || 0) - (p.today_sell || 0),
+    0
+  )
+)
+
+const netChangeClass = computed(() => {
+  if (netChange.value > 0) return 'text-up'
+  if (netChange.value < 0) return 'text-down'
+  return ''
+})
+
+async function refresh() {
+  loading.value = true
+  try {
+    await positionStore.fetchPositions()
+  } finally {
+    loading.value = false
+  }
+}
 
 function handleSelect(stockCode) {
   positionStore.selectStock(stockCode)
   orderStore.fetchOrders(stockCode)
   orderStore.fetchTrades(stockCode)
+  drawerVisible.value = true
 }
 
-async function handleInit() {
+async function handleInitCommand(command) {
   try {
     await ElMessageBox.confirm(
-      '确认进行日初初始化？将重置所有标的的今日买卖数据。',
+      command === 'all'
+        ? '确认对所有标的进行日初初始化？将重置今日买卖数据。'
+        : `确认对 ${positionStore.selectedStockCode} 进行日初初始化？`,
       '日初初始化',
       { confirmButtonText: '确认', cancelButtonText: '取消', type: 'warning' }
     )
-    for (const pos of positionStore.positions) {
-      await positionStore.initPosition(pos.stock_code)
+    loading.value = true
+    if (command === 'all') {
+      for (const pos of positionStore.positions) {
+        await positionStore.initPosition(pos.stock_code)
+      }
+    } else if (positionStore.selectedStockCode) {
+      await positionStore.initPosition(positionStore.selectedStockCode)
     }
     ElMessage.success('日初初始化完成')
   } catch {
     // cancelled
+  } finally {
+    loading.value = false
   }
 }
+
+onMounted(async () => {
+  loading.value = true
+  try {
+    await positionStore.fetchPositions()
+  } finally {
+    loading.value = false
+  }
+})
 </script>
 
 <style scoped>
-.position-page {
-  max-width: 1200px;
+.position-view {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
 }
-.header {
+
+.pos-stats {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: var(--space-3);
+}
+
+.stat-pill {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-base);
+  border-radius: var(--radius-md);
+  padding: var(--space-3) var(--space-4);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  transition: all var(--transition-fast);
+}
+
+.stat-pill:hover {
+  border-color: var(--brand-primary);
+  box-shadow: var(--shadow-sm);
+}
+
+.pill-label {
+  font-size: 12px;
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+
+.pill-value {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.toolbar {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 20px;
+  padding: var(--space-3) var(--space-4);
 }
-.header h2 {
-  margin: 0;
+
+.toolbar-right {
+  display: flex;
+  gap: var(--space-3);
+}
+
+.pos-table-wrap {
+  padding: var(--space-2);
+  overflow: hidden;
+}
+
+@media (max-width: 960px) {
+  .pos-stats { grid-template-columns: repeat(2, 1fr); }
 }
 </style>

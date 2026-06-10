@@ -1,0 +1,285 @@
+<template>
+  <aside class="sidebar">
+    <div class="sidebar-brand">
+      <div class="brand-logo">
+        <el-icon :size="22"><TrendCharts /></el-icon>
+      </div>
+      <transition name="fade">
+        <div v-if="!uiStore.sidebarCollapsed" class="brand-text">
+          <div class="brand-title">EvTrade</div>
+          <div class="brand-sub">智能交易终端</div>
+        </div>
+      </transition>
+    </div>
+
+    <nav class="sidebar-nav">
+      <template v-for="item in menuItems" :key="item.path">
+        <div v-if="item.divider" class="nav-divider" :title="item.label">
+          <span v-if="!uiStore.sidebarCollapsed" class="divider-label">
+            {{ item.label }}
+          </span>
+        </div>
+        <router-link
+          v-else
+          :to="item.path"
+          class="nav-item"
+          :class="{ active: isActive(item.path) }"
+        >
+          <span class="nav-icon">
+            <el-icon :size="18">
+              <component :is="item.icon" />
+            </el-icon>
+          </span>
+          <transition name="fade">
+            <span v-if="!uiStore.sidebarCollapsed" class="nav-label">
+              {{ item.label }}
+            </span>
+          </transition>
+          <span v-if="!uiStore.sidebarCollapsed && item.badge" class="nav-badge">
+            {{ item.badge }}
+          </span>
+        </router-link>
+      </template>
+    </nav>
+
+    <div class="sidebar-footer">
+      <button class="footer-btn" @click="uiStore.toggleSidebar">
+        <el-icon :size="18">
+          <Fold v-if="!uiStore.sidebarCollapsed" />
+          <Expand v-else />
+        </el-icon>
+        <transition name="fade">
+          <span v-if="!uiStore.sidebarCollapsed">收起菜单</span>
+        </transition>
+      </button>
+    </div>
+  </aside>
+</template>
+
+<script setup>
+import { computed } from 'vue'
+import { useRoute } from 'vue-router'
+import { useUiStore } from '../stores/ui'
+import { useOrderStore } from '../stores/order'
+import {
+  Odometer, Wallet, Money, DataAnalysis, List, Tickets,
+  Fold, Expand, TrendCharts, UserFilled
+} from '@element-plus/icons-vue'
+import { useAuthStore } from '../stores/auth'
+
+const route = useRoute()
+const uiStore = useUiStore()
+const orderStore = useOrderStore()
+const authStore = useAuthStore()
+
+const pendingCount = computed(() =>
+  orderStore.orders.filter((o) => o.status === 'pending' || o.status === 'partial').length
+)
+
+const menuItems = computed(() => {
+  const base = [
+    { path: '/', label: '仪表盘', icon: Odometer },
+    { path: '/positions', label: '持仓管理', icon: DataAnalysis },
+    { path: '/trade', label: '交易下单', icon: TrendCharts },
+    {
+      path: '/orders',
+      label: '委托查询',
+      icon: List,
+      badge: pendingCount.value > 0 ? pendingCount.value : null
+    },
+    { path: '/trades', label: '成交查询', icon: Tickets },
+    { path: '/asset', label: '账户资金', icon: Wallet }
+  ]
+  if (authStore.isAdmin) {
+    base.push({ path: '/users', label: '用户管理', icon: UserFilled, divider: true })
+  }
+  return base
+})
+
+function isActive(path) {
+  if (path === '/') return route.path === '/'
+  return route.path.startsWith(path)
+}
+</script>
+
+<style scoped>
+.sidebar {
+  background: var(--bg-elevated);
+  border-right: 1px solid var(--border-base);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  transition: width var(--transition-base);
+}
+
+.sidebar-brand {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-5) var(--space-4);
+  border-bottom: 1px solid var(--border-light);
+  min-height: var(--header-height);
+}
+
+.brand-logo {
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-sm);
+  background: var(--brand-gradient);
+  display: grid;
+  place-items: center;
+  color: white;
+  flex-shrink: 0;
+  box-shadow: var(--shadow-glow);
+}
+
+.brand-text {
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.brand-title {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text-primary);
+  letter-spacing: 0.5px;
+}
+
+.brand-sub {
+  font-size: 11px;
+  color: var(--text-secondary);
+  margin-top: 2px;
+}
+
+.sidebar-nav {
+  flex: 1;
+  padding: var(--space-3) var(--space-3);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.nav-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 10px var(--space-3);
+  border-radius: var(--radius-sm);
+  color: var(--text-regular);
+  text-decoration: none;
+  font-size: 14px;
+  font-weight: 500;
+  transition: all var(--transition-fast);
+  position: relative;
+  white-space: nowrap;
+}
+
+.nav-item:hover {
+  background: var(--bg-hover);
+  color: var(--brand-primary);
+}
+
+.nav-divider {
+  margin: var(--space-3) var(--space-2) var(--space-2);
+  padding: 0 var(--space-2);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.nav-divider::before,
+.nav-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--border-light);
+}
+
+.divider-label {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 1px;
+  color: var(--text-placeholder);
+  text-transform: uppercase;
+}
+
+.sidebar-nav.collapsed .nav-divider {
+  margin: var(--space-3) auto;
+  width: 24px;
+}
+
+.nav-item.active {
+  background: var(--brand-gradient-soft);
+  color: var(--brand-primary);
+}
+
+.nav-item.active::before {
+  content: '';
+  position: absolute;
+  left: -12px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 3px;
+  height: 18px;
+  border-radius: 0 3px 3px 0;
+  background: var(--brand-gradient);
+}
+
+.nav-icon {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+}
+
+.nav-label {
+  flex: 1;
+  overflow: hidden;
+}
+
+.nav-badge {
+  background: var(--color-up-gradient);
+  color: white;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: var(--radius-full);
+  min-width: 20px;
+  text-align: center;
+}
+
+.sidebar-footer {
+  padding: var(--space-3);
+  border-top: 1px solid var(--border-light);
+}
+
+.footer-btn {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 10px var(--space-3);
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  white-space: nowrap;
+}
+
+.footer-btn:hover {
+  background: var(--bg-hover);
+  color: var(--brand-primary);
+}
+
+.fade-enter-active,
+.fade-leave-active {
+  transition: opacity 150ms;
+}
+.fade-enter-from,
+.fade-leave-to {
+  opacity: 0;
+}
+</style>

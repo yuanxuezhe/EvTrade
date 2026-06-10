@@ -20,6 +20,11 @@ export const useOrderStore = defineStore('order', () => {
     return order
   }
 
+  async function placeOrder(orderData) {
+    const order = await api.placeOrder(orderData)
+    return order
+  }
+
   async function cancelOrder(orderId) {
     await api.cancelOrder(orderId)
     const order = orders.value.find(o => o.order_id === orderId)
@@ -34,6 +39,7 @@ export const useOrderStore = defineStore('order', () => {
     fetchOrders,
     fetchTrades,
     createOrder,
+    placeOrder,
     cancelOrder
   }
 })
