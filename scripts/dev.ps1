@@ -47,20 +47,33 @@ function Stop-ByPort([int]$Port, [string]$Tag) {
   try {
     $proc = Get-Process -Id $pidOwner -ErrorAction SilentlyContinue
     if ($proc) {
-      Write-Host "[$Tag] killing PID $pidOwner ($($proc.ProcessName))"
-      Stop-Process -Id $pidOwner -Force -ErrorAction SilentlyContinue
+      Write-Host "[$Tag] killing process tree at PID $pidOwner ($($proc.ProcessName))"
+      # taskkill /T kills the process and all its children (uvicorn reloader + worker)
+      # /F is force. We invoke cmd.exe to avoid bash escaping issues with slashes.
+      $null = cmd.exe /c "taskkill /F /T /PID $pidOwner" 2>&1
     } else {
-      Write-Host "[$Tag] PID $pidOwner gone, port may be zombie"
+      Write-Host "[$Tag] PID $pidOwner already gone (zombie), port may still be held by a child"
     }
   } catch {
     Write-Host "[$Tag] kill PID $pidOwner failed: $_"
   }
-  # uvicorn --reload spawns a worker; sweep again
-  Start-Sleep -Milliseconds 800
+  # Sweep up any remaining children that may still hold the socket
+  Start-Sleep -Milliseconds 1200
   $pid2 = Get-PortOwner $Port
-  if ($pid2 -and $pid2 -ne $pidOwner) {
-    Write-Host "[$Tag] cleaning worker PID $pid2"
-    Stop-Process -Id $pid2 -Force -ErrorAction SilentlyContinue
+  if ($pid2) {
+    Write-Host "[$Tag] port still held by PID $pid2, sweeping children"
+    $children = Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
+                  Where-Object { $_.ParentProcessId -eq $pid2 -or $_.ParentProcessId -eq $pidOwner } |
+                  Select-Object -ExpandProperty ProcessId
+    foreach ($c in $children) {
+      Write-Host "[$Tag] killing child PID $c"
+      $null = cmd.exe /c "taskkill /F /T /PID $c" 2>&1
+    }
+  }
+  Start-Sleep -Seconds 1
+  $pid3 = Get-PortOwner $Port
+  if ($pid3) {
+    Write-Host "[$Tag] WARNING port $Port still held by PID $pid3 (Windows kernel may need time to release)" -ForegroundColor Yellow
   }
 }
 
