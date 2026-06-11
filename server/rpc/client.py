@@ -449,9 +449,10 @@ def _parse_positions(pkt: MsgPacket) -> Dict[str, Any]:
         available = row.get("avl_amt") or row.get("available") or "0"
         cost = row.get("avg_price") or row.get("cost") or "0"
         market_value = row.get("market_value", "0")
+        last_vol = row.get("last_vol", "0")
         items.append({
             "stock_code": row.get("stock_code", ""),
-            "stock_name": row.get("stock_name") or row.get("name") or "",
+            "last_vol": _to_int(last_vol),
             "volume": _to_int(volume),
             "available": _to_int(available),
             "cost": _to_float(cost),

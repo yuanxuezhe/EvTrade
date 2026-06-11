@@ -8,7 +8,7 @@ router = APIRouter()
 
 class HoldingItem(BaseModel):
     stock_code: str
-    stock_name: str
+    last_vol: int
     volume: int
     available: int
     cost: float

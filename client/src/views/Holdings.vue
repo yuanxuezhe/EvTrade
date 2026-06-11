@@ -28,9 +28,9 @@
             <span class="stock-code">{{ row.stock_code }}</span>
           </template>
         </el-table-column>
-        <el-table-column prop="stock_name" label="股票名称" min-width="120">
+        <el-table-column prop="last_vol" label="期初持仓" align="right" min-width="120">
           <template #default="{ row }">
-            <span class="text-secondary">{{ row.stock_name || '--' }}</span>
+            <span class="text-mono">{{ formatNumber(row.last_vol) }}</span>
           </template>
         </el-table-column>
         <el-table-column prop="volume" label="持仓量" align="right" width="120">
@@ -89,9 +89,7 @@ const filteredPositions = computed(() => {
   const kw = filters.keyword.trim().toLowerCase()
   if (!kw) return positions.value
   return positions.value.filter(
-    (p) =>
-      (p.stock_code || '').toLowerCase().includes(kw) ||
-      (p.stock_name || '').toLowerCase().includes(kw)
+    (p) => (p.stock_code || '').toLowerCase().includes(kw)
   )
 })
 
@@ -116,10 +114,10 @@ function resetFilters() {
 }
 
 function exportCSV() {
-  const header = ['股票代码', '股票名称', '持仓量', '可用', '成本价', '市值']
+  const header = ['股票代码', '期初持仓', '持仓量', '可用', '成本价', '市值']
   const rows = filteredPositions.value.map((p) => [
     p.stock_code,
-    p.stock_name || '',
+    p.last_vol,
     p.volume,
     p.available,
     p.cost,
