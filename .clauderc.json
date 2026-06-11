@@ -1,0 +1,10 @@
+{
+  "autoApprove": true,
+  "allowedTools": [
+    "view_file",
+    "edit_file",
+    "write_file",
+    "grep",
+    "list_dir"
+  ]
+}

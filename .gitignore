@@ -39,3 +39,13 @@ Thumbs.db
 node_modules/
 dist/
 .logs/
+
+# Logs / PIDs / DB
+*.log
+*.pid
+*.db
+*.sqlite
+*.sqlite3
+server/2.0
+scripts/.logs/
+scripts/.pids/
