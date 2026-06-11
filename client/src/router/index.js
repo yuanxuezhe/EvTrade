@@ -8,6 +8,7 @@ const Position = () => import('../views/Position.vue')
 const Trade = () => import('../views/Trade.vue')
 const Asset = () => import('../views/Asset.vue')
 const Orders = () => import('../views/Orders.vue')
+const Holdings = () => import('../views/Holdings.vue')
 const Trades = () => import('../views/Trades.vue')
 const Users = () => import('../views/Users.vue')
 const Profile = () => import('../views/Profile.vue')
@@ -24,6 +25,7 @@ const routes = [
   { path: '/trade', name: 'Trade', component: Trade, meta: { title: '交易下单', requiresTrader: true } },
   { path: '/asset', name: 'Asset', component: Asset, meta: { title: '账户资金' } },
   { path: '/orders', name: 'Orders', component: Orders, meta: { title: '委托查询' } },
+  { path: '/holdings', name: 'Holdings', component: Holdings, meta: { title: '持仓查询' } },
   { path: '/trades', name: 'Trades', component: Trades, meta: { title: '成交查询' } },
   {
     path: '/users',
