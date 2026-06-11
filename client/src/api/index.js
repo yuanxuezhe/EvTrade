@@ -88,7 +88,11 @@ export const tokenStorage = {
 // 业务 API
 // ============================================================
 export const api = {
-  // 持仓
+  // 持仓（持仓查询 = 6 字段原始 RPC；持仓管理 = 含派生字段）
+  async getHoldings() {
+    const res = await http.get('/holdings')
+    return res.data
+  },
   async getPositions() {
     const res = await http.get('/positions')
     return res.data

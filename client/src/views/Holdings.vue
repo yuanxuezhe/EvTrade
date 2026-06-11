@@ -33,19 +33,9 @@
             <span class="text-secondary">{{ row.stock_name || '--' }}</span>
           </template>
         </el-table-column>
-        <el-table-column prop="initial_position" label="期初" align="right" width="120">
+        <el-table-column prop="volume" label="持仓量" align="right" width="120">
           <template #default="{ row }">
-            <span class="text-mono">{{ formatNumber(row.initial_position) }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column prop="today_buy" label="今日买入" align="right" width="120">
-          <template #default="{ row }">
-            <span class="text-mono">{{ formatNumber(row.today_buy) }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column prop="today_sell" label="今日卖出" align="right" width="120">
-          <template #default="{ row }">
-            <span class="text-mono">{{ formatNumber(row.today_sell) }}</span>
+            <span class="text-mono">{{ formatNumber(row.volume) }}</span>
           </template>
         </el-table-column>
         <el-table-column prop="available" label="可用" align="right" width="120">
@@ -53,9 +43,14 @@
             <span class="text-mono">{{ formatNumber(row.available) }}</span>
           </template>
         </el-table-column>
-        <el-table-column prop="total" label="总持仓" align="right" width="120">
+        <el-table-column prop="cost" label="成本价" align="right" width="120">
           <template #default="{ row }">
-            <span class="text-mono">{{ formatNumber(row.total) }}</span>
+            <span class="text-mono">{{ formatMoney(row.cost) }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column prop="market_value" label="市值" align="right" width="140">
+          <template #default="{ row }">
+            <span class="text-mono">{{ formatMoney(row.market_value) }}</span>
           </template>
         </el-table-column>
         <template #empty>
@@ -81,7 +76,7 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Search, Refresh, Download } from '@element-plus/icons-vue'
 import { api } from '../api'
-import { formatNumber } from '../utils/format'
+import { formatNumber, formatMoney } from '../utils/format'
 
 const positions = ref([])
 const loading = ref(false)
@@ -108,7 +103,7 @@ const pagedPositions = computed(() => {
 async function refresh() {
   loading.value = true
   try {
-    positions.value = await api.getPositions()
+    positions.value = await api.getHoldings()
   } catch {
     // 错误已由 axios 拦截器统一弹 ElMessage.error
   } finally {
@@ -121,15 +116,14 @@ function resetFilters() {
 }
 
 function exportCSV() {
-  const header = ['股票代码', '股票名称', '期初', '今日买入', '今日卖出', '可用', '总持仓']
+  const header = ['股票代码', '股票名称', '持仓量', '可用', '成本价', '市值']
   const rows = filteredPositions.value.map((p) => [
     p.stock_code,
     p.stock_name || '',
-    p.initial_position,
-    p.today_buy,
-    p.today_sell,
+    p.volume,
     p.available,
-    p.total
+    p.cost,
+    p.market_value
   ])
   const csv = [header, ...rows].map((r) => r.map((v) => `"${v}"`).join(',')).join('\n')
   const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8' })
