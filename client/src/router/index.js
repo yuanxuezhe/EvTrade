@@ -10,6 +10,7 @@ const Asset = () => import('../views/Asset.vue')
 const Orders = () => import('../views/Orders.vue')
 const Holdings = () => import('../views/Holdings.vue')
 const Trades = () => import('../views/Trades.vue')
+const AlgoStrategy = () => import('../views/AlgoStrategy.vue')
 const Users = () => import('../views/Users.vue')
 const Profile = () => import('../views/Profile.vue')
 
@@ -21,12 +22,14 @@ const routes = [
     meta: { title: '登录', layout: 'blank', public: true }
   },
   { path: '/', name: 'Dashboard', component: Dashboard, meta: { title: '仪表盘' } },
-  { path: '/positions', name: 'Position', component: Position, meta: { title: '持仓管理' } },
+  { path: '/positions', redirect: '/to-management' },
   { path: '/trade', name: 'Trade', component: Trade, meta: { title: '交易下单', requiresTrader: true } },
   { path: '/asset', name: 'Asset', component: Asset, meta: { title: '账户资金' } },
   { path: '/orders', name: 'Orders', component: Orders, meta: { title: '委托查询' } },
   { path: '/holdings', name: 'Holdings', component: Holdings, meta: { title: '持仓查询' } },
   { path: '/trades', name: 'Trades', component: Trades, meta: { title: '成交查询' } },
+  { path: '/to-management', name: 'ToManagement', component: Position, meta: { title: 'TO管理' } },
+  { path: '/algo-strategy', name: 'AlgoStrategy', component: AlgoStrategy, meta: { title: '算法策略' } },
   {
     path: '/users',
     name: 'Users',
