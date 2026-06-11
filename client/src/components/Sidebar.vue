@@ -20,52 +20,6 @@
           </span>
         </div>
 
-        <!-- 父项：含可展开的子菜单（点击切换展开状态） -->
-        <div v-else-if="item.children" class="nav-group">
-          <div
-            class="nav-item nav-parent"
-            :class="{ active: isGroupActive(item) }"
-            @click="toggleGroup(item.key)"
-          >
-            <span class="nav-icon">
-              <el-icon :size="18">
-                <component :is="item.icon" />
-              </el-icon>
-            </span>
-            <transition name="fade">
-              <span v-if="!uiStore.sidebarCollapsed" class="nav-label">
-                {{ item.label }}
-              </span>
-            </transition>
-            <span v-if="!uiStore.sidebarCollapsed" class="nav-caret">
-              <el-icon :size="14">
-                <component :is="expanded[item.key] ? ArrowDown : ArrowRight" />
-              </el-icon>
-            </span>
-          </div>
-          <transition name="expand">
-            <div
-              v-if="expanded[item.key] && !uiStore.sidebarCollapsed"
-              class="nav-children"
-            >
-              <router-link
-                v-for="child in item.children"
-                :key="child.path"
-                :to="child.path"
-                class="nav-item nav-child"
-                :class="{ active: isActive(child.path) }"
-              >
-                <span class="nav-icon">
-                  <el-icon :size="16">
-                    <component :is="child.icon" />
-                  </el-icon>
-                </span>
-                <span class="nav-label">{{ child.label }}</span>
-              </router-link>
-            </div>
-          </transition>
-        </div>
-
         <!-- 普通菜单项 -->
         <router-link
           v-else
@@ -105,14 +59,14 @@
 </template>
 
 <script setup>
-import { computed, ref, watch } from 'vue'
+import { computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { useUiStore } from '../stores/ui'
 import { useOrderStore } from '../stores/order'
 import {
   Odometer, Wallet, Money, DataAnalysis, List, Tickets,
   Fold, Expand, TrendCharts, UserFilled, Files,
-  Sunrise, Coin, Cpu, ArrowDown, ArrowRight
+  Coin, Cpu, MagicStick
 } from '@element-plus/icons-vue'
 import { useAuthStore } from '../stores/auth'
 
@@ -140,46 +94,15 @@ const menuItems = computed(() => {
     { path: '/asset', label: '账户资金', icon: Wallet },
     // 策略交易分组
     { divider: true, label: '策略交易' },
-    {
-      key: 'intraday',
-      label: '日内策略',
-      icon: Sunrise,
-      children: [
-        { path: '/to-management', label: 'TO管理', icon: Coin }
-      ]
-    },
-    { path: '/algo-strategy', label: '算法策略', icon: Cpu }
+    { path: '/to-management', label: '快速做T', icon: Coin },
+    { path: '/t-strategy', label: '做T策略', icon: MagicStick },
+    { path: '/algo-strategy', label: '交易策略', icon: Cpu }
   ]
   if (authStore.isAdmin) {
     base.push({ path: '/users', label: '用户管理', icon: UserFilled, divider: true })
   }
   return base
 })
-
-// 可展开分组的展开状态（日内策略默认展开）
-const expanded = ref({ intraday: true })
-
-function toggleGroup(key) {
-  expanded.value[key] = !expanded.value[key]
-}
-
-function isGroupActive(item) {
-  if (!item.children) return false
-  return item.children.some((c) => isActive(c.path))
-}
-
-// 进入子路由时自动展开父分组
-watch(
-  () => route.path,
-  () => {
-    for (const item of menuItems.value) {
-      if (item.children && isGroupActive(item)) {
-        expanded.value[item.key] = true
-      }
-    }
-  },
-  { immediate: true }
-)
 
 function isActive(path) {
   if (path === '/') return route.path === '/'
@@ -320,64 +243,6 @@ function isActive(path) {
 .nav-label {
   flex: 1;
   overflow: hidden;
-}
-
-/* 父项（可展开） */
-.nav-group {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.nav-parent {
-  cursor: pointer;
-}
-
-.nav-parent.active {
-  background: var(--brand-gradient-soft);
-  color: var(--brand-primary);
-}
-
-.nav-caret {
-  display: flex;
-  align-items: center;
-  color: var(--text-secondary);
-  flex-shrink: 0;
-}
-
-.nav-children {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  margin-left: var(--space-4);
-  padding-left: var(--space-2);
-  border-left: 1px solid var(--border-light);
-  overflow: hidden;
-}
-
-.nav-child {
-  padding-left: var(--space-3);
-  font-size: 13px;
-}
-
-.nav-child.active {
-  background: var(--brand-gradient-soft);
-  color: var(--brand-primary);
-}
-
-.expand-enter-active,
-.expand-leave-active {
-  transition: opacity 200ms, max-height 200ms;
-}
-.expand-enter-from,
-.expand-leave-to {
-  opacity: 0;
-  max-height: 0;
-}
-.expand-enter-to,
-.expand-leave-from {
-  opacity: 1;
-  max-height: 240px;
 }
 
 .nav-badge {

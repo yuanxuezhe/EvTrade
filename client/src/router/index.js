@@ -11,6 +11,7 @@ const Orders = () => import('../views/Orders.vue')
 const Holdings = () => import('../views/Holdings.vue')
 const Trades = () => import('../views/Trades.vue')
 const AlgoStrategy = () => import('../views/AlgoStrategy.vue')
+const TStrategy = () => import('../views/TStrategy.vue')
 const Users = () => import('../views/Users.vue')
 const Profile = () => import('../views/Profile.vue')
 
@@ -28,8 +29,9 @@ const routes = [
   { path: '/orders', name: 'Orders', component: Orders, meta: { title: '委托查询' } },
   { path: '/holdings', name: 'Holdings', component: Holdings, meta: { title: '持仓查询' } },
   { path: '/trades', name: 'Trades', component: Trades, meta: { title: '成交查询' } },
-  { path: '/to-management', name: 'ToManagement', component: Position, meta: { title: 'TO管理' } },
-  { path: '/algo-strategy', name: 'AlgoStrategy', component: AlgoStrategy, meta: { title: '算法策略' } },
+  { path: '/to-management', name: 'ToManagement', component: Position, meta: { title: '快速做T' } },
+  { path: '/t-strategy', name: 'TStrategy', component: TStrategy, meta: { title: '做T策略' } },
+  { path: '/algo-strategy', name: 'AlgoStrategy', component: AlgoStrategy, meta: { title: '交易策略' } },
   {
     path: '/users',
     name: 'Users',
