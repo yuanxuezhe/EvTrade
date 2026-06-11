@@ -63,7 +63,7 @@ import { useUiStore } from '../stores/ui'
 import { useOrderStore } from '../stores/order'
 import {
   Odometer, Wallet, Money, DataAnalysis, List, Tickets,
-  Fold, Expand, TrendCharts, UserFilled
+  Fold, Expand, TrendCharts, UserFilled, Files
 } from '@element-plus/icons-vue'
 import { useAuthStore } from '../stores/auth'
 
@@ -87,6 +87,7 @@ const menuItems = computed(() => {
       icon: List,
       badge: pendingCount.value > 0 ? pendingCount.value : null
     },
+    { path: '/holdings', label: '持仓查询', icon: Files },
     { path: '/trades', label: '成交查询', icon: Tickets },
     { path: '/asset', label: '账户资金', icon: Wallet }
   ]
