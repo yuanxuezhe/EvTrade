@@ -55,6 +55,10 @@ class Settings:
     # ---- RPC 行为 ----
     RPC_TIMEOUT: float = _env_float("EVTRADE_RPC_TIMEOUT", 30.0)  # 单次 call 超时
 
+    # 下单时附带的 remark 备注（柜台透传字段，常用于区分下单来源）
+    # 可通过 EVTRADE_ORDER_REMARK 环境变量覆盖
+    ORDER_REMARK: str = _env("EVTRADE_ORDER_REMARK", "EvTrade.Test")
+
     # ---- FastAPI ----
     API_HOST: str = _env("EVTRADE_API_HOST", "0.0.0.0")
     API_PORT: int = _env_int("EVTRADE_API_PORT", 8001)

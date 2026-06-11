@@ -141,8 +141,8 @@
             :key="order.order_id"
             class="activity-item"
           >
-            <div class="activity-marker" :class="order.direction === 'BUY' ? 'buy' : 'sell'">
-              {{ order.direction === 'BUY' ? '买' : '卖' }}
+            <div class="activity-marker" :class="order.order_type === '23' ? 'buy' : 'sell'">
+              {{ order.order_type === '23' ? '买' : '卖' }}
             </div>
             <div class="activity-main">
               <div class="activity-top">
@@ -153,7 +153,7 @@
                 <span class="text-mono text-secondary">
                   {{ formatNumber(order.volume) }} 股 @ ¥{{ formatMoney(order.price) }}
                 </span>
-                <OrderStatusBadge :status="order.status" />
+                <OrderStatusBadge :status="order.status" :remark="order.order_remark" :status_msg="order.status_msg" />
               </div>
             </div>
           </div>
@@ -197,8 +197,8 @@ const todayPnL = computed(() => {
   let buy = 0
   let sell = 0
   for (const t of orderStore.trades) {
-    if (t.direction === 'BUY') buy += t.volume * t.price
-    else if (t.direction === 'SELL') sell += t.volume * t.price
+    if (t.order_type === '23') buy += t.volume * t.price
+    else if (t.order_type === '24') sell += t.volume * t.price
   }
   return sell - buy
 })
@@ -211,41 +211,44 @@ const todayPnLPercent = computed(() => {
 const orderStats = computed(() => {
   const orders = orderStore.orders
   const total = orders.length || 1
-  // 按 tone 分组聚合 11 个细粒度状态
+  // 按 tone 分组聚合 11 个细粒度状态（柜台数字）
+  //   48 未报 / 49 待报 / 50 已报
+  //   51 已报待撤 / 52 部成待撤 / 53 部撤 / 54 已撤
+  //   55 部成 / 56 已成 / 57 废单 / 255 未知
   const groups = [
     {
       key: 'done',
       label: '已成交',
       color: '#16b572',
-      statuses: ['filled']
+      statuses: ['56']
     },
     {
       key: 'working',
       label: '部分成交',
       color: '#ffa726',
-      statuses: ['partial', 'partial_pending_cancel', 'partial_cancelled']
+      statuses: ['55', '52', '53']
     },
     {
       key: 'pending',
       label: '已报/待报',
       color: '#5fa8ff',
-      statuses: ['reported', 'pending_report', 'unreported', 'pending']
+      statuses: ['50', '49', '48']
     },
     {
       key: 'terminal',
       label: '已撤单',
       color: '#a0aec0',
-      statuses: ['cancelled', 'reported_cancel']
+      statuses: ['54', '51']
     },
     {
       key: 'rejected',
       label: '废单',
       color: '#e85d75',
-      statuses: ['rejected']
+      statuses: ['57']
     }
   ]
   return groups.map((g) => {
-    const count = orders.filter((o) => g.statuses.includes(o.status)).length
+    const count = orders.filter((o) => g.statuses.includes(String(o.status || ''))).length
     return { ...g, count, percent: (count / total) * 100 }
   })
 })

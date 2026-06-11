@@ -34,9 +34,9 @@
           :prefix-icon="Search"
           style="width: 200px"
         />
-        <el-select v-model="filters.direction" placeholder="方向" clearable style="width: 120px">
-          <el-option label="买入" value="BUY" />
-          <el-option label="卖出" value="SELL" />
+        <el-select v-model="filters.order_type" placeholder="方向" clearable style="width: 120px">
+          <el-option label="买入" value="23" />
+          <el-option label="卖出" value="24" />
         </el-select>
         <el-select v-model="filters.status" placeholder="状态" clearable style="width: 120px">
           <el-option v-for="(label, k) in STATUS_LABEL" :key="k" :label="label" :value="k" />
@@ -69,10 +69,10 @@
             <span class="stock-code">{{ row.stock_code }}</span>
           </template>
         </el-table-column>
-        <el-table-column prop="direction" label="方向" width="80">
+        <el-table-column prop="order_type" label="方向" width="80">
           <template #default="{ row }">
-            <span class="dir-chip" :class="row.direction === 'BUY' ? 'buy' : 'sell'">
-              {{ row.direction === 'BUY' ? '买入' : '卖出' }}
+            <span class="dir-chip" :class="row.order_type === '23' ? 'buy' : 'sell'">
+              {{ row.order_type === '23' ? '买入' : '卖出' }}
             </span>
           </template>
         </el-table-column>
@@ -111,12 +111,12 @@
         </el-table-column>
         <el-table-column prop="status" label="状态" width="110">
           <template #default="{ row }">
-            <OrderStatusBadge :status="row.status" />
+            <OrderStatusBadge :status="row.status" :remark="row.order_remark" :status_msg="row.status_msg" />
           </template>
         </el-table-column>
         <el-table-column prop="price_type" label="类型" width="80">
           <template #default="{ row }">
-            <span class="text-secondary">{{ row.price_type || 'LIMIT' }}</span>
+            <span class="text-secondary">{{ priceTypeLabel(row.price_type) }}</span>
           </template>
         </el-table-column>
         <el-table-column prop="order_id" label="委托编号" min-width="140" show-overflow-tooltip>
@@ -148,7 +148,7 @@ import { ElMessage } from 'element-plus'
 import { Search, Refresh, Download } from '@element-plus/icons-vue'
 import { api } from '../api'
 import {
-  formatMoney, formatNumber, STATUS_LABEL, STATUS_TYPE
+  formatMoney, formatNumber, STATUS_LABEL, STATUS_TYPE, priceTypeLabel
 } from '../utils/format'
 import OrderStatusBadge from '../components/OrderStatusBadge.vue'
 
@@ -159,19 +159,21 @@ const pageSize = ref(20)
 
 const filters = reactive({
   keyword: '',
-  direction: '',
+  order_type: '',
   status: ''
 })
 
 const countByStatus = computed(() => {
+  // 柜台数字分组
+  // 已成: 56  部成: 55/52/53  待报/已报: 48/49/50  已撤: 54/51  废单: 57
   const map = { filled: 0, partial: 0, pending: 0, cancelled: 0, rejected: 0 }
   for (const o of orders.value) {
-    const s = o.status
-    if (s === 'filled') map.filled++
-    else if (s === 'partial' || s === 'partial_pending_cancel' || s === 'partial_cancelled') map.partial++
-    else if (s === 'unreported' || s === 'pending_report' || s === 'reported' || s === 'pending') map.pending++
-    else if (s === 'cancelled' || s === 'reported_cancel') map.cancelled++
-    else if (s === 'rejected') map.rejected++
+    const s = String(o.status || '')
+    if (s === '56') map.filled++
+    else if (s === '55' || s === '52' || s === '53') map.partial++
+    else if (s === '48' || s === '49' || s === '50') map.pending++
+    else if (s === '54' || s === '51') map.cancelled++
+    else if (s === '57') map.rejected++
   }
   return map
 })
@@ -181,7 +183,7 @@ const filteredOrders = computed(() => {
     if (filters.keyword && !o.stock_code.toLowerCase().includes(filters.keyword.toLowerCase())) {
       return false
     }
-    if (filters.direction && o.direction !== filters.direction) return false
+    if (filters.order_type && o.order_type !== filters.order_type) return false
     if (filters.status && o.status !== filters.status) return false
     return true
   })
@@ -197,7 +199,7 @@ async function refresh() {
   try {
     orders.value = await api.getOrders()
   } catch (e) {
-    ElMessage.error('查询失败')
+    // 错误已由 axios 拦截器统一弹 ElMessage.error
   } finally {
     loading.value = false
   }
@@ -205,7 +207,7 @@ async function refresh() {
 
 function resetFilters() {
   filters.keyword = ''
-  filters.direction = ''
+  filters.order_type = ''
   filters.status = ''
 }
 
@@ -215,9 +217,11 @@ function getFillRate(row) {
 }
 
 function getProgressColor(status) {
-  if (status === 'filled') return '#16b572'
-  if (status === 'partial') return '#ffa726'
-  if (status === 'cancelled' || status === 'rejected') return '#a0aec0'
+  // 柜台数字：56=已成 55=部成 54/51=已撤/已报待撤 57=废单
+  const s = String(status || '')
+  if (s === '56') return '#16b572'
+  if (s === '55') return '#ffa726'
+  if (s === '54' || s === '51' || s === '57') return '#a0aec0'
   return '#5fa8ff'
 }
 
@@ -226,13 +230,13 @@ function exportCSV() {
   const rows = filteredOrders.value.map((o) => [
     o.order_time,
     o.stock_code,
-    o.direction === 'BUY' ? '买入' : '卖出',
+    o.order_type === '23' ? '买入' : (o.order_type === '24' ? '卖出' : o.order_type),
     o.volume,
     o.price,
     o.traded_volume,
     o.traded_price,
     STATUS_LABEL[o.status] || o.status,
-    o.price_type,
+    priceTypeLabel(o.price_type),
     o.order_id
   ])
   const csv = [header, ...rows].map((r) => r.map((v) => `"${v}"`).join(',')).join('\n')

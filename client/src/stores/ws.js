@@ -125,18 +125,24 @@ export const useWsStore = defineStore('ws', () => {
       if (!Number.isNaN(tv)) existing.traded_volume = tv
       const tp = Number(row.traded_price)
       if (!Number.isNaN(tp)) existing.traded_price = tp
+      if (row.order_remark) existing.order_remark = String(row.order_remark)
+      if (row.status_msg) existing.status_msg = String(row.status_msg)
     } else if (orderId) {
       orderStore.orders.unshift({
         order_id: orderId,
         stock_code: code,
-        direction: row.direction || 'BUY',
+        // 柜台 order_type 数字串：股票 23=买入，24=卖出
+        order_type: row.order_type || '23',
         volume: Number(row.volume || row.order_volume) || 0,
         price: Number(row.price) || 0,
-        price_type: row.price_type || 'LIMIT',
+        // 柜台 price_type 数字：5=最新价 11=指定价 14=对手价 44=市价
+        price_type: row.price_type != null ? Number(row.price_type) : 11,
         status: mapped || status || 'reported',
         traded_volume: Number(row.traded_volume) || 0,
         traded_price: Number(row.traded_price) || 0,
-        order_time: row.order_time || payload_ts_to_hms()
+        order_time: row.order_time || payload_ts_to_hms(),
+        order_remark: row.order_remark ? String(row.order_remark) : '',
+        status_msg: row.status_msg ? String(row.status_msg) : ''
       })
     }
 
@@ -146,13 +152,15 @@ export const useWsStore = defineStore('ws', () => {
   function _onTradeCfm(row) {
     const orderStore = useOrderStore()
     orderStore.trades.unshift({
-      trade_id: row.trade_id || '',
+      // 柜台报文字段名是 traded_id / traded_time；保留 trade_id / trade_time 作兼容
+      trade_id: row.traded_id || row.trade_id || '',
       order_id: row.order_id || '',
       stock_code: row.stock_code || '',
-      direction: row.direction || '',
+      // 柜台 order_type 数字串：股票 23=买入，24=卖出
+      order_type: row.order_type || '',
       volume: Number(row.volume) || 0,
       price: Number(row.price) || 0,
-      trade_time: row.trade_time || payload_ts_to_hms()
+      trade_time: row.traded_time || row.trade_time || payload_ts_to_hms()
     })
 
     ElNotification({
@@ -188,15 +196,18 @@ export const useWsStore = defineStore('ws', () => {
   }
 
   function _notifyOrder(code, status, row) {
-    const label = STATUS_LABEL[status] || status || '已报'
+    // 柜台数字：48 未报 / 49 待报 / 50 已报 / 51 已报待撤 / 52 部成待撤
+    //           53 部撤 / 54 已撤 / 55 部成 / 56 已成 / 57 废单 / 255 未知
+    const s = String(status || '')
+    const label = STATUS_LABEL[s] || s || '已报'
     const filled = Number(row.traded_volume) || 0
     const volume = Number(row.volume) || 0
     let nType = 'info'
     let msg = `${code} 状态：${label}`
-    if (status === 'filled') { nType = 'success'; msg = `${code} 已成交 ${volume}@${row.price || ''}` }
-    else if (status === 'partial' || status === 'partial_pending_cancel') { nType = 'warning'; msg = `${code} 部成 ${filled}/${volume}` }
-    else if (status === 'rejected') { nType = 'error'; msg = `${code} 废单${row.status_msg ? '：' + row.status_msg : ''}` }
-    else if (status === 'cancelled' || status === 'partial_cancelled') { nType = 'info'; msg = `${code} 已撤单` }
+    if (s === '56') { nType = 'success'; msg = `${code} 已成交 ${volume}@${row.price || ''}` }
+    else if (s === '55' || s === '52') { nType = 'warning'; msg = `${code} 部成 ${filled}/${volume}` }
+    else if (s === '57') { nType = 'error'; msg = `${code} 废单${row.status_msg ? '：' + row.status_msg : ''}` }
+    else if (s === '54' || s === '53') { nType = 'info'; msg = `${code} 已撤单` }
 
     ElNotification({ title: '委托更新', message: msg, type: nType, duration: 3500 })
   }
@@ -213,24 +224,10 @@ export const useWsStore = defineStore('ws', () => {
 
 function _mapOrderStatus(raw) {
   if (!raw) return ''
-  // 已经是前端 key（unreported / reported / filled ...）
-  if (STATUS_LABEL[raw]) return raw
-  // XtQuant 字符串数字
-  const m = {
-    '48': 'unreported',
-    '49': 'pending_report',
-    '50': 'reported',
-    '51': 'reported_cancel',
-    '52': 'partial_pending_cancel',
-    '53': 'partial_cancelled',
-    '54': 'cancelled',
-    '55': 'partial',
-    '56': 'filled',
-    '57': 'rejected',
-    '255': 'unknown',
-    'pending': 'pending'
-  }
-  return m[String(raw)] || ''
+  const s = String(raw).trim()
+  if (!s) return ''
+  // 已经是柜台数字（48-57 / 255）或已知的英文 key，都原样返回
+  return s
 }
 
 function payload_ts_to_hms() {

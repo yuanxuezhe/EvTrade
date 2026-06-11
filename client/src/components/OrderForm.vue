@@ -4,16 +4,16 @@
     <div class="direction-tabs">
       <button
         class="tab-btn buy"
-        :class="{ active: form.direction === 'BUY' }"
-        @click="form.direction = 'BUY'"
+        :class="{ active: form.order_type === '23' }"
+        @click="form.order_type = '23'"
       >
         <el-icon><Top /></el-icon>
         <span>买入</span>
       </button>
       <button
         class="tab-btn sell"
-        :class="{ active: form.direction === 'SELL' }"
-        @click="form.direction = 'SELL'"
+        :class="{ active: form.order_type === '24' }"
+        @click="form.order_type = '24'"
       >
         <el-icon><Bottom /></el-icon>
         <span>卖出</span>
@@ -49,7 +49,7 @@
             :min="0"
             :precision="2"
             :step="0.01"
-            :disabled="form.price_type !== 'LIMIT'"
+            :disabled="form.price_type !== 11"
             controls-position="right"
             style="width: 100%"
           />
@@ -57,6 +57,7 @@
             <button
               v-for="p in priceShortcuts"
               :key="p.label"
+              type="button"
               class="quick-btn"
               @click="applyPriceShortcut(p)"
             >
@@ -77,6 +78,7 @@
             <button
               v-for="v in volumeShortcuts"
               :key="v"
+              type="button"
               class="quick-btn"
               @click="form.volume = v"
             >
@@ -98,13 +100,13 @@
 
         <div class="form-actions">
           <el-button
-            :type="form.direction === 'BUY' ? 'danger' : 'success'"
+            :type="form.order_type === '23' ? 'danger' : 'success'"
             size="large"
             class="submit-btn"
             @click="handleSubmit"
             :loading="submitting"
           >
-            {{ form.direction === 'BUY' ? '确认买入' : '确认卖出' }}
+            {{ form.order_type === '23' ? '确认买入' : '确认卖出' }}
           </el-button>
           <el-button size="large" @click="handleReset" :disabled="submitting">
             重置
@@ -130,16 +132,20 @@ const submitting = ref(false)
 
 const form = reactive({
   stock_code: props.defaultStockCode || '',
-  direction: 'BUY',
-  price_type: 'LIMIT',
+  // 柜台 order_type：股票 23=买入，24=卖出
+  order_type: '23',
+  // 柜台 price_type 数字：11=指定价(限价) 5=最新价 14=对手价 44=市价 ...
+  price_type: 11,
   price: 0,
   volume: 100
 })
 
+// 价格类型 → 柜台枚举数字（与后端/柜台一致）
 const priceTypeOptions = [
-  { label: '限价', value: 'LIMIT' },
-  { label: '最新价', value: 'LATEST' },
-  { label: '挂单价', value: 'FAIR' }
+  { label: '限价', value: 11 },
+  { label: '最新价', value: 5 },
+  { label: '挂单价', value: 14 },
+  { label: '市价', value: 44 }
 ]
 
 const priceShortcuts = [
@@ -180,7 +186,7 @@ async function handleSubmit() {
     ElMessage.warning('请输入股票代码')
     return
   }
-  if (form.price_type === 'LIMIT' && form.price <= 0) {
+  if (form.price_type === 11 && form.price <= 0) {
     ElMessage.warning('限价单需要输入价格')
     return
   }
@@ -190,14 +196,14 @@ async function handleSubmit() {
   }
   try {
     await ElMessageBox.confirm(
-      `确认${form.direction === 'BUY' ? '买入' : '卖出'} ${form.stock_code} ${form.volume} 股，
+      `确认${form.order_type === '23' ? '买入' : '卖出'} ${form.stock_code} ${form.volume} 股，
 预估金额 ¥${formatMoney(estimatedAmount.value)}`,
       '订单确认',
       {
         confirmButtonText: '确认下单',
         cancelButtonText: '取消',
-        type: form.direction === 'BUY' ? 'warning' : 'info',
-        confirmButtonClass: form.direction === 'BUY' ? 'el-button--danger' : 'el-button--success'
+        type: form.order_type === '23' ? 'warning' : 'info',
+        confirmButtonClass: form.order_type === '23' ? 'el-button--danger' : 'el-button--success'
       }
     )
   } catch {

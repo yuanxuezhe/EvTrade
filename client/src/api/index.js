@@ -26,8 +26,45 @@ export function setUnauthorizedHandler(fn) {
   onUnauthorized = fn
 }
 
+// 后端 RPC 响应统一为 {code, msg, list}：
+//   - code === 0：把 res.data 替换为 list，调用方拿到的就是数组
+//   - code !== 0：红色 ElMessage.error(msg) 并 reject，调用方 await 抛错
+// 异步加载 element-plus 以避免与 main.js 的初始化循环依赖。
+function _isRpcResponse(body) {
+  return (
+    body &&
+    typeof body === 'object' &&
+    !Array.isArray(body) &&
+    'code' in body &&
+    'msg' in body &&
+    'list' in body
+  )
+}
+
+async function _showRpcError(msg) {
+  try {
+    const { ElMessage } = await import('element-plus')
+    ElMessage.error(msg || '请求失败')
+  } catch (e) {
+    // eslint-disable-next-line no-console
+    console.error('[api] failed to show ElMessage:', e)
+  }
+}
+
 http.interceptors.response.use(
-  (res) => res,
+  (res) => {
+    const body = res.data
+    if (_isRpcResponse(body)) {
+      const code = Number(body.code)
+      if (code !== 0) {
+        _showRpcError(body.msg)
+        return Promise.reject({ rpc: true, code, msg: body.msg })
+      }
+      // 解包：让调用方直接拿到 list
+      res.data = Array.isArray(body.list) ? body.list : []
+    }
+    return res
+  },
   (err) => {
     const status = err.response?.status
     if (status === 401) {

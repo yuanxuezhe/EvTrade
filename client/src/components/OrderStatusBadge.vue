@@ -1,5 +1,24 @@
 <template>
-  <span class="order-status-badge" :class="['tone-' + tone, { pulse: pulse, 'size-sm': size === 'sm' }]">
+  <el-tooltip
+    v-if="tooltipContent"
+    :content="tooltipContent"
+    placement="top"
+    :show-after="120"
+    raw-content
+  >
+    <span class="order-status-badge" :class="['tone-' + tone, { pulse: pulse, 'size-sm': size === 'sm' }]">
+      <span class="badge-dot"></span>
+      <el-icon v-if="iconName" class="badge-icon" :size="iconSize">
+        <component :is="iconComponent" />
+      </el-icon>
+      <span class="badge-label">{{ label }}</span>
+    </span>
+  </el-tooltip>
+  <span
+    v-else
+    class="order-status-badge"
+    :class="['tone-' + tone, { pulse: pulse, 'size-sm': size === 'sm' }]"
+  >
     <span class="badge-dot"></span>
     <el-icon v-if="iconName" class="badge-icon" :size="iconSize">
       <component :is="iconComponent" />
@@ -17,7 +36,11 @@ import * as ElIcons from '@element-plus/icons-vue'
 
 const props = defineProps({
   status: { type: String, default: '' },
-  size: { type: String, default: 'sm' } // sm | md
+  size: { type: String, default: 'sm' }, // sm | md
+  // 柜台返回的废单/撤单原因说明；非空时合并到 tooltip
+  remark: { type: String, default: '' },
+  // 柜台废单原因文本（终端态 status=57 时附带）；非空时优先展示
+  status_msg: { type: String, default: '' }
 })
 
 const tone = computed(() => STATUS_TONE[props.status] || 'pending')
@@ -26,6 +49,18 @@ const pulse = computed(() => !!STATUS_PULSE[props.status])
 const iconName = computed(() => STATUS_ICON_NAME[props.status] || 'QuestionFilled')
 const iconComponent = computed(() => ElIcons[iconName.value] || ElIcons.QuestionFilled)
 const iconSize = computed(() => (props.size === 'sm' ? 12 : 14))
+
+const remark = computed(() => String(props.remark || '').trim())
+const statusMsg = computed(() => String(props.status_msg || '').trim())
+
+// 合并策略：status_msg 优先（废单原因），下面再补一行 remark（撤单/备注等）
+// 都为空时不显示 tooltip，避免空弹框
+const tooltipContent = computed(() => {
+  const parts = []
+  if (statusMsg.value) parts.push(statusMsg.value)
+  if (remark.value && remark.value !== statusMsg.value) parts.push(remark.value)
+  return parts.join('\n')
+})
 </script>
 
 <style scoped>

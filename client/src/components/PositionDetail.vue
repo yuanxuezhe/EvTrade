@@ -53,7 +53,7 @@
               v-for="(item, idx) in orderTradeList"
               :key="idx"
               class="tl-item"
-              :class="item.direction === 'BUY' ? 'tl-buy' : 'tl-sell'"
+              :class="item.order_type === '23' ? 'tl-buy' : 'tl-sell'"
             >
               <div class="tl-marker">
                 <div class="tl-dot"></div>
@@ -61,13 +61,13 @@
               </div>
               <div class="tl-content">
                 <div class="tl-head">
-                  <span class="tl-type">{{ item.type }} · {{ item.direction === 'BUY' ? '买入' : '卖出' }}</span>
+                  <span class="tl-type">{{ item.type }} · {{ item.order_type === '23' ? '买入' : '卖出' }}</span>
                   <span class="tl-time text-mono text-secondary">{{ item.time }}</span>
                 </div>
                 <div class="tl-body text-mono">
                   {{ item.volume }} 股 @ ¥{{ item.price.toFixed(2) }}
                   <span class="tl-status" v-if="item.status !== '-'">
-                    · <OrderStatusBadge :status="item.statusKey" size="sm" />
+                    · <OrderStatusBadge :status="item.statusKey" size="sm" :remark="item.order_remark" :status_msg="item.status_msg" />
                   </span>
                 </div>
               </div>
@@ -85,10 +85,10 @@
                 </el-tag>
               </template>
             </el-table-column>
-            <el-table-column prop="direction" label="方向" width="60">
+            <el-table-column prop="order_type" label="方向" width="60">
               <template #default="{ row }">
-                <span class="dir-chip" :class="row.direction === 'BUY' ? 'buy' : 'sell'">
-                  {{ row.direction === 'BUY' ? '买' : '卖' }}
+                <span class="dir-chip" :class="row.order_type === '23' ? 'buy' : 'sell'">
+                  {{ row.order_type === '23' ? '买' : '卖' }}
                 </span>
               </template>
             </el-table-column>
@@ -100,7 +100,7 @@
             </el-table-column>
             <el-table-column prop="statusLabel" label="状态" width="110">
               <template #default="{ row }">
-                <OrderStatusBadge v-if="row.statusKey" :status="row.statusKey" />
+                <OrderStatusBadge v-if="row.statusKey" :status="row.statusKey" :remark="row.order_remark" :status_msg="row.status_msg" />
                 <span v-else class="text-secondary">—</span>
               </template>
             </el-table-column>
@@ -131,11 +131,13 @@ const orderTradeList = computed(() => {
     list.push({
       time: order.order_time,
       type: '委托',
-      direction: order.direction,
+      order_type: order.order_type,
       volume: order.volume,
       price: order.price,
       status: STATUS_LABEL[order.status] || order.status,
       statusKey: order.status,
+      order_remark: order.order_remark || '',
+      status_msg: order.status_msg || '',
       order_id: order.order_id
     })
   }
@@ -143,7 +145,7 @@ const orderTradeList = computed(() => {
     list.push({
       time: trade.trade_time,
       type: '成交',
-      direction: trade.direction,
+      order_type: trade.order_type,
       volume: trade.volume,
       price: trade.price,
       status: '-',
@@ -160,10 +162,10 @@ const profit = computed(() => {
   const buyVolume = Math.min(today_buy, today_sell)
 
   const totalBuy = props.trades
-    .filter((t) => t.direction === 'BUY')
+    .filter((t) => t.order_type === '23')
     .reduce((sum, t) => sum + t.volume * t.price, 0)
   const totalSell = props.trades
-    .filter((t) => t.direction === 'SELL')
+    .filter((t) => t.order_type === '24')
     .reduce((sum, t) => sum + t.volume * t.price, 0)
 
   const avgBuy = today_buy > 0 ? totalBuy / today_buy : 0

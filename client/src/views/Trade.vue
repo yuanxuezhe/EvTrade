@@ -53,10 +53,10 @@
               <span class="stock-code-cell">{{ row.stock_code }}</span>
             </template>
           </el-table-column>
-          <el-table-column prop="direction" label="方向" width="60">
+          <el-table-column prop="order_type" label="方向" width="60">
             <template #default="{ row }">
-              <span class="dir-chip" :class="row.direction === 'BUY' ? 'buy' : 'sell'">
-                {{ row.direction === 'BUY' ? '买' : '卖' }}
+              <span class="dir-chip" :class="row.order_type === '23' ? 'buy' : 'sell'">
+                {{ row.order_type === '23' ? '买' : '卖' }}
               </span>
             </template>
           </el-table-column>
@@ -77,7 +77,7 @@
           </el-table-column>
           <el-table-column prop="status" label="状态" width="100">
             <template #default="{ row }">
-              <OrderStatusBadge :status="row.status" />
+              <OrderStatusBadge :status="row.status" :remark="row.order_remark" :status_msg="row.status_msg" />
             </template>
           </el-table-column>
           <el-table-column label="操作" width="80" fixed="right">
@@ -110,7 +110,7 @@ import { Refresh } from '@element-plus/icons-vue'
 import OrderForm from '../components/OrderForm.vue'
 import { useOrderStore } from '../stores/order'
 import {
-  formatMoney, formatNumber, STATUS_LABEL, STATUS_TYPE
+  formatMoney, formatNumber
 } from '../utils/format'
 import OrderStatusBadge from '../components/OrderStatusBadge.vue'
 
@@ -128,36 +128,37 @@ const quickStocks = [
   { code: '000333.SZ', name: '美的集团' }
 ]
 
+// 柜台数字：48 未报 / 49 待报 / 50 已报 / 51 已报待撤 / 52 部成待撤
+//           53 部撤 / 54 已撤 / 55 部成 / 56 已成 / 57 废单 / 255 未知
+const _PENDING_NUMERIC = new Set(['48', '49', '50', '51', '52', '55'])
+const _FILLED_NUMERIC = new Set(['56'])
+
 const pendingCount = computed(() =>
-  orderStore.orders.filter((o) => o.status === 'pending' || o.status === 'partial').length
+  orderStore.orders.filter((o) => _PENDING_NUMERIC.has(String(o.status || ''))).length
 )
 
 const filteredOrders = computed(() => {
   const list = orderStore.orders
   if (filter.value === 'pending') {
-    return list.filter((o) => o.status === 'pending' || o.status === 'partial')
+    return list.filter((o) => _PENDING_NUMERIC.has(String(o.status || '')))
   }
   if (filter.value === 'filled') {
-    return list.filter((o) => o.status === 'filled')
+    return list.filter((o) => _FILLED_NUMERIC.has(String(o.status || '')))
   }
   return list
 })
 
 function canCancel(status) {
   // 已报到部成之间可撤；已成/已撤/废单 不可撤
-  return [
-    'unreported', 'pending_report', 'reported', 'reported_cancel',
-    'partial', 'partial_pending_cancel', 'pending'
-  ].includes(status)
+  return _PENDING_NUMERIC.has(String(status || ''))
 }
 
 async function handleOrderSubmit(orderData) {
   try {
     await orderStore.placeOrder(orderData)
-    ElMessage.success({ message: '下单已提交', duration: 2000 })
     await orderStore.fetchOrders()
   } catch (e) {
-    ElMessage.error('下单失败: ' + (e.message || ''))
+    // 错误已由 axios 拦截器统一弹 ElMessage.error
   }
 }
 

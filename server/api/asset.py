@@ -1,26 +1,34 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter
 from pydantic import BaseModel
-import traceback
+from typing import List
+
 from rpc.client import qry_asset
 
 router = APIRouter()
 
-class AssetResponse(BaseModel):
+
+class AssetItem(BaseModel):
     cash: float
     frozen_cash: float
     market_value: float
     total_asset: float
 
-@router.get("", response_model=AssetResponse)
+
+class AssetRpcResponse(BaseModel):
+    code: int
+    msg: str
+    list: List[AssetItem]
+
+
+@router.get("", response_model=AssetRpcResponse)
 async def get_account_asset():
     try:
         data = await qry_asset()
-        return AssetResponse(
-            cash=data.get("cash", 0),
-            frozen_cash=data.get("frozen_cash", 0),
-            market_value=data.get("market_value", 0),
-            total_asset=data.get("total_asset", 0)
+        return AssetRpcResponse(
+            code=int(data.get("code", -1)),
+            msg=str(data.get("msg", "")),
+            list=[AssetItem(**item) for item in data.get("list", [])],
         )
     except Exception as e:
         print(f"qry_asset error: {e}")
-        return AssetResponse(cash=0, frozen_cash=0, market_value=0, total_asset=0)
+        return AssetRpcResponse(code=-1, msg=str(e), list=[])

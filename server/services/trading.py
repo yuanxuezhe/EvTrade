@@ -63,7 +63,8 @@ def update_position_from_trade(trade: Trade):
         pos = Position(stock_code=trade.stock_code, stock_name="")
         positions_store[trade.stock_code] = pos
 
-    if trade.direction == "BUY":
+    # 股票 order_type：23=买入，24=卖出
+    if trade.order_type == "23":
         pos.today_buy += trade.volume
     else:
         pos.today_sell += trade.volume

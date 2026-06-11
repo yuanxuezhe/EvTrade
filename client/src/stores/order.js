@@ -21,15 +21,16 @@ export const useOrderStore = defineStore('order', () => {
   }
 
   async function placeOrder(orderData) {
-    const order = await api.placeOrder(orderData)
-    return order
+    const list = await api.placeOrder(orderData)
+    return (Array.isArray(list) && list[0]) || null
   }
 
   async function cancelOrder(orderId) {
     await api.cancelOrder(orderId)
     const order = orders.value.find(o => o.order_id === orderId)
     if (order) {
-      order.status = 'cancelled'
+      // 柜台数字 54 = 已撤
+      order.status = '54'
     }
   }
 

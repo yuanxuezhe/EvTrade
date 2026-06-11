@@ -1,6 +1,5 @@
 import asyncio
 import json
-import uuid
 from datetime import datetime
 from typing import Optional, Dict, Any
 
@@ -37,6 +36,18 @@ def _clean_id(raw: str) -> str:
     if not raw:
         return ""
     return raw.strip().rstrip("\x00").strip()
+
+
+def _wire_dump(pkt: "MsgPacket") -> str:
+    """用 msgpacket 自带的 wire_to_string 抓报文字符串视图，便于排查。
+
+    返回空串时上层不打印，避免噪音。
+    """
+    try:
+        s = pkt.wire_to_string()
+    except Exception as e:
+        return f"<wire_to_string error: {type(e).__name__}: {e}>"
+    return s or ""
 
 
 class RPClient:
@@ -89,6 +100,9 @@ class RPClient:
                             f"[RPClient] decoded func={func!r} type={mt!r} "
                             f"msg_id={msg_id!r} pending={list(self.pending.keys())}"
                         )
+                        reply_dump = _wire_dump(pkt)
+                        if reply_dump:
+                            print(f"[RPClient] <<< wire:\n{reply_dump}")
                         if msg_id and msg_id in self.pending:
                             future = self.pending.pop(msg_id)
                             if not future.done():
@@ -168,16 +182,34 @@ class RPClient:
                         )
                         traceback.print_exc()
 
-    async def call(self, func: str, timeout: Optional[float] = None) -> MsgPacket:
+    async def call(
+        self,
+        func: str,
+        timeout: Optional[float] = None,
+        headers: Optional[str] = None,
+        values: Optional[Dict[str, Any]] = None,
+    ) -> MsgPacket:
         """发送 RPC 请求并等待应答。
 
         msgid 由 MsgPacket 构造时自动生成（UUID v4 hex，32 字符）。
         协议要求柜台在应答包中回写该 msgid，否则本调用会等到 timeout。
+
+        可选参数：
+          headers: 逗号分隔的字段名（如 "stock_code,volume,price"），用于带请求体的调用。
+          values:  字段名 → 字符串值的 dict；会在 headers 设置后写入第一行。
         """
         if timeout is None:
             timeout = settings.RPC_TIMEOUT
         pkt = MsgPacket(MSG_TYPE_REQUEST, "V1.0")
         pkt.set_func(func)
+        if headers:
+            names = [h.strip() for h in headers.split(",") if h.strip()]
+            pkt.set_headers(len(names), ",".join(names))
+            if values:
+                pkt.add_row()
+                for name in names:
+                    if name in values:
+                        pkt.set_value(name, str(values[name]))
         pkt.finalize()
 
         msg_id = _clean_id(pkt.msg_id())
@@ -189,12 +221,16 @@ class RPClient:
         loop = asyncio.get_event_loop()
         future = loop.create_future()
         self.pending[msg_id] = future
-        print(
-            f"[RPClient.call] >>> func={func} msg_id={msg_id} "
-            f"pending={len(self.pending)}"
-        )
 
         _, wire_data = pkt.encode()
+        print(
+            f"[RPClient.call] >>> func={func} msg_id={msg_id} "
+            f"pending={len(self.pending)} wire_len={len(wire_data)}"
+        )
+        req_dump = _wire_dump(pkt)
+        if req_dump:
+            print(f"[RPClient.call] >>> wire:\n{req_dump}")
+
         await self.exchange.publish(
             Message(body=wire_data), routing_key=QUEUE_REQ
         )
@@ -236,97 +272,204 @@ async def close_rpc_client():
 # ================================================================
 # 响应解析器
 # ================================================================
+#
+# 应答协议（柜台返回）：
+#   - 第 1 结果集：固定两字段 code / msg，1 行
+#       * code == 0 表示成功；其他值表示业务错误
+#       * msg  为人类可读的错误描述
+#   - 第 2 结果集：业务数据，0..N 行（仅当 code == 0 时才有意义）
+#
+# 所有 _parse_* 解析器统一返回 {"code": int, "msg": str, "list": list}：
+#   - code != 0 时 list 直接为空，不读第二结果集
+#   - code == 0 时按各业务字段映射规则解析第二结果集，list 为业务对象数组
+
+
+def _select_rs(pkt: MsgPacket, rs: int) -> bool:
+    """安全切换到第 rs 个结果集（1-based）。
+
+    优先使用 select_result_set(rs)；某些 msgpacket 版本在该 API 异常时，
+    回退到 reset → next_result_set 的链式定位。返回是否成功。
+    """
+    try:
+        ok = pkt.select_result_set(rs)
+        if ok is False:
+            return False
+        # 部分实现 select_result_set 不返回 bool，按当前 rs 校验
+        try:
+            return pkt.result_set() == rs
+        except Exception:
+            return True
+    except Exception:
+        pass
+    # fallback
+    try:
+        pkt.select_result_set(1)
+    except Exception:
+        pass
+    cur = 1
+    while cur < rs:
+        if not pkt.next_result_set():
+            return False
+        cur += 1
+    return True
+
+
+def _parse_code_msg(pkt: MsgPacket) -> tuple:
+    """读取第 1 结果集中的 code/msg。失败时返回 (-1, str)。"""
+    if pkt.result_set_count() < 1:
+        return -1, "empty packet"
+    if not _select_rs(pkt, 1):
+        return -1, "missing result set #1"
+    pkt.reset_cursor()
+    if not pkt.fetch_next():
+        return -1, "missing code row"
+    raw_code = (pkt.get_value_str("code") or "").strip()
+    raw_msg = (pkt.get_value_str("msg") or "").strip()
+    try:
+        code = int(raw_code) if raw_code else -1
+    except ValueError:
+        code = -1
+    return code, raw_msg
+
+
+def _iter_rows(pkt: MsgPacket, rs: int) -> list:
+    """把第 rs 个结果集的所有行按 headers 解析为 dict 数组。
+
+    与 _parse_push_rows 思路一致：不做类型转换，由调用方按业务再做映射。
+    若第 rs 个结果集不存在，返回空数组。
+    """
+    if pkt.result_set_count() < rs:
+        return []
+    if not _select_rs(pkt, rs):
+        return []
+    headers_str = pkt.get_headers() or ""
+    headers = [h.strip() for h in headers_str.split(",") if h.strip()]
+    rows: list = []
+    pkt.reset_cursor()
+    while pkt.fetch_next():
+        rows.append({h: (pkt.get_value_str(h) or "") for h in headers})
+    return rows
+
+
+def _to_float(v: str) -> float:
+    try:
+        return float(v) if v else 0.0
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _to_int(v: str) -> int:
+    try:
+        return int(v) if v else 0
+    except (TypeError, ValueError):
+        try:
+            return int(float(v))
+        except (TypeError, ValueError):
+            return 0
+
+
+def _empty(code: int, msg: str) -> Dict[str, Any]:
+    return {"code": code, "msg": msg, "list": []}
+
+
 def _parse_asset(pkt: MsgPacket) -> Dict[str, Any]:
-    """解析资金查询结果"""
-    result = {"cash": 0.0, "frozen_cash": 0.0, "market_value": 0.0, "total_asset": 0.0}
-
-    for rs in range(1, pkt.result_set_count() + 1):
-        if rs > 1:
-            if not pkt.next_result_set():
-                break
-
-        pkt.reset_cursor()
-        while pkt.fetch_next():
-            cash = pkt.get_value_str("cash")
-            frozen = pkt.get_value_str("frozen_cash")
-            market = pkt.get_value_str("market_value")
-            total = pkt.get_value_str("total_asset")
-
-            if cash:
-                result["cash"] = float(cash)
-            if frozen:
-                result["frozen_cash"] = float(frozen)
-            if market:
-                result["market_value"] = float(market)
-            if total:
-                result["total_asset"] = float(total)
-
-    return result
+    """解析资金查询结果 → {code, msg, list:[{cash, frozen_cash, market_value, total_asset}]}"""
+    code, msg = _parse_code_msg(pkt)
+    if code != 0:
+        return _empty(code, msg)
+    items = []
+    for row in _iter_rows(pkt, 2):
+        items.append({
+            "cash": _to_float(row.get("cash", "")),
+            "frozen_cash": _to_float(row.get("frozen_cash", "")),
+            "market_value": _to_float(row.get("market_value", "")),
+            "total_asset": _to_float(row.get("total_asset", "")),
+        })
+    return {"code": code, "msg": msg, "list": items}
 
 
-def _parse_orders(pkt: MsgPacket) -> list:
-    """解析委托查询结果"""
-    orders = []
-
-    for rs in range(1, pkt.result_set_count() + 1):
-        if rs > 1:
-            if not pkt.next_result_set():
-                break
-
-        pkt.reset_cursor()
-        while pkt.fetch_next():
-            order_id = pkt.get_value_str("order_id") or ""
-            stock_code = pkt.get_value_str("stock_code") or ""
-            price = pkt.get_value_str("price")
-            volume = pkt.get_value_str("order_volume") or pkt.get_value_str("volume") or "0"
-            traded_volume = pkt.get_value_str("traded_volume") or "0"
-            traded_price = pkt.get_value_str("traded_price") or "0"
-            status = pkt.get_value_str("order_status") or pkt.get_value_str("status") or ""
-            order_type = pkt.get_value_str("order_type") or ""
-            direction = pkt.get_value_str("direction") or ""
-            order_time = pkt.get_value_str("order_time") or ""
-
-            orders.append({
-                "order_id": order_id,
-                "stock_code": stock_code,
-                "price": float(price) if price else 0.0,
-                "volume": int(volume) if volume else 0,
-                "traded_volume": int(traded_volume) if traded_volume else 0,
-                "traded_price": float(traded_price) if traded_price else 0.0,
-                "status": status,
-                "order_type": order_type,
-                "direction": direction,
-                "order_time": order_time,
-            })
-
-    return orders
+def _parse_orders(pkt: MsgPacket) -> Dict[str, Any]:
+    """解析委托查询结果 → {code, msg, list:[order_dict, ...]}"""
+    code, msg = _parse_code_msg(pkt)
+    if code != 0:
+        return _empty(code, msg)
+    items = []
+    for row in _iter_rows(pkt, 2):
+        volume = row.get("order_volume") or row.get("volume") or "0"
+        status = row.get("order_status") or row.get("status") or ""
+        items.append({
+            "order_id": row.get("order_id", ""),
+            "stock_code": row.get("stock_code", ""),
+            # 柜台 order_type 数字串：股票 23=买入，24=卖出
+            "order_type": _to_int(row.get("order_type", "")),
+            "price_type": _to_int(row.get("price_type", "")),
+            "price": _to_float(row.get("price", "")),
+            "volume": _to_int(volume),
+            "traded_volume": _to_int(row.get("traded_volume", "")),
+            "traded_price": _to_float(row.get("traded_price", "")),
+            "status": status,
+            "order_time": row.get("order_time", ""),
+            "order_remark": row.get("order_remark", ""),
+            "status_msg": row.get("status_msg", ""),
+        })
+    return {"code": code, "msg": msg, "list": items}
 
 
-def _parse_trades(pkt: MsgPacket) -> list:
-    """解析成交查询结果"""
-    trades = []
+def _parse_trades(pkt: MsgPacket) -> Dict[str, Any]:
+    """解析成交查询结果 → {code, msg, list:[trade_dict, ...]}"""
+    code, msg = _parse_code_msg(pkt)
+    if code != 0:
+        return _empty(code, msg)
+    items = []
+    for row in _iter_rows(pkt, 2):
+        volume = row.get("volume") or row.get("traded_volume") or "0"
+        price = row.get("price") or row.get("traded_price") or "0"
+        # 柜台报文字段名是 traded_id / traded_time；保留 trade_id / trade_time 作兼容
+        items.append({
+            "trade_id": row.get("traded_id", ""),
+            "order_id": row.get("order_id", ""),
+            "stock_code": row.get("stock_code", ""),
+            # 柜台 order_type 数字串：股票 23=买入，24=卖出
+            "order_type": row.get("order_type", ""),
+            "volume": _to_int(volume),
+            "price": _to_float(price),
+            "trade_time": row.get("traded_time", ""),
+        })
+    return {"code": code, "msg": msg, "list": items}
 
-    for rs in range(1, pkt.result_set_count() + 1):
-        if rs > 1:
-            if not pkt.next_result_set():
-                break
 
-        pkt.reset_cursor()
-        while pkt.fetch_next():
-            volume = pkt.get_value_str("volume") or pkt.get_value_str("traded_volume") or "0"
-            price = pkt.get_value_str("price") or pkt.get_value_str("traded_price") or "0"
+def _parse_positions(pkt: MsgPacket) -> Dict[str, Any]:
+    """解析持仓查询结果 → {code, msg, list:[pos_dict, ...]}"""
+    code, msg = _parse_code_msg(pkt)
+    if code != 0:
+        return _empty(code, msg)
+    items = []
+    for row in _iter_rows(pkt, 2):
+        volume = row.get("volume", "0")
+        available = row.get("avl_amt") or row.get("available") or "0"
+        cost = row.get("avg_price") or row.get("cost") or "0"
+        market_value = row.get("market_value", "0")
+        items.append({
+            "stock_code": row.get("stock_code", ""),
+            "stock_name": row.get("stock_name") or row.get("name") or "",
+            "volume": _to_int(volume),
+            "available": _to_int(available),
+            "cost": _to_float(cost),
+            "market_value": _to_float(market_value),
+        })
+    return {"code": code, "msg": msg, "list": items}
 
-            trades.append({
-                "trade_id": pkt.get_value_str("trade_id") or "",
-                "order_id": pkt.get_value_str("order_id") or "",
-                "stock_code": pkt.get_value_str("stock_code") or "",
-                "direction": pkt.get_value_str("direction") or "",
-                "volume": int(volume) if volume else 0,
-                "price": float(price) if price else 0.0,
-                "trade_time": pkt.get_value_str("trade_time") or "",
-            })
 
-    return trades
+def _parse_order_ack(pkt: MsgPacket) -> Dict[str, Any]:
+    """解析下单应答 → {code, msg, list:[ack_dict, ...]}
+
+    第二结果集字段未严格约定（可能包含 order_id / order_sysid 等），
+    这里原样透传 dict，由前端展示层处理。
+    """
+    code, msg = _parse_code_msg(pkt)
+    if code != 0:
+        return _empty(code, msg)
+    return {"code": code, "msg": msg, "list": _iter_rows(pkt, 2)}
 
 
 def _parse_push_rows(pkt: MsgPacket) -> list:
@@ -356,100 +499,72 @@ def _parse_push_rows(pkt: MsgPacket) -> list:
 # 业务调用
 # ================================================================
 async def qry_asset() -> Dict[str, Any]:
-    """查询资金 qry_ast"""
+    """查询资金 qry_ast → {code, msg, list:[asset_dict]}"""
     client = await get_rpc_client()
     pkt = await client.call("qry_ast")
     return _parse_asset(pkt)
 
 
-async def qry_orders() -> list:
-    """查询委托 qry_ord"""
+async def qry_orders() -> Dict[str, Any]:
+    """查询委托 qry_ord → {code, msg, list:[order_dict, ...]}"""
     client = await get_rpc_client()
     pkt = await client.call("qry_ord")
     return _parse_orders(pkt)
 
 
-async def qry_trades() -> list:
-    """查询成交 qry_mch"""
+async def qry_trades() -> Dict[str, Any]:
+    """查询成交 qry_mch → {code, msg, list:[trade_dict, ...]}"""
     client = await get_rpc_client()
     pkt = await client.call("qry_mch")
     return _parse_trades(pkt)
 
 
-async def qry_positions() -> list:
-    """查询持仓 qry_pos"""
+async def qry_positions() -> Dict[str, Any]:
+    """查询持仓 qry_pos → {code, msg, list:[pos_dict, ...]}"""
     client = await get_rpc_client()
     pkt = await client.call("qry_pos")
-    positions = []
-
-    for rs in range(1, pkt.result_set_count() + 1):
-        if rs > 1:
-            if not pkt.next_result_set():
-                break
-
-        pkt.reset_cursor()
-        while pkt.fetch_next():
-            volume = pkt.get_value_str("volume") or "0"
-            available = pkt.get_value_str("avl_amt") or pkt.get_value_str("available") or "0"
-            cost = pkt.get_value_str("avg_price") or pkt.get_value_str("cost") or "0"
-            market_value = pkt.get_value_str("market_value") or "0"
-
-            positions.append({
-                "stock_code": pkt.get_value_str("stock_code") or "",
-                "stock_name": pkt.get_value_str("stock_name") or pkt.get_value_str("name") or "",
-                "volume": int(volume) if volume else 0,
-                "available": int(available) if available else 0,
-                "cost": float(cost) if cost else 0.0,
-                "market_value": float(market_value) if market_value else 0.0,
-            })
-
-    return positions
+    return _parse_positions(pkt)
 
 
 async def ord_stk(
-    stock_code: str, volume: int, price_type: str, price: float, direction: str
+    stock_code: str,
+    volume: int,
+    price_type: int,
+    price: float,
+    order_type: str,
+    remark: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """下单 ord_stk（fire-and-forget）
+    """下单 ord_stk（等待柜台应答）
 
-    关键约束：
-    1. msgid 由 MsgPacket 自动生成；柜台若回写应答包，可据此关联回报。
-    2. XtQuant 的 ord_stk 本身是 fire-and-forget，broker 不直接回包；
-       真正的成交通知通过 EvTrade.Test.Push 队列异步推送（ord_cfm / trd_cfm）。
-    3. 这里发完立即返回临时 order_id，前端拿到后可轮询 GET /api/orders
-       获取真实状态。
+    协议同 qry_*：第 1 结果集 code/msg；第 2 结果集为下单回报（如 order_id）。
+    成交细节仍通过 EvTrade.Test.Push 队列异步推送（ord_cfm / trd_cfm）。
+
+    参数：
+      order_type  柜台买卖类型数字串，股票场景：23=买入，24=卖出
+      price_type  柜台价格类型数字：
+                    5=最新价 11=指定价(限价) 14=对手价 44=市价 ...
+      remark      委托备注，柜台透传；不传时取 settings.ORDER_REMARK（默认 "EvTrade.Test"）
     """
     client = await get_rpc_client()
-
-    pkt = MsgPacket(MSG_TYPE_REQUEST, "V1.0")
-    pkt.set_func("ord_stk")
-    pkt.set_headers(5, "stock_code,volume,price_type,price,direction")
-    pkt.add_row()
-    pkt.set_value("stock_code", stock_code)
-    pkt.set_value("volume", str(volume))
-    pkt.set_value("price_type", price_type)
-    pkt.set_value("price", str(price))
-    pkt.set_value("direction", direction)
-    pkt.finalize()
-
-    # 用独立 UUID 作为前端占位 order_id（与 msgid 解耦）
-    temp_order_id = uuid.uuid4().hex[:8]
-
-    _, wire_data = pkt.encode()
-    await client.exchange.publish(
-        Message(body=wire_data), routing_key=QUEUE_REQ
+    if remark is None:
+        remark = settings.ORDER_REMARK
+    pkt = await client.call(
+        "ord_stk",
+        headers="stock_code,volume,price_type,price,order_type,remark",
+        values={
+            "stock_code": stock_code,
+            "volume": str(volume),
+            "price_type": str(price_type),
+            "price": str(price),
+            "order_type": order_type,
+            "remark": remark,
+        },
     )
-
-    msg_id = _clean_id(pkt.msg_id())
-    print(
-        f"[ord_stk] published: stock_code={stock_code} volume={volume} "
-        f"price={price} direction={direction} "
-        f"temp_order_id={temp_order_id} msg_id={msg_id}"
-    )
-    return {"order_id": temp_order_id, "status": "pending"}
+    return _parse_order_ack(pkt)
 
 
 async def cancel_order(order_id: str) -> Dict[str, Any]:
     """撤单 cancel_ord（占位实现，未把 order_id 写入请求体）"""
     client = await get_rpc_client()
     pkt = await client.call("cancel_ord")
-    return {"order_id": order_id, "status": "cancelled"}
+    return _parse_order_ack(pkt)

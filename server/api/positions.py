@@ -16,24 +16,39 @@ class PositionResponse(BaseModel):
     available: int
     total: int
 
-@router.get("", response_model=List[PositionResponse])
+
+class PositionRpcResponse(BaseModel):
+    code: int
+    msg: str
+    list: List[PositionResponse]
+
+
+def _row_to_position(p: dict) -> PositionResponse:
+    return PositionResponse(
+        stock_code=p.get("stock_code", ""),
+        stock_name=p.get("stock_name", ""),
+        initial_position=p.get("initial_position", 0),
+        today_buy=p.get("today_buy", 0),
+        today_sell=p.get("today_sell", 0),
+        available=p.get("available", 0),
+        total=p.get("total", p.get("volume", 0)),
+    )
+
+
+@router.get("", response_model=PositionRpcResponse)
 async def list_positions():
     try:
-        positions = await qry_positions()
-    except Exception:
-        positions = []
-    return [
-        PositionResponse(
-            stock_code=p.get("stock_code", ""),
-            stock_name=p.get("stock_name", ""),
-            initial_position=p.get("initial_position", 0),
-            today_buy=p.get("today_buy", 0),
-            today_sell=p.get("today_sell", 0),
-            available=p.get("available", 0),
-            total=p.get("total", 0)
-        )
-        for p in positions
-    ]
+        data = await qry_positions()
+        code = int(data.get("code", -1))
+        msg = str(data.get("msg", ""))
+        items = []
+        if code == 0:
+            items = [_row_to_position(p) for p in data.get("list", [])]
+        return PositionRpcResponse(code=code, msg=msg, list=items)
+    except Exception as e:
+        print(f"qry_positions error: {e}")
+        return PositionRpcResponse(code=-1, msg=str(e), list=[])
+
 
 @router.post("/{stock_code}/init", response_model=PositionResponse)
 async def init_stock_position(stock_code: str, _=Depends(require_trader)):

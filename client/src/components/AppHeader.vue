@@ -173,7 +173,7 @@ async function handleRefresh() {
     uiStore.markRefreshed()
     ElMessage.success({ message: '数据已刷新', duration: 1500 })
   } catch (e) {
-    ElMessage.error('刷新失败')
+    // 单个查询的错误已由 axios 拦截器统一弹 ElMessage.error
   } finally {
     setTimeout(() => (refreshing.value = false), 500)
   }

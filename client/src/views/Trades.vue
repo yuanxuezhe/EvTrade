@@ -34,9 +34,9 @@
           :prefix-icon="Search"
           style="width: 200px"
         />
-        <el-select v-model="filters.direction" placeholder="方向" clearable style="width: 120px">
-          <el-option label="买入" value="BUY" />
-          <el-option label="卖出" value="SELL" />
+        <el-select v-model="filters.order_type" placeholder="方向" clearable style="width: 120px">
+          <el-option label="买入" value="23" />
+          <el-option label="卖出" value="24" />
         </el-select>
         <el-button @click="resetFilters">清空</el-button>
       </div>
@@ -61,10 +61,10 @@
             <span class="stock-code">{{ row.stock_code }}</span>
           </template>
         </el-table-column>
-        <el-table-column prop="direction" label="方向" width="80">
+        <el-table-column prop="order_type" label="方向" width="80">
           <template #default="{ row }">
-            <span class="dir-chip" :class="row.direction === 'BUY' ? 'buy' : 'sell'">
-              {{ row.direction === 'BUY' ? '买入' : '卖出' }}
+            <span class="dir-chip" :class="row.order_type === '23' ? 'buy' : 'sell'">
+              {{ row.order_type === '23' ? '买入' : '卖出' }}
             </span>
           </template>
         </el-table-column>
@@ -125,22 +125,22 @@ const pageSize = ref(20)
 
 const filters = reactive({
   keyword: '',
-  direction: ''
+  order_type: ''
 })
 
-const buyCount = computed(() => trades.value.filter((t) => t.direction === 'BUY').length)
-const sellCount = computed(() => trades.value.filter((t) => t.direction === 'SELL').length)
+const buyCount = computed(() => trades.value.filter((t) => t.order_type === '23').length)
+const sellCount = computed(() => trades.value.filter((t) => t.order_type === '24').length)
 const buyAmount = computed(() =>
-  trades.value.filter((t) => t.direction === 'BUY').reduce((s, t) => s + t.volume * t.price, 0)
+  trades.value.filter((t) => t.order_type === '23').reduce((s, t) => s + t.volume * t.price, 0)
 )
 const sellAmount = computed(() =>
-  trades.value.filter((t) => t.direction === 'SELL').reduce((s, t) => s + t.volume * t.price, 0)
+  trades.value.filter((t) => t.order_type === '24').reduce((s, t) => s + t.volume * t.price, 0)
 )
 
 const filteredTrades = computed(() =>
   trades.value.filter((t) => {
     if (filters.keyword && !t.stock_code.toLowerCase().includes(filters.keyword.toLowerCase())) return false
-    if (filters.direction && t.direction !== filters.direction) return false
+    if (filters.order_type && t.order_type !== filters.order_type) return false
     return true
   })
 )
@@ -155,7 +155,7 @@ async function refresh() {
   try {
     trades.value = await api.getTrades()
   } catch {
-    ElMessage.error('查询失败')
+    // 错误已由 axios 拦截器统一弹 ElMessage.error
   } finally {
     loading.value = false
   }
@@ -163,7 +163,7 @@ async function refresh() {
 
 function resetFilters() {
   filters.keyword = ''
-  filters.direction = ''
+  filters.order_type = ''
 }
 
 function exportCSV() {
@@ -171,7 +171,7 @@ function exportCSV() {
   const rows = filteredTrades.value.map((t) => [
     t.trade_time,
     t.stock_code,
-    t.direction === 'BUY' ? '买入' : '卖出',
+    t.order_type === '23' ? '买入' : (t.order_type === '24' ? '卖出' : t.order_type),
     t.volume,
     t.price,
     (t.volume * t.price).toFixed(2),
