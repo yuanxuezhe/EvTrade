@@ -10,103 +10,93 @@
       <span v-if="lastPriceText" class="qp-last-time">更新 {{ updatedAgo }}</span>
     </div>
 
-    <!-- 无数据 -->
-    <div v-if="!code" class="qp-empty">
-      请先在上方输入股票代码（如 600519.SH / 000001.SZ）
-    </div>
-    <div v-else-if="!quote" class="qp-empty">
-      <el-icon class="is-loading"><Loading /></el-icon>
-      <span>等待行情订阅中…</span>
-    </div>
-
-    <template v-else>
-      <!-- ① 顶部：最新价 + 涨跌幅（核心） -->
-      <div class="qp-hero" :class="heroClass">
-        <div class="qp-hero-price">{{ lastPriceText }}</div>
-        <div class="qp-hero-chg">
-          <span>{{ changeText }}</span>
-          <span class="qp-hero-pct">{{ changePctText }}</span>
-        </div>
+    <!-- ① 顶部：最新价 + 涨跌幅（核心）：未订阅时显示占位 -->
+    <div class="qp-hero" :class="heroClass">
+      <div class="qp-hero-price">{{ lastPriceText }}</div>
+      <div class="qp-hero-chg">
+        <span>{{ changeText }}</span>
+        <span class="qp-hero-pct">{{ changePctText }}</span>
       </div>
+      <span v-if="!code" class="qp-hero-hint">输入股票代码订阅行情</span>
+    </div>
 
-      <!-- ② 中部：6 字段（开/高/低/昨收/量/额） -->
-      <div class="qp-grid">
-        <div class="qp-cell" @dblclick="emitApply(quote.fields?.[FIELD.OPEN])" title="双击带入限价">
-          <span class="qp-cell-label">今开</span>
-          <span class="qp-cell-value">{{ formatNum(quote.fields?.[FIELD.OPEN]) }}</span>
-        </div>
-        <div class="qp-cell" @dblclick="emitApply(quote.fields?.[FIELD.HIGH])" title="双击带入限价">
-          <span class="qp-cell-label">最高</span>
-          <span class="qp-cell-value">{{ formatNum(quote.fields?.[FIELD.HIGH]) }}</span>
-        </div>
-        <div class="qp-cell" @dblclick="emitApply(quote.fields?.[FIELD.LOW])" title="双击带入限价">
-          <span class="qp-cell-label">最低</span>
-          <span class="qp-cell-value">{{ formatNum(quote.fields?.[FIELD.LOW]) }}</span>
-        </div>
-        <div class="qp-cell" @dblclick="emitApply(quote.fields?.[FIELD.PREV_CLOSE])" title="双击带入限价（昨收）">
-          <span class="qp-cell-label">昨收</span>
-          <span class="qp-cell-value">{{ formatNum(quote.fields?.[FIELD.PREV_CLOSE]) }}</span>
-        </div>
-        <div class="qp-cell">
-          <span class="qp-cell-label">成交量</span>
-          <span class="qp-cell-value">{{ formatBigNum(quote.fields?.[FIELD.VOLUME]) }}</span>
-        </div>
-        <div class="qp-cell">
-          <span class="qp-cell-label">成交额</span>
-          <span class="qp-cell-value">{{ formatBigNum(quote.fields?.[FIELD.AMOUNT]) }}</span>
-        </div>
+    <!-- ② 中部：6 字段（开/高/低/昨收/量/额） -->
+    <div class="qp-grid">
+      <div class="qp-cell" @dblclick="emitApply(quote?.fields?.[FIELD.OPEN])" title="双击带入限价">
+        <span class="qp-cell-label">今开</span>
+        <span class="qp-cell-value">{{ formatNum(quote?.fields?.[FIELD.OPEN]) }}</span>
       </div>
+      <div class="qp-cell" @dblclick="emitApply(quote?.fields?.[FIELD.HIGH])" title="双击带入限价">
+        <span class="qp-cell-label">最高</span>
+        <span class="qp-cell-value">{{ formatNum(quote?.fields?.[FIELD.HIGH]) }}</span>
+      </div>
+      <div class="qp-cell" @dblclick="emitApply(quote?.fields?.[FIELD.LOW])" title="双击带入限价">
+        <span class="qp-cell-label">最低</span>
+        <span class="qp-cell-value">{{ formatNum(quote?.fields?.[FIELD.LOW]) }}</span>
+      </div>
+      <div class="qp-cell" @dblclick="emitApply(quote?.fields?.[FIELD.PREV_CLOSE])" title="双击带入限价（昨收）">
+        <span class="qp-cell-label">昨收</span>
+        <span class="qp-cell-value">{{ formatNum(quote?.fields?.[FIELD.PREV_CLOSE]) }}</span>
+      </div>
+      <div class="qp-cell">
+        <span class="qp-cell-label">成交量</span>
+        <span class="qp-cell-value">{{ formatBigNum(quote?.fields?.[FIELD.VOLUME]) }}</span>
+      </div>
+      <div class="qp-cell">
+        <span class="qp-cell-label">成交额</span>
+        <span class="qp-cell-value">{{ formatBigNum(quote?.fields?.[FIELD.AMOUNT]) }}</span>
+      </div>
+    </div>
 
-      <!-- ③ 5 档盘口（卖5..卖1 + 最新价 + 买1..买5） -->
-      <div class="qp-orderbook">
-        <div class="qp-ob-head">
-          <span class="qp-ob-label ask">卖盘</span>
-          <span class="qp-ob-label">最新</span>
-          <span class="qp-ob-label bid">买盘</span>
-        </div>
+    <!-- ③ 5 档盘口（卖5..卖1 + 最新价 + 买1..买5）—— 未订阅时仍显示空骨架 -->
+    <div class="qp-orderbook" :class="{ 'is-empty': !quote }">
+      <div class="qp-ob-head">
+        <span class="qp-ob-label ask">卖盘</span>
+        <span class="qp-ob-label">最新</span>
+        <span class="qp-ob-label bid">买盘</span>
+      </div>
+      <div
+        v-for="i in 5"
+        :key="i"
+        class="qp-ob-row"
+      >
+        <!-- 卖5..卖1（i=5→1 倒序） -->
         <div
-          v-for="i in 5"
-          :key="i"
-          class="qp-ob-row"
+          class="qp-ob-cell ask"
+          @dblclick="emitApply(getAskPrice(6 - i))"
+          title="双击带入限价（卖盘）"
         >
-          <!-- 卖5..卖1（i=5→1 倒序） -->
-          <div
-            class="qp-ob-cell ask"
-            @dblclick="emitApply(getAskPrice(6 - i))"
-            title="双击带入限价（卖盘）"
-          >
-            <span class="qp-ob-rank">卖{{ 6 - i }}</span>
-            <span class="qp-ob-price">{{ formatNum(getAskPrice(6 - i)) }}</span>
-            <span class="qp-ob-vol">{{ getAskVol(6 - i) }}</span>
-          </div>
-          <!-- 最新价列（中间，第 3 列高亮） -->
-          <div
-            v-if="i === 3"
-            class="qp-ob-cell mid"
-            :class="heroClass"
-          >
-            <span class="qp-ob-mid-price">{{ lastPriceText }}</span>
-          </div>
-          <div v-else class="qp-ob-cell mid empty"></div>
-          <!-- 买1..买5 -->
-          <div
-            class="qp-ob-cell bid"
-            @dblclick="emitApply(getBidPrice(i))"
-            title="双击带入限价（买盘）"
-          >
-            <span class="qp-ob-rank">买{{ i }}</span>
-            <span class="qp-ob-price">{{ formatNum(getBidPrice(i)) }}</span>
-            <span class="qp-ob-vol">{{ getBidVol(i) }}</span>
-          </div>
+          <span class="qp-ob-rank">卖{{ 6 - i }}</span>
+          <span class="qp-ob-price">{{ formatNum(getAskPrice(6 - i)) }}</span>
+          <span class="qp-ob-vol">{{ formatBigNum(getAskVol(6 - i)) }}</span>
+        </div>
+        <!-- 最新价列（中间，第 3 列高亮） -->
+        <div
+          v-if="i === 3"
+          class="qp-ob-cell mid"
+          :class="heroClass"
+        >
+          <span class="qp-ob-mid-price">{{ lastPriceText }}</span>
+        </div>
+        <div v-else class="qp-ob-cell mid empty"></div>
+        <!-- 买1..买5 -->
+        <div
+          class="qp-ob-cell bid"
+          @dblclick="emitApply(getBidPrice(i))"
+          title="双击带入限价（买盘）"
+        >
+          <span class="qp-ob-rank">买{{ i }}</span>
+          <span class="qp-ob-price">{{ formatNum(getBidPrice(i)) }}</span>
+          <span class="qp-ob-vol">{{ formatBigNum(getBidVol(i)) }}</span>
         </div>
       </div>
-    </template>
+    </div>
   </div>
 </template>
 
 <script setup>
 import { computed, onBeforeUnmount, ref } from 'vue'
-import { DataLine, Loading } from '@element-plus/icons-vue'
+import { DataLine } from '@element-plus/icons-vue'
 import { useQuoteStore, FIELD as F } from '../stores/quote'
 
 const props = defineProps({
@@ -232,6 +222,7 @@ startTick()
 .qp-hero-price { font-size: 32px; font-weight: 700; font-family: 'Roboto Mono', monospace; letter-spacing: -0.5px; }
 .qp-hero-chg { display: flex; align-items: baseline; gap: 6px; font-size: 14px; font-family: 'Roboto Mono', monospace; }
 .qp-hero-pct { font-weight: 600; }
+.qp-hero-hint { font-size: 12px; color: var(--text-tertiary, #8f95a1); margin-left: auto; font-weight: 400; font-family: inherit; }
 
 /* 6 格字段 */
 .qp-grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 6px; }
@@ -246,7 +237,8 @@ startTick()
 .qp-cell-value { font-size: 13px; font-weight: 600; font-family: 'Roboto Mono', monospace; color: var(--text-primary, #1f2329); }
 
 /* 5 档盘口 */
-.qp-orderbook { display: flex; flex-direction: column; gap: 2px; border: 1px solid var(--border-color, #e5e6eb); border-radius: 4px; padding: 4px 0; background: var(--bg-secondary, #fafbfc); }
+.qp-orderbook { display: flex; flex-direction: column; gap: 2px; border: 1px solid var(--border-color, #e5e6eb); border-radius: 4px; padding: 4px 0; background: var(--bg-secondary, #fafbfc); transition: opacity .2s; }
+.qp-orderbook.is-empty { opacity: .55; }
 .qp-ob-head { display: grid; grid-template-columns: 1fr 1fr 1fr; padding: 2px 8px; }
 .qp-ob-label { font-size: 11px; color: var(--text-tertiary, #8f95a1); }
 .qp-ob-label.ask { color: var(--color-down, #16b572); text-align: left; }

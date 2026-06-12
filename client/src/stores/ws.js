@@ -115,12 +115,8 @@ export const useWsStore = defineStore('ws', () => {
   function _onQuote(row) {
     // row: { stock_code, last_price, fields, body, ts? }
     if (!row || !row.stock_code) return
-    // 行情经由 holdings store 白名单过滤：只关心持仓中的代码
-    //   - 持仓中的代码：写入 quote store，触发实时市值重算
-    //   - 非持仓：忽略（broker 推的所有 *.SH / *.SZ 行情量大）
-    const holdings = useHoldingsStore()
-    if (holdings.applyQuote(row)) return // 持仓代码已处理
-    // 兜底：若 holdings 还没 bootstrap（极端情况），仍写入 quote store
+    // 直接写入 quote store（hqserver 推所有 *.SH / *.SZ，无需白名单）
+    // 下单页输入任意标的即可显示行情
     const quoteStore = useQuoteStore()
     quoteStore.update({
       stock_code: row.stock_code,
@@ -129,6 +125,11 @@ export const useWsStore = defineStore('ws', () => {
       body: row.body,
       ts: row.ts || Date.now()
     })
+    // 同步给 holdings store（用于持仓代码的实时市值计算）
+    try {
+      const holdings = useHoldingsStore()
+      holdings.applyQuote(row)
+    } catch (_) { /* 同上 */ }
   }
 
   function _onOrderCfm(row) {
