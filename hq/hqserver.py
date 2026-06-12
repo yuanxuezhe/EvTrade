@@ -1,82 +1,135 @@
 #!/usr/bin/env python3
-# -*- coding: gbk -*-
 """
-EvQuota ĞĞÇé²¢·¢Ïû·ÑÓë¾«×¼·Ö·¢Â·ÓÉÆ÷ (Python 3.6.8 ĞŞ¸´°æ)
+EvQuota è¡Œæƒ…å¹¶å‘æ¶ˆè´¹ä¸ç²¾å‡†åˆ†å‘è·¯ç”±å™¨ (å›ºå®šåç¨‹æ± é˜²æ‰“æ»¡ç‰ˆ)
+
+æ¶æ„ï¼š
+  RabbitMQ EvQuota é˜Ÿåˆ— (ä¸Šæ¸¸ broker æ¨æ‰€æœ‰ A è‚¡è¡Œæƒ…)
+        â†“ aio_pika iterator + no_ack=True   æé€Ÿæ¥æ”¶
+  asyncio.Queue å†…éƒ¨ç¼“å†²åŒº (maxsize=5000, å¤©ç„¶èƒŒå‹)
+        â†“ N ä¸ªå›ºå®š worker åç¨‹            CPU å—æ§
+  quota.broadcast.exchange (Topic, routing_key=stock_code)
+        â†“
+  å‰ç«¯ WebSocket / server.quote.subscriber (FANOUT æ¨¡å¼é€šé… *.SH / *.SZ)
+
+å…³é”®æ”¹è¿›ï¼ˆç›¸å¯¹æ—§ç‰ˆï¼‰ï¼š
+  1. å›ºå®š 4 ä¸ª worker åç¨‹æ± ï¼Œä¸ä¸ºæ¯æ¡æ¶ˆæ¯ spawn åç¨‹
+  2. å†…éƒ¨ asyncio.Queue ç¼“å†²åŒºæä¾›å¤©ç„¶ backpressure
+  3. no_ack=Trueï¼šé«˜é¢‘åœºæ™¯ä¸‹é¿å… ack é£æš´
+  4. Message æ¨¡æ¿é¢„åˆ›å»ºï¼šworker å†…åªæ¢ body å¼•ç”¨
+  5. å­—èŠ‚å±‚åˆ‡ stock_codeï¼šä¸ decode æ•´æ¡ body
+  6. asyncio.sleep(0) è®©å‡º CPU
 """
 
 import asyncio
 import aio_pika
 
-# ==================== ÅäÖÃ ====================
+# ==================== é…ç½® ====================
 RABBITMQ_URL = "amqp://192.168.10.2:5672/"
-SOURCE_QUEUE = "EvQuota"  # QMT ÈûÈëµÄÔ­Ê¼ĞĞÇé¶ÓÁĞ
+# ä¸Šæ¸¸ broker ç›´æ¥ publish åˆ° quota.exchange (Topic, durable=false)
+# hqserver åˆ›å»ºä¸€ä¸ª exclusive ä¸´æ—¶é˜Ÿåˆ— bind åˆ°è¯¥ exchange, é€šé… *.SH / *.SZ æ”¶æ‰€æœ‰ A è‚¡è¡Œæƒ…
+EXCHANGE_NAME = "quota.exchange"
+# ä»ç„¶ä¿ç•™å¯¹ EvQuota é˜Ÿåˆ—çš„å…¼å®¹ï¼ˆå¦‚æœ broker æ”¹å›èµ°é˜Ÿåˆ—æ¨¡å¼ï¼Œä¸è‡³äºæ–­æµï¼‰
+SOURCE_QUEUE = "EvQuota"
 
-# ĞÂÉèÒ»¸ö×¨ÓÃÓÚ¹ã²¥·Ö·¢µÄ Topic ½»»»»ú
-BROADCAST_EXCHANGE = "quota.broadcast.exchange" 
+NUM_WORKERS = 4          # ä¸¥æ ¼é™åˆ¶å¹¶å‘å¤„ç†çš„ Worker æ•°é‡ï¼Œé˜²æ­¢åƒæ»¡å•æ ¸ CPU
+MAX_QUEUE_SIZE = 5000    # å†…éƒ¨ç¼“å†²åŒºå¤§å°ï¼Œé˜²æ­¢å†…å­˜æš´æ¶¨
+PREFETCH_COUNT = 32      # aio_pika ä¸€æ¬¡æœ€å¤šé¢„å–çš„æœªç¡®è®¤æ¶ˆæ¯æ•°ï¼ˆåº” >= NUM_WORKERSï¼‰
 
-# ²¢·¢´¦ÀíÏŞÖÆ£¨QoS Prefetch£©£ºÔÊĞíÍ¬Ê±²¢·¢´¦ÀíµÄÎ´È·ÈÏÏûÏ¢Êı
-CONCURRENCY_LIMIT = 50 
+# åˆå§‹åŒ–å†…éƒ¨å¼‚æ­¥é˜Ÿåˆ—
+task_queue: asyncio.Queue = asyncio.Queue(maxsize=MAX_QUEUE_SIZE)
 
-async def process_message(message: aio_pika.IncomingMessage, exchange: aio_pika.Exchange):
-    """µ¥ÌõĞĞÇéµÄ½âÎöÓë¶ş´Î×ª·¢Âß¼­"""
-    async with message.process():
+
+async def quota_worker(worker_id: int, exchange: aio_pika.Exchange) -> None:
+    """å›ºå®šçš„ Worker åç¨‹ï¼Œä»å†…éƒ¨é˜Ÿåˆ—å–ä»»åŠ¡å¤„ç†"""
+    # é¢„å…ˆåˆ›å»ºæ¶ˆæ¯æ¨¡æ¿ï¼ˆåªå¤ç”¨ bytes bodyï¼‰ï¼Œé¿å…å¾ªç¯å†…é‡å¤å®ä¾‹åŒ–çš„å¼€é”€
+    forward_msg = aio_pika.Message(body=b"", delivery_mode=1)
+    publish_func = exchange.publish
+
+    while True:
+        # ä»é˜Ÿåˆ—è·å–åŸç”Ÿ bytes æ•°æ®
+        raw_body = await task_queue.get()
         try:
-            # 1. ½âÂëĞĞÇéÊı¾İ
-            body_str = message.body.decode('gbk').strip()
-            if not body_str:
-                return
-            
-            # 2. ÌáÈ¡¹ÉÆ±´úÂë
-            fields = body_str.split('|')
-            stock_code = fields[0]  # ÀıÈç: "600519.SH"
-            
-            # 3. ·â×°²¢ÖØĞÂ·¢²¼
-            # ºËĞÄĞŞ¸´£ºÖ±½ÓÊ¹ÓÃÊı×Ö 1 ´úÌæ aio_pika.DeliveryMode.TRANSIENT
-            forward_msg = aio_pika.Message(
-                body=message.body,
-                delivery_mode=1  # 1 ´ú±í·Ç³Ö¾Ã»¯(Transient)£¬ÔÚ Python 3.6 »·¾³ÏÂ×îÎÈ¶¨ÇÒĞÔÄÜ×î¸ß
-            )
-            
-            # ·¢ËÍµ½¹ã²¥½»»»»ú£¬Â·ÓÉ¼üÊÇ¹ÉÆ±´úÂë
-            await exchange.publish(forward_msg, routing_key=stock_code)
-            
-        except Exception as e:
-            # ÕâÀïµÄ str(e) Ö®Ç°´òÓ¡³öÁË "TRANSIENT"£¬ÕıÊÇÒòÎªÔ­´úÂëÔÚ·â×° Message Ê±±ÀÀ£ÁË
-            print(f"[Error] ½âÎö»ò·Ö·¢Ê§°Ü: {e}")
+            # ä»…åœ¨å­—èŠ‚æµå±‚é¢åˆ‡å‡ºè‚¡ç¥¨ä»£ç ï¼Œä¸ decode æ•´æ¡ bodyï¼Œé™ä½ CPU å¼€é”€
+            stock_code_bytes = raw_body.split(b'|', 1)[0]
+            stock_code = stock_code_bytes.decode('gbk')
 
-async def main():
-    print(f"[Router] ÕıÔÚÁ¬½Ó RabbitMQ: {RABBITMQ_URL}...", flush=True)
+            # å¤ç”¨ Message æ¨¡æ¿ï¼šåªæ¢ body å¼•ç”¨
+            forward_msg.body = raw_body
+            await publish_func(forward_msg, routing_key=stock_code)
+
+        except Exception as e:
+            print(f"[Worker-{worker_id} Error]: {e}", flush=True)
+        finally:
+            task_queue.task_done()
+            # ä¸»åŠ¨è®©å‡ºå¾®å°çš„ CPU æ—¶é—´ç‰‡ï¼Œç»™å…¶ä»–å¼‚æ­¥ä»»åŠ¡æ‰§è¡Œçš„æœºä¼š
+            await asyncio.sleep(0)
+
+
+async def main() -> None:
+    print(f"[Router] æ­£åœ¨è¿æ¥ RabbitMQ: {RABBITMQ_URL}...", flush=True)
     connection = await aio_pika.connect_robust(RABBITMQ_URL)
     channel = await connection.channel()
-    
-    # ÏŞÖÆÍ¨µÀÉÏµÄ²¢·¢Á÷Á¿
-    await channel.set_qos(prefetch_count=CONCURRENCY_LIMIT)
 
-    # 1. ÉùÃ÷Ô­Ê¼ĞĞÇé¶ÓÁĞ
-    source_queue = await channel.declare_queue(SOURCE_QUEUE, durable=True)
+    # é€šé“çº§ QoSï¼šé™åˆ¶ aio_pika ä¸€æ¬¡é¢„å–çš„æœªç¡®è®¤æ¶ˆæ¯æ•°
+    # no_ack=True æ—¶ aio_pika ä¸ç­‰å¾… broker confirmï¼Œä½†ä»ä¼šå—æ­¤é™åˆ¶å½±å“æ‹‰å–é€Ÿåº¦
+    await channel.set_qos(prefetch_count=PREFETCH_COUNT)
 
-    # 2. ÉùÃ÷×¨ÃÅÓÃÓÚ¶©ÔÄµÄ Topic ¹ã²¥½»»»»ú
+    # è®¢é˜…ä¸Šæ¸¸ broker çš„ quota.exchange (Topic, durable=false)
+    # - passive=Trueï¼šä¸åˆ›å»ºåªæ ¡éªŒï¼ˆbroker ç«¯å·²å­˜åœ¨ï¼Œdurable=false ä¸èƒ½æ”¹ï¼‰
+    # - exclusive ä¸´æ—¶é˜Ÿåˆ—ï¼šè¿æ¥æ–­å³é”€æ¯ï¼Œä¸ç•™åƒåœ¾
+    # - bind *.SH / *.SZï¼šé€šé…æ‰€æœ‰ A è‚¡
+    source_queue = await channel.declare_queue(exclusive=True)
+    source_exchange = await channel.declare_exchange(
+        EXCHANGE_NAME,
+        type=aio_pika.ExchangeType.TOPIC,
+        durable=False,
+        passive=True,
+    )
+    for pat in ("*.SH", "*.SZ"):
+        await source_queue.bind(source_exchange, routing_key=pat)
+    print(f"[Router] å·²ç»‘å®š {EXCHANGE_NAME!r} (*.SH / *.SZ) ä¸´æ—¶é˜Ÿåˆ—", flush=True)
+
+    # å†…éƒ¨è½¬å‘ç”¨çš„å¹¿æ’­ Topic äº¤æ¢æœºï¼šrouting_key=stock_code
+    # broker ç«¯å·²å­˜åœ¨ quota.broadcast.exchange (durable=true)ï¼Œç›´æ¥ reuse
     broadcast_exchange = await channel.declare_exchange(
-        BROADCAST_EXCHANGE, 
-        type=aio_pika.ExchangeType.TOPIC, 
-        durable=True
+        "quota.broadcast.exchange",
+        type=aio_pika.ExchangeType.TOPIC,
+        durable=True,
+        passive=True,
+    )
+    print("[Router] å·²è¿æ¥åˆ° quota.broadcast.exchange (broker å…±äº«, å†…éƒ¨è½¬å‘ç”¨)", flush=True)
+
+    # 1. å¯åŠ¨å›ºå®šæ•°é‡çš„åå°æ¶ˆè´¹å·¥äºº
+    workers = []
+    for i in range(NUM_WORKERS):
+        worker = asyncio.create_task(quota_worker(i, broadcast_exchange))
+        workers.append(worker)
+    print(
+        f"[Router] å·²å¯åŠ¨ {NUM_WORKERS} ä¸ªåç¨‹å·¥äºº, å†…éƒ¨ç¼“å†²åŒº: {MAX_QUEUE_SIZE}, "
+        f"prefetch: {PREFETCH_COUNT}",
+        flush=True,
     )
 
-    print(f"[Router] ¿ªÊ¼²¢·¢Ïû·Ñ¶ÓÁĞ [{SOURCE_QUEUE}] ²¢·Ö·¢ÖÁ [{BROADCAST_EXCHANGE}]...", flush=True)
+    # 2. æé€Ÿæ¥æ”¶ç½‘ç»œæ•°æ®å¹¶å¡å…¥å†…éƒ¨é˜Ÿåˆ— (å¼€å¯ no_ack=True)
+    #    å¦‚æœé˜Ÿåˆ—æ»¡äº†, await task_queue.put ä¼šå¼‚æ­¥é˜»å¡,
+    #    è‡ªç„¶é™åˆ¶äº†ä» RabbitMQ æ‹‰å–æ•°æ®çš„é€Ÿåº¦, ä¿æŠ¤ CPU
+    try:
+        async with source_queue.iterator(no_ack=True) as queue_iter:
+            async for message in queue_iter:
+                if message.body:
+                    await task_queue.put(message.body)
+    except (asyncio.CancelledError, KeyboardInterrupt):
+        print("\n[Router] æ”¶åˆ°åœæ­¢ä¿¡å·, æ’ç©ºé˜Ÿåˆ—åé€€å‡º...", flush=True)
+        # ç­‰å¾…é˜Ÿåˆ—ä¸­æ®‹ç•™ä»»åŠ¡å¤„ç†å®Œ
+        await task_queue.join()
+        for w in workers:
+            w.cancel()
+    finally:
+        print("[Router] å·²åœæ­¢ã€‚", flush=True)
 
-    loop = asyncio.get_event_loop()
-
-    # 3. ¿ªÊ¼Òì²½Ñ­»·Ïû·Ñ
-    async with source_queue.iterator() as queue_iter:
-        async for message in queue_iter:
-            loop.create_task(process_message(message, broadcast_exchange))
 
 if __name__ == "__main__":
-    loop = asyncio.get_event_loop()
     try:
-        loop.run_until_complete(main())
+        asyncio.run(main())
     except KeyboardInterrupt:
-        print("\n[Router] ³ÌĞò±»ÊÖ¶¯Í£Ö¹¡£")
-    finally:
-        print("[Router] ÕıÔÚÇåÀíµ×²ãÒì²½×ÊÔ´...")
-        loop.close()
+        print("\n[Router] æ‰‹åŠ¨åœæ­¢ã€‚")
