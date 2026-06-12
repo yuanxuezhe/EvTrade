@@ -1,13 +1,12 @@
 <#
 .SYNOPSIS
-  One-shot start/stop script for EvTrade frontend (Vite:3000) and backend (uvicorn:8001).
+  One-shot start/stop script for EvTrade frontend (Vite:50998) and backend (uvicorn:8000).
 
 .USAGE
   powershell -File scripts\dev.ps1 -Action start|stop|restart|status
 
 .NOTES
-  - 8000 is occupied by an unkillable process owned by another user; we use 8001.
-  - Vite proxies /api and /ws to 8001, so the frontend still works at :3000.
+  - Vite proxies /api and /ws to 8000, so the frontend still works at :50998.
   - Logs go to scripts\.logs\, pids to scripts\.pids\.
 #>
 
@@ -20,8 +19,8 @@ $ErrorActionPreference = 'Stop'
 $ProjectRoot   = Split-Path -Parent $PSScriptRoot
 $LogsDir       = Join-Path $PSScriptRoot '.logs'
 $PidsDir       = Join-Path $PSScriptRoot '.pids'
-$BackendPort   = 8002
-$FrontendPort  = 3000
+$BackendPort   = 8000
+$FrontendPort  = 50998
 $BackendLog    = Join-Path $LogsDir 'backend.log'
 $FrontendLog   = Join-Path $LogsDir 'frontend.log'
 $BackendPidF   = Join-Path $PidsDir 'backend.pid'
