@@ -22,7 +22,7 @@
 
     <div class="form-body">
       <el-form :model="form" label-position="top" size="default">
-        <el-form-item label="股票代码">
+        <el-form-item label="股票代码" class="row-tight">
           <el-input
             v-model="form.stock_code"
             placeholder="如 000001.SZ"
@@ -35,38 +35,31 @@
           </el-input>
         </el-form-item>
 
-        <el-form-item label="价格类型">
-          <el-segmented
-            v-model="form.price_type"
-            :options="priceTypeOptions"
-            block
-          />
-        </el-form-item>
+        <!-- 价格类型 + 委托价格：同一行 -->
+        <div class="price-row">
+          <el-form-item label="价格类型" class="row-tight price-type-col">
+            <el-segmented
+              v-model="form.price_type"
+              :options="priceTypeOptions"
+              block
+              size="small"
+            />
+          </el-form-item>
+          <el-form-item label="委托价格" class="row-tight price-col">
+            <el-input-number
+              v-model="form.price"
+              :min="0"
+              :precision="form.price_type === 11 ? null : 2"
+              :step="form.price_type === 11 ? 0.01 : null"
+              :disabled="form.price_type !== 11"
+              :placeholder="form.price_type === 11 ? '输入价格' : '市价单无需输入'"
+              controls-position="right"
+              style="width: 100%"
+            />
+          </el-form-item>
+        </div>
 
-        <el-form-item label="委托价格">
-          <el-input-number
-            v-model="form.price"
-            :min="0"
-            :precision="2"
-            :step="0.01"
-            :disabled="form.price_type !== 11"
-            controls-position="right"
-            style="width: 100%"
-          />
-          <div class="price-quick">
-            <button
-              v-for="p in priceShortcuts"
-              :key="p.label"
-              type="button"
-              class="quick-btn"
-              @click="applyPriceShortcut(p)"
-            >
-              {{ p.label }}
-            </button>
-          </div>
-        </el-form-item>
-
-        <el-form-item label="委托数量">
+        <el-form-item label="委托数量" class="row-tight">
           <el-input-number
             v-model="form.volume"
             :min="100"
@@ -90,25 +83,24 @@
         <div class="form-summary">
           <div class="summary-row">
             <span class="summary-label">预估金额</span>
-            <span class="summary-value text-mono">¥{{ formatMoney(estimatedAmount) }}</span>
-          </div>
-          <div class="summary-row">
-            <span class="summary-label">手续费(估算)</span>
-            <span class="summary-value text-mono text-secondary">¥{{ formatMoney(estimatedFee) }}</span>
+            <span class="summary-value text-mono">
+              <template v-if="form.price_type === 11">¥{{ formatMoney(estimatedAmount) }}</template>
+              <template v-else>— 市价单 —</template>
+            </span>
           </div>
         </div>
 
         <div class="form-actions">
           <el-button
             :type="form.order_type === '23' ? 'danger' : 'success'"
-            size="large"
+            size="default"
             class="submit-btn"
             @click="handleSubmit"
             :loading="submitting"
           >
             {{ form.order_type === '23' ? '确认买入' : '确认卖出' }}
           </el-button>
-          <el-button size="large" @click="handleReset" :disabled="submitting">
+          <el-button size="default" @click="handleReset" :disabled="submitting">
             重置
           </el-button>
         </div>
@@ -118,7 +110,7 @@
 </template>
 
 <script setup>
-import { computed, reactive, ref } from 'vue'
+import { computed, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Search, Top, Bottom } from '@element-plus/icons-vue'
 import { formatMoney } from '../utils/format'
@@ -127,6 +119,8 @@ const props = defineProps({
   onSubmit: { type: Function, required: true },
   defaultStockCode: { type: String, default: '' }
 })
+
+const emit = defineEmits(['apply-quote-price', 'update:stockCode'])
 
 const submitting = ref(false)
 
@@ -148,37 +142,33 @@ const priceTypeOptions = [
   { label: '市价', value: 44 }
 ]
 
-const priceShortcuts = [
-  { label: '涨停', op: 'up10' },
-  { label: '+1%', op: 'plus1' },
-  { label: '-1%', op: 'minus1' },
-  { label: '跌停', op: 'down10' }
-]
-
 const volumeShortcuts = [100, 500, 1000, 5000, 10000]
 
 const estimatedAmount = computed(() => (form.price || 0) * (form.volume || 0))
-const estimatedFee = computed(() => Math.max(5, estimatedAmount.value * 0.00025))
+
+// 切换市价(44)时清空价格；切回限价(11)也清空（避免残留的旧值误下单）
+watch(() => form.price_type, (newType, oldType) => {
+  if (newType !== 11) {
+    // 市价单不依赖具体价格，但保留作为显示用也行；这里清空避免误读
+    form.price = 0
+  }
+})
+
+// 外部双击行情价格带入：要求限价模式
+function onExternalApply(price) {
+  if (form.price_type !== 11) form.price_type = 11
+  form.price = Number(price)
+}
+defineExpose({ onExternalApply })
 
 function formatVolume(v) {
   return v >= 10000 ? `${v / 10000}万` : String(v)
 }
 
-function applyPriceShortcut(p) {
-  if (!form.price) {
-    ElMessage.warning('请先输入基准价格')
-    return
-  }
-  switch (p.op) {
-    case 'up10': form.price = Number((form.price * 1.10).toFixed(2)); break
-    case 'down10': form.price = Number((form.price * 0.90).toFixed(2)); break
-    case 'plus1': form.price = Number((form.price * 1.01).toFixed(2)); break
-    case 'minus1': form.price = Number((form.price * 0.99).toFixed(2)); break
-  }
-}
-
 function onStockCodeChange() {
   form.stock_code = form.stock_code.toUpperCase().trim()
+  // 通知父组件（Trade.vue）：行情面板要切换到这只票
+  emit('update:stockCode', form.stock_code)
 }
 
 async function handleSubmit() {
@@ -194,10 +184,12 @@ async function handleSubmit() {
     ElMessage.warning('请输入数量')
     return
   }
+  const amountNote = form.price_type === 11
+    ? `预估金额 ¥${formatMoney(estimatedAmount.value)}`
+    : `市价单（价格类型 ${form.price_type}）`
   try {
     await ElMessageBox.confirm(
-      `确认${form.order_type === '23' ? '买入' : '卖出'} ${form.stock_code} ${form.volume} 股，
-预估金额 ¥${formatMoney(estimatedAmount.value)}`,
+      `确认${form.order_type === '23' ? '买入' : '卖出'} ${form.stock_code} ${form.volume} 股，\n${amountNote}`,
       '订单确认',
       {
         confirmButtonText: '确认下单',
@@ -244,10 +236,10 @@ function handleReset() {
   align-items: center;
   justify-content: center;
   gap: 6px;
-  padding: var(--space-4);
+  padding: var(--space-3);
   background: transparent;
   border: none;
-  font-size: 15px;
+  font-size: 14px;
   font-weight: 600;
   color: var(--text-secondary);
   cursor: pointer;
@@ -282,23 +274,33 @@ function handleReset() {
 }
 
 .form-body {
-  padding: var(--space-5);
+  padding: var(--space-3) var(--space-4);
 }
 
-.price-quick,
+.price-row {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: var(--space-3);
+  align-items: start;
+}
+
+.price-type-col {
+  min-width: 180px;
+}
+
 .volume-quick {
   display: flex;
-  gap: var(--space-2);
-  margin-top: var(--space-2);
+  gap: var(--space-1);
+  margin-top: var(--space-1);
   flex-wrap: wrap;
 }
 
 .quick-btn {
-  padding: 4px 10px;
+  padding: 2px 8px;
   background: var(--bg-soft);
   border: 1px solid var(--border-base);
   border-radius: var(--radius-xs);
-  font-size: 12px;
+  font-size: 11px;
   color: var(--text-regular);
   cursor: pointer;
   transition: all var(--transition-fast);
@@ -311,18 +313,18 @@ function handleReset() {
 }
 
 .form-summary {
-  padding: var(--space-3) var(--space-4);
+  padding: var(--space-2) var(--space-3);
   background: var(--bg-soft);
-  border-radius: var(--radius-md);
-  margin: var(--space-4) 0;
+  border-radius: var(--radius-sm);
+  margin: var(--space-3) 0;
 }
 
 .summary-row {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  font-size: 13px;
-  padding: 4px 0;
+  font-size: 12px;
+  padding: 2px 0;
 }
 
 .summary-label {
@@ -336,8 +338,8 @@ function handleReset() {
 
 .form-actions {
   display: flex;
-  gap: var(--space-3);
-  margin-top: var(--space-4);
+  gap: var(--space-2);
+  margin-top: var(--space-3);
 }
 
 .submit-btn {
@@ -346,14 +348,21 @@ function handleReset() {
   letter-spacing: 1px;
 }
 
-:deep(.el-form-item) {
-  margin-bottom: var(--space-4);
+/* 紧凑化：缩小 el-form-item 间距 */
+:deep(.row-tight.el-form-item) {
+  margin-bottom: var(--space-3);
 }
 
 :deep(.el-form-item__label) {
-  font-size: 13px;
+  font-size: 12px;
   color: var(--text-secondary);
   font-weight: 500;
-  padding-bottom: 4px;
+  padding-bottom: 2px;
+  line-height: 1.4;
+}
+
+:deep(.el-input__wrapper),
+:deep(.el-input-number) {
+  font-size: 13px;
 }
 </style>

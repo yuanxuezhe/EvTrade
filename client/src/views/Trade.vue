@@ -1,28 +1,20 @@
 <template>
   <div class="trade-view fade-in-up">
     <div class="trade-grid">
-      <!-- 左侧：下单表单 -->
+      <!-- 左侧：下单表单 + 行情面板 -->
       <div class="trade-form-col">
-        <OrderForm :on-submit="handleOrderSubmit" :default-stock-code="quickStock" />
+        <OrderForm
+          ref="orderFormRef"
+          :on-submit="handleOrderSubmit"
+          :default-stock-code="quickStock"
+          @update:stock-code="quickStock = $event"
+        />
 
-        <!-- 快捷股票 -->
-        <div class="content-card quick-stocks">
-          <div class="qs-header">
-            <span class="qs-title">快捷选股</span>
-            <span class="qs-sub">点击填入代码</span>
-          </div>
-          <div class="qs-list">
-            <button
-              v-for="s in quickStocks"
-              :key="s.code"
-              class="qs-item"
-              @click="quickStock = s.code"
-            >
-              <div class="qs-code">{{ s.code }}</div>
-              <div class="qs-name">{{ s.name }}</div>
-            </button>
-          </div>
-        </div>
+        <!-- 行情面板（替换原快捷选股） -->
+        <QuotePanel
+          :stock-code="formStockCode"
+          @apply-price="onApplyPrice"
+        />
       </div>
 
       <!-- 右侧：今日委托 -->
@@ -108,25 +100,23 @@ import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Refresh } from '@element-plus/icons-vue'
 import OrderForm from '../components/OrderForm.vue'
+import QuotePanel from '../components/QuotePanel.vue'
 import { useOrderStore } from '../stores/order'
+import { useWsStore } from '../stores/ws'
 import {
   formatMoney, formatNumber
 } from '../utils/format'
 import OrderStatusBadge from '../components/OrderStatusBadge.vue'
 
 const orderStore = useOrderStore()
+const wsStore = useWsStore()
 const filter = ref('all')
 const quickStock = ref('')
 const loading = ref(false)
+const orderFormRef = ref(null)
 
-const quickStocks = [
-  { code: '000001.SZ', name: '平安银行' },
-  { code: '600519.SH', name: '贵州茅台' },
-  { code: '600036.SH', name: '招商银行' },
-  { code: '000858.SZ', name: '五粮液' },
-  { code: '601318.SH', name: '中国平安' },
-  { code: '000333.SZ', name: '美的集团' }
-]
+// 行情面板聚焦的股票代码：默认就是当前下单的代码
+const formStockCode = computed(() => quickStock.value || '')
 
 // 柜台数字：48 未报 / 49 待报 / 50 已报 / 51 已报待撤 / 52 部成待撤
 //           53 部撤 / 54 已撤 / 55 部成 / 56 已成 / 57 废单 / 255 未知
@@ -176,6 +166,13 @@ async function handleCancel(orderId) {
   }
 }
 
+function onApplyPrice(price) {
+  // 行情面板双击价格 → 带入 OrderForm 限价
+  if (orderFormRef.value?.onExternalApply) {
+    orderFormRef.value.onExternalApply(price)
+  }
+}
+
 async function refresh() {
   loading.value = true
   try {
@@ -193,8 +190,10 @@ onMounted(async () => {
   } finally {
     loading.value = false
   }
-  // 5s 自动刷新
+  // 5s 自动刷新委托
   timer = setInterval(() => orderStore.fetchOrders(), 5000)
+  // 启动 WS（含 quote_update 频道）
+  wsStore.connect()
 })
 
 onUnmounted(() => {
@@ -205,74 +204,18 @@ onUnmounted(() => {
 <style scoped>
 .trade-grid {
   display: grid;
-  grid-template-columns: 360px 1fr;
-  gap: var(--space-5);
+  grid-template-columns: 380px 1fr;
+  gap: var(--space-4);
 }
 
 .trade-form-col {
   display: flex;
   flex-direction: column;
-  gap: var(--space-4);
-}
-
-.quick-stocks {
-  padding: var(--space-4);
-}
-
-.qs-header {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  margin-bottom: var(--space-3);
-}
-
-.qs-title {
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--text-primary);
-}
-
-.qs-sub {
-  font-size: 11px;
-  color: var(--text-secondary);
-}
-
-.qs-list {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: var(--space-2);
-}
-
-.qs-item {
-  text-align: left;
-  padding: var(--space-2) var(--space-3);
-  background: var(--bg-soft);
-  border: 1px solid var(--border-base);
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-  transition: all var(--transition-fast);
-}
-
-.qs-item:hover {
-  border-color: var(--brand-primary);
-  background: var(--bg-hover);
-}
-
-.qs-code {
-  font-family: var(--font-mono);
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--brand-primary);
-}
-
-.qs-name {
-  font-size: 12px;
-  color: var(--text-regular);
-  margin-top: 2px;
+  gap: var(--space-3);
 }
 
 .trade-orders-col {
-  padding: var(--space-5);
+  padding: var(--space-4);
   display: flex;
   flex-direction: column;
 }
@@ -281,7 +224,7 @@ onUnmounted(() => {
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
-  margin-bottom: var(--space-4);
+  margin-bottom: var(--space-3);
 }
 
 .orders-title {

@@ -117,8 +117,11 @@ import { ElMessage } from 'element-plus'
 import { Search, Refresh, Download } from '@element-plus/icons-vue'
 import { api } from '../api'
 import { formatMoney, formatNumber } from '../utils/format'
+import { useHoldingsStore } from '../stores/holdings'
 
-const trades = ref([])
+/** 成交数据来源：holdings store 缓存 */
+const holdingsStore = useHoldingsStore()
+const trades = computed(() => holdingsStore.trades)
 const loading = ref(false)
 const page = ref(1)
 const pageSize = ref(20)
@@ -151,14 +154,8 @@ const pagedTrades = computed(() => {
 })
 
 async function refresh() {
-  loading.value = true
-  try {
-    trades.value = await api.getTrades()
-  } catch {
-    // 错误已由 axios 拦截器统一弹 ElMessage.error
-  } finally {
-    loading.value = false
-  }
+  // 通过 holdings.refreshAll 重拉全量 RPC（统一日志）
+  await holdingsStore.refreshAll()
 }
 
 function resetFilters() {
@@ -189,7 +186,7 @@ function exportCSV() {
   ElMessage.success('已导出')
 }
 
-onMounted(refresh)
+// 页面挂载不再 fetch — 数据从 holdings 缓存读
 </script>
 
 <style scoped>

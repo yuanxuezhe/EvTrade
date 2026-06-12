@@ -8,6 +8,7 @@ from auth.deps import get_current_user
 from api import positions, holdings, orders, trades, asset, auth as auth_api, users as users_api
 from ws.manager import ws_manager
 from rpc.client import get_rpc_client, close_rpc_client
+from quote.subscriber import start_subscriber, stop_subscriber
 
 app = FastAPI(title="EvTrade API")
 
@@ -52,12 +53,29 @@ async def on_startup_rpc():
         print(f"[INIT] RPC client failed to start: {e}")
 
 
+@app.on_event("startup")
+async def on_startup_quote():
+    """启动行情订阅：把 RabbitMQ broadcast exchange 的行情转发到 WS quote_update 频道。"""
+    try:
+        await start_subscriber()
+    except Exception as e:
+        print(f"[INIT] Quote subscriber failed to start: {e}")
+
+
 @app.on_event("shutdown")
 async def on_shutdown_rpc():
     try:
         await close_rpc_client()
     except Exception as e:
         print(f"[SHUTDOWN] RPC client close error: {e}")
+
+
+@app.on_event("shutdown")
+async def on_shutdown_quote():
+    try:
+        await stop_subscriber()
+    except Exception as e:
+        print(f"[SHUTDOWN] Quote subscriber close error: {e}")
 
 
 # ---- Public routes ------------------------------------------------------

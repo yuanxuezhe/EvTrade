@@ -151,8 +151,14 @@ import {
   formatMoney, formatNumber, STATUS_LABEL, STATUS_TYPE, priceTypeLabel
 } from '../utils/format'
 import OrderStatusBadge from '../components/OrderStatusBadge.vue'
+import { useHoldingsStore } from '../stores/holdings'
 
-const orders = ref([])
+/**
+ * 委托数据来源：holdings store 缓存（App 启动时已 bootstrap）
+ * 页面 mount 时不重新拉取；点击"刷新"按钮才重拉缓存
+ */
+const holdingsStore = useHoldingsStore()
+const orders = computed(() => holdingsStore.orders)
 const loading = ref(false)
 const page = ref(1)
 const pageSize = ref(20)
@@ -195,14 +201,8 @@ const pagedOrders = computed(() => {
 })
 
 async function refresh() {
-  loading.value = true
-  try {
-    orders.value = await api.getOrders()
-  } catch (e) {
-    // 错误已由 axios 拦截器统一弹 ElMessage.error
-  } finally {
-    loading.value = false
-  }
+  // 通过 holdings.refreshAll 重拉全量 RPC（统一日志）
+  await holdingsStore.refreshAll()
 }
 
 function resetFilters() {
@@ -250,7 +250,8 @@ function exportCSV() {
   ElMessage.success('已导出')
 }
 
-onMounted(refresh)
+// 页面挂载不再 fetch — 数据从 holdings 缓存读
+// 只有点击"刷新"按钮或推送数据时才更新
 </script>
 
 <style scoped>

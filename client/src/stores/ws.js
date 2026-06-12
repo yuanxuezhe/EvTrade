@@ -4,9 +4,11 @@ import { ElNotification } from 'element-plus'
 import { useOrderStore } from './order'
 import { usePositionStore } from './position'
 import { useAssetStore } from './asset'
+import { useQuoteStore } from './quote'
+import { useHoldingsStore } from './holdings'
 import { STATUS_LABEL } from '../utils/format'
 
-const CHANNELS = ['order_update', 'trade_update', 'position_update', 'asset_update']
+const CHANNELS = ['order_update', 'trade_update', 'position_update', 'asset_update', 'quote_update']
 const RECONNECT_DELAY = 3000
 
 /**
@@ -107,6 +109,26 @@ export const useWsStore = defineStore('ws', () => {
     else if (t === 'trd_cfm') _onTradeCfm(payload.data)
     else if (t === 'pos_cfm') _onPositionCfm(payload.data)
     else if (t === 'ast_cfm') _onAssetCfm(payload.data)
+    else if (t === 'quote') _onQuote(payload.data)
+  }
+
+  function _onQuote(row) {
+    // row: { stock_code, last_price, fields, body, ts? }
+    if (!row || !row.stock_code) return
+    // 行情经由 holdings store 白名单过滤：只关心持仓中的代码
+    //   - 持仓中的代码：写入 quote store，触发实时市值重算
+    //   - 非持仓：忽略（broker 推的所有 *.SH / *.SZ 行情量大）
+    const holdings = useHoldingsStore()
+    if (holdings.applyQuote(row)) return // 持仓代码已处理
+    // 兜底：若 holdings 还没 bootstrap（极端情况），仍写入 quote store
+    const quoteStore = useQuoteStore()
+    quoteStore.update({
+      stock_code: row.stock_code,
+      last_price: row.last_price,
+      fields: row.fields,
+      body: row.body,
+      ts: row.ts || Date.now()
+    })
   }
 
   function _onOrderCfm(row) {
@@ -146,6 +168,12 @@ export const useWsStore = defineStore('ws', () => {
       })
     }
 
+    // 同步到 holdings store 缓存（操作记录 + 数据保持一致）
+    try {
+      const holdings = useHoldingsStore()
+      holdings.applyOrderPush(row, existing ? 'update' : 'open')
+    } catch (_) { /* 同上 */ }
+
     _notifyOrder(code, mapped || status, row)
   }
 
@@ -162,6 +190,20 @@ export const useWsStore = defineStore('ws', () => {
       price: Number(row.price) || 0,
       trade_time: row.traded_time || row.trade_time || payload_ts_to_hms()
     })
+
+    // 同步到 holdings 缓存（操作记录 + 视图立刻反映）
+    try {
+      const holdings = useHoldingsStore()
+      holdings.applyTradePush({
+        trade_id: row.traded_id || row.trade_id || '',
+        order_id: row.order_id || '',
+        stock_code: row.stock_code || '',
+        order_type: row.order_type || '',
+        volume: Number(row.volume) || 0,
+        price: Number(row.price) || 0,
+        trade_time: row.traded_time || row.trade_time || payload_ts_to_hms()
+      })
+    } catch (_) { /* 同上 */ }
 
     ElNotification({
       title: '成交通知',
@@ -183,9 +225,15 @@ export const useWsStore = defineStore('ws', () => {
     } else if (code) {
       positionStore.positions.unshift(row)
     }
+    // 同步到 holdings store（让实时市值计算基于最新持仓量）
+    try {
+      const holdings = useHoldingsStore()
+      holdings.applyPositionPush(row)
+    } catch (_) { /* holdings 可能在登出态被销毁 */ }
   }
 
   function _onAssetCfm(row) {
+    // 柜台 push 过来的资产同步到 asset store
     const assetStore = useAssetStore()
     assetStore.asset = {
       cash: Number(row.cash) || 0,
@@ -193,6 +241,11 @@ export const useWsStore = defineStore('ws', () => {
       market_value: Number(row.market_value) || 0,
       total_asset: Number(row.total_asset) || 0
     }
+    // 同步到 holdings store（cachedAsset）
+    try {
+      const holdings = useHoldingsStore()
+      holdings.applyAssetPush(row)
+    } catch (_) { /* 同上 */ }
   }
 
   function _notifyOrder(code, status, row) {

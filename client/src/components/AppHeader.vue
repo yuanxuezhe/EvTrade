@@ -87,6 +87,7 @@ import { useUiStore } from '../stores/ui'
 import { useAssetStore } from '../stores/asset'
 import { useOrderStore } from '../stores/order'
 import { usePositionStore } from '../stores/position'
+import { useHoldingsStore } from '../stores/holdings'
 import { useAuthStore } from '../stores/auth'
 import { formatMoney } from '../utils/format'
 import ChangePasswordDialog from './ChangePasswordDialog.vue'
@@ -97,6 +98,7 @@ const uiStore = useUiStore()
 const assetStore = useAssetStore()
 const orderStore = useOrderStore()
 const positionStore = usePositionStore()
+const holdingsStore = useHoldingsStore()
 const authStore = useAuthStore()
 
 const refreshing = ref(false)
@@ -164,7 +166,10 @@ onUnmounted(() => {
 async function handleRefresh() {
   refreshing.value = true
   try {
-    await Promise.all([
+    // 全部走 holdings store 缓存（统一日志 + 加载状态）
+    await holdingsStore.refreshAll()
+    // 同步刷新 order/asset/position store（兼容老 view）
+    await Promise.allSettled([
       assetStore.fetchAsset(),
       orderStore.fetchOrders(),
       orderStore.fetchTrades(),
@@ -173,7 +178,7 @@ async function handleRefresh() {
     uiStore.markRefreshed()
     ElMessage.success({ message: '数据已刷新', duration: 1500 })
   } catch (e) {
-    // 单个查询的错误已由 axios 拦截器统一弹 ElMessage.error
+    // 错误已由 holdings log 记录
   } finally {
     setTimeout(() => (refreshing.value = false), 500)
   }

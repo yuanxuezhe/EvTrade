@@ -9,6 +9,7 @@ class WSManager:
             "trade_update": set(),
             "position_update": set(),
             "asset_update": set(),
+            "quote_update": set(),
         }
 
     async def connect(self, websocket: WebSocket, channel: str = "order_update"):

@@ -48,9 +48,44 @@
             <span class="text-mono">{{ formatMoney(row.cost) }}</span>
           </template>
         </el-table-column>
-        <el-table-column prop="market_value" label="市值" align="right" width="140">
+        <el-table-column label="最新价" align="right" width="140" :key="quoteTick">
           <template #default="{ row }">
-            <span class="text-mono">{{ formatMoney(row.market_value) }}</span>
+            <span
+              v-if="getLastPrice(row.stock_code) != null"
+              class="text-mono"
+              :class="priceClass(row)"
+            >
+              {{ formatMoneyExact(getLastPrice(row.stock_code)) }}
+            </span>
+            <span v-else class="text-muted">—</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="浮动市值" align="right" width="140" :key="'mv' + quoteTick">
+          <template #default="{ row }">
+            <span v-if="getMarketValue(row) != null" class="text-mono">
+              {{ formatMoney(getMarketValue(row)) }}
+            </span>
+            <span v-else class="text-muted">—</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="浮动盈亏" align="right" width="140" :key="'pl' + quoteTick">
+          <template #default="{ row }">
+            <template v-if="getProfit(row) != null">
+              <span class="text-mono" :class="profitClass(getProfit(row))">
+                {{ formatMoney(getProfit(row)) }}
+              </span>
+            </template>
+            <span v-else class="text-muted">—</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="收益率" align="right" width="120" :key="'rt' + quoteTick">
+          <template #default="{ row }">
+            <template v-if="getReturnRate(row) != null">
+              <span class="text-mono" :class="profitClass(getReturnRate(row))">
+                {{ formatPercent(getReturnRate(row)) }}
+              </span>
+            </template>
+            <span v-else class="text-muted">—</span>
           </template>
         </el-table-column>
         <template #empty>
@@ -72,18 +107,38 @@
 </template>
 
 <script setup>
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Search, Refresh, Download } from '@element-plus/icons-vue'
 import { api } from '../api'
 import { formatNumber, formatMoney } from '../utils/format'
+import { useQuoteStore } from '../stores/quote'
+import { useHoldingsStore } from '../stores/holdings'
 
-const positions = ref([])
-const loading = ref(false)
+/**
+ * 持仓数据来源：holdings store（App 启动时已 bootstrap）
+ * 行情来源：quote store（由 holdings store 白名单控制 — 仅持仓代码入）
+ * 实时市值/盈亏/收益率：holdings store 的 computed
+ */
+
+// 从 holdings store 读 positions — 用 computed proxy
+const holdingsStore = useHoldingsStore()
+const quoteStore = useQuoteStore()
+const positions = computed({
+  get: () => holdingsStore.positions,
+  set: (v) => { holdingsStore.positions = v }   // 兼容老写法
+})
+const loading = computed(() => holdingsStore.loading)
+
 const page = ref(1)
 const pageSize = ref(20)
 
 const filters = reactive({ keyword: '' })
+
+// 用一个 ref 强制 column 在 quote 更新时刷新 — Vue 对 Map.set 内部值的更新
+// 不能精确追踪到每行，但每次推送都 ++tick 让模板重读 getter 即可触发响应
+const quoteTick = ref(0)
+let _quoteTimer = null
 
 const filteredPositions = computed(() => {
   const kw = filters.keyword.trim().toLowerCase()
@@ -98,15 +153,74 @@ const pagedPositions = computed(() => {
   return filteredPositions.value.slice(start, start + pageSize.value)
 })
 
-async function refresh() {
-  loading.value = true
-  try {
-    positions.value = await api.getHoldings()
-  } catch {
-    // 错误已由 axios 拦截器统一弹 ElMessage.error
-  } finally {
-    loading.value = false
+// ---- 行情查询（代理 holdings store；holdings 内部 watch quote 自动重算） ----
+
+function getLastPrice(code) {
+  return holdingsStore.getLivePrice(code)
+}
+
+function getMarketValue(row) {
+  return holdingsStore.getMarketValue(row)
+}
+
+function getProfit(row) {
+  return holdingsStore.getProfit(row)
+}
+
+function getReturnRate(row) {
+  return holdingsStore.getReturnRate(row)
+}
+
+function profitClass(v) {
+  if (v == null) return ''
+  if (v > 0) return 'text-up'    // 正: 红
+  if (v < 0) return 'text-down'  // 负: 绿
+  return 'text-flat'             // 平: 黑
+}
+
+function priceClass(row) {
+  const cost = Number(row.cost) || 0
+  const price = getLastPrice(row.stock_code)
+  if (price == null || cost === 0) return ''
+  if (price > cost) return 'text-up'
+  if (price < cost) return 'text-down'
+  return 'text-flat'
+}
+
+function formatMoneyExact(v) {
+  // 价格按行情原始数据原样输出，不截断、不补 0
+  const n = Number(v)
+  if (!Number.isFinite(n)) return '—'
+  // String(num) 保留 IEEE 754 的最短表示，自然就是原始精度
+  return String(n)
+}
+
+function formatPercent(v) {
+  if (v == null || Number.isNaN(v)) return '—'
+  return `${(v * 100).toFixed(2)}%`
+}
+
+// ---- 行情 tick：每 1s 强制一次刷新（聚合刷新避免抖动） ------------------
+
+function startQuoteTick() {
+  if (_quoteTimer) return
+  _quoteTimer = setInterval(() => {
+    if (quoteStore.size > 0) quoteTick.value++
+  }, 1000)
+}
+
+function stopQuoteTick() {
+  if (_quoteTimer) {
+    clearInterval(_quoteTimer)
+    _quoteTimer = null
   }
+}
+
+// ---- 数据加载 -----------------------------------------------------------
+
+async function refresh() {
+  // 委托给 holdings store（共享缓存 + 触发 ws subscribe）
+  await holdingsStore.refreshPositions()
 }
 
 function resetFilters() {
@@ -114,15 +228,27 @@ function resetFilters() {
 }
 
 function exportCSV() {
-  const header = ['股票代码', '期初持仓', '持仓量', '可用', '成本价', '市值']
-  const rows = filteredPositions.value.map((p) => [
-    p.stock_code,
-    p.last_vol,
-    p.volume,
-    p.available,
-    p.cost,
-    p.market_value
-  ])
+  const header = [
+    '股票代码', '期初持仓', '持仓量', '可用', '成本价',
+    '最新价', '浮动市值', '浮动盈亏', '收益率'
+  ]
+  const rows = filteredPositions.value.map((p) => {
+    const price = getLastPrice(p.stock_code)
+    const mv = getMarketValue(p)
+    const profit = getProfit(p)
+    const rate = getReturnRate(p)
+    return [
+      p.stock_code,
+      p.last_vol,
+      p.volume,
+      p.available,
+      p.cost,
+      price != null ? String(price) : '',
+      mv != null ? mv.toFixed(2) : '',
+      profit != null ? profit.toFixed(2) : '',
+      rate != null ? (rate * 100).toFixed(2) + '%' : ''
+    ]
+  })
   const csv = [header, ...rows].map((r) => r.map((v) => `"${v}"`).join(',')).join('\n')
   const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8' })
   const url = URL.createObjectURL(blob)
@@ -134,7 +260,17 @@ function exportCSV() {
   ElMessage.success('已导出')
 }
 
-onMounted(refresh)
+onMounted(() => {
+  // holdings store 在 App.vue 启动时已 bootstrap；这里只兜底
+  if (!holdingsStore.bootstrapped) {
+    holdingsStore.bootstrap()
+  }
+  startQuoteTick()
+})
+
+onBeforeUnmount(() => {
+  stopQuoteTick()
+})
 </script>
 
 <style scoped>
@@ -166,6 +302,30 @@ onMounted(refresh)
 
 .stock-code {
   font-family: var(--font-mono);
+  font-weight: 600;
+}
+
+.text-mono {
+  font-family: var(--font-mono);
+}
+
+.text-muted {
+  color: var(--text-placeholder);
+  font-family: var(--font-mono);
+}
+
+.text-up {
+  color: var(--color-up);
+  font-weight: 600;
+}
+
+.text-down {
+  color: var(--color-down);
+  font-weight: 600;
+}
+
+.text-flat {
+  color: var(--text-primary);
   font-weight: 600;
 }
 

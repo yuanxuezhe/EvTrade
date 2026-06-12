@@ -4,7 +4,7 @@
     <section class="stats-grid">
       <StatCard
         label="总资产"
-        :value="assetStore.asset.total_asset"
+        :value="displayTotalAsset"
         prefix="¥"
         :trend="0.85"
         icon="Wallet"
@@ -13,7 +13,7 @@
       />
       <StatCard
         label="可用资金"
-        :value="assetStore.asset.cash"
+        :value="displayCash"
         prefix="¥"
         icon="Money"
         accent="info"
@@ -21,11 +21,11 @@
       />
       <StatCard
         label="持仓市值"
-        :value="assetStore.asset.market_value"
+        :value="displayMarketValue"
         prefix="¥"
         icon="DataAnalysis"
         accent="warning"
-        :sublabel="`${positionStore.positions.length} 只持仓`"
+        :sublabel="`${positionCount} 只持仓`"
       />
       <StatCard
         label="今日盈亏"
@@ -173,22 +173,49 @@ import OrderStatusBadge from '../components/OrderStatusBadge.vue'
 import { useAssetStore } from '../stores/asset'
 import { useOrderStore } from '../stores/order'
 import { usePositionStore } from '../stores/position'
+import { useHoldingsStore } from '../stores/holdings'
 import { useUiStore } from '../stores/ui'
 import { formatMoney, formatNumber, STATUS_LABEL, STATUS_TYPE } from '../utils/format'
 
 const assetStore = useAssetStore()
 const orderStore = useOrderStore()
 const positionStore = usePositionStore()
+const holdingsStore = useHoldingsStore()
 const uiStore = useUiStore()
 
+/**
+ * 持仓市值：初始值从 holdings.cachedAsset.market_value（后端查询）
+ *         之后用 holdings.liveMarketValue（实时重算）覆盖
+ * 总资产同理。
+ *
+ * 优先实时值；当且仅当实时全空时（holdings 还没 bootstrap 完）
+ * 才用 cachedAsset 作兜底。
+ */
+const displayMarketValue = computed(() => {
+  const live = holdingsStore.liveMarketValue
+  if (live.withQuote > 0) return live.sum
+  return holdingsStore.cachedAsset.market_value || assetStore.asset.market_value || 0
+})
+const displayTotalAsset = computed(() => {
+  return holdingsStore.liveTotalAsset || holdingsStore.cachedAsset.total_asset
+    || assetStore.asset.total_asset || 0
+})
+const displayCash = computed(() =>
+  holdingsStore.cachedAsset.cash || assetStore.asset.cash || 0
+)
+const displayFrozen = computed(() =>
+  holdingsStore.cachedAsset.frozen_cash || assetStore.asset.frozen_cash || 0
+)
+const positionCount = computed(() => holdingsStore.positions.length)
+
 const topPositions = computed(() =>
-  [...positionStore.positions]
-    .sort((a, b) => (b.total || 0) - (a.total || 0))
+  [...holdingsStore.positions]
+    .sort((a, b) => (b.volume || 0) - (a.volume || 0))
     .slice(0, 5)
 )
 
 const recentOrders = computed(() =>
-  [...orderStore.orders]
+  [...holdingsStore.orders]
     .sort((a, b) => (b.order_time || '').localeCompare(a.order_time || ''))
     .slice(0, 6)
 )
@@ -254,9 +281,9 @@ const orderStats = computed(() => {
 })
 
 const assetChartOption = computed(() => {
-  const cash = Number(assetStore.asset.cash) || 0
-  const frozen = Number(assetStore.asset.frozen_cash) || 0
-  const market = Number(assetStore.asset.market_value) || 0
+  const cash = Number(displayCash.value) || 0
+  const frozen = Number(displayFrozen.value) || 0
+  const market = Number(displayMarketValue.value) || 0
   const isDark = uiStore.theme === 'dark'
   return {
     tooltip: {
@@ -308,12 +335,19 @@ const assetChartOption = computed(() => {
 })
 
 onMounted(async () => {
+  // Dashboard 数据获取：
+  //   - 持仓/资金：App 启动时 holdings store 已 bootstrap，这里只做兜底
+  //   - 委托/成交：仍由本页拉（holdings 不管这两个）
+  //   - 持仓 top 5：从 holdings.positions 读（统一来源）
   await Promise.all([
     assetStore.fetchAsset(),
     orderStore.fetchOrders(),
-    orderStore.fetchTrades(),
-    positionStore.fetchPositions()
+    orderStore.fetchTrades()
   ])
+  // 兜底：若 holdings 还没 bootstrap（例如直接打开 /dashboard）
+  if (!holdingsStore.bootstrapped) {
+    holdingsStore.bootstrap()
+  }
 })
 </script>
 
