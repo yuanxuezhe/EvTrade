@@ -31,7 +31,7 @@ const routes = [
   { path: '/trades', name: 'Trades', component: Trades, meta: { title: '成交查询' } },
   { path: '/to-management', name: 'ToManagement', component: Position, meta: { title: '快速做T' } },
   { path: '/t-strategy', name: 'TStrategy', component: TStrategy, meta: { title: '策略做T' } },
-  { path: '/algo-strategy', name: 'AlgoStrategy', component: AlgoStrategy, meta: { title: '交易策略' } },
+  { path: '/algo-strategy', name: 'AlgoStrategy', component: AlgoStrategy, meta: { title: '策略交易' } },
   {
     path: '/users',
     name: 'Users',
