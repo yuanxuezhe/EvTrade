@@ -1,20 +1,29 @@
 <template>
   <header class="app-header">
     <div class="header-left">
-      <div class="page-title">
+      <button
+        v-if="uiStore.isMobile"
+        class="icon-btn hamburger"
+        @click="$emit('toggle-sidebar')"
+        aria-label="菜单"
+      >
+        <el-icon :size="20"><Menu /></el-icon>
+      </button>
+
+      <div class="page-title" :class="{ 'mobile-only-title': uiStore.isMobile }">
         <span class="title-text">{{ pageTitle }}</span>
-        <span class="title-sub">{{ pageSubtitle }}</span>
+        <span v-if="!uiStore.isMobile" class="title-sub">{{ pageSubtitle }}</span>
       </div>
     </div>
 
     <div class="header-right">
       <div class="market-status">
         <span class="status-dot" :class="marketOpen ? 'open' : 'closed'"></span>
-        <span class="status-text">{{ marketOpen ? '交易中' : '休市' }}</span>
+        <span v-if="!uiStore.isMobile" class="status-text">{{ marketOpen ? '交易中' : '休市' }}</span>
         <span class="status-time text-mono">{{ currentTime }}</span>
       </div>
 
-      <div class="asset-mini" v-if="assetStore.asset.total_asset > 0">
+      <div v-if="!uiStore.isMobile && assetStore.asset.total_asset > 0" class="asset-mini">
         <div class="mini-label">总资产</div>
         <div class="mini-value gradient-text text-mono">
           ¥{{ formatMoney(assetStore.asset.total_asset) }}
@@ -38,15 +47,15 @@
 
       <!-- 用户下拉 -->
       <el-dropdown trigger="click" @command="handleUserCmd">
-        <div class="user-chip">
+        <div class="user-chip" :class="{ 'mobile-chip': uiStore.isMobile }">
           <div class="avatar" :class="`role-${roleKey}`">
             {{ avatarText }}
           </div>
-          <div class="user-meta">
+          <div v-if="!uiStore.isMobile" class="user-meta">
             <div class="user-name">{{ displayName }}</div>
             <div class="user-role">{{ roleLabel }}</div>
           </div>
-          <el-icon class="user-arrow"><ArrowDown /></el-icon>
+          <el-icon v-if="!uiStore.isMobile" class="user-arrow"><ArrowDown /></el-icon>
         </div>
         <template #dropdown>
           <el-dropdown-menu>
@@ -81,7 +90,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   Refresh, Sunny, Moon, User, Lock, UserFilled,
-  SwitchButton, ArrowDown
+  SwitchButton, ArrowDown, Menu
 } from '@element-plus/icons-vue'
 import { useUiStore } from '../stores/ui'
 import { useAssetStore } from '../stores/asset'
@@ -94,6 +103,7 @@ import ChangePasswordDialog from './ChangePasswordDialog.vue'
 
 const route = useRoute()
 const router = useRouter()
+defineEmits(['toggle-sidebar'])
 const uiStore = useUiStore()
 const assetStore = useAssetStore()
 const orderStore = useOrderStore()
@@ -216,6 +226,32 @@ async function handleUserCmd(cmd) {
   justify-content: space-between;
   flex-shrink: 0;
   backdrop-filter: blur(12px);
+  position: relative;
+  z-index: 110;  /* 移动端时高于 sidebar-mask(90) 和 sidebar(100) */
+  gap: var(--space-3);
+}
+
+/* 移动端 */
+@media (max-width: 900px) {
+  .app-header {
+    padding: 0 var(--space-3);
+    gap: var(--space-2);
+  }
+}
+.hamburger {
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  background: transparent;
+  border: 1px solid var(--border-base);
+  border-radius: var(--radius-md);
+  color: var(--text-primary);
+  cursor: pointer;
+  margin-right: var(--space-2);
+}
+.hamburger:hover {
+  background: var(--bg-soft);
 }
 
 .page-title {
@@ -340,6 +376,10 @@ async function handleUserCmd(cmd) {
   border-radius: var(--radius-full);
   cursor: pointer;
   transition: all var(--transition-fast);
+}
+.user-chip.mobile-chip {
+  padding: 2px;
+  border-radius: 50%;
 }
 
 .user-chip:hover {

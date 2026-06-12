@@ -4,10 +4,20 @@
   </div>
 
   <template v-else>
-    <div class="app-layout" :class="{ collapsed: uiStore.sidebarCollapsed }">
+    <div
+      class="app-layout"
+      :class="{
+        collapsed: !uiStore.isMobile && uiStore.sidebarCollapsed,
+        'is-mobile': uiStore.isMobile,
+        'sidebar-open': uiStore.mobileSidebarOpen
+      }"
+    >
+      <!-- 移动端遮罩 -->
+      <div v-if="uiStore.isMobile && uiStore.mobileSidebarOpen" class="sidebar-mask" @click="uiStore.toggleSidebar"></div>
+
       <Sidebar />
       <div class="app-main">
-        <AppHeader />
+        <AppHeader @toggle-sidebar="onToggleSidebar" />
         <main class="app-content">
           <router-view v-slot="{ Component, route }">
             <transition name="page" mode="out-in">
@@ -40,6 +50,18 @@ const wsStore = useWsStore()
 const holdingsStore = useHoldingsStore()
 
 const isBlankLayout = computed(() => route.meta?.layout === 'blank')
+
+function onToggleSidebar() {
+  uiStore.toggleSidebar()
+}
+
+// 路由切换时关闭移动端抽屉
+watch(
+  () => route.fullPath,
+  () => {
+    if (uiStore.isMobile) uiStore.toggleSidebar()
+  }
+)
 
 onMounted(async () => {
   // 启动时刷新当前用户信息（若有 token）
@@ -86,6 +108,46 @@ watch(
   grid-template-columns: var(--sidebar-collapsed-width) 1fr;
 }
 
+/* 移动端：单列 + Sidebar 抽屉 */
+.app-layout.is-mobile {
+  grid-template-columns: 1fr;
+}
+.app-layout.is-mobile .sidebar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  height: 100vh;
+  width: 80vw;
+  max-width: 280px;
+  z-index: 95;  /* 桌面侧栏 100 < 移动端 95 = header 110 之下；mask 90 之下 */
+  transform: translateX(-100%);
+  transition: transform 0.25s ease;
+  box-shadow: 0 0 0 transparent;
+}
+.app-layout.is-mobile.sidebar-open .sidebar {
+  transform: translateX(0);
+  box-shadow: 4px 0 20px rgba(0, 0, 0, 0.15);
+}
+.app-layout.is-mobile.sidebar-open {
+  grid-template-columns: 1fr; /* main 区不偏移 */
+}
+.app-layout.is-mobile .app-main {
+  width: 100vw;
+}
+
+/* 移动端遮罩 */
+.sidebar-mask {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  z-index: 90;
+  animation: maskIn 0.2s ease;
+}
+@keyframes maskIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
 .app-main {
   display: flex;
   flex-direction: column;
@@ -99,6 +161,7 @@ watch(
   padding: var(--space-6);
   /* 给底部固定操作记录栏留出空间（折叠态 44px） */
   padding-bottom: 60px;
+  -webkit-overflow-scrolling: touch;
 }
 
 /* 页面切换动画 */

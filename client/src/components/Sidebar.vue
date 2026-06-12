@@ -5,7 +5,7 @@
         <el-icon :size="22"><TrendCharts /></el-icon>
       </div>
       <transition name="fade">
-        <div v-if="!uiStore.sidebarCollapsed" class="brand-text">
+        <div v-if="!uiStore.sidebarCollapsed || uiStore.isMobile" class="brand-text">
           <div class="brand-title">EvTrade</div>
           <div class="brand-sub">智能交易终端</div>
         </div>
@@ -15,7 +15,7 @@
     <nav class="sidebar-nav">
       <template v-for="item in menuItems" :key="item.key || item.path || item.label">
         <div v-if="item.divider" class="nav-divider" :title="item.label">
-          <span v-if="!uiStore.sidebarCollapsed" class="divider-label">
+          <span v-if="!uiStore.sidebarCollapsed || uiStore.isMobile" class="divider-label">
             {{ item.label }}
           </span>
         </div>
@@ -33,18 +33,18 @@
             </el-icon>
           </span>
           <transition name="fade">
-            <span v-if="!uiStore.sidebarCollapsed" class="nav-label">
+            <span v-if="!uiStore.sidebarCollapsed || uiStore.isMobile" class="nav-label">
               {{ item.label }}
             </span>
           </transition>
-          <span v-if="!uiStore.sidebarCollapsed && item.badge" class="nav-badge">
+          <span v-if="(!uiStore.sidebarCollapsed || uiStore.isMobile) && item.badge" class="nav-badge">
             {{ item.badge }}
           </span>
         </router-link>
       </template>
     </nav>
 
-    <div class="sidebar-footer">
+    <div v-if="!uiStore.isMobile" class="sidebar-footer">
       <button class="footer-btn" @click="uiStore.toggleSidebar">
         <el-icon :size="18">
           <Fold v-if="!uiStore.sidebarCollapsed" />

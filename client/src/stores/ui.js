@@ -1,45 +1,52 @@
 import { defineStore } from 'pinia'
-import { ref, watch } from 'vue'
+import { ref, watch, onMounted, onBeforeUnmount } from 'vue'
 
 export const useUiStore = defineStore('ui', () => {
   const sidebarCollapsed = ref(localStorage.getItem('evtrade-sidebar') === '1')
-  const theme = ref(localStorage.getItem('evtrade-theme') || 'light')
-  const lastRefreshAt = ref(null)
+
+  // 移动端断点
+  const MOBILE_BP = 900
+  const isMobile = ref(false)
+
+  // 移动端侧栏抽屉
+  const mobileSidebarOpen = ref(false)
+
+  function _applyBreakpoint() {
+    // 调试覆盖：URL ?mobile=1 强制移动端（不依赖物理视口）
+    const forced = new URLSearchParams(window.location.search).get('mobile') === '1'
+    const w = window.innerWidth
+    const m = forced || w <= MOBILE_BP
+    const was = isMobile.value
+    isMobile.value = m
+    // 切回桌面时自动关闭抽屉
+    if (was && !m) mobileSidebarOpen.value = false
+  }
+
+  // 监听（SSR-safe）
+  if (typeof window !== 'undefined') {
+    _applyBreakpoint()
+    window.addEventListener('resize', _applyBreakpoint)
+  }
 
   function toggleSidebar() {
-    sidebarCollapsed.value = !sidebarCollapsed.value
-    localStorage.setItem('evtrade-sidebar', sidebarCollapsed.value ? '1' : '0')
-  }
-
-  function toggleTheme() {
-    theme.value = theme.value === 'dark' ? 'light' : 'dark'
-    applyTheme()
-  }
-
-  function applyTheme() {
-    if (theme.value === 'dark') {
-      document.documentElement.classList.add('dark')
+    if (isMobile.value) {
+      mobileSidebarOpen.value = !mobileSidebarOpen.value
     } else {
-      document.documentElement.classList.remove('dark')
+      sidebarCollapsed.value = !sidebarCollapsed.value
+      localStorage.setItem('evtrade-sidebar', sidebarCollapsed.value ? '1' : '0')
     }
-    localStorage.setItem('evtrade-theme', theme.value)
   }
 
-  function markRefreshed() {
-    lastRefreshAt.value = new Date()
+  // 路由切换时关闭抽屉
+  function onRouteChange() {
+    if (mobileSidebarOpen.value) mobileSidebarOpen.value = false
   }
-
-  // 初次同步
-  applyTheme()
-
-  watch(theme, applyTheme)
 
   return {
     sidebarCollapsed,
-    theme,
-    lastRefreshAt,
+    isMobile,
+    mobileSidebarOpen,
     toggleSidebar,
-    toggleTheme,
-    markRefreshed
+    onRouteChange,
   }
 })

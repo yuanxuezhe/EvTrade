@@ -425,3 +425,89 @@ h1, h2, h3, h4, h5, h6 {
 .el-descriptions .el-descriptions__cell.is-bordered-label {
   background: var(--bg-soft) !important;
 }
+
+/* ============================================================
+   移动端适配（≤900px）
+   覆盖全局变量 + 关键类
+   ============================================================ */
+@media (max-width: 900px) {
+  :root {
+    --space-2: 6px;
+    --space-3: 10px;
+    --space-4: 12px;
+    --space-5: 14px;
+    --space-6: 14px;
+    --header-height: 52px;
+  }
+
+  /* 表格紧凑 */
+  .el-table {
+    font-size: 12px;
+  }
+  .el-table th, .el-table td {
+    padding: 4px 0 !important;
+  }
+  /* 表格内小屏 cell padding */
+  .el-table .cell {
+    padding: 0 4px !important;
+    white-space: nowrap;
+  }
+
+  /* 数字字体保持 */
+  .num {
+    font-size: 13px;
+  }
+
+  /* 描述列表紧凑 */
+  .el-descriptions__label,
+  .el-descriptions__content {
+    padding: 6px 8px !important;
+    font-size: 12px;
+  }
+
+  /* Card 紧凑 */
+  .el-card__header {
+    padding: 8px 12px !important;
+  }
+  .el-card__body {
+    padding: 12px !important;
+  }
+
+  /* Tabs 紧凑 */
+  .el-tabs__nav-wrap--card .el-tabs__item {
+    padding: 0 10px !important;
+    font-size: 12px;
+  }
+
+  /* StatCard 等 */
+  .stat-card {
+    padding: 12px !important;
+  }
+  .stat-card .stat-value {
+    font-size: 18px !important;
+  }
+  .stat-card .stat-label {
+    font-size: 11px !important;
+  }
+  .stat-card .stat-delta {
+    font-size: 11px !important;
+  }
+
+  /* StatCard 同行变 2 列 */
+  .stats-row {
+    grid-template-columns: repeat(2, 1fr) !important;
+    gap: 8px !important;
+  }
+}
+
+/* 超窄屏 (≤480px) */
+@media (max-width: 480px) {
+  :root {
+    --space-4: 10px;
+    --space-5: 12px;
+    --space-6: 12px;
+  }
+  .stats-row {
+    grid-template-columns: 1fr !important;
+  }
+}

@@ -243,6 +243,14 @@ defineExpose({ toggle, collapsed })
 .app-layout.collapsed .oplog {
   left: var(--sidebar-collapsed-w, 64px);
 }
+/* 移动端：抽屉式侧栏时 left:0，宽度更小 */
+.app-layout.is-mobile .oplog {
+  left: 0;
+  max-height: 44px;
+}
+.app-layout.is-mobile .oplog.expanded {
+  max-height: 60vh;
+}
 
 /* 折叠态：单行 44px 紧贴下边框 */
 .oplog-header {
