@@ -2,7 +2,7 @@
   <div class="t-strategy-view fade-in-up">
     <div class="placeholder-card">
       <el-icon :size="64" class="placeholder-icon"><MagicStick /></el-icon>
-      <h2 class="placeholder-title">做T策略</h2>
+      <h2 class="placeholder-title">策略做T</h2>
       <p class="placeholder-desc">敬请期待</p>
     </div>
   </div>

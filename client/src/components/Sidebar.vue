@@ -95,7 +95,7 @@ const menuItems = computed(() => {
     // 策略交易分组
     { divider: true, label: '策略交易' },
     { path: '/to-management', label: '快速做T', icon: Coin },
-    { path: '/t-strategy', label: '做T策略', icon: MagicStick },
+    { path: '/t-strategy', label: '策略做T', icon: MagicStick },
     { path: '/algo-strategy', label: '交易策略', icon: Cpu }
   ]
   if (authStore.isAdmin) {
