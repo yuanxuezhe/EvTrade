@@ -70,6 +70,7 @@ class QuoteSubscriber:
                     BROADCAST_EXCHANGE,
                     type=ExchangeType.TOPIC,
                     durable=True,
+                    passive=True,
                 )
                 for pat in SUBSCRIBE_PATTERNS:
                     await queue.bind(exchange, routing_key=pat)
