@@ -1,0 +1,63 @@
+# OpenSpec configuration for EvTrade
+# Spec-driven development workflow: 改 spec → 改代码 → 归档 change
+#
+# 工作流命令（用户使用 /openspec: 前缀调用 AI 助手）：
+#   /openspec:proposal <name>  → 在 changes/ 下生成 proposal + tasks + spec deltas
+#   /openspec:apply <name>     → 按 tasks.md 实施变更
+#   /openspec:archive <name>   → 实施完成 + spec 已更新后归档
+
+project:
+  name: EvTrade
+  description: |
+    量化交易 Web 平台：Vue3 前端 + FastAPI 后端 + msgpacket RPC + RabbitMQ +
+    XtQuant/QMT 柜台 + hqserver 独立行情 WebSocket。
+  version: 0.1.0
+  domain: financial-trading
+  language: python  # 主语言
+
+# 能力域划分（specs/ 下的子目录）
+specs:
+  - auth             # 身份认证 / JWT / RBAC
+  - trading          # 委托/成交/资金（下单、撤单、查询）
+  - positioning      # 持仓查询
+  - quotes           # 行情数据（hqserver 解耦）
+  - push             # 柜台主动推送 → WebSocket 路由
+  - frontend         # Vue3 路由 / 角色守卫 / WS 客户端
+  - configuration    # 环境变量 / 配置分层 / 启动校验
+  - rpc-protocol     # msgpacket RPC 客户端契约
+
+# 变更工作流
+workflow:
+  states:
+    - draft       # proposal 刚创建，未实施
+    - applying    # 实施中
+    - implemented # 代码已合，spec delta 已写
+    - archived    # 已合并进 specs/，changes/ 移入 archive/
+  required_artifacts:
+    - proposal.md       # 为什么改、改什么、影响面
+    - tasks.md          # 实施 checklist（带 checkbox）
+    - spec-deltas/      # 涉及 capabilities 的 spec delta
+      - <capability>.md
+
+# 校验规则
+validation:
+  # 任何 capability 改动必须在对应的 specs/<cap>/spec.md 留下 delta
+  require_spec_deltas: true
+  # 实施前必须 review proposal.md
+  require_proposal_review: true
+  # 归档前必须确认 tasks.md 全 ✅
+  require_tasks_complete_for_archive: true
+
+# 跨 capability 的关联
+cross_references:
+  - from: trading
+    to: [rpc-protocol, push, auth]
+    reason: 下单/撤单走 RPC，状态变更靠 push 推送，需鉴权
+  - from: positioning
+    to: [rpc-protocol, auth]
+  - from: quotes
+    to: [push, frontend]
+  - from: frontend
+    to: [auth, quotes, push]
+  - from: push
+    to: [rpc-protocol]
