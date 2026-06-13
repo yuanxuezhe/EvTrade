@@ -309,6 +309,7 @@ async def test_consume_pushes_bodies_into_task_queue():
     class FakeMessage:
         def __init__(self, body):
             self.body = body
+            self.ack = AsyncMock()
 
     class FakeIter:
         def __init__(self):
@@ -318,6 +319,7 @@ async def test_consume_pushes_bodies_into_task_queue():
                 FakeMessage(b"000001.SZ|t|20|"),
                 FakeMessage(b"600519.SH|t|1800|"),
             ]
+            self._i = 0
 
         def __aiter__(self):
             self._i = 0
@@ -342,6 +344,8 @@ async def test_consume_pushes_bodies_into_task_queue():
             return False
 
     mock_queue.iterator = MagicMock(return_value=FakeQueueIter(no_ack=True))
+    # 暴露给断言用：确保验证的是被 _consume 实际消费的那批 message
+    iter_messages = mock_queue.iterator.return_value.iter.messages
 
     stop_event = asyncio.Event()
     task = asyncio.create_task(hq._consume(mock_queue, stop_event))
@@ -363,6 +367,13 @@ async def test_consume_pushes_bodies_into_task_queue():
 
     # task_queue 应有 3 条（空 body 跳过）
     assert hq.task_queue.qsize() == 3
+
+    # 3 条非空 body 都应被 ack（空 body 跳过 put 因此也没 ack）
+    for fake in iter_messages:
+        if fake.body:
+            fake.ack.assert_awaited_once()
+        else:
+            fake.ack.assert_not_called()
 
 
 # ==================== 集成测试：_broadcast_ws 自身 ====================
