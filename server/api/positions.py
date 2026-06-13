@@ -1,9 +1,10 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter
 from typing import List
 from pydantic import BaseModel
 from rpc.client import qry_positions
-from services.trading import init_position
-from auth.deps import require_trader
+import logging
+
+log = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -37,30 +38,16 @@ def _row_to_position(p: dict) -> PositionResponse:
 
 @router.get("", response_model=PositionRpcResponse)
 async def list_positions():
+    """查持仓（柜台 RPC 单一数据源）"""
     try:
         data = await qry_positions()
-        code = int(data.get("code", -1))
-        msg = str(data.get("msg", ""))
-        items = []
-        if code == 0:
-            items = [_row_to_position(p) for p in data.get("list", [])]
-        return PositionRpcResponse(code=code, msg=msg, list=items)
     except Exception as e:
-        print(f"qry_positions error: {e}")
+        log.exception("qry_positions error: %s", e)
         return PositionRpcResponse(code=-1, msg=str(e), list=[])
 
-
-@router.post("/{stock_code}/init", response_model=PositionResponse)
-async def init_stock_position(stock_code: str, _=Depends(require_trader)):
-    pos = init_position(stock_code)
-    if not pos:
-        return {"error": "position not found"}
-    return PositionResponse(
-        stock_code=pos.stock_code,
-        stock_name=pos.stock_name,
-        initial_position=pos.initial_position,
-        today_buy=pos.today_buy,
-        today_sell=pos.today_sell,
-        available=pos.available,
-        total=pos.total
-    )
+    code = int(data.get("code", -1))
+    msg = str(data.get("msg", ""))
+    items: List[PositionResponse] = []
+    if code == 0:
+        items = [_row_to_position(p) for p in data.get("list", [])]
+    return PositionRpcResponse(code=code, msg=msg, list=items)

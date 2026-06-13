@@ -1,12 +1,11 @@
 from fastapi import APIRouter, HTTPException, Depends
 from typing import List, Optional, Any, Dict
 from pydantic import BaseModel
-from services.trading import get_orders, add_order, update_order_status
-from models.types import Order
-from rpc.client import qry_orders, ord_stk
+from rpc.client import qry_orders, ord_stk, cancel_order as rpc_cancel_order
 from auth.deps import require_trader
-import uuid
-from datetime import datetime
+import logging
+
+log = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -51,34 +50,6 @@ class OrderAckRpcResponse(BaseModel):
     list: List[Dict[str, Any]]
 
 
-# 内存中占位用的英文状态 → 柜台数字（保持前后端都用原始数字）
-_INMEM_TO_NUMERIC = {
-    "pending":   "49",  # 柜台 pending_report 待报
-    "cancelled": "54",  # 柜台 cancelled 已撤
-    "filled":    "56",
-    "rejected":  "57",
-}
-
-
-def _normalize_status(status: str) -> str:
-    """统一委托状态为柜台原始数字。
-
-    RPC 路径直接是柜台返回的字符串数字（"48"-"57" / "255"）；
-    in-memory 路径存的是英文占位 key，需要反向映射成同样的数字串，
-    否则前端要兼容两套表示。
-    """
-    if status is None:
-        return ""
-    s = str(status).strip()
-    if not s:
-        return ""
-    # 已是数字 → 原样返回
-    if s.isdigit():
-        return s
-    # in-memory 英文 key → 数字
-    return _INMEM_TO_NUMERIC.get(s, s)
-
-
 def _row_to_order_response(o: dict, stock_code_filter: Optional[str] = None) -> Optional[OrderResponse]:
     if stock_code_filter and o.get("stock_code") != stock_code_filter:
         return None
@@ -89,7 +60,7 @@ def _row_to_order_response(o: dict, stock_code_filter: Optional[str] = None) -> 
         volume=o.get("volume", 0),
         price=o.get("price", 0.0),
         price_type=int(o.get("price_type", 11)),
-        status=_normalize_status(o.get("status", "")),
+        status=str(o.get("status", "")),
         traded_volume=o.get("traded_volume", 0),
         traded_price=o.get("traded_price", 0.0),
         order_time=o.get("order_time", ""),
@@ -99,79 +70,28 @@ def _row_to_order_response(o: dict, stock_code_filter: Optional[str] = None) -> 
 
 
 @router.get("", response_model=OrderRpcResponse)
-async def list_orders(stock_code: Optional[str] = None, use_rpc: bool = True):
-    if use_rpc:
-        try:
-            data = await qry_orders()
-            code = int(data.get("code", -1))
-            msg = str(data.get("msg", ""))
-            items = []
-            if code == 0:
-                for o in data.get("list", []):
-                    mapped = _row_to_order_response(o, stock_code)
-                    if mapped is not None:
-                        items.append(mapped)
-            return OrderRpcResponse(code=code, msg=msg, list=items)
-        except Exception as e:
-            print(f"qry_orders error: {e}")
-            return OrderRpcResponse(code=-1, msg=str(e), list=[])
+async def list_orders(stock_code: Optional[str] = None):
+    """查委托列表（柜台 RPC 单一数据源，无内存占位）"""
+    try:
+        data = await qry_orders()
+    except Exception as e:
+        log.exception("qry_orders error: %s", e)
+        return OrderRpcResponse(code=-1, msg=str(e), list=[])
 
-    orders = get_orders(stock_code)
-    return OrderRpcResponse(
-        code=0,
-        msg="",
-        list=[
-            OrderResponse(
-                order_id=o.order_id,
-                stock_code=o.stock_code,
-                order_type=o.order_type,
-                volume=o.volume,
-                price=o.price,
-                price_type=o.price_type,
-                status=_normalize_status(o.status),
-                traded_volume=o.traded_volume,
-                traded_price=o.traded_price,
-                order_time=o.order_time,
-                order_remark=o.order_remark,
-                status_msg=""
-            )
-            for o in orders
-        ],
-    )
-
-
-@router.post("", response_model=OrderResponse)
-async def create_order(order_data: OrderCreate, _=Depends(require_trader)):
-    order = Order(
-        order_id=str(uuid.uuid4())[:8],
-        stock_code=order_data.stock_code,
-        order_type=order_data.order_type,
-        volume=order_data.volume,
-        price=order_data.price,
-        price_type=order_data.price_type,
-        status="pending",
-        order_time=datetime.now().strftime("%H:%M:%S")
-    )
-    add_order(order)
-    return OrderResponse(
-        order_id=order.order_id,
-        stock_code=order.stock_code,
-        order_type=order.order_type,
-        volume=order.volume,
-        price=order.price,
-        price_type=order.price_type,
-        status=order.status,
-        traded_volume=order.traded_volume,
-        traded_price=order.traded_price,
-        order_time=order.order_time,
-        order_remark=order.order_remark,
-        status_msg=order.status_msg
-    )
+    code = int(data.get("code", -1))
+    msg = str(data.get("msg", ""))
+    items: List[OrderResponse] = []
+    if code == 0:
+        for o in data.get("list", []):
+            mapped = _row_to_order_response(o, stock_code)
+            if mapped is not None:
+                items.append(mapped)
+    return OrderRpcResponse(code=code, msg=msg, list=items)
 
 
 @router.post("/place", response_model=OrderAckRpcResponse)
 async def place_order(order_data: OrderCreate, _=Depends(require_trader)):
-    """通过RPC下单 ord_stk（等待柜台应答）"""
+    """通过 RPC 下单 ord_stk（等待柜台应答）"""
     try:
         result = await ord_stk(
             stock_code=order_data.stock_code,
@@ -186,11 +106,20 @@ async def place_order(order_data: OrderCreate, _=Depends(require_trader)):
             list=list(result.get("list", [])),
         )
     except Exception as e:
-        print(f"ord_stk error: {e}")
+        log.exception("ord_stk error: %s", e)
         return OrderAckRpcResponse(code=-1, msg=str(e), list=[])
 
 
-@router.delete("/{order_id}")
-async def cancel_order(order_id: str, _=Depends(require_trader)):
-    update_order_status(order_id, "cancelled")
-    return {"order_id": order_id, "status": "cancelled"}
+@router.delete("/{order_id}", response_model=OrderAckRpcResponse)
+async def cancel_order_endpoint(order_id: str, _=Depends(require_trader)):
+    """撤单：走柜台 cancel_ord RPC，状态变更由 push 队列异步通知 WS。"""
+    try:
+        result = await rpc_cancel_order(order_id)
+    except Exception as e:
+        log.exception("cancel_ord error: %s", e)
+        return OrderAckRpcResponse(code=-1, msg=str(e), list=[])
+    return OrderAckRpcResponse(
+        code=int(result.get("code", -1)),
+        msg=str(result.get("msg", "")),
+        list=list(result.get("list", [])),
+    )

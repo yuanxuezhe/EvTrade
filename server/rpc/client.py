@@ -565,7 +565,11 @@ async def ord_stk(
 
 
 async def cancel_order(order_id: str) -> Dict[str, Any]:
-    """撤单 cancel_ord（占位实现，未把 order_id 写入请求体）"""
+    """撤单 cancel_ord（柜台协议：order_id 走 values）"""
     client = await get_rpc_client()
-    pkt = await client.call("cancel_ord")
+    pkt = await client.call(
+        "cancel_ord",
+        headers="order_id",
+        values={"order_id": order_id},
+    )
     return _parse_order_ack(pkt)
