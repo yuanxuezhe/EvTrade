@@ -10,6 +10,14 @@ import { STATUS_LABEL } from '../utils/format'
 
 const CHANNELS = ['order_update', 'trade_update', 'position_update', 'asset_update', 'quote_update']
 const RECONNECT_DELAY = 3000
+// 行情直连 hqserver :8765，不再走 server 后端转发
+const QUOTE_WS_HOST = (() => {
+  // 优先用环境变量；否则复用当前 host（hqserver 通常跟前端同机部署）
+  if (typeof import.meta !== 'undefined' && import.meta.env?.VITE_QUOTE_WS_URL) {
+    return import.meta.env.VITE_QUOTE_WS_URL.replace(/^ws/, '')
+  }
+  return window.location.hostname + ':8765'
+})()
 
 /**
  * WS 推送订阅
@@ -33,6 +41,10 @@ export const useWsStore = defineStore('ws', () => {
 
   function _wsUrl(channel) {
     const proto = window.location.protocol === 'https:' ? 'wss' : 'ws'
+    // quote_update 直连 hqserver；其他 channel 走后端
+    if (channel === 'quote_update') {
+      return `${proto}://${QUOTE_WS_HOST}/`
+    }
     return `${proto}://${window.location.host}/ws/${channel}`
   }
 
@@ -69,6 +81,8 @@ export const useWsStore = defineStore('ws', () => {
         console.warn('[WS] bad payload', e.data, err)
         return
       }
+      // eslint-disable-next-line no-console
+      console.log(`[WS][${channel}]`, payload)
       lastEvent.value = payload
       _dispatch(payload)
     }
