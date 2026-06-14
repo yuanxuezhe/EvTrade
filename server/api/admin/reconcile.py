@@ -25,12 +25,14 @@ REPORT_RETENTION_DAYS = 90
 
 class ReconcileConfigOut(BaseModel):
     auto_reconcile: bool
+    auto_use_broker_data: bool
     updated_at: Optional[str] = None
     updated_by: str
 
 
 class ReconcileConfigUpdate(BaseModel):
-    auto_reconcile: bool
+    auto_reconcile: Optional[bool] = None
+    auto_use_broker_data: Optional[bool] = None
 
 
 class ReconcileReportSummary(BaseModel):
@@ -50,7 +52,8 @@ async def get_config(db: Session = Depends(get_db), _=Depends(require_admin)):
         db.commit()
         db.refresh(cfg)
     return ReconcileConfigOut(
-        auto_reconcile=cfg.auto_reconcile,
+        auto_reconcile=bool(cfg.auto_reconcile),
+        auto_use_broker_data=bool(cfg.auto_use_broker_data),
         updated_at=cfg.updated_at.isoformat() if cfg.updated_at else None,
         updated_by=cfg.updated_by or 'init',
     )
@@ -66,13 +69,17 @@ async def update_config(
     if not cfg:
         cfg = ReconcileConfig()
         db.add(cfg)
-    cfg.auto_reconcile = req.auto_reconcile
+    if req.auto_reconcile is not None:
+        cfg.auto_reconcile = 1 if req.auto_reconcile else 0
+    if req.auto_use_broker_data is not None:
+        cfg.auto_use_broker_data = 1 if req.auto_use_broker_data else 0
     cfg.updated_by = 'admin'  # TODO: 实际用户
     cfg.updated_at = datetime.utcnow()
     db.commit()
     db.refresh(cfg)
     return ReconcileConfigOut(
-        auto_reconcile=cfg.auto_reconcile,
+        auto_reconcile=bool(cfg.auto_reconcile),
+        auto_use_broker_data=bool(cfg.auto_use_broker_data),
         updated_at=cfg.updated_at.isoformat() if cfg.updated_at else None,
         updated_by=cfg.updated_by,
     )

@@ -5,5 +5,6 @@
     <el-menu-item index="/trades">成交查询</el-menu-item>
     <el-menu-item index="/trade">交易面板</el-menu-item>
     <el-menu-item index="/asset">资金</el-menu-item>
+    <el-menu-item index="/system-init">系统初始化</el-menu-item>
   </el-menu>
 </template>

@@ -35,19 +35,9 @@
       </div>
       <div class="toolbar-right">
         <el-button :icon="Refresh" @click="refresh" :loading="loading">刷新</el-button>
-        <el-dropdown @command="handleInitCommand">
-          <el-button type="warning">
-            日初初始化 <el-icon class="el-icon--right"><ArrowDown /></el-icon>
-          </el-button>
-          <template #dropdown>
-            <el-dropdown-menu>
-              <el-dropdown-item command="all" :icon="Refresh">全部标的</el-dropdown-item>
-              <el-dropdown-item command="selected" :icon="Check" :disabled="!positionStore.selectedStockCode">
-                仅选中标的
-              </el-dropdown-item>
-            </el-dropdown-menu>
-          </template>
-        </el-dropdown>
+        <el-button type="warning" @click="goSystemInit">
+          <el-icon class="el-icon--right"><Setting /></el-icon>系统初始化
+        </el-button>
       </div>
     </div>
 
@@ -81,14 +71,16 @@
 
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
-import { Search, Refresh, ArrowDown, Check } from '@element-plus/icons-vue'
+import { useRouter } from 'vue-router'
+import { ElMessage } from 'element-plus'
+import { Search, Refresh, Setting } from '@element-plus/icons-vue'
 import PositionTable from '../components/PositionTable.vue'
 import PositionDetail from '../components/PositionDetail.vue'
 import { usePositionStore } from '../stores/position'
 import { useOrderStore } from '../stores/order'
 import { formatNumber } from '../utils/format'
 
+const router = useRouter()
 const positionStore = usePositionStore()
 const orderStore = useOrderStore()
 
@@ -143,29 +135,8 @@ function handleSelect(stockCode) {
   drawerVisible.value = true
 }
 
-async function handleInitCommand(command) {
-  try {
-    await ElMessageBox.confirm(
-      command === 'all'
-        ? '确认对所有标的进行日初初始化？将重置今日买卖数据。'
-        : `确认对 ${positionStore.selectedStockCode} 进行日初初始化？`,
-      '日初初始化',
-      { confirmButtonText: '确认', cancelButtonText: '取消', type: 'warning' }
-    )
-    loading.value = true
-    if (command === 'all') {
-      for (const pos of positionStore.positions) {
-        await positionStore.initPosition(pos.stock_code)
-      }
-    } else if (positionStore.selectedStockCode) {
-      await positionStore.initPosition(positionStore.selectedStockCode)
-    }
-    ElMessage.success('日初初始化完成')
-  } catch {
-    // cancelled
-  } finally {
-    loading.value = false
-  }
+function goSystemInit() {
+  router.push('/system-init')
 }
 
 onMounted(async () => {

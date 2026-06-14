@@ -14,6 +14,7 @@ const AlgoStrategy = () => import('../views/AlgoStrategy.vue')
 const TStrategy = () => import('../views/TStrategy.vue')
 const Users = () => import('../views/Users.vue')
 const Profile = () => import('../views/Profile.vue')
+const SystemInit = () => import('../views/SystemInit.vue')
 
 const routes = [
   {
@@ -39,6 +40,7 @@ const routes = [
     meta: { title: '用户管理', requiresAdmin: true }
   },
   { path: '/profile', name: 'Profile', component: Profile, meta: { title: '个人资料' } },
+  { path: '/system-init', name: 'SystemInit', component: SystemInit, meta: { title: '系统初始化', requiresAdmin: true } },
   { path: '/:pathMatch(.*)*', redirect: '/' }
 ]
 
