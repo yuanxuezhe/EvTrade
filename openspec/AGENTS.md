@@ -74,5 +74,6 @@ ls openspec/changes/<name>/
 | `current-issues` | draft | 列出本轮分析发现的 13 项问题及修复分工 |
 | `add-config-validation` | draft | .env 启动校验 + 配置分层文档化 |
 | `consolidate-rpc-parsers` | draft | 8 个 _parse_* 解析器合并为统一 schema |
+| `persistence-and-t0` | **v4 待 review** | 本地 DB 持久层 + 交易日屏障 + 交易时段 + 日初对账 + T0 配平 + 费率可配（10 张表 / 42 步） |
 
 详见 `openspec/changes/<name>/proposal.md`。
