@@ -162,13 +162,34 @@ class RPClient:
                             continue
 
                         rows = _parse_push_rows(pkt)
+                        ts = _clean_id(pkt.timestamp()) or ""
+
                         for row in rows:
                             payload = {
                                 "type": func,
                                 "channel": channel,
-                                "ts": _clean_id(pkt.timestamp()) or "",
+                                "ts": ts,
                                 "data": row,
                             }
+
+                            # v4 持久化：先写 DB，再推 WS
+                            try:
+                                from db import SessionLocal
+                                from services.push_handlers import handle_push
+                                db = SessionLocal()
+                                try:
+                                    handle_push(db, func, row, ts)
+                                    db.commit()
+                                except Exception as e:
+                                    db.rollback()
+                                    print(f"[RPClient.push] handle_push error: {e}")
+                                finally:
+                                    db.close()
+                            except Exception as e:
+                                import traceback
+                                print(f"[RPClient.push] DB integration error: {e}")
+                                traceback.print_exc()
+
                             print(
                                 f"[RPClient.push] broadcast → {channel}: "
                                 f"{list(row.keys())[:6]}"

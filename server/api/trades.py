@@ -1,61 +1,62 @@
-from fastapi import APIRouter
-from typing import List, Optional
+"""
+trades.py — v4 读本地 DB
+
+成交回报由 trd_cfm push handler 写入 trades 表。
+GET /api/trades 纯读 DB，不调 RPC。
+"""
+from fastapi import APIRouter, Depends
+from typing import Optional, List
 from pydantic import BaseModel
-from rpc.client import qry_trades
+from sqlalchemy.orm import Session
+
+from db import get_db
+from models.orm import Trade
+from services.guards import resolve_default_trd_date
 
 router = APIRouter()
 
-class TradeResponse(BaseModel):
+
+class TradeOut(BaseModel):
+    id: int
     trade_id: str
+    TRD_DATE: str
     order_id: str
     stock_code: str
-    # 柜台 order_type 数字串：股票 23=买入，24=卖出
     order_type: str
-    volume: int
     price: float
+    volume: int
+    amount: float
     trade_time: str
 
 
-class TradeRpcResponse(BaseModel):
-    """成交查询统一返回 {code, msg, list}"""
-    code: int
-    msg: str
-    list: List[TradeResponse]
+class TradesListResponse(BaseModel):
+    code: int = 0
+    msg: str = ""
+    list: List[TradeOut] = []
 
 
-def _row_to_trade_response(t: dict, stock_code_filter: Optional[str] = None) -> Optional[TradeResponse]:
-    if stock_code_filter and t.get("stock_code") != stock_code_filter:
-        return None
-    return TradeResponse(
-        trade_id=t.get("trade_id", ""),
-        order_id=t.get("order_id", ""),
-        stock_code=t.get("stock_code", ""),
-        order_type=str(t.get("order_type", "")),
-        volume=int(t.get("volume", 0) or 0),
-        price=float(t.get("price", 0.0) or 0.0),
-        trade_time=t.get("trade_time", ""),
-    )
-
-
-@router.get("", response_model=TradeRpcResponse)
-async def list_trades(stock_code: Optional[str] = None):
-    """成交查询走柜台 qry_mch，应答统一 {code, msg, list}。
-
-    注意：之前用的是 services.trading.get_trades()，那个内存表
-    trades_store 在实际流程中没有任何写入（WS push 只更新前端 store），
-    所以查询永远返回空数组。改为 RPC 之后才能拉到真实的成交记录。
-    """
-    try:
-        data = await qry_trades()
-        code = int(data.get("code", -1))
-        msg = str(data.get("msg", ""))
-        items = []
-        if code == 0:
-            for t in data.get("list", []):
-                mapped = _row_to_trade_response(t, stock_code)
-                if mapped is not None:
-                    items.append(mapped)
-        return TradeRpcResponse(code=code, msg=msg, list=items)
-    except Exception as e:
-        print(f"qry_trades error: {e}")
-        return TradeRpcResponse(code=-1, msg=str(e), list=[])
+@router.get("", response_model=TradesListResponse)
+async def list_trades(
+    stock_code: Optional[str] = None,
+    trading_day: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
+    trd = trading_day or resolve_default_trd_date(db)
+    q = db.query(Trade).filter(Trade.TRD_DATE == trd)
+    if stock_code:
+        q = q.filter(Trade.stock_code == stock_code)
+    rows = q.order_by(Trade.id.desc()).limit(500).all()
+    return TradesListResponse(code=0, msg="", list=[
+        TradeOut(
+            id=r.id,
+            trade_id=r.trade_id,
+            TRD_DATE=r.TRD_DATE,
+            order_id=r.order_id,
+            stock_code=r.stock_code,
+            order_type=r.order_type,
+            price=r.price,
+            volume=r.volume,
+            amount=r.amount,
+            trade_time=r.trade_time,
+        ) for r in rows
+    ])

@@ -4,8 +4,12 @@
 
 ## 项目一句话
 
-Vue3 + FastAPI 量化交易 Web 平台。**唯一数据源**是 QMT 柜台（msgpacket RPC over RabbitMQ）。
-后端是薄薄一层包装 + 鉴权 + WebSocket 推送；前端 = 12 个页面；行情走独立 hqserver。
+Vue3 + FastAPI 量化交易 Web 平台。**业务数据本地 DB 优先**（v4 改造后）：
+- 委托/成交/持仓/资金：本地 SQLite 是展示源
+- 下单/撤单/对账：调 QMT 柜台 RPC
+- 行情：msgpacket RPC + RabbitMQ FANOUT → 独立 hqserver WebSocket
+
+后端 = 薄包装 + JWT/RBAC + DB 落库 + WebSocket 推送；前端 = 12 页面 + Pinia 缓存。
 
 ## 架构
 
@@ -26,6 +30,12 @@ Vue3 + FastAPI 量化交易 Web 平台。**唯一数据源**是 QMT 柜台（msg
                                   │  QMT 柜台        │
                                   │  (Windows 部署)  │
                                   └──────────────────┘
+
+数据流（v4）：
+  下单:  Vue → FastAPI place() → DB INSERT (status=48) → ord_stk RPC → status=49/55 → WS 推 Vue
+  推送:  QMT → ord_cfm/trd_cfm/pos_cfm/ast_cfm → push_handlers 写 DB → WS 推 Vue
+  查询:  Vue → FastAPI → DB SELECT（不再调 RPC）
+  日初:  Admin → /api/admin/trading-day/init → do_reconcile → qry_4类 → 写 report → 切交易日
 ```
 
 ## 8 个 capability（specs/ 目录一一对应）
@@ -33,10 +43,10 @@ Vue3 + FastAPI 量化交易 Web 平台。**唯一数据源**是 QMT 柜台（msg
 | Cap | 范围 | 关键文件 |
 |---|---|---|
 | `auth` | 登录/JWT/RBAC | `server/auth/`, `server/api/auth.py`, `client/src/stores/auth.js` |
-| `trading` | 下单/撤单/委托/成交/资金 | `server/api/{orders,trades,asset}.py`, `client/src/views/{Trade,Orders,Trades,Asset}.vue` |
+| `trading` | 下单/撤单/委托/成交/资金/T0 | `server/api/{orders,trades,asset,fee_config}.py`, `server/services/t0.py` |
 | `positioning` | 持仓查询 | `server/api/positions.py`, `client/src/views/Position.vue` |
 | `quotes` | 行情推送 | `hq/hqserver.py`, `client/src/stores/quote.js`, `client/src/stores/ws.js` |
-| `push` | 柜台 push → WebSocket 路由 | `server/rpc/client.py:121-180` |
+| `push` | 柜台 push → DB 落库 + WebSocket 路由 | `server/services/push_handlers.py`, `server/rpc/client.py:121-180` |
 | `frontend` | Vue 路由/角色守卫/WS | `client/src/router/`, `client/src/api/` |
 | `configuration` | .env / 配置分层 | `server/config.py`, `hq/hqserver.py:26-62` |
 | `rpc-protocol` | msgpacket 客户端契约 | `server/rpc/client.py` |
@@ -56,16 +66,22 @@ ls openspec/changes/<name>/
 # 3. 改代码，按 tasks.md 走
 
 # 4. 归档（spec 已合并到 specs/<cap>/spec.md 后）
-/openspec:archive <name>
+mv openspec/changes/<name> openspec/changes/archive/<date>-<name>
 ```
 
 ## 约定
 
-- **单一数据源**：后端不维护内存委托/成交/持仓副本，所有展示走柜台 RPC + push
+- **业务数据源（v4）**：本地 SQLite（orders/trades/positions/assets）是展示源；RPC 只用于下单/撤单/对账时的事实写入
+- **下单流程**：本地 INSERT(status=48) → 调 ord_stk(remark=order_no) → 改 status=49/55 → WS 推
+- **推送流程**：4 类 push → push_handlers 写 DB → WS 推 Vue
+- **查询流程**：纯 DB SELECT，不调 RPC；按 trading_day 默认 = 激活日
+- **三屏障**：未做日初 / 非交易时段 / 非 trader 角色 → 503（查询不受限）
 - **WS 频道命名**：`order_update` / `trade_update` / `position_update` / `asset_update` / `quote_update`
 - **RPC 响应统一**：`{code, msg, list}`（code=0 成功，前端 axios 拦截器自动展平）
 - **配置分层**：`server/.env`（FastAPI）+ `HQ_*`（hqserver，与 server 共享 .env）
-- **测试**：`pytest hq/` 18/18 通过；`test_rpc.py` 是手测脚本
+- **T0 配平**：`calc_t0_volume(target * coefficient) → 整手取整`（买向下/卖向上）
+- **order_no**：8 位数字（DB 序列表原子 UPSERT），当 order_remark 透传
+- **测试**：`pytest hq/` 18/18；`pytest server/test_*.py` 75/75 通过
 
 ## 当前活跃 change
 
@@ -74,6 +90,6 @@ ls openspec/changes/<name>/
 | `current-issues` | draft | 列出本轮分析发现的 13 项问题及修复分工 |
 | `add-config-validation` | draft | .env 启动校验 + 配置分层文档化 |
 | `consolidate-rpc-parsers` | draft | 8 个 _parse_* 解析器合并为统一 schema |
-| `persistence-and-t0` | **v4 待 review** | 本地 DB 持久层 + 交易日屏障 + 交易时段 + 日初对账 + T0 配平 + 费率可配（10 张表 / 42 步） |
+| `2026-06-14-persistence-and-t0` | **✅ 已归档** | v4 实施完成：11 张表 + 屏障 + 日初对账 + T0 + 费率（详见 `archive/2026-06-14-persistence-and-t0/proposal.md`） |
 
 详见 `openspec/changes/<name>/proposal.md`。

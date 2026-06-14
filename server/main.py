@@ -6,6 +6,8 @@ from models.user import User
 from auth.security import hash_password
 from auth.deps import get_current_user
 from api import positions, holdings, orders, trades, asset, auth as auth_api, users as users_api
+from api import clock, fee_config
+from api.admin import trading_day as admin_trading_day, reconcile as admin_reconcile, session as admin_session
 from ws.manager import ws_manager
 from rpc.client import get_rpc_client, close_rpc_client
 # 注：行情订阅已解耦到 hq/hqserver.py 的内置 WebSocket 服务 (:8765)，
@@ -70,6 +72,7 @@ async def on_shutdown_rpc():
 
 # ---- Public routes ------------------------------------------------------
 app.include_router(auth_api.router, prefix="/api/auth", tags=["auth"])
+app.include_router(clock.router, prefix="/api/trading", tags=["trading-clock"])
 
 
 # ---- Protected routes (require login) -----------------------------------
@@ -80,10 +83,14 @@ app.include_router(holdings.router, prefix="/api/holdings", tags=["holdings"], d
 app.include_router(orders.router, prefix="/api/orders", tags=["orders"], dependencies=_AUTH)
 app.include_router(trades.router, prefix="/api/trades", tags=["trades"], dependencies=_AUTH)
 app.include_router(asset.router, prefix="/api/asset", tags=["asset"], dependencies=_AUTH)
+app.include_router(fee_config.router, prefix="/api/fee-config", tags=["fee-config"], dependencies=_AUTH)
 
 
 # ---- Admin routes -------------------------------------------------------
 app.include_router(users_api.router, prefix="/api/users", tags=["users"])
+app.include_router(admin_trading_day.router, prefix="/api/admin/trading-day", tags=["admin-trading-day"])
+app.include_router(admin_reconcile.router, prefix="/api/admin/reconcile", tags=["admin-reconcile"])
+app.include_router(admin_session.router, prefix="/api/admin/trading-session", tags=["admin-session"])
 
 
 @app.get("/api/health")
