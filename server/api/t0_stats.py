@@ -1,16 +1,11 @@
 """
 t0_stats.py — T0 当日 / 历史收益汇总
 
-GET /api/orders/t0-stats/{stock_code}?trading_day=YYYYMMDD
-  返:
-  {
-    trd_date, stock_code, cost_basis, today_bought, today_sold,
-    today_bought_amount, today_sold_amount, realized_pnl,
-    position_volume, position_cost, current_market_value, unrealized_pnl,
-    total_pnl, return_rate
-  }
+GET /api/orders/t0-stats/{stock_code}?trading_day=YYYYMMDD   单日统计
+GET /api/orders/t0-history/{stock_code}?days=30               历史曲线
 """
-from datetime import datetime
+from collections import defaultdict
+from datetime import datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import func
@@ -139,4 +134,82 @@ async def t0_stats(
         order_count=order_count,
         trade_count=len(trades_today),
         open_order_count=open_order_count,
+    )
+
+
+# ============== T0 历史曲线 ==============
+
+class T0HistoryPoint(BaseModel):
+    TRD_DATE: str
+    realized_pnl: float
+    sell_amount: float
+    buy_amount: float
+    trade_count: int
+
+
+class T0HistoryOut(BaseModel):
+    stock_code: str
+    days: int
+    points: List[T0HistoryPoint]
+    total_realized: float
+    total_return_rate: float
+    win_days: int
+    total_days: int
+
+
+@router.get("/t0-history/{stock_code}", response_model=T0HistoryOut)
+def t0_history(
+    stock_code: str,
+    days: int = Query(30, ge=1, le=180),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """近 N 天做T 每日买入/卖出/笔数 + 累计差额（暂无 realized_pnl 字段）"""
+    today = datetime.now().strftime("%Y%m%d")
+    start = (datetime.now() - timedelta(days=days * 2)).strftime("%Y%m%d")
+    rows = (
+        db.query(Trade)
+        .filter(
+            Trade.stock_code == stock_code,
+            Trade.TRD_DATE >= start,
+            Trade.TRD_DATE <= today,
+        )
+        .all()
+    )
+    by_day = defaultdict(lambda: {
+        "buy_amt": 0.0, "sell_amt": 0.0, "diff": 0.0, "n": 0
+    })
+    for t in rows:
+        d = t.TRD_DATE
+        amt = float(t.amount or 0)
+        if t.direction == "BUY":
+            by_day[d]["buy_amt"] += amt
+            by_day[d]["diff"] -= amt  # 净流出
+        else:
+            by_day[d]["sell_amt"] += amt
+            by_day[d]["diff"] += amt  # 净流入
+        by_day[d]["n"] += 1
+    points = []
+    for d in sorted(by_day.keys()):
+        info = by_day[d]
+        points.append(T0HistoryPoint(
+            TRD_DATE=d,
+            realized_pnl=round(info["diff"], 2),  # 用净流入做"虚拟已实现"显示
+            sell_amount=round(info["sell_amt"], 2),
+            buy_amount=round(info["buy_amt"], 2),
+            trade_count=info["n"],
+        ))
+    # 累计差额（已实现收益的近似）
+    total_realized = sum(p.realized_pnl for p in points)
+    win_days = sum(1 for p in points if p.realized_pnl > 0)
+    total_buy = sum(p.buy_amount for p in points) or 1.0
+    total_return_rate = total_realized / total_buy
+    return T0HistoryOut(
+        stock_code=stock_code,
+        days=days,
+        points=points,
+        total_realized=round(total_realized, 2),
+        total_return_rate=round(total_return_rate, 4),
+        win_days=win_days,
+        total_days=len(points),
     )

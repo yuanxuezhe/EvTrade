@@ -18,7 +18,7 @@
       </div>
       <div class="quote-mid" v-if="lastPrice != null">
         <div class="price-line">
-          <span class="last-price" :class="priceClass">{{ formatPrice(lastPrice) }}</span>
+          <span class="last-price" :class="[priceClass, flashClass]">{{ formatPrice(lastPrice) }}</span>
           <span class="change" :class="priceClass">
             {{ changePct >= 0 ? '+' : '' }}{{ changePct?.toFixed(2) }}%
           </span>
@@ -167,7 +167,7 @@
               class="big-btn"
             >
               一键全仓买入
-              <div class="btn-sub">{{ formatNumber(oneClickBuyQty) }} 股</div>
+              <div class="btn-sub">{{ formatNumber(oneClickBuyQty) }} 股 (B)</div>
             </el-button>
             <el-button
               type="danger"
@@ -179,7 +179,7 @@
               class="big-btn"
             >
               一键全仓卖出
-              <div class="btn-sub">{{ formatNumber(oneClickSellQty) }} 股</div>
+              <div class="btn-sub">{{ formatNumber(oneClickSellQty) }} 股 (S)</div>
             </el-button>
           </div>
 
@@ -318,7 +318,7 @@
             >
               一键配平{{ direction === 'flat' ? '（无差额）' : (direction === 'buy' ? '买入' : '卖出') }}
               <div class="btn-sub" v-if="direction !== 'flat'">
-                {{ formatNumber(Math.abs(balanceQty)) }} 股 × ¥{{ formatPrice(orderPrice) }}
+                {{ formatNumber(Math.abs(balanceQty)) }} 股 × ¥{{ formatPrice(orderPrice) }} (F)
               </div>
             </el-button>
           </div>
@@ -340,6 +340,137 @@
         </el-table-column>
       </el-table>
     </el-dialog>
+
+    <!-- 仓位管理建议卡 -->
+    <el-card class="risk-card" shadow="hover">
+      <template #header>
+        <div class="card-header-flex">
+          <span class="card-title">🎯 仓位管理建议</span>
+          <span class="risk-tag" :class="riskLevel.level">{{ riskLevel.label }}</span>
+        </div>
+      </template>
+      <div class="risk-body">
+        <el-radio-group v-model="riskProfile" size="large" class="risk-profile">
+          <el-radio-button value="conservative">保守</el-radio-button>
+          <el-radio-button value="balanced">平衡</el-radio-button>
+          <el-radio-button value="aggressive">激进</el-radio-button>
+        </el-radio-group>
+
+        <el-row :gutter="16" class="risk-grid">
+          <el-col :span="6">
+            <div class="risk-item">
+              <div class="risk-label">单股仓位上限</div>
+              <div class="risk-value">{{ (riskConfig.maxSinglePosition * 100).toFixed(0) }}%</div>
+              <div class="risk-hint">¥{{ formatAmount(maxSingleAmount) }}</div>
+            </div>
+          </el-col>
+          <el-col :span="6">
+            <div class="risk-item">
+              <div class="risk-label">预留安全余额</div>
+              <div class="risk-value">{{ (riskConfig.reserveCash * 100).toFixed(0) }}%</div>
+              <div class="risk-hint">¥{{ formatAmount(reserveAmount) }}</div>
+            </div>
+          </el-col>
+          <el-col :span="6">
+            <div class="risk-item">
+              <div class="risk-label">单笔最大买入</div>
+              <div class="risk-value">{{ formatNumber(maxBuyQty) }}</div>
+              <div class="risk-hint">股</div>
+            </div>
+          </el-col>
+          <el-col :span="6">
+            <div class="risk-item">
+              <div class="risk-label">建议配平系数</div>
+              <div class="risk-value">{{ suggestedCoeff.toFixed(2) }}</div>
+              <div class="risk-hint">
+                <el-link type="primary" :underline="false" @click="balanceCoeff = suggestedCoeff">应用</el-link>
+              </div>
+            </div>
+          </el-col>
+        </el-row>
+
+        <el-alert
+          v-if="riskWarnings.length > 0"
+          :title="riskWarnings.length + ' 项风险提示'"
+          type="warning"
+          :closable="false"
+          class="risk-warnings"
+        >
+          <ul class="warning-list">
+            <li v-for="(w, i) in riskWarnings" :key="i">{{ w }}</li>
+          </ul>
+        </el-alert>
+      </div>
+    </el-card>
+
+    <!-- T0 历史收益曲线 -->
+    <el-card class="history-card" shadow="hover">
+      <template #header>
+        <div class="card-header-flex">
+          <span class="card-title">📈 T0 历史收益曲线</span>
+          <div class="history-meta" v-if="historyData">
+            <span class="meta-item">
+              累计: <b :class="historyData.total_realized >= 0 ? 'up' : 'down'">
+                ¥{{ formatAmount(historyData.total_realized) }}
+              </b>
+            </span>
+            <span class="meta-item">
+              收益: <b :class="historyData.total_realized >= 0 ? 'up' : 'down'">
+                {{ (historyData.total_return_rate * 100).toFixed(2) }}%
+              </b>
+            </span>
+            <span class="meta-item">
+              胜: <b>{{ historyData.win_days }}/{{ historyData.total_days }}</b> 天
+            </span>
+            <el-radio-group v-model="historyDays" size="small" class="days-pick">
+              <el-radio-button :value="7">7D</el-radio-button>
+              <el-radio-button :value="30">30D</el-radio-button>
+              <el-radio-button :value="90">90D</el-radio-button>
+            </el-radio-group>
+          </div>
+        </div>
+      </template>
+      <div class="chart-wrap" v-if="cumHistory.length > 0">
+        <svg :viewBox="`0 0 ${chartW} ${chartH}`" class="chart-svg" preserveAspectRatio="none">
+          <!-- 0 轴 -->
+          <line
+            :x1="0" :y1="zeroY"
+            :x2="chartW" :y2="zeroY"
+            stroke="#dcdfe6" stroke-width="1" stroke-dasharray="3,3"
+          />
+          <!-- 累计曲线 -->
+          <path
+            :d="cumPath"
+            :stroke="cumHistory[cumHistory.length - 1].cum_pnl >= 0 ? '#f56c6c' : '#67c23a'"
+            stroke-width="2" fill="none"
+          />
+          <!-- 填充 -->
+          <path
+            :d="cumAreaPath"
+            :fill="cumHistory[cumHistory.length - 1].cum_pnl >= 0 ? 'rgba(245,108,108,0.12)' : 'rgba(103,194,58,0.12)'"
+            stroke="none"
+          />
+          <!-- 每日 bar（实心 = 赚，空心 = 亏） -->
+          <g v-for="(p, i) in cumHistory" :key="p.TRD_DATE">
+            <line
+              :x1="barX(i)" :x2="barX(i)"
+              :y1="barY(p.realized_pnl, i)"
+              :y2="zeroY"
+              :stroke="p.realized_pnl >= 0 ? '#f56c6c' : '#67c23a'"
+              stroke-width="3"
+              stroke-linecap="round"
+            />
+            <title>{{ p.TRD_DATE }}: {{ p.realized_pnl >= 0 ? '+' : '' }}¥{{ p.realized_pnl }} ({{ p.trade_count }} 笔)</title>
+          </g>
+        </svg>
+        <div class="x-labels">
+          <span v-for="(p, i) in xLabelIndices" :key="i" :style="{ left: (p / (cumHistory.length - 1 || 1) * 100) + '%' }">
+            {{ p.slice(4) }}
+          </span>
+        </div>
+      </div>
+      <el-empty v-else description="尚无做T 历史" :image-size="60" />
+    </el-card>
   </div>
 </template>
 
@@ -389,10 +520,93 @@ const priceTypeLabel = computed(() => {
 // 持仓列表
 const holdingsPositions = computed(() => positions.value)
 
+// ---- 仓位管理（4 档 + 风险建议） -----------------------------------------
+const riskProfile = ref('balanced')  // 'conservative' | 'balanced' | 'aggressive'
+const RISK_CONFIGS = {
+  conservative: { maxSinglePosition: 0.10, reserveCash: 0.50, suggestedCoeff: 0.5, label: '🛡 保守' },
+  balanced:     { maxSinglePosition: 0.25, reserveCash: 0.30, suggestedCoeff: 1.0, label: '⚖ 平衡' },
+  aggressive:   { maxSinglePosition: 0.50, reserveCash: 0.10, suggestedCoeff: 1.5, label: '🔥 激进' },
+}
+const riskConfig = computed(() => RISK_CONFIGS[riskProfile.value])
+
+// 总资产
+const totalAsset = computed(() => Number(asset.value?.total_asset) || 0)
+// 可用资金
+const availableCash = computed(() => Number(asset.value?.cash) || 0)
+// 单股最大可买金额
+const maxSingleAmount = computed(() => totalAsset.value * riskConfig.value.maxSinglePosition)
+// 安全余额（保留）
+const reserveAmount = computed(() => totalAsset.value * riskConfig.value.reserveCash)
+// 可用于此股的最大买入金额（= 单股上限 - 当前持仓市值，扣除已用）
+const investableAmount = computed(() => {
+  const used = marketValue.value
+  return Math.max(0, maxSingleAmount.value - used)
+})
+// 单笔最大买入股数
+const maxBuyQty = computed(() => {
+  if (!hasQuote.value || lastPrice.value <= 0) return 0
+  // 限制 1：可投资金额 / 价格
+  const maxByRisk = investableAmount.value / lastPrice.value
+  // 限制 2：可用资金 - 保留余额
+  const maxByCash = Math.max(0, availableCash.value - reserveAmount.value)
+  return Math.floor(Math.min(maxByRisk, maxByCash) / 100) * 100
+})
+// 建议配平系数（基于浮盈浮亏反向）
+const suggestedCoeff = computed(() => {
+  // 浮亏时建议加仓（系数 1.5），浮盈时建议减仓（系数 0.5）
+  if (profitRate.value < -0.05) return 1.5
+  if (profitRate.value < 0) return 1.0
+  if (profitRate.value > 0.10) return 0.5
+  return RISK_CONFIGS[riskProfile.value].suggestedCoeff
+})
+// 风险等级
+const riskLevel = computed(() => {
+  const ratio = totalAsset.value > 0 ? marketValue.value / totalAsset.value : 0
+  if (ratio > 0.5) return { level: 'high', label: '⚠ 高风险' }
+  if (ratio > 0.25) return { level: 'medium', label: '⚡ 中等' }
+  if (ratio > 0.1) return { level: 'low', label: '✅ 合理' }
+  return { level: 'safe', label: '🟢 安全' }
+})
+// 风险提示列表
+const riskWarnings = computed(() => {
+  const warns = []
+  const ratio = totalAsset.value > 0 ? marketValue.value / totalAsset.value : 0
+  if (ratio > riskConfig.value.maxSinglePosition) {
+    warns.push(`当前 ${stockCode.value} 仓位 ${(ratio * 100).toFixed(1)}%，超过 ${riskProfile.value} 上限 ${(riskConfig.value.maxSinglePosition * 100).toFixed(0)}%`)
+  }
+  if (availableCash.value < reserveAmount.value) {
+    warns.push(`可用资金 ¥${formatAmount(availableCash.value)} 低于安全余额 ¥${formatAmount(reserveAmount.value)}`)
+  }
+  if (insufficientCash.value) {
+    warns.push(`本次买入 ¥${formatAmount(balanceAmount.value)} 超过可用资金 ¥${formatAmount(availableCash.value)}`)
+  }
+  if (insufficientPosition.value) {
+    warns.push(`本次卖出 ${formatNumber(Math.abs(balanceQty.value))} 股超过可用持仓 ${formatNumber(currentVolume.value)}`)
+  }
+  if (profit.value < 0 && direction.value === 'buy') {
+    warns.push('当前浮亏时加仓，请确认止损位')
+  }
+  return warns
+})
+
 // 颜色 class
 const priceClass = computed(() => {
   if (changePct.value == null) return ''
   return changePct.value >= 0 ? 'up' : 'down'
+})
+// 涨跌闪烁 class
+const flashClass = ref('')
+let _lastPrice = null
+watch(lastPrice, (newP, oldP) => {
+  if (newP == null || oldP == null) {
+    _lastPrice = newP
+    return
+  }
+  if (newP > oldP) flashClass.value = 'flash-up'
+  else if (newP < oldP) flashClass.value = 'flash-down'
+  else flashClass.value = ''
+  _lastPrice = newP
+  setTimeout(() => { flashClass.value = '' }, 700)
 })
 const profitClass = computed(() => profit.value >= 0 ? 'up' : 'down')
 const t0Class = computed(() => t0Stats.value.total_pnl >= 0 ? 'up' : 'down')
@@ -412,9 +626,83 @@ async function loadT0Stats() {
   try {
     t0Stats.value = await t0StatsApi.get(stockCode.value)
   } catch (e) {
-    console.warn('T0 stats load failed:', e)
+    console.warn('load t0 stats failed', e)
   }
 }
+
+const historyDays = ref(30)
+const historyData = ref(null)
+async function loadT0History() {
+  if (!stockCode.value) return
+  try {
+    historyData.value = await t0StatsApi.getHistory(stockCode.value, historyDays.value)
+  } catch (e) {
+    console.warn('load t0 history failed', e)
+    historyData.value = null
+  }
+}
+// 累计收益曲线（每日 realized 累加）
+const cumHistory = computed(() => {
+  const pts = historyData.value?.points || []
+  let cum = 0
+  return pts.map(p => ({ ...p, cum_pnl: (cum += p.realized_pnl) }))
+})
+
+// SVG 曲线几何
+const chartW = 800
+const chartH = 200
+const chartPad = 24
+const cumPath = computed(() => {
+  const arr = cumHistory.value
+  if (arr.length < 2) return ''
+  const minY = Math.min(0, ...arr.map(p => p.cum_pnl))
+  const maxY = Math.max(0, ...arr.map(p => p.cum_pnl))
+  const range = (maxY - minY) || 1
+  return arr.map((p, i) => {
+    const x = (i / (arr.length - 1)) * chartW
+    const y = chartH - chartPad - ((p.cum_pnl - minY) / range) * (chartH - 2 * chartPad)
+    return `${i === 0 ? 'M' : 'L'}${x.toFixed(1)},${y.toFixed(1)}`
+  }).join(' ')
+})
+const cumAreaPath = computed(() => {
+  if (!cumPath.value) return ''
+  const arr = cumHistory.value
+  const minY = Math.min(0, ...arr.map(p => p.cum_pnl))
+  const maxY = Math.max(0, ...arr.map(p => p.cum_pnl))
+  const range = (maxY - minY) || 1
+  const zeroYY = chartH - chartPad - ((0 - minY) / range) * (chartH - 2 * chartPad)
+  return cumPath.value + ` L${chartW},${zeroYY.toFixed(1)} L0,${zeroYY.toFixed(1)} Z`
+})
+const zeroY = computed(() => {
+  const arr = cumHistory.value
+  if (arr.length === 0) return chartH / 2
+  const minY = Math.min(0, ...arr.map(p => p.cum_pnl))
+  const maxY = Math.max(0, ...arr.map(p => p.cum_pnl))
+  const range = (maxY - minY) || 1
+  return chartH - chartPad - ((0 - minY) / range) * (chartH - 2 * chartPad)
+})
+function barX(i) {
+  const arr = cumHistory.value
+  if (arr.length <= 1) return chartW / 2
+  return (i / (arr.length - 1)) * chartW
+}
+function barY(realized, i) {
+  const arr = cumHistory.value
+  if (arr.length === 0) return chartH / 2
+  const minR = Math.min(0, ...arr.map(p => p.realized_pnl))
+  const maxR = Math.max(0, ...arr.map(p => p.realized_pnl))
+  const range = (maxR - minR) || 1
+  return chartH - chartPad - ((realized - minR) / range) * (chartH - 2 * chartPad)
+}
+// X 轴标签（首 / 中 / 末）
+const xLabelIndices = computed(() => {
+  const arr = cumHistory.value
+  if (arr.length === 0) return []
+  if (arr.length === 1) return [arr[0].TRD_DATE]
+  if (arr.length === 2) return [arr[0].TRD_DATE, arr[1].TRD_DATE]
+  const mid = Math.floor(arr.length / 2)
+  return [arr[0].TRD_DATE, arr[mid].TRD_DATE, arr[arr.length - 1].TRD_DATE]
+})
 
 function onStockCodeChange() {
   loadT0Stats()
@@ -501,20 +789,48 @@ function onOneClickBalance() {
 }
 
 // 监听 stockCode 变化 → 加载 stats
-watch(stockCode, () => loadT0Stats())
+watch(stockCode, () => {
+  loadT0Stats()
+  loadT0History()
+})
+watch(historyDays, () => loadT0History())
 
 // 监听成交推送 → 自动刷新 stats
 let _unwatchTrades = null
+function onKeyDown(e) {
+  // Esc 关闭弹窗
+  if (e.key === 'Escape') {
+    if (showPicker.value) showPicker.value = false
+    return
+  }
+  // 快捷键仅在非输入框时生效
+  const tag = (e.target?.tagName || '').toLowerCase()
+  if (['input', 'textarea', 'select'].includes(tag)) return
+  if (e.ctrlKey || e.metaKey || e.altKey) return
+  const k = e.key.toLowerCase()
+  if (k === 'b' && canBuy.value) {
+    e.preventDefault(); onOneClickBuy()
+  } else if (k === 's' && canSell.value) {
+    e.preventDefault(); onOneClickSell()
+  } else if (k === 'f' && canBalanceSubmit.value) {
+    e.preventDefault(); onOneClickBalance()
+  }
+}
+
 onMounted(async () => {
   await loadT0Stats()
+  await loadT0History()
   // 监听 trades 变化（ws 推送会触发）
   _unwatchTrades = watch(
     () => holdingsStore.trades?.length,
     () => loadT0Stats()
   )
+  // 监听全局快捷键
+  window.addEventListener('keydown', onKeyDown)
 })
 onUnmounted(() => {
   if (_unwatchTrades) _unwatchTrades()
+  window.removeEventListener('keydown', onKeyDown)
 })
 </script>
 
@@ -585,6 +901,32 @@ onUnmounted(() => {
 
 .up { color: #f56c6c; }   /* A股红涨绿跌 */
 .down { color: #67c23a; }
+
+/* 行情价格跳动动画（最新推送时短暂高亮） */
+@keyframes priceFlash {
+  0% { background-color: transparent; }
+  20% { background-color: var(--el-color-warning-light-7); }
+  100% { background-color: transparent; }
+}
+
+.last-price {
+  font-size: 28px;
+  font-weight: 700;
+  font-family: var(--mono-font);
+  transition: color 0.3s;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.last-price.flash-up {
+  animation: priceFlash 0.6s ease-out;
+  color: #f56c6c !important;
+}
+
+.last-price.flash-down {
+  animation: priceFlash 0.6s ease-out;
+  color: #67c23a !important;
+}
 
 .quote-meta {
   font-size: 12px;
@@ -746,5 +1088,61 @@ onUnmounted(() => {
   .content-card-row {
     grid-template-columns: 1fr;
   }
+}
+
+/* 仓位管理 + 风险建议 */
+.risk-card { margin-bottom: 16px; }
+.card-header-flex {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.risk-profile { margin-bottom: 16px; }
+.risk-grid { margin-bottom: 12px; }
+.risk-item {
+  background: var(--el-fill-color-light);
+  border-radius: 8px;
+  padding: 12px 16px;
+  text-align: center;
+}
+.risk-label { font-size: 12px; color: #909399; margin-bottom: 4px; }
+.risk-value { font-size: 22px; font-weight: 700; color: #303133; }
+.risk-hint { font-size: 11px; color: #909399; margin-top: 2px; }
+.risk-tag {
+  padding: 2px 10px;
+  border-radius: 10px;
+  font-size: 12px;
+  font-weight: 600;
+}
+.risk-tag.safe { background: #f0f9eb; color: #67c23a; }
+.risk-tag.low { background: #fdf6ec; color: #e6a23c; }
+.risk-tag.medium { background: #fef0f0; color: #f56c6c; }
+.risk-tag.high { background: #fef0f0; color: #f56c6c; font-weight: 700; }
+.risk-warnings { margin-top: 8px; }
+.warning-list { margin: 0; padding-left: 20px; line-height: 1.7; }
+
+/* 历史曲线 */
+.history-card { margin-bottom: 16px; }
+.history-meta { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; }
+.history-meta .meta-item { font-size: 13px; color: #606266; }
+.history-meta b { font-weight: 700; }
+.days-pick { margin-left: 8px; }
+.chart-wrap { padding: 8px 4px 0; }
+.chart-svg {
+  width: 100%;
+  height: 200px;
+  display: block;
+}
+.x-labels {
+  position: relative;
+  height: 22px;
+  margin-top: 4px;
+}
+.x-labels span {
+  position: absolute;
+  transform: translateX(-50%);
+  font-size: 11px;
+  color: #909399;
+  font-family: var(--mono-font);
 }
 </style>
