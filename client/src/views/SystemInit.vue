@@ -354,15 +354,21 @@ async function handleInit() {
 }
 
 async function handleReconcile() {
+  if (!initForm.date) {
+    ElMessage.warning('请先选择交易日')
+    return
+  }
   loading.reconcile = true
   try {
-    const result = await reconcileApi.getConfig()
-    if (result) {
-      ElMessage.success('对账报告已生成')
+    const result = await tradingDayApi.init(initForm.date, 'manual')
+    if (result.code === 0 || result.ok) {
+      ElMessage.success(`对账报告已生成：#${result.report_id || ''}`)
       loadReports()
+    } else {
+      ElMessage.error(`对账失败：${result.msg || result.error || '未知错误'}`)
     }
   } catch (e) {
-    ElMessage.error('对账失败')
+    ElMessage.error('对账失败：' + (e.msg || e.message))
   } finally {
     loading.reconcile = false
   }

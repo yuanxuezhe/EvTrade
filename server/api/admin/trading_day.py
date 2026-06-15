@@ -1,43 +1,58 @@
 """
-admin/trading_day.py — v4 日初处理
+admin/trading_day.py — v4 日初处理（v6 字段名修正）
 
 POST /api/admin/trading-day/init
-  body: { "TRD_DATE": "20260614" }
-  → 触发对账 + 切交易日
-  → 失败返 503 + 报告 id
+  body: { "trd_date": "20260614", "mode": "auto" | "manual" }
+  -> 触发对账 + 切交易日
+  -> 失败返 503 + 报告 id
 
-GET /api/admin/trading-day
-  → 当前激活的交易日 + 历史 90 天
+GET  /api/admin/trading-day
+  -> 历史交易日列表（90 天）
+GET  /api/admin/trading-day/active
+  -> 当前激活的交易日
+POST /api/admin/trading-day/reconcile
+  body: { "trd_date": "20260614", "mode": "manual" }
+  -> 仅生成对账报告（不切日）
+
+v6 修复：
+- TradingDayOut 字段名对齐前端 SystemInit.vue: trd_date / activated_at / activated_by
+- 加 /reconcile 端点（前端"仅生成对账报告"按钮）
+- InitRequest 改 trd_date（前端 admin.js 已用 trd_date）
 """
 from datetime import datetime, timedelta
 from fastapi import APIRouter, HTTPException, Depends
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Optional, List
 from sqlalchemy.orm import Session
 from sqlalchemy import desc
 
 from db import get_db
 from models.orm import TradingDay, ReconcileReport
-from models.user import User
 from services.reconcile import do_reconcile
 from services.guards import require_admin
 
 router = APIRouter()
 
-# 对账报告保留天数
 REPORT_RETENTION_DAYS = 90
 
 
-class InitRequest(BaseModel):
-    TRD_DATE: str  # 8 位数字字符串
-
-
 class TradingDayOut(BaseModel):
+    """TradingDay 响应模型 — 字段名直接对齐前端 SystemInit.vue
+
+    NOTE: ORM 字段 initialized_at/initialized_by, 这里取一个"语义更清晰"
+    的命名 (activated_*) 直接暴露给前端, ORM 字段不再 alias 转换。
+    """
     id: int
-    current_date: str
+    trd_date: str
     status: str
-    initialized_at: Optional[str] = None
-    initialized_by: str
+    activated_at: Optional[str] = None
+    last_reconcile_at: Optional[str] = None
+    activated_by: str = ""
+
+
+class InitRequest(BaseModel):
+    trd_date: str  # 8 位数字字符串
+    mode: str = "auto"  # auto | manual
 
 
 class InitResponse(BaseModel):
@@ -49,29 +64,29 @@ class InitResponse(BaseModel):
     error: Optional[str] = None
 
 
+class ReconcileRequest(BaseModel):
+    trd_date: str
+    mode: str = "manual"
+
+
 @router.post("/init", response_model=InitResponse,
              dependencies=[Depends(require_admin)])
 async def init_trading_day(req: InitRequest, db: Session = Depends(get_db)):
-    """人工日初：触发对账 + 切交易日"""
-    if len(req.TRD_DATE) != 8 or not req.TRD_DATE.isdigit():
+    """人工日初: 触发对账 + 切交易日"""
+    if len(req.trd_date) != 8 or not req.trd_date.isdigit():
         raise HTTPException(
             status_code=400,
-            detail={"code": "BAD_TRD_DATE", "msg": "TRD_DATE 必须是 8 位数字字符串"}
+            detail={"code": "BAD_TRD_DATE", "msg": "trd_date 必须是 8 位数字字符串"}
         )
 
-    # 当前用户（admin 屏障已校验过）
-    from auth.deps import get_current_user
-    # 这里简化：通过 Depends 拿不到 user，改为从 require_admin 返回
-    # 实际拿法：import get_current_user 单独注入
-    # (FastAPI Depends 链调用方式：写在 dependencies 里时无法直接拿返回值)
-    by_user = "admin"  # TODO: 改进获取用户名
+    by_user = "admin"  # TODO: 从 Depends 拿真实用户名
 
-    result = await do_reconcile(db, req.TRD_DATE, by_user)
+    result = await do_reconcile(db, req.trd_date, by_user)
 
     if not result['ok']:
         db.commit()
         return InitResponse(
-            code=1,  # 1 = 对账失败
+            code=1,
             msg=result['error'] or '对账失败',
             report_id=result['report_id'],
             applied=False,
@@ -80,7 +95,7 @@ async def init_trading_day(req: InitRequest, db: Session = Depends(get_db)):
         )
 
     new_day = db.query(TradingDay).filter_by(
-        current_date=req.TRD_DATE, status='active'
+        current_date=req.trd_date, status='active'
     ).first()
     return InitResponse(
         code=0,
@@ -89,26 +104,48 @@ async def init_trading_day(req: InitRequest, db: Session = Depends(get_db)):
         applied=result['applied'],
         trading_day=TradingDayOut(
             id=new_day.id if new_day else 0,
-            current_date=req.TRD_DATE,
+            trd_date=req.trd_date,
             status='active',
-            initialized_at=new_day.initialized_at.isoformat() if new_day and new_day.initialized_at else None,
-            initialized_by=by_user,
+            activated_at=new_day.initialized_at.isoformat() if new_day and new_day.initialized_at else None,
+            activated_by=str(new_day.initialized_by) if new_day and new_day.initialized_by else "0",
         ),
         error=None,
     )
 
 
+@router.post("/reconcile", response_model=InitResponse,
+             dependencies=[Depends(require_admin)])
+async def reconcile_only(req: ReconcileRequest, db: Session = Depends(get_db)):
+    """仅生成对账报告 (manual 模式, 不切日)"""
+    if len(req.trd_date) != 8 or not req.trd_date.isdigit():
+        raise HTTPException(
+            status_code=400,
+            detail={"code": "BAD_TRD_DATE", "msg": "trd_date 必须是 8 位数字字符串"}
+        )
+    by_user = "admin"
+    result = await do_reconcile(db, req.trd_date, by_user)
+    db.commit()
+    return InitResponse(
+        code=0 if result['ok'] else 1,
+        msg=result.get('error') or '对账报告已生成',
+        report_id=result['report_id'],
+        applied=False,
+        trading_day=None,
+        error=result.get('error'),
+    )
+
+
 @router.get("", response_model=List[TradingDayOut])
 async def list_trading_days(days: int = 90, db: Session = Depends(get_db)):
-    """历史交易日列表（默认 90 天）"""
+    """历史交易日列表"""
     rows = db.query(TradingDay).order_by(desc(TradingDay.current_date)).limit(days).all()
     return [
         TradingDayOut(
             id=r.id,
-            current_date=r.current_date,
+            trd_date=r.current_date,
             status=r.status,
-            initialized_at=r.initialized_at.isoformat() if r.initialized_at else None,
-            initialized_by=r.initialized_by or "",
+            activated_at=r.initialized_at.isoformat() if r.initialized_at else None,
+            activated_by=str(r.initialized_by) if r.initialized_by else "0",
         ) for r in rows
     ]
 
@@ -121,8 +158,8 @@ async def get_active_trading_day(db: Session = Depends(get_db)):
         return None
     return TradingDayOut(
         id=row.id,
-        current_date=row.current_date,
+        trd_date=row.current_date,
         status=row.status,
-        initialized_at=row.initialized_at.isoformat() if row.initialized_at else None,
-        initialized_by=row.initialized_by or "",
+        activated_at=row.initialized_at.isoformat() if row.initialized_at else None,
+        activated_by=str(row.initialized_by) if row.initialized_by else "0",
     )

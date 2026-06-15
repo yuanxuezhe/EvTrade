@@ -7,14 +7,19 @@ import { http } from './index'
 
 // 交易日管理
 export const tradingDayApi = {
-  // 当前激活交易日 + 历史 90 天
+  // 当前激活交易日
   async current() {
+    const res = await http.get('/admin/trading-day/active')
+    return res.data
+  },
+  // 列出历史交易日
+  async list() {
     const res = await http.get('/admin/trading-day')
     return res.data
   },
   // 触发日初（对账 + 切日）
-  async init(trdDate) {
-    const res = await http.post('/admin/trading-day/init', { trd_date: trdDate })
+  async init(trdDate, mode = 'auto') {
+    const res = await http.post('/admin/trading-day/init', { trd_date: trdDate, mode })
     return res.data
   },
   // 关闭当前日

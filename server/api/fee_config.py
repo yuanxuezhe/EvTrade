@@ -34,7 +34,7 @@ class FeeConfigUpdate(BaseModel):
 async def get_fee_config_route(db: Session = Depends(get_db)):
     cfg = db.query(FeeConfig).first()
     if not cfg:
-        cfg = FeeConfig(commission_rate=0.0001, stamp_tax_rate=0.0005, slippage=0.0)
+        cfg = FeeConfig(commission_rate=0.0001, stamp_tax_rate=0.001, slippage=0.0)
         db.add(cfg)
         db.commit()
         db.refresh(cfg)
