@@ -1,8 +1,13 @@
 """
 positions.py — v4 读本地 DB
 
-持仓由 pos_cfm push handler 写入 positions 表。
+持仓由 pos_cfm push handler + do_reconcile 写入 positions 表。
 GET /api/positions 纯读 DB，不调 RPC。
+
+NOTE: market_value 字段
+- v4 实施时 Position ORM 漏了 market_value 字段（v4 bug）
+- 此处临时用 cost × total 作为「成本市值」代理，前端持仓页用 quote store
+  liveMarketValue 实时重算真实市值（holdings.js:83-97）
 """
 from fastapi import APIRouter, Depends
 from typing import List, Optional
@@ -61,7 +66,8 @@ async def list_positions(
             available=r.available,
             total=r.total,
             cost=r.cost,
-            market_value=r.market_value,
+            # 成本市值代理：cost × total；前端用 quote store 实时重算真实市值
+            market_value=round(r.cost * r.total, 2),
             synced_at=r.synced_at.isoformat() if r.synced_at else None,
             synced_from=r.synced_from,
         ) for r in rows
