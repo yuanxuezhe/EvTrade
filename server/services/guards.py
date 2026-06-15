@@ -31,7 +31,9 @@ def resolve_default_trd_date(db: Session) -> str:
     if active:
         return active.trd_date
     # 兜底：取本地表 MAX
-    for table in ("orders", "trades", "positions", "reconcile_report"):
+    # v5 schema 注意：positions 是当前快照（按 stock_code 唯一），无 trd_date 列，
+    # 不能进这个循环。其余 3 张表都有 trd_date。
+    for table in ("orders", "trades", "reconcile_report"):
         r = db.execute(text(f"SELECT MAX(trd_date) FROM {table}")).first()
         if r and r[0]:
             return r[0]
