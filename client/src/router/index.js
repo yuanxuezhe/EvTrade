@@ -15,6 +15,7 @@ const TStrategy = () => import('../views/TStrategy.vue')
 const Users = () => import('../views/Users.vue')
 const Profile = () => import('../views/Profile.vue')
 const SystemInit = () => import('../views/SystemInit.vue')
+const SystemConfig = () => import('../views/SystemConfig.vue')
 const T0Trade = () => import('../views/T0Trade.vue')
 
 const routes = [
@@ -42,6 +43,7 @@ const routes = [
   },
   { path: '/profile', name: 'Profile', component: Profile, meta: { title: '个人资料' } },
   { path: '/system-init', name: 'SystemInit', component: SystemInit, meta: { title: '系统初始化', requiresAdmin: true } },
+  { path: '/system-config', name: 'SystemConfig', component: SystemConfig, meta: { title: '系统配置', requiresAdmin: true } },
   { path: '/t0-trade', name: 'T0Trade', component: T0Trade, meta: { title: '快速做T' } },
   { path: '/:pathMatch(.*)*', redirect: '/' }
 ]

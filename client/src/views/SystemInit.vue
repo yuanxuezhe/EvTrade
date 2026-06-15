@@ -83,108 +83,12 @@
       </el-form>
     </el-card>
 
-    <!-- 配置面板 -->
-    <el-card class="config-card" shadow="hover">
-      <template #header>
-        <span class="card-title">⚙️ 系统配置</span>
-      </template>
-      <el-tabs v-model="activeTab">
-        <!-- 对账配置 -->
-        <el-tab-pane label="对账" name="reconcile">
-          <el-form :model="reconcileCfg" label-width="160px" v-loading="loading.config">
-            <el-form-item label="自动对账">
-              <el-switch
-                v-model="reconcileCfg.auto_reconcile"
-                @change="saveReconcile"
-              />
-              <span class="hint">日初时自动调柜台对账</span>
-            </el-form-item>
-            <el-form-item label="自动时以谁为准">
-              <el-radio-group v-model="reconcileCfg.auto_use_broker_data" @change="saveReconcile">
-                <el-radio :value="1">以柜台为准</el-radio>
-                <el-radio :value="0">以本地为准</el-radio>
-              </el-radio-group>
-            </el-form-item>
-          </el-form>
-        </el-tab-pane>
-
-        <!-- 时段配置 -->
-        <el-tab-pane label="交易时段" name="session">
-          <el-form :model="sessionCfg" label-width="160px" v-loading="loading.config" v-if="activeTab === 'session'">
-            <el-form-item label="上午时段">
-              <el-time-picker
-                v-model="sessionCfg.morning_start"
-                format="HH:mm"
-                placeholder="开始"
-                @change="saveSession"
-              />
-              <span style="margin: 0 8px">—</span>
-              <el-time-picker
-                v-model="sessionCfg.morning_end"
-                format="HH:mm"
-                placeholder="结束"
-                @change="saveSession"
-              />
-            </el-form-item>
-            <el-form-item label="下午时段">
-              <el-time-picker
-                v-model="sessionCfg.afternoon_start"
-                format="HH:mm"
-                placeholder="开始"
-                @change="saveSession"
-              />
-              <span style="margin: 0 8px">—</span>
-              <el-time-picker
-                v-model="sessionCfg.afternoon_end"
-                format="HH:mm"
-                placeholder="结束"
-                @change="saveSession"
-              />
-            </el-form-item>
-            <el-form-item label="半日市">
-              <el-switch v-model="sessionCfg.is_half_day" @change="saveSession" />
-            </el-form-item>
-          </el-form>
-        </el-tab-pane>
-
-        <!-- 费率配置 -->
-        <el-tab-pane label="费率" name="fee">
-          <el-form :model="feeCfg" label-width="160px" v-loading="loading.config">
-            <el-form-item label="佣金费率">
-              <el-input-number
-                v-model="feeCfg.commission_rate"
-                :step="0.00001"
-                :min="0"
-                :max="0.01"
-                :precision="5"
-                @change="saveFee"
-              />
-              <span class="hint">万一 = 0.0001</span>
-            </el-form-item>
-            <el-form-item label="印花税率">
-              <el-input-number
-                v-model="feeCfg.stamp_tax_rate"
-                :step="0.0001"
-                :min="0"
-                :max="0.01"
-                :precision="4"
-                @change="saveFee"
-              />
-              <span class="hint">默认 0.001 (卖出)</span>
-            </el-form-item>
-            <el-form-item label="滑点">
-              <el-input-number
-                v-model="feeCfg.slippage"
-                :step="0.0001"
-                :min="0"
-                :max="0.01"
-                :precision="4"
-                @change="saveFee"
-              />
-            </el-form-item>
-          </el-form>
-        </el-tab-pane>
-      </el-tabs>
+    <!-- 配置面板（已迁出 → SystemConfig.vue，v6.5 拆分） -->
+    <el-card class="config-link-card" shadow="hover">
+      <el-button type="primary" @click="$router.push('/system-config')">
+        <el-icon class="el-icon--right"><Setting /></el-icon>
+        前往系统配置（对账/时段/费率）
+      </el-button>
     </el-card>
 
     <!-- 历史报告 -->
@@ -236,22 +140,21 @@
 </template>
 
 <script setup>
-import { ref, onMounted, reactive, computed } from 'vue'
+import { ref, onMounted, reactive, onUnmounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { tradingDayApi, reconcileApi, sessionApi, feeConfigApi } from '../api/admin'
+import { Setting } from '@element-plus/icons-vue'
+import { tradingDayApi, reconcileApi } from '../api/admin'
 import { http } from '../api'
 
 const loading = reactive({
   current: false,
   init: false,
   reconcile: false,
-  config: false,
   reports: false
 })
 
 const currentDay = ref(null)
 const reports = ref([])
-const activeTab = ref('reconcile')
 const reportDialog = ref(false)
 const reportDetail = ref('')
 
@@ -260,15 +163,8 @@ const initForm = reactive({
   mode: 'auto'
 })
 
-const reconcileCfg = reactive({ auto_reconcile: true, auto_use_broker_data: 1 })
-const sessionCfg = reactive({
-  morning_start: '09:15:00', morning_end: '11:30:00',
-  afternoon_start: '13:00:00', afternoon_end: '15:00:00',
-  is_half_day: false
-})
-const feeCfg = reactive({ commission_rate: 0.0001, stamp_tax_rate: 0.001, slippage: 0 })
-
 const clock = reactive({ now: '', in_session: false, session_label: '' })
+let _tickHandle = null
 
 function tickClock() {
   const d = new Date()
@@ -291,24 +187,6 @@ async function loadCurrent() {
     currentDay.value = null
   } finally {
     loading.current = false
-  }
-}
-
-async function loadConfig() {
-  loading.config = true
-  try {
-    const [rc, sc, fc] = await Promise.all([
-      reconcileApi.getConfig(),
-      sessionApi.get(),
-      feeConfigApi.get()
-    ])
-    Object.assign(reconcileCfg, rc)
-    Object.assign(sessionCfg, sc)
-    Object.assign(feeCfg, fc)
-  } catch (e) {
-    ElMessage.error('配置加载失败')
-  } finally {
-    loading.config = false
   }
 }
 
@@ -374,19 +252,6 @@ async function handleReconcile() {
   }
 }
 
-async function saveReconcile() {
-  try { await reconcileApi.updateConfig(reconcileCfg); ElMessage.success('对账配置已保存') }
-  catch { ElMessage.error('保存失败') }
-}
-async function saveSession() {
-  try { await sessionApi.update(sessionCfg); ElMessage.success('时段配置已保存') }
-  catch { ElMessage.error('保存失败') }
-}
-async function saveFee() {
-  try { await feeConfigApi.update(feeCfg); ElMessage.success('费率已保存') }
-  catch { ElMessage.error('保存失败') }
-}
-
 async function viewReport(row) {
   try {
     const data = await reconcileApi.getReport(row.id)
@@ -399,10 +264,12 @@ async function viewReport(row) {
 
 onMounted(() => {
   loadCurrent()
-  loadConfig()
   loadReports()
   tickClock()
-  setInterval(tickClock, 1000)
+  _tickHandle = setInterval(tickClock, 1000)
+})
+onUnmounted(() => {
+  if (_tickHandle) clearInterval(_tickHandle)
 })
 </script>
 
