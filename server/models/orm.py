@@ -127,6 +127,7 @@ class TradingDay(Base):
     __tablename__ = "trading_day"
     __table_args__ = (
         Index("ix_trading_day_status", "status"),
+        UniqueConstraint("current_date", name="uq_trading_day_current_date"),
     )
 
     id = Column(Integer, primary_key=True, autoincrement=True)

@@ -1,25 +1,30 @@
 """
-reconcile.py — v4 对账算法
+reconcile.py — v4 对账算法 (v7 简化: 委托/成交不走对账, push 增量)
 
 启动人工触发，admin 调 POST /api/admin/reconcile/trigger：
-1. 调 qry_pos + qry_asset + qry_orders + qry_trades（顺序：先查 RPC）
+1. 调 qry_positions + qry_asset（仅 2 个 RPC，委托/成交靠 push 增量）
 2. 计算 diff（本地 vs 柜台）
 3. 写 reconcile_report 表
-4. auto_reconcile=True → 用柜台数据覆盖本地
+4. auto_reconcile=True → 用柜台数据覆盖本地 Position + Asset
    auto_reconcile=False → 只写报告，不动数据
 5. 切交易日到新 TRD_DATE
 
 对账失败 → 不切交易日，返回 503，用户重试。
 RPC 部分失败 → 写对账报告 + 503 错误详情，不切交易日。
+
+v7 改动（你要求"委托和成交不需要对账"）：
+- 删 qry_orders / qry_trades 调用
+- 删 _apply_broker_data 中 Order/Trade 覆盖逻辑
+- Order/Trade 改靠 push_handlers.handle_push (ord_cfm / trd_cfm) 自动 upsert
 """
 from datetime import datetime
 from typing import Dict, Any, List
 from sqlalchemy.orm import Session
 
 from db import SessionLocal
-from rpc.client import qry_positions, qry_asset, qry_orders, qry_trades
+from rpc.client import qry_positions, qry_asset
 from models.orm import (
-    Order, Trade, Position, Asset, TradingDay, ReconcileConfig, ReconcileReport,
+    Position, Asset, TradingDay, ReconcileConfig, ReconcileReport,
 )
 import logging
 
@@ -61,23 +66,9 @@ async def do_reconcile(
     """
     cfg = get_reconcile_config(db)
 
-    # 1. 拉柜台 4 类数据
+    # 1. 拉柜台 2 类数据 (委托/成交靠 push 增量, 不在对账走)
     diffs: Dict[str, Any] = {'fetched_at': datetime.utcnow().isoformat()}
     rpc_errors: List[str] = []
-
-    try:
-        orders_data = _safe_dict_list(await qry_orders())
-        diffs['orders_count'] = len(orders_data)
-    except Exception as e:
-        rpc_errors.append(f"qry_orders: {e}")
-        orders_data = []
-
-    try:
-        trades_data = _safe_dict_list(await qry_trades())
-        diffs['trades_count'] = len(trades_data)
-    except Exception as e:
-        rpc_errors.append(f"qry_trades: {e}")
-        trades_data = []
 
     try:
         positions_data = _safe_dict_list(await qry_positions())
@@ -97,14 +88,9 @@ async def do_reconcile(
     import json
     rpc_status = "ok"
     if rpc_errors:
-        rpc_status = "failed" if not any([orders_data, trades_data, positions_data, assets_data]) else "partial"
+        rpc_status = "failed" if not any([positions_data, assets_data]) else "partial"
 
-    # 解析本地快照（对比用）
-    local_orders = [
-        {"order_id": o.order_id, "stock_code": o.stock_code, "status": o.status,
-         "volume": o.volume, "traded_volume": o.traded_volume, "TRD_DATE": o.TRD_DATE}
-        for o in db.query(Order).all()
-    ]
+    # 解析本地快照（对比用; 委托/成交不参与对账）
     local_positions = [
         {"stock_code": p.stock_code, "total": p.total, "available": p.available,
          "TRD_DATE": p.TRD_DATE}
@@ -121,11 +107,10 @@ async def do_reconcile(
         diffs_json=json.dumps({
             'rpc_errors': rpc_errors,
             'broker': {
-                'orders': orders_data, 'trades': trades_data,
                 'positions': positions_data, 'assets': assets_data,
             },
             'local': {
-                'orders': local_orders, 'positions': local_positions, 'assets': local_assets,
+                'positions': local_positions, 'assets': local_assets,
             },
         }, ensure_ascii=False, default=str),
         broker_asset_json=json.dumps(assets_data, ensure_ascii=False, default=str),
@@ -149,13 +134,13 @@ async def do_reconcile(
             'error': f"全部 RPC 失败: {'; '.join(rpc_errors)}",
         }
 
-    # 4. auto_reconcile=True → 覆盖本地
+    # 4. auto_reconcile=True → 覆盖本地 (Position + Asset, 委托/成交跳过)
     applied = False
     if cfg.auto_reconcile:
         try:
             applied = _apply_broker_data(
                 db, new_trd_date,
-                orders_data, trades_data, positions_data, assets_data
+                positions_data, assets_data
             )
         except Exception as e:
             log.exception("apply_broker_data failed: %s", e)
@@ -168,6 +153,11 @@ async def do_reconcile(
             }
 
     # 5. 切交易日 (upsert: 有则激活老行, 无则新增)
+    #
+    # DB 层级: TradingDay ORM 有 UniqueConstraint("current_date")
+    # 防同日多 INSERT, 配合本 upsert 块保证同日只 1 行 active。
+    # 同 current_date 再次 init: 走 `existing` 分支, status='active' + 更新元数据
+    # 切到新日: 老的 active 同 current_date 不同的先 closed, 再查/插新日
     if applied or not cfg.auto_reconcile:
         old_active = db.query(TradingDay).filter_by(status='active').first()
         if old_active and old_active.current_date != new_trd_date:
@@ -200,55 +190,14 @@ async def do_reconcile(
 def _apply_broker_data(
     db: Session,
     trd_date: str,
-    orders_data: List[Dict],
-    trades_data: List[Dict],
     positions_data: List[Dict],
     assets_data: List[Dict],
 ) -> bool:
-    """用柜台数据覆盖本地表"""
-    # Orders: 删旧日 + 插新日（对账是日初处理，覆盖就行）
-    db.query(Order).filter(Order.TRD_DATE == trd_date).delete()
-    for o in orders_data:
-        order_id = str(o.get('order_id', ''))
-        if not order_id:
-            continue
-        db.add(Order(
-            order_id=order_id,
-            client_order_id=str(o.get('client_order_id', order_id)),
-            order_no=str(o.get('order_no', order_id)),
-            order_remark=str(o.get('order_remark', order_id)),
-            TRD_DATE=trd_date,
-            stock_code=str(o.get('stock_code', '')),
-            order_type=str(o.get('order_type', '')),
-            price_type=int(o.get('price_type', 11) or 11),
-            price=float(o.get('price', 0) or 0),
-            volume=int(o.get('volume', 0) or 0),
-            traded_volume=int(o.get('traded_volume', 0) or 0),
-            traded_amount=float(o.get('traded_amount', 0) or 0),
-            avg_price=float(o.get('avg_price', 0) or 0),
-            status=str(o.get('status', '49')),
-            status_msg=str(o.get('status_msg', '')),
-            order_time=str(o.get('order_time', '')),
-        ))
+    """用柜台数据覆盖本地 (仅 Position + Asset, 委托/成交靠 push)
 
-    # Trades
-    db.query(Trade).filter(Trade.TRD_DATE == trd_date).delete()
-    for t in trades_data:
-        trade_id = str(t.get('trade_id', ''))
-        if not trade_id:
-            continue
-        db.add(Trade(
-            trade_id=trade_id,
-            TRD_DATE=trd_date,
-            order_id=str(t.get('order_id', '')),
-            stock_code=str(t.get('stock_code', '')),
-            order_type=str(t.get('order_type', '')),
-            price=float(t.get('price', 0) or 0),
-            volume=int(t.get('volume', 0) or 0),
-            amount=float(t.get('amount', 0) or 0),
-            trade_time=str(t.get('trade_time', '')),
-        ))
-
+    v7 简化: 委托/成交不在对账流程处理, 改靠 push_handlers.handle_push
+    (ord_cfm / trd_cfm 事件) 自动 upsert 到本地表。
+    """
     # Positions
     db.query(Position).filter(Position.TRD_DATE == trd_date).delete()
     for p in positions_data:
@@ -269,17 +218,20 @@ def _apply_broker_data(
             synced_from='rpc_reconcile',
         ))
 
-    # Assets (单行)
-    db.query(Asset).filter(Asset.TRD_DATE == trd_date).delete()
+    # Assets (单行; Asset ORM CheckConstraint("id=1") 强制单行,
+    # 切日必须先 DELETE 老日, 再 INSERT 新日 (id=1))
+    db.query(Asset).delete()
     if assets_data:
         a = assets_data[0]
         db.add(Asset(
+            id=1,
             TRD_DATE=trd_date,
             cash=float(a.get('cash', 0) or 0),
             frozen_cash=float(a.get('frozen_cash', a.get('frozen', 0)) or 0),
             market_value=float(a.get('market_value', 0) or 0),
             total_asset=float(a.get('total_asset', 0) or 0),
             synced_at=datetime.utcnow(),
+            synced_from='rpc_reconcile',
         ))
 
     db.commit()
