@@ -12,6 +12,9 @@ export function formatMoney(val, decimals = 2) {
   })
 }
 
+// alias: T0Trade 等模块用 formatAmount
+export const formatAmount = formatMoney
+
 export function formatNumber(val) {
   const n = Number(val)
   if (!Number.isFinite(n)) return '0'
