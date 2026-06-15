@@ -1,10 +1,8 @@
 """
-orders.py — v4 重构版（已完成：T0 一键买卖扩展）
+orders.py — v4 重构版
 
 写路径：先 DB 后 RPC
   POST /place                  → INSERT status=48 → 调 ord_stk(remark=order_no) → 改 status=49/55
-  POST /place_t0               → T0 一键（自动取整 100 + 应用配平系数）
-  POST /place_t0_pair          → T0 一买一卖（智能配平）
   DELETE /{id}                 → 调 RPC cancel_ord，不本地改 status（等 push）
 
 读路径：纯 DB
@@ -26,10 +24,8 @@ from auth.deps import get_current_user
 from models.user import User
 from services.guards import require_trader, require_trading_day, require_trading_session
 from services.order_no import next_order_no
-from services.t0 import (
-    get_fee_config, calc_t0_volume, calc_net_amount, round_to_lot, LOT_SIZE,
-)
-from rpc.client import ord_stk, cancel_order, qry_orders
+from services.t0 import get_fee_config, calc_t0_volume, calc_net_amount
+from rpc.client import ord_stk, cancel_order as rpc_cancel_order, qry_orders
 from ws.manager import ws_manager
 
 log = logging.getLogger(__name__)
@@ -46,7 +42,6 @@ class PlaceOrderRequest(BaseModel):
     price: float
     volume: int
     t0_coefficient: float = 1.0
-    is_t0_pair: bool = False
 
 
 class OrderOut(BaseModel):
@@ -225,29 +220,6 @@ async def place_order(req: PlaceOrderRequest, user: User = Depends(get_current_u
     )
 
 
-@router.post("/place_t0", response_model=PlaceOrderResponse,
-             dependencies=[Depends(require_trader), Depends(require_trading_day), Depends(require_trading_session)])
-async def place_t0_order(req: PlaceOrderRequest, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    """T0 一键买卖（强制应用配平系数 + 整手）"""
-    # 等价于 place 但 frontend 通常会设 coefficient=1.0 默认
-    return await place_order(req, user=user, db=db)
-
-
-@router.post("/place_t0_pair", response_model=PlaceOrderResponse,
-             dependencies=[Depends(require_trader), Depends(require_trading_day), Depends(require_trading_session)])
-async def place_t0_pair(req: PlaceOrderRequest, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    """T0 一买一卖（智能配平：根据持仓差额计算）
-
-    通常卖单 = 持仓可用，买单 = ceil(目标量 / 100) * 100
-    """
-    if req.order_type != "23":  # 仅支持买方向触发
-        raise HTTPException(
-            status_code=400,
-            detail={"code": "T0_PAIR_BUY_ONLY", "msg": "place_t0_pair 只接收买单（order_type=23），系统自动生成对等卖单"}
-        )
-    return await place_order(req, user=user, db=db)
-
-
 # ────────────── 撤单 ──────────────
 
 @router.delete("/{order_id}", response_model=CancelResponse,
@@ -266,7 +238,7 @@ async def cancel_order(order_id: str, user: User = Depends(get_current_user), db
         )
 
     try:
-        ack = await cancel_order(order_id=order_id)
+        ack = await rpc_cancel_order(order_id=order_id)
         ack_code = int(ack.get("code", -1))
         if ack_code == 0:
             # 成功 → 等 push 改 status

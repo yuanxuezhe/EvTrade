@@ -1,15 +1,15 @@
 # 1. Why
 
-本轮深度分析（2026-06-14）发现 EvTrade 项目 13 项问题，分级如下：
+两轮深度分析（2026-06-14 / 2026-06-15）累计发现 EvTrade 项目 **26 项问题**，分级如下：
 
-| 级别 | 数量 | 状态 |
-|---|---|---|
-| 🔴 高（bug/数据不一致） | 3 | **2 已修，1 待修** |
-| 🟡 中（设计缺陷/契约不清） | 5 | 待修 |
-| 🟢 低（代码风格/可优化） | 5 | 视情况 |
+| 级别 | 数量 | 已修 | 待修 |
+|---|---|---|---|
+| 🔴 高（运行时崩溃/数据错误/功能不可用） | 5 | 3 | **2** |
+| 🟡 中（设计缺陷/契约不一致/代码质量） | 11 | 0 | **11** |
+| 🟢 低（代码风格/文档/可优化项） | 10 | 2 | **8** |
 
 本 change 是**问题盘点 + 修复追踪表**，不直接实施任何改动。
-修复具体某项时，新建独立 change（如 `add-config-validation`）。
+修复具体某项时，新建独立 change 提案。
 
 ## 2. What
 
@@ -17,55 +17,100 @@
 
 | # | 问题 | 根因 | 修复 | 提交 |
 |---|---|---|---|---|
-| H1 | `DELETE /api/orders/{id}` 假撤单（前端刷新就回到原状态） | `update_order_status` 只写内存，无 RPC | `client.cancel_order` 走真 RPC，DELETE 调它 | `1b8e785` |
-| H2 | `services/trading.py` 118 行内存仓，永不被消费 | 早版本遗物 | 整文件删除 | `1b8e785` |
-| H3 | `services/xtquant.py` 硬编码 Windows 路径，Linux 必崩 | 同上 | 整文件删除 | `1b8e785` |
+| H1 | `DELETE /api/orders/{id}` 假撤单 | `update_order_status` 只写内存，无 RPC | `client.cancel_order` 走真 RPC | `1b8e785` |
+| H2 | `services/trading.py` 118 行内存仓 | 早版本遗物 | 整文件删除 | `1b8e785` |
+| H3 | `services/xtquant.py` 硬编码 Windows 路径 | 同上 | 整文件删除 | `1b8e785` |
 
-### 2.2 🟡 中（待修，本 change 追踪）
+### 2.2 🔴 高（待修）
+
+| # | 问题 | 位置 | 影响 | 建议 change |
+|---|---|---|---|---|
+| H4 | 撤单 API 递归调用自身，非调用 RPC | `api/orders.py:269` | 撤单必然 RecursionError 崩溃 | `fix-cancel-order-recursion` |
+| H5 | `api.createOrder()` POST `/api/orders` 无对应路由，405 | `client/src/api/index.js:128` | 前端创建订单功能完全不可用 | `fix-frontend-create-order` |
+
+**H4 详细分析：**
+`api/orders.py:32` 导入 `from rpc.client import cancel_order`，但第 255 行定义同名函数 `async def cancel_order(...)`，覆盖了导入名。第 269 行 `await cancel_order(order_id=order_id)` 实际调用自身，不是 RPC 客户端。用户每次撤单都会递归溢出。
+
+**H5 详细分析：**
+v4 重构后 `api/orders.py` 只有 `POST /place`、`POST /place_t0`、`POST /place_t0_pair`，删除了老的 `POST ""` 路由。但前端 `api/index.js:128-130` 仍暴露 `createOrder()` 发 `POST /api/orders`，调用方会收到 405。
+
+### 2.3 🟡 中（设计缺陷/契约不一致）
 
 | # | 问题 | 范围 | 建议 change |
 |---|---|---|---|
-| M1 | `JWT_SECRET` 缺失时静默通过用 `dev-secret-please-change` | `configuration` | `add-config-validation` |
-| M2 | 8 个 `_parse_*` 解析器无统一 schema，部分返回 dict 部分 TypedDict | `rpc-protocol` | `consolidate-rpc-parsers` |
-| M3 | `position_update` / `asset_update` WS 频道无数据源（push listener 不识别） | `push` | `route-position-asset-push` |
-| M4 | 行情 vs 业务 WS 在前端是**两个不同 host**（:8765 vs :8000），但 `ws.js` 单 store 管理 | `frontend` | `split-quote-and-bus-ws` |
-| M5 | `TStrategy.vue` / `AlgoStrategy.vue` 各 43 行未实现 | `frontend` | `implement-strategies` 或**删** |
+| M1 | `JWT_SECRET` 缺失时静默用 `dev-secret-please-change` | `configuration` | `add-config-validation` |
+| M2 | 8 个 `_parse_*` 解析器无统一 schema，返回 dict | `rpc-protocol` | `consolidate-rpc-parsers` |
+| M3 | `position_update` / `asset_update` WS 频道无数据源 | `push` | `route-position-asset-push` |
+| M4 | 行情 vs 业务 WS 不同 host（:8765 vs :8000），单 store 管理 | `frontend` | `split-quote-and-bus-ws` |
+| M5 | `TStrategy.vue` / `AlgoStrategy.vue` 未实现 | `frontend` | `implement-strategies` 或**删** |
+| M6 | API 响应格式不一致：asset 用 `{code,msg,data}`，其余用 `{code,msg,list}` | `api` | 合并到 `consolidate-rpc-parsers` |
+| M7 | push handler 写 `pos.market_value` 但 ORM 无此列 → 运行时 AttributeError | `push` | `fix-push-handler-market-value` |
+| M8 | T0 `place_t0` / `place_t0_pair` 只是空壳，直接 delegate 到 `place_order` | `api/orders` | `implement-t0` 或**删壳** |
+| M9 | 服务层绕过 FastAPI DI 自建 Session（`t0.py`, `trading_clock.py`, `guards.py`） | `services` | `fix-service-session-lifecycle` |
+| M10 | `by_user = "admin"` 硬编码审计用户（trading_day.py:82, reconcile.py:76, reconcile.py:122） | `admin` | 合并到 `fix-system-init-and-users-api` |
+| M11 | 前端 3 套 store 存同一份数据（order + position + asset + holdings），WS 更新需写两份 | `frontend/stores` | `unify-frontend-stores` |
 
-### 2.3 🟢 低（视情况）
+**M6 详细分析：**
+- `asset.py` 返回 `{code, msg, data: AssetOut}` — 单对象包在 `data` 里
+- `orders/positions/trades.py` 返回 `{code, msg, list: [...]}` — 数组包在 `list` 里
+- 前端拦截器只识别 `list` 解包，asset 需要 `_parseAsset(resp.data.data)` 特殊处理
+- 前端 `holdings.js:refreshAll` 中 `positions.value = Array.isArray(rPos.value) ? rPos.value : []` — 对 holdings 接口返的 `{code,msg,list}` 解包不彻底
+
+### 2.4 🟢 低
 
 | # | 问题 | 备注 |
 |---|---|---|
-| L1 | `server/main.py` 有 2 个 `@app.on_event("startup")`，FastAPI 推荐用 `lifespan` | 不影响功能 |
-| L2 | `POST /api/auth/logout` 是空 stub | JWT 无状态，可删 |
-| L3 | `client.py:567` 之前 `cancel_order` 注释写了"占位" → 本轮已修 | ✅ |
-| L4 | `kb/` 18 份文档索引校对 | 文档问题 |
-| L5 | `server/test_rpc.py` 是手测脚本，被 pytest 自动发现超时 | 已通过 `pytest.ini testpaths = hq` 规避 |
+| L1 | 2 个 `@app.on_event("startup")`，FastAPI 推荐 `lifespan` | 不影响功能 |
+| L2 | `POST /api/auth/logout` 空 stub，JWT 无状态无法撤销 | 如需实现需 token 黑名单 |
+| L3 | `kb/` 18 份文档与 v4 代码严重不一致 | 文档问题 |
+| L4 | `server/test_rpc.py` 手测脚本 | ✅ 已通过 `pytest.ini` 规避 |
+| L5 | admin 路由未加路由级 `dependencies=_AUTH`，仅靠函数内 `Depends(require_admin)` | 如有遗漏则未鉴权 |
+| L6 | `OrderNoSeq.next_order_no()` UPSERT + SELECT 分两次查询，依赖调用方 commit | 有竞态风险 |
+| L7 | hqserver 向所有 WS 客户端推送全市场行情，无白名单 | 带宽可能过大 |
+| L8 | 持仓/委托/成交/资金 4 个视图仍用 `setInterval` 轮询 + WS 推送同时更新 | 重复更新 |
+| L9 | `Asset` ORM `CheckConstraint(id=1)` 单行约束 + PK id — 无法保留历史资产数据 | 设计取舍 |
+| L10 | `PlaceOrderRequest.t0_coefficient` 有 `is_t0_pair` 字段但 `place_t0_pair` 只 delegate | 与 M8 重叠 |
 
 ## 3. 影响面
 
-- 修复 M1-M5 不影响线上，仅改本地代码
-- M4（拆 WS）需要前端 8 个视图 + 3 个 store 协同改动，**有 UI 风险**
-- M5（策略页面）需要确认是真未实现还是占位
+- **H4/H5** 是运行时 bug，修复直接影响撤单和下单功能
+- **M6/M7** 涉及 API 契约，改动需同步前端
+- **M2/M6** 可合并到 `consolidate-rpc-parsers` 一起做
+- **M8/M9** 改动范围小但涉及服务层重构
+- **M11** 改动最大，涉及前端 store 架构
 
 ## 4. 不在本 change 范围
 
-- 真实环境部署（网络/CORS/Windows 部署） — 留给运维
-- msgpacket 协议本身 — 独立项目
-- QMT 柜台行为 — 不可控
+- 真实环境部署（网络/CORS/Windows 部署）
+- msgpacket 协议本身
+- QMT 柜台行为
+- Position 加 `market_value` 列（确认：前端根据行情实时计算，不需要后端存储）
 
 ## 5. Tasks
 
-- [x] H1-H3 修复（见 commit `1b8e785`）
+- [x] H1-H3 修复（commit `1b8e785`）
 - [x] 18/18 测试通过（commit `3188316`）
+- [x] L4 test_rpc.py 排除（commit `pytest.ini`）
+- [ ] H4 撤单递归修复（提案：`fix-cancel-order-recursion`）
+- [ ] H5 前端 createOrder 修复（提案：`fix-frontend-create-order`）
 - [ ] M1 启动校验（提案：`add-config-validation`）
-- [ ] M2 RPC 解析器统一（提案：`consolidate-rpc-parsers`）
+- [ ] M2+M6 RPC 解析器 + 响应格式统一（提案：`consolidate-rpc-parsers`）
 - [ ] M3 push 路由 position/asset（提案：`route-position-asset-push`）
 - [ ] M4 WS 拆分（提案：`split-quote-and-bus-ws`）
 - [ ] M5 策略页面（提案：`implement-strategies` 或 `remove-placeholder-strategies`）
+- [ ] M7 push handler 写 market_value 修复（提案：`fix-push-handler-market-value`）
+- [ ] M8 T0 端点实现或删壳
+- [ ] M9 服务层 Session 生命周期
+- [ ] M10 审计用户硬编码
+- [ ] M11 前端 store 统一
+- [ ] L1 lifespan 替代 on_event
+- [ ] L2 logout 空 stub
+- [ ] L3 kb 文档对账
+- [ ] L5 admin 路由鉴权重审
 
 ## 6. 归档条件
 
-本 change 性质特殊：**它不是要被实施的 change，而是问题追踪表**。
-建议实施路径：
-- 每完成 M1-M5 一项时，从本文件移出对应行到独立 change 的 tasks.md
-- 全部 M 项完成后，把本文件归档，change 名保留作历史快照
+本 change 是问题追踪表，不是要实施的 change。
+- 每完成一项 M/L 问题时，从本文件移出对应行到独立 change 的 tasks.md
+- 全部 H/M 项完成后，本文件归档作历史快照
+- **market_value 相关已从问题列表移除**：确认由前端根据行情实时计算

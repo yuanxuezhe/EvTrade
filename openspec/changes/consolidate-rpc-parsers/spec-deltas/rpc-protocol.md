@@ -38,6 +38,17 @@ class RpcResponse(BaseModel, Generic[T]):
 - 类型不匹配时记录 warning 日志，**降级**为默认值
 - `code` 非 0 时 `list` 可为空
 
+### REQ-RPC-008: API 响应格式统一 (NEW)
+
+所有 `/api/*` 查询端点统一返回：
+```json
+{"code": 0, "msg": "", "list": [...]}
+```
+
+- `asset` 端点从 `{code, msg, data: {...}}` 改为 `{code, msg, list: [{...}]}`（包单元素数组）
+- 前端 axios 拦截器统一解包 `list` 字段
+- 删除 `_parseAsset(resp.data.data)` 特殊处理
+
 ## REMOVED Requirements
 
 无（旧的 `_parse_*` 函数不是 spec 要求，是实现细节）

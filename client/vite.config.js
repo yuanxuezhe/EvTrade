@@ -3,6 +3,7 @@ import vue from '@vitejs/plugin-vue'
 
 export default defineConfig({
   plugins: [vue()],
+  cacheDir: '../.vite-cache',
   server: {
     port: 50998,
     host: '0.0.0.0',

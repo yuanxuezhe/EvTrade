@@ -21,7 +21,8 @@ import sys
 from typing import Set
 
 import aio_pika
-from websockets.asyncio.server import serve, ServerConnection
+from websockets import serve
+from websockets import WebSocketServerProtocol  # websockets 9.x compatible
 
 # ==================== 配置 ====================
 # 优先从 server/.env 加载（与 server/config.py 共享同一个 .env），便于一处维护。
@@ -69,17 +70,17 @@ logging.basicConfig(
 log = logging.getLogger("hqserver")
 
 # ==================== WebSocket 客户端集合 ====================
-_ws_clients: Set[ServerConnection] = set()
+_ws_clients: Set[WebSocketServerProtocol] = set()
 _ws_clients_lock = asyncio.Lock()
 
 
-async def _register_ws(conn: ServerConnection):
+async def _register_ws(conn: WebSocketServerProtocol):
     async with _ws_clients_lock:
         _ws_clients.add(conn)
     log.info(f"[WS] 客户端已连接: {conn.remote_address}, 当前总连接数={len(_ws_clients)}")
 
 
-async def _unregister_ws(conn: ServerConnection):
+async def _unregister_ws(conn: WebSocketServerProtocol):
     async with _ws_clients_lock:
         _ws_clients.discard(conn)
     log.info(f"[WS] 客户端已断开: {conn.remote_address}, 当前总连接数={len(_ws_clients)}")
@@ -90,7 +91,7 @@ async def _broadcast_ws(payload: dict):
     if not _ws_clients:
         return
     msg = json.dumps(payload, ensure_ascii=False)
-    dead: Set[ServerConnection] = set()
+    dead: Set[WebSocketServerProtocol] = set()
     
     async with _ws_clients_lock:
         clients = list(_ws_clients)
@@ -107,14 +108,14 @@ async def _broadcast_ws(payload: dict):
                 _ws_clients.discard(c)
 
 
-async def _ws_handler(conn: ServerConnection):
+async def _ws_handler(websocket: WebSocketServerProtocol, path: str):
     """每个 WS 连接一个 task。客户端不发消息，仅 keepalive。"""
-    await _register_ws(conn)
+    await _register_ws(websocket)
     try:
-        async for _ in conn:  # 只为检测断开
+        async for _ in websocket:  # 只为检测断开
             pass
     finally:
-        await _unregister_ws(conn)
+        await _unregister_ws(websocket)
 
 
 # ==================== Worker ====================
@@ -202,7 +203,7 @@ async def main() -> None:
 
     # ---- 启动 worker 池 ----
     workers = [
-        asyncio.create_task(quota_worker(i, broadcast_exchange))
+        asyncio.ensure_future(quota_worker(i, broadcast_exchange))
         for i in range(NUM_WORKERS)
     ]
     log.info(f"已启动 {NUM_WORKERS} 个并发处理 worker，内部缓冲区最大限制={MAX_QUEUE_SIZE}")
@@ -213,7 +214,7 @@ async def main() -> None:
 
     # ---- 注册信号处理 ----
     stop_event = asyncio.Event()
-    loop = asyncio.get_running_loop()
+    loop = asyncio.get_event_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):
         try:
             loop.add_signal_handler(sig, stop_event.set)
@@ -221,7 +222,7 @@ async def main() -> None:
             pass  # 兼容 Windows 环境
 
     # ---- 启动核心消费任务并加入看门狗监听 ----
-    consume_task = asyncio.create_task(_consume(source_queue, stop_event))
+    consume_task = asyncio.ensure_future(_consume(source_queue, stop_event))
     
     def handle_consume_result(task: asyncio.Task):
         """核心消费协程看门狗：如果异常退出，强制终止主程序，防止假死"""
@@ -272,7 +273,8 @@ async def _consume(source_queue: aio_pika.Queue, stop_event: asyncio.Event):
 
 if __name__ == "__main__":
     try:
-        asyncio.run(main())
+        loop = asyncio.get_event_loop()
+        loop.run_until_complete(main())
     except KeyboardInterrupt:
         log.info("程序被用户手动终止。")
         sys.exit(0)

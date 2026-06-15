@@ -13,7 +13,7 @@ from services.guards import resolve_default_trd_date, resolve_active_trd_date
 router = APIRouter()
 
 
-@router.get("/trading/clock")
+@router.get("/clock")
 async def get_trading_clock():
     """前端轮询用：交易日 + 时段状态"""
     db = SessionLocal()

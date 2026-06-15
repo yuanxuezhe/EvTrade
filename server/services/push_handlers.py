@@ -219,7 +219,7 @@ def handle_pos_cfm(db: Session, row: Dict[str, Any], ts: str) -> None:
     pos.total = _int(row.get('volume', 0))
     pos.available = _int(row.get('available', pos.total))
     pos.cost = _float(row.get('cost_price', row.get('cost', 0)))
-    pos.market_value = _float(row.get('market_value', 0))
+    # market_value 由前端根据行情实时计算，后端不存储
     pos.synced_at = datetime.utcnow()
     pos.synced_from = 'push_pos_cfm'
 

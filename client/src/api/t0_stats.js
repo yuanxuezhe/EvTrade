@@ -13,7 +13,7 @@ export const t0StatsApi = {
    */
   async get(stockCode, tradingDay) {
     const params = tradingDay ? { trading_day: tradingDay } : {}
-    const { data } = await http.get(`/api/orders/t0-stats/${stockCode}`, { params })
+    const { data } = await http.get(`/orders/t0-stats/${stockCode}`, { params })
     return data
   },
   /**
@@ -22,7 +22,7 @@ export const t0StatsApi = {
    * @param {number} [days=30]
    */
   async getHistory(stockCode, days = 30) {
-    const { data } = await http.get(`/api/orders/t0-history/${stockCode}`, {
+    const { data } = await http.get(`/orders/t0-history/${stockCode}`, {
       params: { days },
     })
     return data

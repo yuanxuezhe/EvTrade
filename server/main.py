@@ -88,11 +88,12 @@ app.include_router(asset.router, prefix="/api/asset", tags=["asset"], dependenci
 app.include_router(fee_config.router, prefix="/api/fee-config", tags=["fee-config"], dependencies=_AUTH)
 
 
-# ---- Admin routes -------------------------------------------------------
-app.include_router(users_api.router, prefix="/api/users", tags=["users"])
-app.include_router(admin_trading_day.router, prefix="/api/admin/trading-day", tags=["admin-trading-day"])
-app.include_router(admin_reconcile.router, prefix="/api/admin/reconcile", tags=["admin-reconcile"])
-app.include_router(admin_session.router, prefix="/api/admin/trading-session", tags=["admin-session"])
+# ---- Admin routes (login required, role checked by handler) ----------------
+_AUTH_ADMIN = [Depends(get_current_user)]
+app.include_router(users_api.router, prefix="/api/users", tags=["users"], dependencies=_AUTH_ADMIN)
+app.include_router(admin_trading_day.router, prefix="/api/admin/trading-day", tags=["admin-trading-day"], dependencies=_AUTH_ADMIN)
+app.include_router(admin_reconcile.router, prefix="/api/admin/reconcile", tags=["admin-reconcile"], dependencies=_AUTH_ADMIN)
+app.include_router(admin_session.router, prefix="/api/admin/trading-session", tags=["admin-session"], dependencies=_AUTH_ADMIN)
 
 
 @app.get("/api/health")

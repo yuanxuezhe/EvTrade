@@ -99,6 +99,7 @@ import { usePositionStore } from '../stores/position'
 import { useHoldingsStore } from '../stores/holdings'
 import { useAuthStore } from '../stores/auth'
 import { formatMoney } from '../utils/format'
+import { api } from '../api'
 import ChangePasswordDialog from './ChangePasswordDialog.vue'
 
 const route = useRoute()
@@ -114,6 +115,8 @@ const authStore = useAuthStore()
 const refreshing = ref(false)
 const currentTime = ref('')
 const pwdDialogVisible = ref(false)
+// 交易时段：以后端 /api/trading/clock 为准（DB 配的 trading_session）
+const tradingClock = ref({ is_in_session: false })
 
 const pageMeta = {
   '/': { title: '仪表盘', sub: '账户概览与今日行情' },
@@ -129,13 +132,7 @@ const pageMeta = {
 const pageTitle = computed(() => pageMeta[route.path]?.title || 'EvTrade')
 const pageSubtitle = computed(() => pageMeta[route.path]?.sub || '')
 
-const marketOpen = computed(() => {
-  const d = new Date()
-  const day = d.getDay()
-  if (day === 0 || day === 6) return false
-  const m = d.getHours() * 60 + d.getMinutes()
-  return (m >= 570 && m <= 690) || (m >= 780 && m <= 900)
-})
+const marketOpen = computed(() => !!tradingClock.value?.is_in_session)
 
 const displayName = computed(
   () => authStore.user?.full_name || authStore.user?.username || '未登录'
@@ -151,11 +148,18 @@ const avatarText = computed(() => {
 })
 
 let timer = null
+let clockTimer = null
 
 function updateTime() {
   const d = new Date()
   const pad = (n) => String(n).padStart(2, '0')
   currentTime.value = `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
+}
+
+async function refreshClock() {
+  try {
+    tradingClock.value = await api.getTradingClock()
+  } catch (_) { /* 静默 */ }
 }
 
 function formatLastLogin(iso) {
@@ -167,10 +171,13 @@ function formatLastLogin(iso) {
 onMounted(() => {
   updateTime()
   timer = setInterval(updateTime, 1000)
+  refreshClock()
+  clockTimer = setInterval(refreshClock, 30000)
 })
 
 onUnmounted(() => {
   if (timer) clearInterval(timer)
+  if (clockTimer) clearInterval(clockTimer)
 })
 
 async function handleRefresh() {

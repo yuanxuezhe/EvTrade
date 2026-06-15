@@ -11,6 +11,20 @@ export const useUiStore = defineStore('ui', () => {
   // 移动端侧栏抽屉
   const mobileSidebarOpen = ref(false)
 
+  // 主题
+  const theme = ref(localStorage.getItem('evtrade-theme') || 'light')
+
+  function toggleTheme() {
+    theme.value = theme.value === 'dark' ? 'light' : 'dark'
+    localStorage.setItem('evtrade-theme', theme.value)
+    document.documentElement.classList.toggle('dark', theme.value === 'dark')
+  }
+
+  // 初始化时应用主题
+  if (typeof document !== 'undefined') {
+    document.documentElement.classList.toggle('dark', theme.value === 'dark')
+  }
+
   function _applyBreakpoint() {
     // 调试覆盖：URL ?mobile=1 强制移动端（不依赖物理视口）
     const forced = new URLSearchParams(window.location.search).get('mobile') === '1'
@@ -46,7 +60,9 @@ export const useUiStore = defineStore('ui', () => {
     sidebarCollapsed,
     isMobile,
     mobileSidebarOpen,
+    theme,
     toggleSidebar,
+    toggleTheme,
     onRouteChange,
   }
 })

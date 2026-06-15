@@ -37,7 +37,7 @@ function _isRpcResponse(body) {
     !Array.isArray(body) &&
     'code' in body &&
     'msg' in body &&
-    'list' in body
+    ('list' in body || 'data' in body)
   )
 }
 
@@ -60,8 +60,14 @@ http.interceptors.response.use(
         _showRpcError(body.msg)
         return Promise.reject({ rpc: true, code, msg: body.msg })
       }
-      // 解包：让调用方直接拿到 list
-      res.data = Array.isArray(body.list) ? body.list : []
+      // 解包：统一返回 list 数组；兼容旧 data 字段
+      if (Array.isArray(body.list)) {
+        res.data = body.list
+      } else if (body.data != null) {
+        res.data = body.data
+      } else {
+        res.data = body
+      }
     }
     return res
   },
@@ -126,7 +132,7 @@ export const api = {
     return res.data
   },
   async createOrder(orderData) {
-    const res = await http.post('/orders', orderData)
+    const res = await http.post('/orders/place', orderData)
     return res.data
   },
   async placeOrder(orderData) {
@@ -148,6 +154,12 @@ export const api = {
   // 资金
   async getAsset() {
     const res = await http.get('/asset')
+    return res.data
+  },
+
+  // 交易时段（公开接口）
+  async getTradingClock() {
+    const res = await http.get('/trading/clock')
     return res.data
   }
 }

@@ -1,19 +1,44 @@
 # Tasks — current-issues
 
-本 change 不直接实施，是问题追踪表。具体修复见独立 change：
+本 change 是问题追踪表，不直接实施。具体修复见独立 change：
+
+## 🔴 高优先级
 
 | 任务 | 状态 | 对应 change |
 |---|---|---|
 | H1 撤单假动作 | ✅ Done | `1b8e785` |
 | H2 内存委托仓 | ✅ Done | `1b8e785` |
 | H3 死代码 xtquant.py | ✅ Done | `1b8e785` |
-| H4 测试 18/18 全绿 | ✅ Done | `3188316` |
+| H4 撤单递归调用（250615 发现） | ⏳ Pending | `fix-cancel-order-recursion` |
+| H5 前端 createOrder 405（250615 发现） | ⏳ Pending | `fix-frontend-create-order` |
+
+## 🟡 中优先级
+
+| 任务 | 状态 | 对应 change |
+|---|---|---|
 | M1 JWT_SECRET 启动校验 | ⏳ Pending | `add-config-validation` |
 | M2 RPC 解析器统一 | ⏳ Pending | `consolidate-rpc-parsers` |
 | M3 push 路由 position/asset | ⏳ Pending | `route-position-asset-push` |
 | M4 业务 WS vs 行情 WS 拆分 | ⏳ Pending | `split-quote-and-bus-ws` |
 | M5 策略页面占位 | ⏳ Pending | TBD |
+| M6 API 响应格式不一致（asset data vs 其他 list） | ⏳ Pending | 合并到 `consolidate-rpc-parsers` |
+| M7 push handler 写 market_value AttributeError | ⏳ Pending | `fix-push-handler-market-value` |
+| M8 T0 端点空壳 | ⏳ Pending | TBD |
+| M9 服务层绕过 FastAPI DI 自建 Session | ⏳ Pending | `fix-service-session-lifecycle` |
+| M10 审计用户硬编码 "admin" | ⏳ Pending | `fix-system-init-and-users-api` |
+| M11 前端 store 数据冗余（3 套 store 存同一份数据） | ⏳ Pending | `unify-frontend-stores` |
+
+## 🟢 低优先级
+
+| 任务 | 状态 | 对应 change |
+|---|---|---|
 | L1 lifespan 替代 on_event | ⏳ Pending | TBD |
-| L2 删 /api/auth/logout stub | ⏳ Pending | TBD |
-| L4 kb 文档校对 | ⏳ Pending | TBD |
-| L5 test_rpc.py 挪出 pytest | ✅ Done | `pytest.ini testpaths = hq` |
+| L2 logout 空 stub | ⏳ Pending | TBD |
+| L3 kb 文档对账 | ⏳ Pending | TBD |
+| L4 test_rpc.py 挪出 pytest | ✅ Done | `pytest.ini testpaths = hq` |
+| L5 admin 路由鉴权重审 | ⏳ Pending | TBD |
+| L6 OrderNoSeq 竞态 | ⏳ Pending | TBD |
+| L7 hqserver 全市场行情无白名单 | ⏳ Pending | TBD |
+| L8 前端轮询 + WS 重复更新 | ⏳ Pending | TBD |
+| L9 Asset 单行约束无法保留历史 | ⏳ Pending | TBD |
+| L10 t0_coefficient/is_t0_pair 字段未用 | 与 M8 重叠 | TBD |

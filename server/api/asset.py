@@ -5,7 +5,7 @@ asset.py — v4 读本地 DB
 GET /api/asset 纯读 DB，不调 RPC。
 """
 from fastapi import APIRouter, Depends
-from typing import Optional
+from typing import Optional, List
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -29,7 +29,7 @@ class AssetOut(BaseModel):
 class AssetResponse(BaseModel):
     code: int = 0
     msg: str = ""
-    data: Optional[AssetOut] = None
+    list: List[AssetOut] = []
 
 
 @router.get("", response_model=AssetResponse)
@@ -40,8 +40,8 @@ async def get_account_asset(
     trd = trading_day or resolve_default_trd_date(db)
     row = db.query(Asset).filter(Asset.TRD_DATE == trd).first()
     if not row:
-        return AssetResponse(code=0, msg="无资产数据", data=None)
-    return AssetResponse(code=0, msg="", data=AssetOut(
+        return AssetResponse(code=0, msg="无资产数据", list=[])
+    return AssetResponse(code=0, msg="", list=[AssetOut(
         TRD_DATE=row.TRD_DATE,
         cash=row.cash,
         frozen_cash=row.frozen_cash,
@@ -49,4 +49,4 @@ async def get_account_asset(
         total_asset=row.total_asset,
         synced_at=row.synced_at.isoformat() if row.synced_at else None,
         synced_from=row.synced_from,
-    ))
+    )])

@@ -25,8 +25,9 @@
 ### REQ-TRADE-003: 撤单
 
 - `DELETE /api/orders/{order_id}`
-- 走 `cancel_ord` RPC，order_id 写入请求体
+- 走 `cancel_ord` RPC，`order_id` 写入请求体
 - 状态变更由 push 队列异步推送（前端 WS 收到后更新 store）
+- **实现约定**：`api/orders.py` 中 import 使用别名 `from rpc.client import cancel_order as rpc_cancel_order`，避免与路由函数同名递归
 
 ### REQ-TRADE-004: 鉴权
 

@@ -79,6 +79,7 @@ RS2: [{
 
 ## Known Issues (from analysis)
 
-- 🟡 `position_update` 和 `asset_update` 频道**没有真实数据源**（push listener 不识别）
-- 🟡 `func=qry_pos` 误路由问题根因是 QMT 端，**不在本项目修复范围**但需要健壮处理
-- 🟡 push listener 的解析器 `_parse_ord_cfm` 散落在 `client.py:478+`，应统一为 `rpc-protocol` 能力
+- 🟡 `position_update` 和 `asset_update` 频道路由待完善
+- 🟡 `func=qry_pos` 误路由问题根因是 QMT 端，不在本项目修复范围但需健壮处理
+- 🟡 push handler `handle_pos_cfm` 不写 `market_value`（Position ORM 无此列，前端实时计算）
+- 🟢 push listener 的解析器 `_parse_ord_cfm` 散落在 `client.py`，应统一为 `rpc-protocol` 能力

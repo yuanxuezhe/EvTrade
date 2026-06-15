@@ -143,9 +143,10 @@ export const useHoldingsStore = defineStore('holdings', () => {
   }
 
   // ---- 内部辅助：解包 asset 响应 ---------------------------------------
-  // 后端返 {code:0, msg:"", data:{cash, ...}}, 这里取 resp.data.data
+  // 后端返 {code:0, msg:"", list:[{cash, ...}]}，拦截器解 list → resp.data 为数组
   function _parseAsset(resp) {
-    const a = (resp && resp.data) ? resp.data : (Array.isArray(resp) ? resp[0] : resp)
+    const list = Array.isArray(resp) ? resp : (Array.isArray(resp?.list) ? resp.list : [resp])
+    const a = list[0]
     if (!a) return null
     return {
       cash: Number(a.cash) || 0,

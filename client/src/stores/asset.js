@@ -15,9 +15,10 @@ export const useAssetStore = defineStore('asset', () => {
   async function fetchAsset() {
     loading.value = true
     try {
-      // 后端返 {code:0, msg:"", data:{cash, frozen_cash, market_value, total_asset, ...}}
+      // api 拦截器已解包 {code,msg,list} → list 数组
       const resp = await api.getAsset()
-      const data = resp && resp.data ? resp.data : {}
+      const list = Array.isArray(resp) ? resp : (Array.isArray(resp?.list) ? resp.list : [resp])
+      const data = list[0] || {}
       asset.value = {
         cash: Number(data.cash) || 0,
         frozen_cash: Number(data.frozen_cash) || 0,

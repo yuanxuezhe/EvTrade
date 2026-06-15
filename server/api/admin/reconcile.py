@@ -16,6 +16,7 @@ import json
 
 from db import get_db
 from models.orm import ReconcileConfig, ReconcileReport
+from models.user import User
 from services.guards import require_admin
 
 router = APIRouter()
@@ -24,15 +25,17 @@ REPORT_RETENTION_DAYS = 90
 
 
 class ReconcileConfigOut(BaseModel):
-    auto_reconcile: bool
-    auto_use_broker_data: bool
+    # ORM 存 int 0/1；前端 <el-switch> 期望 bool，<el-radio> 期望 int 0/1
+    # 所以两个字段分别用不同类型序列化：
+    auto_reconcile: bool          # switch 用
+    auto_use_broker_data: int     # radio 用（不要转 bool，否则 :value="1" 匹配不上）
     updated_at: Optional[str] = None
     updated_by: str
 
 
 class ReconcileConfigUpdate(BaseModel):
     auto_reconcile: Optional[bool] = None
-    auto_use_broker_data: Optional[bool] = None
+    auto_use_broker_data: Optional[int] = None
 
 
 class ReconcileReportSummary(BaseModel):
@@ -53,7 +56,7 @@ async def get_config(db: Session = Depends(get_db), _=Depends(require_admin)):
         db.refresh(cfg)
     return ReconcileConfigOut(
         auto_reconcile=bool(cfg.auto_reconcile),
-        auto_use_broker_data=bool(cfg.auto_use_broker_data),
+        auto_use_broker_data=int(cfg.auto_use_broker_data),
         updated_at=cfg.updated_at.isoformat() if cfg.updated_at else None,
         updated_by=cfg.updated_by or 'init',
     )
@@ -63,7 +66,7 @@ async def get_config(db: Session = Depends(get_db), _=Depends(require_admin)):
 async def update_config(
     req: ReconcileConfigUpdate,
     db: Session = Depends(get_db),
-    _=Depends(require_admin),
+    admin_user: User = Depends(require_admin),
 ):
     cfg = db.query(ReconcileConfig).first()
     if not cfg:
@@ -73,13 +76,13 @@ async def update_config(
         cfg.auto_reconcile = 1 if req.auto_reconcile else 0
     if req.auto_use_broker_data is not None:
         cfg.auto_use_broker_data = 1 if req.auto_use_broker_data else 0
-    cfg.updated_by = 'admin'  # TODO: 实际用户
+    cfg.updated_by = str(admin_user.id)
     cfg.updated_at = datetime.utcnow()
     db.commit()
     db.refresh(cfg)
     return ReconcileConfigOut(
         auto_reconcile=bool(cfg.auto_reconcile),
-        auto_use_broker_data=bool(cfg.auto_use_broker_data),
+        auto_use_broker_data=int(cfg.auto_use_broker_data),
         updated_at=cfg.updated_at.isoformat() if cfg.updated_at else None,
         updated_by=cfg.updated_by,
     )

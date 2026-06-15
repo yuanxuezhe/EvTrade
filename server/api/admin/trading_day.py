@@ -28,6 +28,7 @@ from sqlalchemy import desc
 
 from db import get_db
 from models.orm import TradingDay, ReconcileReport
+from models.user import User
 from services.reconcile import do_reconcile
 from services.guards import require_admin
 
@@ -69,9 +70,12 @@ class ReconcileRequest(BaseModel):
     mode: str = "manual"
 
 
-@router.post("/init", response_model=InitResponse,
-             dependencies=[Depends(require_admin)])
-async def init_trading_day(req: InitRequest, db: Session = Depends(get_db)):
+@router.post("/init", response_model=InitResponse)
+async def init_trading_day(
+    req: InitRequest,
+    db: Session = Depends(get_db),
+    admin_user: User = Depends(require_admin),
+):
     """人工日初: 触发对账 + 切交易日"""
     if len(req.trd_date) != 8 or not req.trd_date.isdigit():
         raise HTTPException(
@@ -79,7 +83,7 @@ async def init_trading_day(req: InitRequest, db: Session = Depends(get_db)):
             detail={"code": "BAD_TRD_DATE", "msg": "trd_date 必须是 8 位数字字符串"}
         )
 
-    by_user = "admin"  # TODO: 从 Depends 拿真实用户名
+    by_user = str(admin_user.id)
 
     result = await do_reconcile(db, req.trd_date, by_user)
 
@@ -114,16 +118,19 @@ async def init_trading_day(req: InitRequest, db: Session = Depends(get_db)):
     )
 
 
-@router.post("/reconcile", response_model=InitResponse,
-             dependencies=[Depends(require_admin)])
-async def reconcile_only(req: ReconcileRequest, db: Session = Depends(get_db)):
+@router.post("/reconcile", response_model=InitResponse)
+async def reconcile_only(
+    req: ReconcileRequest,
+    db: Session = Depends(get_db),
+    admin_user: User = Depends(require_admin),
+):
     """仅生成对账报告 (manual 模式, 不切日)"""
     if len(req.trd_date) != 8 or not req.trd_date.isdigit():
         raise HTTPException(
             status_code=400,
             detail={"code": "BAD_TRD_DATE", "msg": "trd_date 必须是 8 位数字字符串"}
         )
-    by_user = "admin"
+    by_user = str(admin_user.id)
     result = await do_reconcile(db, req.trd_date, by_user)
     db.commit()
     return InitResponse(

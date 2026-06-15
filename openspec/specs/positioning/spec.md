@@ -3,40 +3,50 @@
 ## Purpose
 
 展示当前账户的全部持仓，含初始持仓、今日买卖、可卖、总持仓。
-**唯一数据源是 QMT 柜台**（`qry_pos` RPC）。
+**读本地 DB**（positions 表由 pos_cfm push handler + do_reconcile 写入），不直接调 RPC。
 
 ## Requirements
 
 ### REQ-POS-001: 查询全部持仓
 
-- `GET /api/positions`
-- 走 `qry_pos` RPC，响应 `{code, msg, list: [Position]}`
-- Position 字段：`stock_code, stock_name, initial_position, today_buy, today_sell, available, total`
+- `GET /api/positions` 和 `GET /api/holdings`
+- 读本地 `positions` 表，响应 `{code, msg, list: [Position]}`
+- Position 字段：`stock_code, stock_name, initial_position, today_buy, today_sell, available, total, cost`
+- **market_value 不由后端计算**：前端通过 `holdings.js:liveMarketValue` 根据实时行情 × 总持仓计算
+- 后端返回 `cost * total` 作为成本市值代理（前端行情未到时的 fallback）
 
 ### REQ-POS-002: 鉴权
 
 - 必须登录；`viewer/trader/admin` 全部可读
 
+### REQ-POS-003: 数据来源
+
+- Push 路径：柜台 `pos_cfm` → `push_handlers.handle_pos_cfm` → 写入 positions 表
+- 对账路径：`do_reconcile` → `qry_positions` RPC → `_apply_broker_data` → 覆盖 positions 表
+- 读路径：纯读 DB，不调 RPC
+
 ## Scenarios
 
 ### S-POS-001: 正常查持仓
 
-When `GET /api/positions`  
-Then 返回当前所有持仓，按 `stock_code` 排序
+When `GET /api/positions`
+Then 返回当前激活交易日持仓，按 `stock_code` 排序
 
-### S-POS-002: 柜台断连
+### S-POS-002: 推送更新
 
-Given 柜台 RPC 客户端未连接  
-When `GET /api/positions`  
-Then 返回 `{code: -1, msg: "<error>", list: []}`，前端 axios 拦截器弹错误 toast
+Given 柜台推送 pos_cfm 消息
+When `handle_pos_cfm` 收到
+Then upsert positions 表对应行（不写 market_value 字段）
 
 ## API Surface
 
-| Method | Path | RPC | Auth |
+| Method | Path | 数据源 | Auth |
 |---|---|---|---|
-| GET | `/api/positions` | `qry_pos` | login |
+| GET | `/api/positions` | DB | login |
+| GET | `/api/holdings` | DB | login |
 
 ## Known Issues (from analysis)
 
-- 🟥 ~~`POST /api/positions/{code}/init` 内存 init 接口~~ → **本轮已删**（柜台自动维护 initial_position）
-- 🟡 `position_update` WS 频道当前**未路由**（RPC 客户端收到持仓变更无处理）
+- 🟥 ~~`POST /api/positions/{code}/init` 内存 init 接口~~ → **已删**
+- 🟡 `position_update` WS 频道 push 路由待完善
+- 🟡 `market_value` 字段由前端计算，后端不存（commit `2026-06-15` 确认设计）

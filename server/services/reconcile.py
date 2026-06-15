@@ -119,7 +119,7 @@ async def do_reconcile(
         local_positions_json=json.dumps(local_positions, ensure_ascii=False, default=str),
         rpc_status=rpc_status,
         error_message="; ".join(rpc_errors)[:512],
-        created_by=None,  # TODO: admin user id
+        created_by=int(by_user) if by_user else None,
     )
     db.add(report)
     db.flush()

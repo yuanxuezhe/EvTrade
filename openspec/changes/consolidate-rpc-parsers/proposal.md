@@ -40,12 +40,36 @@ async def ord_stk(...) -> RpcResponse[OrderAckResponse]: ...
 
 `ord_cfm` push 消息结构与 `qry_orders` 不同（多 status/traded_volume 等），用单独的 `OrderPushEvent` model，**不复用** OrderResponse。
 
+### 2.5 统一 API 响应格式
+
+当前响应格式不一致：
+
+| 模块 | 格式 | 示例 |
+|---|---|---|
+| `asset.py` | `{code, msg, data: AssetOut}` | 单对象 |
+| `orders.py` | `{code, msg, list: [OrderOut]}` | 数组 |
+| `positions.py` | `{code, msg, list: [PositionOut]}` | 数组 |
+| `trades.py` | `{code, msg, list: [TradeOut]}` | 数组 |
+| `holdings.py` | `{code, msg, list: [HoldingItem]}` | 数组 |
+
+问题：
+- 前端 `_isRpcResponse` 只解包 `list` 字段，asset 的 `data` 需要 `_parseAsset(resp.data.data)` 特殊处理
+- `holdings.js:refreshAll` 中 `positions.value = Array.isArray(rPos.value) ? rPos.value : (Array.isArray(rPos.value?.list) ? rPos.value.list : [])` — 解包逻辑混乱
+
+修复：
+- **方案 A（推荐）**：asset 改为 `{code, msg, data: AssetOut}`，但前端拦截器统一处理 `data` 和 `list` 两种字段
+- **方案 B**：全部统一为 `{code, msg, list: [...]}`，asset 包数组 `list: [AssetOut]`
+- 推荐 B：asset 按 `list` 包装更一致，改动只需后端 1 处 + 前端 `_parseAsset` 删除
+
 ## 3. 影响面
 
 - `server/rpc/client.py` — 重构解析层
 - `server/api/{orders,trades,asset,positions}.py` — 改成 `.model_dump()` 或直接传 BaseModel
+- `server/api/asset.py` — 响应格式统一为 `{code, msg, list}`
 - `server/models/types.py` — 增加 Pydantic 响应模型
-- 前后端契约不变（响应字段名/类型保持）
+- `client/src/api/index.js` — 拦截器支持 `data` + `list` 双字段解包
+- `client/src/stores/holdings.js` — `_parseAsset` 简化
+- 前后端字段名/类型保持不变
 
 ## 4. Spec Deltas
 
