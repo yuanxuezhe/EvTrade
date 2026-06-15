@@ -13,7 +13,7 @@
             <el-tag v-if="currentDay?.status === 'active'" type="success">活跃</el-tag>
             <el-tag v-else-if="currentDay?.status === 'pending'" type="warning">未激活</el-tag>
             <el-tag v-else-if="currentDay?.status === 'closed'" type="info">已收盘</el-tag>
-            <el-tag v-else type="info">{{ currentDay?.status || '未知' }}</el-tag>
+            <el-tag v-else type="info">未知</el-tag>
           </el-descriptions-item>
           <el-descriptions-item label="交易日">
             {{ currentDay?.trd_date || '—' }}
@@ -110,7 +110,7 @@
 
         <!-- 时段配置 -->
         <el-tab-pane label="交易时段" name="session">
-          <el-form :model="sessionCfg" label-width="160px" v-loading="loading.config">
+          <el-form :model="sessionCfg" label-width="160px" v-loading="loading.config" v-if="activeTab === 'session'">
             <el-form-item label="上午时段">
               <el-time-picker
                 v-model="sessionCfg.morning_start"
@@ -262,8 +262,8 @@ const initForm = reactive({
 
 const reconcileCfg = reactive({ auto_reconcile: true, auto_use_broker_data: 1 })
 const sessionCfg = reactive({
-  morning_start: null, morning_end: null,
-  afternoon_start: null, afternoon_end: null,
+  morning_start: '09:15:00', morning_end: '11:30:00',
+  afternoon_start: '13:00:00', afternoon_end: '15:00:00',
   is_half_day: false
 })
 const feeCfg = reactive({ commission_rate: 0.0001, stamp_tax_rate: 0.001, slippage: 0 })

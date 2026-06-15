@@ -94,8 +94,9 @@ async def init_trading_day(req: InitRequest, db: Session = Depends(get_db)):
             error=result['error'],
         )
 
+    # upsert 已在 do_reconcile 完成, 这里直接查 active 行
     new_day = db.query(TradingDay).filter_by(
-        current_date=req.trd_date, status='active'
+        status='active', current_date=req.trd_date
     ).first()
     return InitResponse(
         code=0,
@@ -150,12 +151,22 @@ async def list_trading_days(days: int = 90, db: Session = Depends(get_db)):
     ]
 
 
-@router.get("/active", response_model=Optional[TradingDayOut])
+@router.get("/active", response_model=TradingDayOut)
 async def get_active_trading_day(db: Session = Depends(get_db)):
-    """获取当前激活的交易日"""
+    """获取当前激活的交易日
+
+    无记录 → 返默认值占位 (status="none", trd_date="", id=0),
+    避免前端 null 处理。
+    """
     row = db.query(TradingDay).filter_by(status='active').first()
     if not row:
-        return None
+        return TradingDayOut(
+            id=0,
+            trd_date="",
+            status="none",
+            activated_at=None,
+            activated_by="0",
+        )
     return TradingDayOut(
         id=row.id,
         trd_date=row.current_date,

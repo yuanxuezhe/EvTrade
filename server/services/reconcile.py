@@ -167,18 +167,24 @@ async def do_reconcile(
                 'error': f"覆盖本地失败: {e}",
             }
 
-    # 5. 切交易日
+    # 5. 切交易日 (upsert: 有则激活老行, 无则新增)
     if applied or not cfg.auto_reconcile:
         old_active = db.query(TradingDay).filter_by(status='active').first()
-        if old_active:
+        if old_active and old_active.current_date != new_trd_date:
             old_active.status = 'closed'
-        new_day = TradingDay(
-            current_date=new_trd_date,
-            status='active',
-            initialized_at=datetime.utcnow(),
-            initialized_by=by_user,
-        )
-        db.add(new_day)
+        existing = db.query(TradingDay).filter_by(current_date=new_trd_date).first()
+        now = datetime.utcnow()
+        if existing:
+            existing.status = 'active'
+            existing.initialized_at = now
+            existing.initialized_by = by_user
+        else:
+            db.add(TradingDay(
+                current_date=new_trd_date,
+                status='active',
+                initialized_at=now,
+                initialized_by=by_user,
+            ))
         db.commit()
         db.refresh(report)
 
