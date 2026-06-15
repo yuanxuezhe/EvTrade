@@ -163,12 +163,31 @@ start_backend() {
 
 start_frontend() {
     info "=== START frontend (vite :$FRONTEND_PORT) ==="
-    if [ -n "$(pid_by_port "$FRONTEND_PORT")" ]; then
-        warn "端口 $FRONTEND_PORT 已被占用, 跳过启动"
-        return 0
+    local port_pid
+    port_pid="$(pid_by_port "$FRONTEND_PORT")"
+    if [ -n "$port_pid" ]; then
+        # 端口被占：检查占用者 cmdline
+        #   - 若是 vite/node/esbuild → 孤儿进程，强杀后让本函数继续启动
+        #   - 否则 → 真的被别人占用，跳过并警告
+        local cmdline
+        cmdline="$(tr '\0' ' ' < /proc/"$port_pid"/cmdline 2>/dev/null || true)"
+        if echo "$cmdline" | grep -qE 'vite|esbuild'; then
+            warn "端口 $FRONTEND_PORT 被孤儿 vite 占用 (pid=$port_pid, cmd=$cmdline)，强杀后接管"
+            stop_pid "$port_pid" "orphan-vite" 2
+            sleep 1
+            port_pid="$(pid_by_port "$FRONTEND_PORT")"
+            if [ -n "$port_pid" ]; then
+                err "强杀后端口仍被占, 跳过启动"
+                return 1
+            fi
+        else
+            warn "端口 $FRONTEND_PORT 被非 vite 进程占用 (pid=$port_pid, cmd=$cmdline)，跳过启动"
+            return 0
+        fi
     fi
     cd "$ROOT_DIR/client"
-    nohup npx vite --host 0.0.0.0 --port "$FRONTEND_PORT" \
+    # 严格端口（不让 vite 自己 fallback，否则 50998 被占就跑去 50999）
+    nohup npx vite --host 0.0.0.0 --port "$FRONTEND_PORT" --strictPort \
         > "$LOG_DIR/frontend.log" 2>&1 &
     local pid=$!
     echo "$pid" > "$FRONTEND_PID_FILE"
