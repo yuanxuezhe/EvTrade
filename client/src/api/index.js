@@ -71,6 +71,23 @@ http.interceptors.response.use(
       localStorage.removeItem(TOKEN_KEY)
       if (onUnauthorized) onUnauthorized()
     }
+    // 屏障/拒绝类 (403/422/500/503): FastAPI HTTPException 走 detail
+    // 提取 detail.code + detail.msg 弹 ElMessage, 不然前端只看到 console 裸 503
+    if (status && status >= 400) {
+      const detail = err.response?.data?.detail
+      let msg = null
+      if (typeof detail === 'string') {
+        msg = detail
+      } else if (detail && typeof detail === 'object') {
+        msg = detail.msg || detail.code || null
+      }
+      if (msg) {
+        _showRpcError(msg)
+      } else if (status === 503) {
+        // 兜底：503 业务没返 detail 时也给个提示
+        _showRpcError('服务暂不可用 (503)，请稍后重试')
+      }
+    }
     return Promise.reject(err)
   }
 )
