@@ -752,16 +752,10 @@ async function submitOrder({ orderType, volume, price }) {
     const detail = e?.response?.data?.detail
     const code = detail?.code
     if (code === 'TRADING_DAY_NOT_INIT') {
-      ElMessageBox.confirm(
-        '当前未做日初处理，无法交易。是否前往系统初始化？',
-        '需要日初',
-        { confirmButtonText: '前往', cancelButtonText: '取消', type: 'warning' }
-      ).then(() => {
-        // router 没有直接引入，用 location 兜底
-        window.location.href = '/system-init'
-      }).catch(() => {})
+      // 日初未做：仅提示，由用户在左侧菜单进入「系统初始化」处理
+      ElMessage.warning(detail?.msg || '当前未做日初，请到「系统初始化」处理')
     } else if (code === 'OUTSIDE_TRADING_SESSION') {
-      ElMessage.warning(detail.msg || '非交易时段，仅可查询')
+      ElMessage.warning(detail?.msg || '非交易时段，仅可查询')
     } else {
       ElMessage.error(detail?.msg || e.message || '下单失败')
     }

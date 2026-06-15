@@ -66,7 +66,7 @@ import { useOrderStore } from '../stores/order'
 import {
   Odometer, Wallet, Money, DataAnalysis, List, Tickets,
   Fold, Expand, TrendCharts, UserFilled, Files,
-  Coin, Cpu, MagicStick
+  Coin, Cpu, MagicStick, Setting
 } from '@element-plus/icons-vue'
 import { useAuthStore } from '../stores/auth'
 
@@ -99,7 +99,9 @@ const menuItems = computed(() => {
     { path: '/algo-strategy', label: '策略交易', icon: Cpu }
   ]
   if (authStore.isAdmin) {
-    base.push({ path: '/users', label: '用户管理', icon: UserFilled, divider: true })
+    base.push({ divider: true, label: '系统管理' })
+    base.push({ path: '/system-init', label: '系统初始化', icon: Setting })
+    base.push({ path: '/users', label: '用户管理', icon: UserFilled })
   }
   return base
 })
