@@ -117,6 +117,7 @@ class Asset(Base):
     market_value = Column(Float, nullable=False, default=0.0)
     total_asset = Column(Float, nullable=False, default=0.0)
     synced_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    synced_from = Column(String(16), nullable=False, default="")  # rpc_full / push_partial / manual
 
 
 # ─────────────── 配置表 ───────────────
