@@ -143,8 +143,9 @@ export const useHoldingsStore = defineStore('holdings', () => {
   }
 
   // ---- 内部辅助：解包 asset 响应 ---------------------------------------
-  function _parseAsset(asset) {
-    const a = Array.isArray(asset) ? asset[0] : asset
+  // 后端返 {code:0, msg:"", data:{cash, ...}}, 这里取 resp.data.data
+  function _parseAsset(resp) {
+    const a = (resp && resp.data) ? resp.data : (Array.isArray(resp) ? resp[0] : resp)
     if (!a) return null
     return {
       cash: Number(a.cash) || 0,
@@ -188,7 +189,9 @@ export const useHoldingsStore = defineStore('holdings', () => {
       }
       // positions
       if (rPos.status === 'fulfilled') {
-        positions.value = Array.isArray(rPos.value) ? rPos.value : []
+        // 后端返 {code:0, list:[...]}，解 .list
+        positions.value = Array.isArray(rPos.value) ? rPos.value
+          : (Array.isArray(rPos.value?.list) ? rPos.value.list : [])
         refCounts.value.positions = 'ok'
         log('ok', '缓存', 'bootstrap', `持仓加载成功 (${positions.value.length} 只)`)
       } else {
@@ -197,7 +200,8 @@ export const useHoldingsStore = defineStore('holdings', () => {
       }
       // orders
       if (rOrd.status === 'fulfilled') {
-        orders.value = Array.isArray(rOrd.value) ? rOrd.value : []
+        orders.value = Array.isArray(rOrd.value) ? rOrd.value
+          : (Array.isArray(rOrd.value?.list) ? rOrd.value.list : [])
         refCounts.value.orders = 'ok'
         log('ok', '缓存', 'bootstrap', `委托加载成功 (${orders.value.length} 条)`)
       } else {
@@ -206,7 +210,8 @@ export const useHoldingsStore = defineStore('holdings', () => {
       }
       // trades
       if (rTrd.status === 'fulfilled') {
-        trades.value = Array.isArray(rTrd.value) ? rTrd.value : []
+        trades.value = Array.isArray(rTrd.value) ? rTrd.value
+          : (Array.isArray(rTrd.value?.list) ? rTrd.value.list : [])
         refCounts.value.trades = 'ok'
         log('ok', '缓存', 'bootstrap', `成交加载成功 (${trades.value.length} 条)`)
       } else {

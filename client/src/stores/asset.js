@@ -15,8 +15,9 @@ export const useAssetStore = defineStore('asset', () => {
   async function fetchAsset() {
     loading.value = true
     try {
-      const list = await api.getAsset()
-      const data = (Array.isArray(list) && list[0]) || {}
+      // 后端返 {code:0, msg:"", data:{cash, frozen_cash, market_value, total_asset, ...}}
+      const resp = await api.getAsset()
+      const data = resp && resp.data ? resp.data : {}
       asset.value = {
         cash: Number(data.cash) || 0,
         frozen_cash: Number(data.frozen_cash) || 0,
