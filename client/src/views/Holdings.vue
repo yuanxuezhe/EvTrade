@@ -38,14 +38,14 @@
             <span class="text-mono">{{ formatNumber(row.volume) }}</span>
           </template>
         </el-table-column>
-        <el-table-column prop="available" label="可用" align="right" width="120">
+        <el-table-column prop="avl_vol" label="可用" align="right" width="120">
           <template #default="{ row }">
-            <span class="text-mono">{{ formatNumber(row.available) }}</span>
+            <span class="text-mono">{{ formatNumber(row.avl_vol) }}</span>
           </template>
         </el-table-column>
-        <el-table-column prop="cost" label="成本价" align="right" width="120">
+        <el-table-column prop="cost_price" label="成本价" align="right" width="120">
           <template #default="{ row }">
-            <span class="text-mono">{{ formatMoney(row.cost) }}</span>
+            <span class="text-mono">{{ formatMoney(row.cost_price) }}</span>
           </template>
         </el-table-column>
         <el-table-column label="最新价" align="right" width="140" :key="quoteTick">
@@ -179,7 +179,7 @@ function profitClass(v) {
 }
 
 function priceClass(row) {
-  const cost = Number(row.cost) || 0
+  const cost = Number(row.cost_price) || 0
   const price = getLastPrice(row.stock_code)
   if (price == null || cost === 0) return ''
   if (price > cost) return 'text-up'
@@ -240,9 +240,9 @@ function exportCSV() {
     return [
       p.stock_code,
       p.last_vol,
-      p.volume,
-      p.available,
-      p.cost,
+      p.vol,
+      p.avl_vol,
+      p.cost_price,
       price != null ? String(price) : '',
       mv != null ? mv.toFixed(2) : '',
       profit != null ? profit.toFixed(2) : '',

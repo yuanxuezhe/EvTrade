@@ -1,8 +1,14 @@
 """
-t0_stats.py — T0 当日 / 历史收益汇总
+t0_stats.py — v5 重构版（schema refactor）
 
-GET /api/orders/t0-stats/{stock_code}?trading_day=YYYYMMDD   单日统计
-GET /api/orders/t0-history/{stock_code}?days=30               历史曲线
+GET /api/orders/t0-stats/{stock_code}?trd_date=YYYYMMDD   单日统计
+GET /api/orders/t0-history/{stock_code}?days=30            历史曲线
+
+v5 改动：
+- Trade.TRD_DATE → trd_date
+- Position.TRD_DATE 去掉（无此字段）
+- Position 字段重命名：cost→cost_price, total→vol
+- T0StatsOut 响应字段 trd_date 小写
 """
 from collections import defaultdict
 from datetime import datetime, timedelta
@@ -13,7 +19,7 @@ from pydantic import BaseModel
 from typing import List, Optional
 
 from db import get_db
-from models.orm import Order, Trade, Position, TradingDay
+from models.orm import Order, Trade, Position
 from auth.deps import get_current_user
 from models.user import User
 from services.guards import resolve_default_trd_date
@@ -22,7 +28,7 @@ router = APIRouter()
 
 
 class T0StatsOut(BaseModel):
-    TRD_DATE: str
+    trd_date: str
     stock_code: str
     # 当日累计
     today_buy_volume: int
@@ -33,8 +39,8 @@ class T0StatsOut(BaseModel):
     realized_pnl: float
     # 持仓基准
     cost_basis: float             # 当前持仓的平均成本价
-    position_volume: int          # 当前持仓量（available + frozen）
-    position_cost_total: float    # 持仓成本总额 = cost * volume
+    position_volume: int          # 当前持仓量（avl_vol + frozen）
+    position_cost_total: float    # 持仓成本总额 = cost_price * vol
     # 浮动盈亏（按当前持仓成本算，不算今日已实现的）
     unrealized_pnl: float         # = (avg_sell_price - cost_basis) * today_sell_volume
     # 汇总
@@ -48,13 +54,13 @@ class T0StatsOut(BaseModel):
 @router.get("/t0-stats/{stock_code}", response_model=T0StatsOut)
 async def t0_stats(
     stock_code: str,
-    trading_day: Optional[str] = Query(None, description="8 位数字 YYYYMMDD，默认激活日"),
+    trd_date: Optional[str] = Query(None, description="8 位数字 YYYYMMDD，默认激活日"),
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     """T0 当日 + 历史收益汇总（单标的）"""
-    trd_date = trading_day or resolve_default_trd_date(db)
-    if not trd_date:
+    trd = trd_date or resolve_default_trd_date(db)
+    if not trd:
         raise HTTPException(
             status_code=400,
             detail={"code": "NO_TRADING_DAY", "msg": "无交易日，请先在系统初始化页激活"}
@@ -62,11 +68,11 @@ async def t0_stats(
 
     # 当日委托 / 成交
     orders_today = db.query(Order).filter(
-        Order.TRD_DATE == trd_date,
+        Order.trd_date == trd,
         Order.stock_code == stock_code,
     ).all()
     trades_today = db.query(Trade).filter(
-        Trade.TRD_DATE == trd_date,
+        Trade.trd_date == trd,
         Trade.stock_code == stock_code,
     ).all()
 
@@ -85,31 +91,23 @@ async def t0_stats(
             today_sell_amt += price * vol
 
     # 已实现盈亏（FIFO 简化：买入先入 → 卖出按当日买入均价匹配）
-    # 真正的 T0 是先买后卖同股，盈亏 = (卖价 - 买价) × 配对股数
-    # 简化：取当日买均价为基准
     if today_buy_vol > 0 and today_sell_vol > 0:
         avg_buy = today_buy_amt / today_buy_vol
-        # 已实现 = 卖出股数 × (卖均价 - 买均价)
         avg_sell = today_sell_amt / today_sell_vol
-        # 配对股数 = min(买,卖)
         paired = min(today_buy_vol, today_sell_vol)
         realized = (avg_sell - avg_buy) * paired
     else:
         realized = 0.0
 
-    # 持仓
-    pos = db.query(Position).filter(
-        Position.TRD_DATE == trd_date,
-        Position.stock_code == stock_code,
-    ).first()
-    cost_basis = float(pos.cost) if pos else 0.0
-    position_vol = int(pos.total) if pos and pos.total else 0
+    # 持仓（按 stock_code PK 单行）
+    pos = db.query(Position).filter(Position.stock_code == stock_code).first()
+    cost_basis = float(pos.cost_price) if pos else 0.0
+    position_vol = int(pos.vol) if pos and pos.vol else 0
     position_cost_total = cost_basis * position_vol
 
-    # 浮动盈亏：取今日卖出均价比持仓成本（口径：若今日有卖，按"今日对锁"算）
+    # 浮动盈亏
     if today_sell_vol > 0:
         avg_sell = today_sell_amt / today_sell_vol
-        # 卖出部分相对持仓成本的盈亏
         unrealized = (avg_sell - cost_basis) * min(today_sell_vol, position_vol) if cost_basis > 0 else 0
     else:
         unrealized = 0.0
@@ -119,7 +117,7 @@ async def t0_stats(
     open_order_count = sum(1 for o in orders_today if o.status in ("48", "49", "50"))
 
     return T0StatsOut(
-        TRD_DATE=trd_date,
+        trd_date=trd,
         stock_code=stock_code,
         today_buy_volume=today_buy_vol,
         today_sell_volume=today_sell_vol,
@@ -140,7 +138,7 @@ async def t0_stats(
 # ============== T0 历史曲线 ==============
 
 class T0HistoryPoint(BaseModel):
-    TRD_DATE: str
+    trd_date: str
     realized_pnl: float
     sell_amount: float
     buy_amount: float
@@ -164,15 +162,15 @@ def t0_history(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    """近 N 天做T 每日买入/卖出/笔数 + 累计差额（暂无 realized_pnl 字段）"""
+    """近 N 天做T 每日买入/卖出/笔数 + 累计差额"""
     today = datetime.now().strftime("%Y%m%d")
     start = (datetime.now() - timedelta(days=days * 2)).strftime("%Y%m%d")
     rows = (
         db.query(Trade)
         .filter(
             Trade.stock_code == stock_code,
-            Trade.TRD_DATE >= start,
-            Trade.TRD_DATE <= today,
+            Trade.trd_date >= start,
+            Trade.trd_date <= today,
         )
         .all()
     )
@@ -180,12 +178,12 @@ def t0_history(
         "buy_amt": 0.0, "sell_amt": 0.0, "diff": 0.0, "n": 0
     })
     for t in rows:
-        d = t.TRD_DATE
+        d = t.trd_date
         amt = float(t.amount or 0)
-        if t.direction == "BUY":
+        if t.order_type == "23":  # 买
             by_day[d]["buy_amt"] += amt
             by_day[d]["diff"] -= amt  # 净流出
-        else:
+        elif t.order_type == "24":  # 卖
             by_day[d]["sell_amt"] += amt
             by_day[d]["diff"] += amt  # 净流入
         by_day[d]["n"] += 1
@@ -193,13 +191,12 @@ def t0_history(
     for d in sorted(by_day.keys()):
         info = by_day[d]
         points.append(T0HistoryPoint(
-            TRD_DATE=d,
-            realized_pnl=round(info["diff"], 2),  # 用净流入做"虚拟已实现"显示
+            trd_date=d,
+            realized_pnl=round(info["diff"], 2),
             sell_amount=round(info["sell_amt"], 2),
             buy_amount=round(info["buy_amt"], 2),
             trade_count=info["n"],
         ))
-    # 累计差额（已实现收益的近似）
     total_realized = sum(p.realized_pnl for p in points)
     win_days = sum(1 for p in points if p.realized_pnl > 0)
     total_buy = sum(p.buy_amount for p in points) or 1.0

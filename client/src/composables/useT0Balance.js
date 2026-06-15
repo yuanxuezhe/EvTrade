@@ -48,13 +48,13 @@ export function useT0Balance(stockCodeRef) {
   const currentVolume = computed(() => {
     const p = currentPosition.value
     if (!p) return 0
-    // 优先用 available（可用持仓 = 持仓 - 已挂卖单），无则用 total/volume
-    return Number(p.available ?? p.total ?? p.volume ?? 0)
+    // 优先用 avl_vol（可用持仓 = 持仓 - 已挂卖单），无则用 vol
+    return Number(p.avl_vol ?? p.vol ?? 0)
   })
 
   const cost = computed(() => {
     const p = currentPosition.value
-    return p ? Number(p.cost) || 0 : 0
+    return p ? Number(p.cost_price) || 0 : 0
   })
 
   // 实时行情

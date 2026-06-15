@@ -128,15 +128,15 @@ export const useHoldingsStore = defineStore('holdings', () => {
   function getProfit(p) {
     const price = getLivePrice(p.stock_code)
     if (price == null) return null
-    const cost = Number(p.cost) || 0
-    const vol = Number(p.volume) || 0
+    const cost = Number(p.cost_price) || 0
+    const vol = Number(p.vol) || 0
     if (vol === 0) return 0
     return (price - cost) * vol
   }
   function getReturnRate(p) {
     const profit = getProfit(p)
-    const cost = Number(p.cost) || 0
-    const vol = Number(p.volume) || 0
+    const cost = Number(p.cost_price) || 0
+    const vol = Number(p.vol) || 0
     const costTotal = cost * vol
     if (profit == null || costTotal === 0) return null
     return profit / costTotal
@@ -364,7 +364,7 @@ export const useHoldingsStore = defineStore('holdings', () => {
     } else if (row.volume) {
       positions.value.unshift(row)
     }
-    log('info', '交易', 'ws', `持仓推送: ${row.stock_code} → ${row.volume}@${row.cost}`)
+    log('info', '交易', 'ws', `持仓推送: ${row.stock_code} → ${row.vol}@${row.cost_price}`)
   }
 
   /** ws._onAssetCfm 调用 */

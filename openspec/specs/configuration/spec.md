@@ -58,6 +58,15 @@ EvTrade 部署在 Windows（开发/QMT 柜台）+ Linux（前后端服务），�
 - ✅ `.env.example` 允许 commit，但所有敏感字段值替换为 `<SET_IN_ENV>`
 - ✅ 历史扫描无 `.env` 泄漏（已验证 `git log --all -- server/.env` 为空）
 
+### REQ-CFG-006: 系统状态机（v5 schema refactor）
+
+- 表名：`trading_day` → **`sys_status`**
+- 主键：`trd_date`（YYYYMMDD），去 `id` 自增
+- 状态字段：`status` ∈ {`pending`, `active`, `closed`}
+- 其他字段：`is_half_day` / `initialized_at` / `initialized_by` / `closed_at` / `closed_by` / `remark` / `created_at`
+- URL：`/api/admin/trading-day*` → **`/api/admin/sys-status*`**
+- Pydantic：`TradingDayOut` → **`SysStatusOut`**，字段 `current_date` → **`trd_date`**
+
 ## Scenarios
 
 ### S-CFG-001: 首次部署

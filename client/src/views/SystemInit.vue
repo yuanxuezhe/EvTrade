@@ -102,7 +102,6 @@
         </div>
       </template>
       <el-table :data="reports" v-loading="loading.reports" stripe>
-        <el-table-column prop="id" label="ID" width="80" />
         <el-table-column prop="trd_date" label="交易日" width="120" />
         <el-table-column prop="mode" label="模式" width="100">
           <template #default="{ row }">
@@ -143,7 +142,7 @@
 import { ref, onMounted, reactive, onUnmounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Setting } from '@element-plus/icons-vue'
-import { tradingDayApi, reconcileApi } from '../api/admin'
+import { sysStatusApi, reconcileApi } from '../api/admin'
 import { http } from '../api'
 
 const loading = reactive({
@@ -181,7 +180,7 @@ function tickClock() {
 async function loadCurrent() {
   loading.current = true
   try {
-    const data = await tradingDayApi.current()
+    const data = await sysStatusApi.current()
     currentDay.value = data
   } catch (e) {
     currentDay.value = null
@@ -216,7 +215,7 @@ async function handleInit() {
 
   loading.init = true
   try {
-    const result = await tradingDayApi.init(initForm.date)
+    const result = await sysStatusApi.init(initForm.date)
     if (result.code === 0 || result.ok) {
       ElMessage.success(`日初成功：${result.report_id || ''}`)
       loadCurrent()
@@ -238,7 +237,7 @@ async function handleReconcile() {
   }
   loading.reconcile = true
   try {
-    const result = await tradingDayApi.init(initForm.date, 'manual')
+    const result = await sysStatusApi.init(initForm.date, 'manual')
     if (result.code === 0 || result.ok) {
       ElMessage.success(`对账报告已生成：#${result.report_id || ''}`)
       loadReports()
@@ -254,7 +253,8 @@ async function handleReconcile() {
 
 async function viewReport(row) {
   try {
-    const data = await reconcileApi.getReport(row.id)
+    // v5: 复合主键 (trd_date, mode, created_at)
+    const data = await reconcileApi.getReport(row.trd_date, row.mode, row.created_at)
     reportDetail.value = JSON.stringify(data, null, 2)
     reportDialog.value = true
   } catch (e) {

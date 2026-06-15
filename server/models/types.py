@@ -1,3 +1,10 @@
+"""
+types.py — 内存 dataclass 模型（用于 service 层无 DB 上下文场景）
+
+2026-06-15 重构：字段对齐 v5 ORM
+  - Order 移除 order_remark（broker 透传字段重名）
+  - Position 字段重命名：last_vol / vol / avl_vol / cost_price
+"""
 from dataclasses import dataclass, field
 from typing import List, Optional
 from datetime import datetime
@@ -6,17 +13,19 @@ from datetime import datetime
 class Position:
     stock_code: str
     stock_name: str = ""
-    initial_position: int = 0
+    last_vol: int = 0       # 期初持仓
     today_buy: int = 0
     today_sell: int = 0
 
     @property
-    def available(self) -> int:
-        return self.initial_position - self.today_sell + self.today_buy
+    def avl_vol(self) -> int:
+        """可用 = 期初 - 今日卖出 + 今日买入"""
+        return self.last_vol - self.today_sell + self.today_buy
 
     @property
-    def total(self) -> int:
-        return self.initial_position + self.today_buy - self.today_sell
+    def vol(self) -> int:
+        """总持仓 = 期初 + 今日买入 - 今日卖出"""
+        return self.last_vol + self.today_buy - self.today_sell
 
 @dataclass
 class Order:
@@ -32,9 +41,8 @@ class Order:
     traded_volume: int = 0
     traded_price: float = 0.0
     order_time: str = ""
-    # 柜台返回的废单/撤单原因说明
-    order_remark: str = ""
     # 柜台废单原因文本（终端态 status=57 时由柜台附带）
+    # NOTE: order_remark 已移除（v5 重构）— broker 透传 order_no 走 RPC remark 字段
     status_msg: str = ""
 
 @dataclass

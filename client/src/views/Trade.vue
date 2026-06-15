@@ -69,7 +69,7 @@
           </el-table-column>
           <el-table-column prop="status" label="状态" width="100">
             <template #default="{ row }">
-              <OrderStatusBadge :status="row.status" :remark="row.order_remark" :status_msg="row.status_msg" />
+              <OrderStatusBadge :status="row.status" :remark="row.remark" :status_msg="row.status_msg" />
             </template>
           </el-table-column>
           <el-table-column label="操作" width="80" fixed="right">

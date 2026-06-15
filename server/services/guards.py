@@ -1,5 +1,5 @@
 """
-guards.py — 屏障层
+guards.py — 屏障层（v5: TradingDay→SysStatus, current_date→trd_date）
 
 - require_trading_day: 未做日初 → 503 TRADING_DAY_NOT_INIT
 - require_trading_session: 非交易时段 → 503 OUTSIDE_TRADING_SESSION
@@ -12,7 +12,7 @@ from typing import Optional
 from sqlalchemy.orm import Session
 
 from db import SessionLocal
-from models.orm import TradingDay
+from models.orm import SysStatus
 from models.user import User
 from services.trading_clock import TradingClock
 from auth.deps import get_current_user
@@ -20,19 +20,19 @@ from auth.deps import get_current_user
 
 def resolve_active_trd_date(db: Session) -> Optional[str]:
     """返回当前激活的交易日 (8 位数字字符串)，未激活返回 None"""
-    row = db.query(TradingDay).filter_by(status='active').first()
-    return row.current_date if row else None
+    row = db.query(SysStatus).filter_by(status='active').first()
+    return row.trd_date if row else None
 
 
 def resolve_default_trd_date(db: Session) -> str:
-    """默认查询日期：已激活 → active.current_date，否则 MAX(TRD_DATE)，否则今日"""
+    """默认查询日期：已激活 → active.trd_date，否则 MAX(trd_date)，否则今日"""
     from sqlalchemy import text
-    active = db.query(TradingDay).filter_by(status='active').first()
+    active = db.query(SysStatus).filter_by(status='active').first()
     if active:
-        return active.current_date
+        return active.trd_date
     # 兜底：取本地表 MAX
-    for table in ("orders", "trades", "positions", "assets"):
-        r = db.execute(text(f"SELECT MAX(TRD_DATE) FROM {table}")).first()
+    for table in ("orders", "trades", "positions", "reconcile_report"):
+        r = db.execute(text(f"SELECT MAX(trd_date) FROM {table}")).first()
         if r and r[0]:
             return r[0]
     return datetime.now().strftime('%Y%m%d')
@@ -52,7 +52,7 @@ async def require_trading_day() -> str:
                 detail={
                     "code": "TRADING_DAY_NOT_INIT",
                     "msg": "未做日初处理，无法交易",
-                    "redirect": "/admin/trading-day",
+                    "redirect": "/admin/sys-status",
                 }
             )
         return trd

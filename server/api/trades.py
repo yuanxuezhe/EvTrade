@@ -1,8 +1,13 @@
 """
-trades.py — v4 读本地 DB
+trades.py — v5 重构版（schema refactor）
 
 成交回报由 trd_cfm push handler 写入 trades 表。
 GET /api/trades 纯读 DB，不调 RPC。
+
+v5 改动：
+- 移除 id 字段
+- TRD_DATE → trd_date
+- 复合主键 (trd_date, trade_id)
 """
 from fastapi import APIRouter, Depends
 from typing import Optional, List
@@ -17,9 +22,8 @@ router = APIRouter()
 
 
 class TradeOut(BaseModel):
-    id: int
     trade_id: str
-    TRD_DATE: str
+    trd_date: str
     order_id: str
     stock_code: str
     order_type: str
@@ -38,19 +42,19 @@ class TradesListResponse(BaseModel):
 @router.get("", response_model=TradesListResponse)
 async def list_trades(
     stock_code: Optional[str] = None,
-    trading_day: Optional[str] = None,
+    trd_date: Optional[str] = None,
     db: Session = Depends(get_db),
 ):
-    trd = trading_day or resolve_default_trd_date(db)
-    q = db.query(Trade).filter(Trade.TRD_DATE == trd)
+    trd = trd_date or resolve_default_trd_date(db)
+    q = db.query(Trade).filter(Trade.trd_date == trd)
     if stock_code:
         q = q.filter(Trade.stock_code == stock_code)
-    rows = q.order_by(Trade.id.desc()).limit(500).all()
+    # 排序：按 created_at 倒序（无 id 主键时不再用 id）
+    rows = q.order_by(Trade.created_at.desc()).limit(500).all()
     return TradesListResponse(code=0, msg="", list=[
         TradeOut(
-            id=r.id,
             trade_id=r.trade_id,
-            TRD_DATE=r.TRD_DATE,
+            trd_date=r.trd_date,
             order_id=r.order_id,
             stock_code=r.stock_code,
             order_type=r.order_type,

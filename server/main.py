@@ -8,7 +8,7 @@ from auth.deps import get_current_user
 from api import positions, holdings, orders, trades, asset, auth as auth_api, users as users_api
 from api import clock, fee_config
 from api import t0_stats
-from api.admin import trading_day as admin_trading_day, reconcile as admin_reconcile, session as admin_session
+from api.admin import sys_status as admin_sys_status, reconcile as admin_reconcile, session as admin_session
 from ws.manager import ws_manager
 from rpc.client import get_rpc_client, close_rpc_client
 # 注：行情订阅已解耦到 hq/hqserver.py 的内置 WebSocket 服务 (:8765)，
@@ -91,7 +91,7 @@ app.include_router(fee_config.router, prefix="/api/fee-config", tags=["fee-confi
 # ---- Admin routes (login required, role checked by handler) ----------------
 _AUTH_ADMIN = [Depends(get_current_user)]
 app.include_router(users_api.router, prefix="/api/users", tags=["users"], dependencies=_AUTH_ADMIN)
-app.include_router(admin_trading_day.router, prefix="/api/admin/trading-day", tags=["admin-trading-day"], dependencies=_AUTH_ADMIN)
+app.include_router(admin_sys_status.router, prefix="/api/admin/sys-status", tags=["admin-sys-status"], dependencies=_AUTH_ADMIN)
 app.include_router(admin_reconcile.router, prefix="/api/admin/reconcile", tags=["admin-reconcile"], dependencies=_AUTH_ADMIN)
 app.include_router(admin_session.router, prefix="/api/admin/trading-session", tags=["admin-session"], dependencies=_AUTH_ADMIN)
 

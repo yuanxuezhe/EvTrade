@@ -1,8 +1,12 @@
 """
-asset.py — v4 读本地 DB
+asset.py — v5 重构版（schema refactor）
 
-资金由 ast_cfm push handler 写入 assets 表（单行 TRD_DATE）。
+资金由 ast_cfm push handler 写入 assets 表（单行，无主键）。
 GET /api/asset 纯读 DB，不调 RPC。
+
+v5 改动：
+- 移除 TRD_DATE 字段（assets 只保存当前资金）
+- 移除 id 字段
 """
 from fastapi import APIRouter, Depends
 from typing import Optional, List
@@ -11,13 +15,11 @@ from sqlalchemy.orm import Session
 
 from db import get_db
 from models.orm import Asset
-from services.guards import resolve_default_trd_date
 
 router = APIRouter()
 
 
 class AssetOut(BaseModel):
-    TRD_DATE: str
     cash: float
     frozen_cash: float
     market_value: float
@@ -33,16 +35,11 @@ class AssetResponse(BaseModel):
 
 
 @router.get("", response_model=AssetResponse)
-async def get_account_asset(
-    trading_day: Optional[str] = None,
-    db: Session = Depends(get_db),
-):
-    trd = trading_day or resolve_default_trd_date(db)
-    row = db.query(Asset).filter(Asset.TRD_DATE == trd).first()
+async def get_account_asset(db: Session = Depends(get_db)):
+    row = db.query(Asset).first()
     if not row:
         return AssetResponse(code=0, msg="无资产数据", list=[])
     return AssetResponse(code=0, msg="", list=[AssetOut(
-        TRD_DATE=row.TRD_DATE,
         cash=row.cash,
         frozen_cash=row.frozen_cash,
         market_value=row.market_value,

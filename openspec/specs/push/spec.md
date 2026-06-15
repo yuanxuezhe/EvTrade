@@ -72,10 +72,12 @@ RS2: [{
     traded_volume: ...,
     traded_price: ...,
     order_time: "HH:MM:SS",
-    order_remark: "...",
-    status_msg: "..."
+    remark: "..."        # v5: 柜台透传字段 (= 本地 order_no)
+    status_msg: "..."    # 废单原因 / 撤单原因
 }]
 ```
+
+**v5 匹配规则**：`handle_ord_cfm` 先按 `order_id` 匹配本地 Order；未命中再用 `remark` (= `order_no`) 兜底匹配（应对 broker 端重新生成 `order_id` 但透传 `remark` 不变的场景）。
 
 ## Known Issues (from analysis)
 

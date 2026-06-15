@@ -8,7 +8,7 @@ trading_clock.py — 交易时段判断
 from datetime import datetime, time as dtime
 from typing import Optional
 from db import SessionLocal
-from models.orm import TradingSession, TradingDay
+from models.orm import TradingSession, SysStatus
 
 
 class TradingClock:
@@ -35,7 +35,7 @@ class TradingClock:
                 db.refresh(row)
             cls._session = row
             # 半天判断
-            active = db.query(TradingDay).filter_by(status='active').first()
+            active = db.query(SysStatus).filter_by(status='active').first()
             cls._is_half_day = bool(active and active.is_half_day)
             cls._loaded_at = datetime.now()
             return row

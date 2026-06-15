@@ -11,9 +11,9 @@
 
 - `GET /api/positions` 和 `GET /api/holdings`
 - 读本地 `positions` 表，响应 `{code, msg, list: [Position]}`
-- Position 字段：`stock_code, stock_name, initial_position, today_buy, today_sell, available, total, cost`
+- Position 字段：`stock_code, stock_name, last_vol, today_buy, today_sell, avl_vol, vol, cost_price`
 - **market_value 不由后端计算**：前端通过 `holdings.js:liveMarketValue` 根据实时行情 × 总持仓计算
-- 后端返回 `cost * total` 作为成本市值代理（前端行情未到时的 fallback）
+- 后端返回 `cost_price * vol` 作为成本市值代理（前端行情未到时的 fallback）
 
 ### REQ-POS-002: 鉴权
 
@@ -21,8 +21,8 @@
 
 ### REQ-POS-003: 数据来源
 
-- Push 路径：柜台 `pos_cfm` → `push_handlers.handle_pos_cfm` → 写入 positions 表
-- 对账路径：`do_reconcile` → `qry_positions` RPC → `_apply_broker_data` → 覆盖 positions 表
+- Push 路径：柜台 `pos_cfm` → `push_handlers.handle_pos_cfm` → 按 `stock_code` 主键 UPSERT positions 表
+- 对账路径：`do_reconcile` → `qry_positions` RPC → `_apply_broker_data` → 清空 + 批量重写 positions 表
 - 读路径：纯读 DB，不调 RPC
 
 ## Scenarios

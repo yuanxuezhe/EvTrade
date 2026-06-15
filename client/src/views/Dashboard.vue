@@ -102,14 +102,14 @@
               </div>
             </template>
           </el-table-column>
-          <el-table-column prop="total" label="持仓量" align="right">
+          <el-table-column prop="vol" label="持仓量" align="right">
             <template #default="{ row }">
-              <span class="text-mono">{{ formatNumber(row.total) }}</span>
+              <span class="text-mono">{{ formatNumber(row.vol) }}</span>
             </template>
           </el-table-column>
-          <el-table-column prop="available" label="可用" align="right">
+          <el-table-column prop="avl_vol" label="可用" align="right">
             <template #default="{ row }">
-              <span class="text-mono">{{ formatNumber(row.available) }}</span>
+              <span class="text-mono">{{ formatNumber(row.avl_vol) }}</span>
             </template>
           </el-table-column>
           <el-table-column label="今日变动" align="right">
@@ -153,7 +153,7 @@
                 <span class="text-mono text-secondary">
                   {{ formatNumber(order.volume) }} 股 @ ¥{{ formatMoney(order.price) }}
                 </span>
-                <OrderStatusBadge :status="order.status" :remark="order.order_remark" :status_msg="order.status_msg" />
+                <OrderStatusBadge :status="order.status" :remark="order.remark" :status_msg="order.status_msg" />
               </div>
             </div>
           </div>
@@ -210,7 +210,7 @@ const positionCount = computed(() => holdingsStore.positions.length)
 
 const topPositions = computed(() =>
   [...holdingsStore.positions]
-    .sort((a, b) => (b.volume || 0) - (a.volume || 0))
+    .sort((a, b) => (b.vol || 0) - (a.vol || 0))
     .slice(0, 5)
 )
 

@@ -21,12 +21,18 @@
 - `order_type` 数字串：股票场景 `23=买入 24=卖出`
 - `price_type` 数字：`5=最新价 11=指定价 14=对手价 44=市价 ...`
 - 走 `ord_stk` RPC，等待柜台 ack，**fire-and-forget 后状态变更靠 push 推送**
+- **v5 幂等 / 路由定位**：
+  - `client_order_id` 客户端幂等号（同 cid 二次提交返原单）
+  - `order_no` 服务端本地生成 8 位序号（保证当日 + 全局唯一）
+  - 下单时把 `order_no` 透传到柜台 RPC 的 `remark` 字段（柜台透传，pushed-back 时带回）
+  - 委托表复合主键 `(trd_date, order_id)`；初始 `order_id` 占位 `PENDING-{order_no}`，broker ack 后用真实 `order_id` 替换
 
 ### REQ-TRADE-003: 撤单
 
-- `DELETE /api/orders/{order_id}`
-- 走 `cancel_ord` RPC，`order_id` 写入请求体
+- `DELETE /api/orders/{order_id}?trd_date=YYYYMMDD`
+- 走 `cancel_ord` RPC，`order_id` + `trd_date` 复合主键定位
 - 状态变更由 push 队列异步推送（前端 WS 收到后更新 store）
+- **v5 改写**：本服务**不本地改 status**，由 ord_cfm push 异步回写（避免与柜台状态机分叉）
 - **实现约定**：`api/orders.py` 中 import 使用别名 `from rpc.client import cancel_order as rpc_cancel_order`，避免与路由函数同名递归
 
 ### REQ-TRADE-004: 鉴权

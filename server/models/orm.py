@@ -1,14 +1,15 @@
 """
-SQLAlchemy ORM models for EvTrade v4.
+SQLAlchemy ORM models for EvTrade v5 (schema refactor).
 
-命名规范：
-- 表名/列名：snake_case
-- 交易日期字段：TRD_DATE（8 位数字字符串如 '20260614'，列名沿用用户约定）
-- 单行表：id=1，CHECK (id=1) 约束
+设计原则（2026-06-15 重构）：
+- 表名 / 列名：snake_case
+- 日期字段：trd_date（8 位数字字符串如 '20260614'）
+- 单行表（assets 等）：无主键，按约定 .first() 访问
+- 含 trd_date 的表：trd_date 必入主键（复合主键）
 
-10 张表：
+11 张表：
   业务：orders, trades, positions, assets
-  配置：trading_day, trading_session, fee_config, reconcile_config
+  配置：sys_status, trading_session, fee_config, reconcile_config
   历史：reconcile_report
   行情：quote_snapshots
   序列：order_no_seq
@@ -24,24 +25,21 @@ from db import Base
 # ─────────────── 业务表 ───────────────
 
 class Order(Base):
-    """委托主表"""
+    """委托主表（复合主键 trd_date + order_id）"""
     __tablename__ = "orders"
     __table_args__ = (
-        UniqueConstraint("order_id", name="uq_orders_order_id"),
-        UniqueConstraint("client_order_id", name="uq_orders_client_order_id"),
+        UniqueConstraint("client_order_id", "trd_date", name="uq_orders_client_trd"),
         UniqueConstraint("order_no", name="uq_orders_order_no"),
-        Index("ix_orders_trd_status", "TRD_DATE", "status"),
+        Index("ix_orders_trd_status", "trd_date", "status"),
         Index("ix_orders_stock", "stock_code"),
     )
 
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    order_id = Column(String(64), nullable=False)            # 柜台号
-    client_order_id = Column(String(64), nullable=False)     # 客户端幂等号
-    order_no = Column(String(8), nullable=False)             # 本地 8 位序号
-    order_remark = Column(String(64), nullable=False, default="")
-    TRD_DATE = Column(String(8), nullable=False)            # 交易日
+    trd_date = Column(String(8), primary_key=True, nullable=False)  # 交易日
+    order_id = Column(String(64), primary_key=True, nullable=False)  # 柜台号
+    client_order_id = Column(String(64), nullable=False)             # 客户端幂等号
+    order_no = Column(String(8), nullable=False)                    # 本地 8 位序号
     stock_code = Column(String(16), nullable=False)
-    order_type = Column(String(2), nullable=False)           # 23=买 24=卖
+    order_type = Column(String(2), nullable=False)                  # 23=买 24=卖
     price_type = Column(Integer, nullable=False, default=11)
     price = Column(Float, nullable=False, default=0.0)
     volume = Column(Integer, nullable=False, default=0)
@@ -59,18 +57,16 @@ class Order(Base):
 
 
 class Trade(Base):
-    """成交表"""
+    """成交表（复合主键 trd_date + trade_id）"""
     __tablename__ = "trades"
     __table_args__ = (
-        UniqueConstraint("trade_id", name="uq_trades_trade_id"),
         Index("ix_trades_order", "order_id"),
-        Index("ix_trades_trd_stock", "TRD_DATE", "stock_code"),
+        Index("ix_trades_trd_stock", "trd_date", "stock_code"),
     )
 
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    trade_id = Column(String(64), nullable=False)
+    trd_date = Column(String(8), primary_key=True, nullable=False)
+    trade_id = Column(String(64), primary_key=True, nullable=False)
     order_id = Column(String(64), nullable=False)
-    TRD_DATE = Column(String(8), nullable=False)
     stock_code = Column(String(16), nullable=False)
     order_type = Column(String(2), nullable=False)
     price = Column(Float, nullable=False, default=0.0)
@@ -81,37 +77,33 @@ class Trade(Base):
 
 
 class Position(Base):
-    """持仓表"""
+    """持仓表（单股唯一，无 trd_date；当前快照语义）"""
     __tablename__ = "positions"
-    __table_args__ = (
-        UniqueConstraint("TRD_DATE", "stock_code", name="uq_positions_trd_stock"),
-        Index("ix_positions_stock", "stock_code"),
-    )
 
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    TRD_DATE = Column(String(8), nullable=False)
-    stock_code = Column(String(16), nullable=False)
+    stock_code = Column(String(16), primary_key=True, nullable=False)
     stock_name = Column(String(64), nullable=False, default="")
-    initial_position = Column(Integer, nullable=False, default=0)  # 日初
+    last_vol = Column(Integer, nullable=False, default=0)   # 期初持仓
     today_buy = Column(Integer, nullable=False, default=0)
     today_sell = Column(Integer, nullable=False, default=0)
-    available = Column(Integer, nullable=False, default=0)
-    total = Column(Integer, nullable=False, default=0)
-    cost = Column(Float, nullable=False, default=0.0)
+    avl_vol = Column(Integer, nullable=False, default=0)   # 可用
+    vol = Column(Integer, nullable=False, default=0)       # 总持仓
+    cost_price = Column(Float, nullable=False, default=0.0)
     synced_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     synced_from = Column(String(16), nullable=False, default="")  # rpc_full / push_partial / manual
 
 
 class Asset(Base):
-    """资金表（单行）"""
+    """资金表（单行，SQLAlchemy ORM 强制需要主键，用 id=1 + CheckConstraint 限定单行）
+
+    v5 schema: 移除 TRD_DATE（不再有交易日维度），保留 cash / frozen_cash / market_value / total_asset。
+    业务访问方式：db.query(Asset).first() / db.query(Asset).delete() + db.add(new)
+    """
     __tablename__ = "assets"
     __table_args__ = (
-        CheckConstraint("id = 1", name="ck_assets_single_row"),
-        UniqueConstraint("TRD_DATE", name="uq_assets_trd"),
+        CheckConstraint("id = 1", name="ck_asset_single_row"),
     )
 
     id = Column(Integer, primary_key=True, default=1)
-    TRD_DATE = Column(String(8), nullable=False)
     cash = Column(Float, nullable=False, default=0.0)         # 可用
     frozen_cash = Column(Float, nullable=False, default=0.0)   # 冻结
     market_value = Column(Float, nullable=False, default=0.0)
@@ -122,20 +114,18 @@ class Asset(Base):
 
 # ─────────────── 配置表 ───────────────
 
-class TradingDay(Base):
-    """交易日状态机"""
-    __tablename__ = "trading_day"
+class SysStatus(Base):
+    """系统级状态机（含交易日；主键 trd_date）"""
+    __tablename__ = "sys_status"
     __table_args__ = (
-        Index("ix_trading_day_status", "status"),
-        UniqueConstraint("current_date", name="uq_trading_day_current_date"),
+        Index("ix_sys_status_status", "status"),
     )
 
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    current_date = Column(String(8), nullable=False)   # YYYYMMDD
-    status = Column(String(16), nullable=False, default="pending")  # pending / active / closed
+    trd_date = Column(String(8), primary_key=True, nullable=False)   # YYYYMMDD
+    status = Column(String(16), nullable=False, default="pending")   # pending / active / closed
     is_half_day = Column(Integer, nullable=False, default=0)
     initialized_at = Column(DateTime, nullable=True)
-    initialized_by = Column(Integer, nullable=True)     # FK users.id
+    initialized_by = Column(Integer, nullable=True)                  # FK users.id
     closed_at = Column(DateTime, nullable=True)
     closed_by = Column(Integer, nullable=True)
     remark = Column(String(255), nullable=False, default="")
@@ -190,12 +180,15 @@ class ReconcileConfig(Base):
 # ─────────────── 历史 ───────────────
 
 class ReconcileReport(Base):
-    """对账历史报告"""
+    """对账历史报告（复合主键 trd_date + mode + created_at）"""
     __tablename__ = "reconcile_report"
+    __table_args__ = (
+        Index("ix_reconcile_report_trd", "trd_date"),
+    )
 
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    TRD_DATE = Column(String(8), nullable=False)
-    mode = Column(String(16), nullable=False)              # auto / manual
+    trd_date = Column(String(8), primary_key=True, nullable=False)
+    mode = Column(String(16), primary_key=True, nullable=False)        # auto / manual
+    created_at = Column(DateTime, primary_key=True, nullable=False, default=datetime.utcnow)
     diffs_json = Column(Text, nullable=False, default="[]")
     broker_asset_json = Column(Text, nullable=False, default="")
     local_asset_json = Column(Text, nullable=False, default="")
@@ -203,7 +196,6 @@ class ReconcileReport(Base):
     local_positions_json = Column(Text, nullable=False, default="")
     rpc_status = Column(String(16), nullable=False, default="ok")  # ok / partial / failed
     error_message = Column(String(512), nullable=False, default="")
-    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     created_by = Column(Integer, nullable=True)
 
 

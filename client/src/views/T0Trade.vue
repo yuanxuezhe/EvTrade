@@ -330,8 +330,8 @@
     <el-dialog v-model="showPicker" title="选择持仓" width="500px">
       <el-table :data="holdingsPositions" @row-click="onPickPosition">
         <el-table-column prop="stock_code" label="代码" width="120" />
-        <el-table-column prop="volume" label="持仓" align="right">
-          <template #default="{ row }">{{ formatNumber(row.volume || row.total) }}</template>
+        <el-table-column prop="vol" label="持仓" align="right">
+          <template #default="{ row }">{{ formatNumber(row.vol) }}</template>
         </el-table-column>
         <el-table-column label="现价" align="right">
           <template #default="{ row }">
@@ -451,7 +451,7 @@
             stroke="none"
           />
           <!-- 每日 bar（实心 = 赚，空心 = 亏） -->
-          <g v-for="(p, i) in cumHistory" :key="p.TRD_DATE">
+          <g v-for="(p, i) in cumHistory" :key="p.trd_date">
             <line
               :x1="barX(i)" :x2="barX(i)"
               :y1="barY(p.realized_pnl, i)"
@@ -460,7 +460,7 @@
               stroke-width="3"
               stroke-linecap="round"
             />
-            <title>{{ p.TRD_DATE }}: {{ p.realized_pnl >= 0 ? '+' : '' }}¥{{ p.realized_pnl }} ({{ p.trade_count }} 笔)</title>
+            <title>{{ p.trd_date }}: {{ p.realized_pnl >= 0 ? '+' : '' }}¥{{ p.realized_pnl }} ({{ p.trade_count }} 笔)</title>
           </g>
         </svg>
         <div class="x-labels">
@@ -613,7 +613,7 @@ const t0Class = computed(() => t0Stats.value.total_pnl >= 0 ? 'up' : 'down')
 
 // T0 统计
 const t0Stats = ref({
-  TRD_DATE: '', stock_code: '',
+  trd_date: '', stock_code: '',
   today_buy_volume: 0, today_sell_volume: 0,
   today_buy_amount: 0, today_sell_amount: 0,
   realized_pnl: 0, cost_basis: 0, position_volume: 0,
@@ -698,10 +698,10 @@ function barY(realized, i) {
 const xLabelIndices = computed(() => {
   const arr = cumHistory.value
   if (arr.length === 0) return []
-  if (arr.length === 1) return [arr[0].TRD_DATE]
-  if (arr.length === 2) return [arr[0].TRD_DATE, arr[1].TRD_DATE]
+  if (arr.length === 1) return [arr[0].trd_date]
+  if (arr.length === 2) return [arr[0].trd_date, arr[1].trd_date]
   const mid = Math.floor(arr.length / 2)
-  return [arr[0].TRD_DATE, arr[mid].TRD_DATE, arr[arr.length - 1].TRD_DATE]
+  return [arr[0].trd_date, arr[mid].trd_date, arr[arr.length - 1].trd_date]
 })
 
 function onStockCodeChange() {

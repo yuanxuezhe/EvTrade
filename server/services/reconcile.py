@@ -1,5 +1,5 @@
 """
-reconcile.py — v4 对账算法 (v7 简化: 委托/成交不走对账, push 增量)
+reconcile.py — v5 对账算法 (schema refactor: trading_day→sys_status, 字段重命名)
 
 启动人工触发，admin 调 POST /api/admin/reconcile/trigger：
 1. 调 qry_positions + qry_asset（仅 2 个 RPC，委托/成交靠 push 增量）
@@ -7,15 +7,16 @@ reconcile.py — v4 对账算法 (v7 简化: 委托/成交不走对账, push 增
 3. 写 reconcile_report 表
 4. auto_reconcile=True → 用柜台数据覆盖本地 Position + Asset
    auto_reconcile=False → 只写报告，不动数据
-5. 切交易日到新 TRD_DATE
+5. 切交易日到新 trd_date（写入 sys_status 表）
 
 对账失败 → 不切交易日，返回 503，用户重试。
 RPC 部分失败 → 写对账报告 + 503 错误详情，不切交易日。
 
-v7 改动（你要求"委托和成交不需要对账"）：
-- 删 qry_orders / qry_trades 调用
-- 删 _apply_broker_data 中 Order/Trade 覆盖逻辑
-- Order/Trade 改靠 push_handlers.handle_push (ord_cfm / trd_cfm) 自动 upsert
+v5 改动（schema refactor）：
+- TradingDay → SysStatus；current_date → trd_date
+- Position 字段：initial_position→last_vol, available→avl_vol, total→vol, cost→cost_price
+- Asset 去 TRD_DATE，单行无主键
+- ReconcileReport 复合主键 (trd_date, mode, created_at)
 """
 from datetime import datetime
 from typing import Dict, Any, List
@@ -24,7 +25,7 @@ from sqlalchemy.orm import Session
 from db import SessionLocal
 from rpc.client import qry_positions, qry_asset
 from models.orm import (
-    Position, Asset, TradingDay, ReconcileConfig, ReconcileReport,
+    Position, Asset, SysStatus, ReconcileConfig, ReconcileReport,
 )
 import logging
 
@@ -63,6 +64,9 @@ async def do_reconcile(
         applied: bool (auto_reconcile),
         error: str | None,
     }
+
+    NOTE: report_id 在 v5 改为 (trd_date, mode, created_at) 复合键，
+    返回中只取 created_at 作为标识。
     """
     cfg = get_reconcile_config(db)
 
@@ -92,18 +96,20 @@ async def do_reconcile(
 
     # 解析本地快照（对比用; 委托/成交不参与对账）
     local_positions = [
-        {"stock_code": p.stock_code, "total": p.total, "available": p.available,
-         "TRD_DATE": p.TRD_DATE}
+        {"stock_code": p.stock_code, "vol": p.vol, "avl_vol": p.avl_vol,
+         "cost_price": p.cost_price}
         for p in db.query(Position).all()
     ]
     local_assets = [
-        {"TRD_DATE": a.TRD_DATE, "cash": a.cash, "total_asset": a.total_asset}
+        {"cash": a.cash, "total_asset": a.total_asset}
         for a in db.query(Asset).all()
     ]
 
+    now = datetime.utcnow()
     report = ReconcileReport(
-        TRD_DATE=new_trd_date,
+        trd_date=new_trd_date,
         mode="auto" if cfg.auto_reconcile else "manual",
+        created_at=now,
         diffs_json=json.dumps({
             'rpc_errors': rpc_errors,
             'broker': {
@@ -128,7 +134,7 @@ async def do_reconcile(
     if rpc_status == "failed":
         return {
             'ok': False,
-            'report_id': report.id,
+            'report_id': int(now.timestamp()),
             'diffs': diffs,
             'applied': False,
             'error': f"全部 RPC 失败: {'; '.join(rpc_errors)}",
@@ -146,7 +152,7 @@ async def do_reconcile(
             log.exception("apply_broker_data failed: %s", e)
             return {
                 'ok': False,
-                'report_id': report.id,
+                'report_id': int(now.timestamp()),
                 'diffs': diffs,
                 'applied': False,
                 'error': f"覆盖本地失败: {e}",
@@ -154,33 +160,31 @@ async def do_reconcile(
 
     # 5. 切交易日 (upsert: 有则激活老行, 无则新增)
     #
-    # DB 层级: TradingDay ORM 有 UniqueConstraint("current_date")
+    # DB 层级: SysStatus ORM 主键 trd_date
     # 防同日多 INSERT, 配合本 upsert 块保证同日只 1 行 active。
-    # 同 current_date 再次 init: 走 `existing` 分支, status='active' + 更新元数据
-    # 切到新日: 老的 active 同 current_date 不同的先 closed, 再查/插新日
+    # 同 trd_date 再次 init: 走 `existing` 分支, status='active' + 更新元数据
+    # 切到新日: 老的 active 同 trd_date 不同的先 closed, 再查/插新日
     if applied or not cfg.auto_reconcile:
-        old_active = db.query(TradingDay).filter_by(status='active').first()
-        if old_active and old_active.current_date != new_trd_date:
+        old_active = db.query(SysStatus).filter_by(status='active').first()
+        if old_active and old_active.trd_date != new_trd_date:
             old_active.status = 'closed'
-        existing = db.query(TradingDay).filter_by(current_date=new_trd_date).first()
-        now = datetime.utcnow()
+        existing = db.query(SysStatus).filter_by(trd_date=new_trd_date).first()
         if existing:
             existing.status = 'active'
             existing.initialized_at = now
             existing.initialized_by = by_user
         else:
-            db.add(TradingDay(
-                current_date=new_trd_date,
+            db.add(SysStatus(
+                trd_date=new_trd_date,
                 status='active',
                 initialized_at=now,
                 initialized_by=by_user,
             ))
         db.commit()
-        db.refresh(report)
 
     return {
         'ok': True,
-        'report_id': report.id,
+        'report_id': int(now.timestamp()),
         'diffs': diffs,
         'applied': applied,
         'error': None,
@@ -195,37 +199,33 @@ def _apply_broker_data(
 ) -> bool:
     """用柜台数据覆盖本地 (仅 Position + Asset, 委托/成交靠 push)
 
-    v7 简化: 委托/成交不在对账流程处理, 改靠 push_handlers.handle_push
+    v5 简化: 委托/成交不在对账流程处理, 改靠 push_handlers.handle_push
     (ord_cfm / trd_cfm 事件) 自动 upsert 到本地表。
     """
-    # Positions
-    db.query(Position).filter(Position.TRD_DATE == trd_date).delete()
+    # Positions: 按 stock_code PK 全表覆盖
+    db.query(Position).delete()
     for p in positions_data:
         stock_code = str(p.get('stock_code', ''))
         if not stock_code:
             continue
         db.add(Position(
-            TRD_DATE=trd_date,
             stock_code=stock_code,
             stock_name=str(p.get('stock_name', '')),
-            initial_position=int(p.get('initial_position', 0) or 0),
+            last_vol=int(p.get('last_vol', 0) or 0),
             today_buy=int(p.get('today_buy', 0) or 0),
             today_sell=int(p.get('today_sell', 0) or 0),
-            available=int(p.get('available', 0) or 0),
-            total=int(p.get('total', p.get('volume', 0)) or 0),
-            cost=float(p.get('cost', p.get('cost_price', 0)) or 0),
+            avl_vol=int(p.get('avl_vol', p.get('available', 0)) or 0),
+            vol=int(p.get('vol', p.get('volume', 0)) or 0),
+            cost_price=float(p.get('cost_price', p.get('cost', 0)) or 0),
             synced_at=datetime.utcnow(),
             synced_from='rpc_reconcile',
         ))
 
-    # Assets (单行; Asset ORM CheckConstraint("id=1") 强制单行,
-    # 切日必须先 DELETE 老日, 再 INSERT 新日 (id=1))
+    # Assets: 单行；Asset ORM 无主键，先清空再写入
     db.query(Asset).delete()
     if assets_data:
         a = assets_data[0]
         db.add(Asset(
-            id=1,
-            TRD_DATE=trd_date,
             cash=float(a.get('cash', 0) or 0),
             frozen_cash=float(a.get('frozen_cash', a.get('frozen', 0)) or 0),
             market_value=float(a.get('market_value', 0) or 0),

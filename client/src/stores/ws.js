@@ -162,7 +162,8 @@ export const useWsStore = defineStore('ws', () => {
       if (!Number.isNaN(tv)) existing.traded_volume = tv
       const tp = Number(row.traded_price)
       if (!Number.isNaN(tp)) existing.traded_price = tp
-      if (row.order_remark) existing.order_remark = String(row.order_remark)
+      // v5 schema: 柜台透传字段名是 remark (= 本地 order_no)
+      if (row.remark) existing.remark = String(row.remark)
       if (row.status_msg) existing.status_msg = String(row.status_msg)
     } else if (orderId) {
       orderStore.orders.unshift({
@@ -178,7 +179,7 @@ export const useWsStore = defineStore('ws', () => {
         traded_volume: Number(row.traded_volume) || 0,
         traded_price: Number(row.traded_price) || 0,
         order_time: row.order_time || payload_ts_to_hms(),
-        order_remark: row.order_remark ? String(row.order_remark) : '',
+        remark: row.remark ? String(row.remark) : '',
         status_msg: row.status_msg ? String(row.status_msg) : ''
       })
     }

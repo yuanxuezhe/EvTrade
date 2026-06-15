@@ -1,10 +1,15 @@
 """
-admin/reconcile.py — v4 对账配置 + 历史报告
+admin/reconcile.py — v5 重构版（schema refactor）
 
 GET  /api/admin/reconcile/config      → 读对账配置
 PATCH /api/admin/reconcile/config      → 改 auto_reconcile
 GET  /api/admin/reconcile/reports      → 历史报告列表（90 天）
-GET  /api/admin/reconcile/reports/{id} → 单个报告详情
+GET  /api/admin/reconcile/reports/{trd_date}/{mode}/{created_at} → 单个报告详情
+
+v5 改动：
+- ReconcileReport 复合主键 (trd_date, mode, created_at)
+- 响应中 id 字段改为 created_at 时间戳
+- TRD_DATE → trd_date
 """
 from datetime import datetime, timedelta
 from fastapi import APIRouter, HTTPException, Depends
@@ -39,11 +44,11 @@ class ReconcileConfigUpdate(BaseModel):
 
 
 class ReconcileReportSummary(BaseModel):
-    id: int
-    TRD_DATE: str
+    """v5: id 字段改为 created_at 时间戳（Report 复合主键含 created_at）"""
+    created_at: str
+    trd_date: str
     mode: str
     rpc_status: str
-    created_at: Optional[str] = None
 
 
 @router.get("/config", response_model=ReconcileConfigOut)
@@ -96,24 +101,42 @@ async def list_reports(db: Session = Depends(get_db), _=Depends(require_admin)):
     ).order_by(desc(ReconcileReport.created_at)).limit(200).all()
     return [
         ReconcileReportSummary(
-            id=r.id, TRD_DATE=r.TRD_DATE, mode=r.mode,
+            created_at=r.created_at.isoformat() if r.created_at else "",
+            trd_date=r.trd_date, mode=r.mode,
             rpc_status=r.rpc_status,
-            created_at=r.created_at.isoformat() if r.created_at else None,
         ) for r in rows
     ]
 
 
-@router.get("/reports/{report_id}")
-async def get_report(report_id: int, db: Session = Depends(get_db), _=Depends(require_admin)):
-    r = db.query(ReconcileReport).filter_by(id=report_id).first()
+@router.get("/reports/{trd_date}/{mode}/{created_at}")
+async def get_report(
+    trd_date: str, mode: str, created_at: str,
+    db: Session = Depends(get_db), _=Depends(require_admin),
+):
+    """按复合主键 (trd_date, mode, created_at) 查单个报告"""
+    # Python 3.6 兼容: 用 strptime 代替 fromisoformat (3.7+)
+    for fmt in ("%Y-%m-%dT%H:%M:%S.%f", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S.%f", "%Y-%m-%d %H:%M:%S"):
+        try:
+            ts = datetime.strptime(created_at, fmt)
+            break
+        except ValueError:
+            continue
+    else:
+        raise HTTPException(
+            status_code=400,
+            detail={"code": "BAD_CREATED_AT", "msg": f"created_at 解析失败: {created_at}"}
+        )
+    r = db.query(ReconcileReport).filter_by(
+        trd_date=trd_date, mode=mode, created_at=ts
+    ).first()
     if not r:
-        raise HTTPException(status_code=404, detail={"code": "NOT_FOUND", "msg": f"报告 {report_id} 不存在"})
+        raise HTTPException(status_code=404, detail={"code": "NOT_FOUND", "msg": f"报告 {trd_date}/{mode}@{created_at} 不存在"})
     return {
-        "id": r.id,
-        "TRD_DATE": r.TRD_DATE,
+        "created_at": r.created_at.isoformat() if r.created_at else None,
+        "trd_date": r.trd_date,
         "mode": r.mode,
         "rpc_status": r.rpc_status,
         "error_message": r.error_message,
-        "created_at": r.created_at.isoformat() if r.created_at else None,
+        "created_by": r.created_by,
         "diffs": json.loads(r.diffs_json) if r.diffs_json else {},
     }

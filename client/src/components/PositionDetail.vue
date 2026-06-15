@@ -24,7 +24,7 @@
     <div v-if="position" class="detail-pos">
       <div class="dp-row">
         <span class="dp-label">期初</span>
-        <span class="dp-value text-mono">{{ position.initial_position }}</span>
+        <span class="dp-value text-mono">{{ position.last_vol }}</span>
       </div>
       <div class="dp-row">
         <span class="dp-label">今日买入</span>
@@ -36,11 +36,11 @@
       </div>
       <div class="dp-row">
         <span class="dp-label">可用</span>
-        <span class="dp-value text-mono">{{ position.available }}</span>
+        <span class="dp-value text-mono">{{ position.avl_vol }}</span>
       </div>
       <div class="dp-row total">
         <span class="dp-label">总持仓</span>
-        <span class="dp-value text-mono">{{ position.total }}</span>
+        <span class="dp-value text-mono">{{ position.vol }}</span>
       </div>
     </div>
 
@@ -67,7 +67,7 @@
                 <div class="tl-body text-mono">
                   {{ item.volume }} 股 @ ¥{{ item.price.toFixed(2) }}
                   <span class="tl-status" v-if="item.status !== '-'">
-                    · <OrderStatusBadge :status="item.statusKey" size="sm" :remark="item.order_remark" :status_msg="item.status_msg" />
+                    · <OrderStatusBadge :status="item.statusKey" size="sm" :remark="item.remark" :status_msg="item.status_msg" />
                   </span>
                 </div>
               </div>
@@ -100,7 +100,7 @@
             </el-table-column>
             <el-table-column prop="statusLabel" label="状态" width="110">
               <template #default="{ row }">
-                <OrderStatusBadge v-if="row.statusKey" :status="row.statusKey" :remark="row.order_remark" :status_msg="row.status_msg" />
+                <OrderStatusBadge v-if="row.statusKey" :status="row.statusKey" :remark="row.remark" :status_msg="row.status_msg" />
                 <span v-else class="text-secondary">—</span>
               </template>
             </el-table-column>
@@ -136,7 +136,7 @@ const orderTradeList = computed(() => {
       price: order.price,
       status: STATUS_LABEL[order.status] || order.status,
       statusKey: order.status,
-      order_remark: order.order_remark || '',
+      remark: order.remark || '',
       status_msg: order.status_msg || '',
       order_id: order.order_id
     })
@@ -175,8 +175,8 @@ const profit = computed(() => {
 
 const needBuyBack = computed(() => {
   if (!props.position) return 0
-  const { initial_position, total } = props.position
-  return Math.max(0, initial_position - total)
+  const { last_vol, vol } = props.position
+  return Math.max(0, last_vol - vol)
 })
 </script>
 

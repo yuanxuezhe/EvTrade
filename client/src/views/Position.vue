@@ -99,11 +99,11 @@ const filteredPositions = computed(() => {
 })
 
 const totalShares = computed(() =>
-  positionStore.positions.reduce((sum, p) => sum + (p.total || 0), 0)
+  positionStore.positions.reduce((sum, p) => sum + (p.vol || 0), 0)
 )
 
 const totalAvailable = computed(() =>
-  positionStore.positions.reduce((sum, p) => sum + (p.available || 0), 0)
+  positionStore.positions.reduce((sum, p) => sum + (p.avl_vol || 0), 0)
 )
 
 const netChange = computed(() =>

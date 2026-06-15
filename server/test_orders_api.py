@@ -1,5 +1,5 @@
 """
-test_orders_api.py — 验证 v4 下单/撤单/查询
+test_orders_api.py — 验证 v5 下单/撤单/查询（schema refactor）
 
 mock RPC + TradingClock，覆盖：
 - 幂等（同 client_order_id 二次提交返原单）
@@ -9,6 +9,13 @@ mock RPC + TradingClock，覆盖：
 - 撤单成功 → 不本地改 status
 - 撤单失败 → 500
 - 查询 DB
+
+v5 改动：
+- 移除 order_remark 字段（v4 错误复用 broker 透传字段）
+- TRD_DATE → trd_date
+- TradingDay → SysStatus
+- 复合主键 (trd_date, order_id)
+- DELETE /{order_id} 需要 trd_date 参数（复合主键定位）
 """
 import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'server'))
@@ -21,14 +28,13 @@ from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from db import Base, engine, SessionLocal, init_db, get_db
-from models.orm import Order, TradingDay, TradingSession
+from models.orm import Order, SysStatus, TradingSession
 
 
 @pytest.fixture(autouse=True)
 def fresh_db():
     Base.metadata.drop_all(bind=engine)
     init_db()
-    # 默认时段
     db = SessionLocal()
     db.add(TradingSession(
         morning_start=time(9, 15), morning_end=time(11, 30),
@@ -51,12 +57,11 @@ def active_day(fresh_db):
     from models.user import User
     from auth.security import hash_password
     db = SessionLocal()
-    # 清理已存在的 trader1（来自 startup 创建的 admin 不影响）
     db.query(User).filter_by(username="trader1").delete()
     db.commit()
     trader = User(username="trader1", password_hash=hash_password("x"), role="trader")
     db.add(trader)
-    db.add(TradingDay(current_date="20260614", status="active"))
+    db.add(SysStatus(trd_date="20260614", status="active"))
     db.commit()
     db.refresh(trader)
     db.close()
@@ -76,11 +81,9 @@ def _auth(t: str) -> dict:
 
 @pytest.fixture
 def no_active_day(fresh_db):
-    """fixture: 没有激活的交易日（验证 TRADING_DAY_NOT_INIT 屏障）"""
     from models.user import User
     from auth.security import hash_password
     db = SessionLocal()
-    # 清理已存在的 trader1
     db.query(User).filter_by(username="trader1").delete()
     db.commit()
     trader = User(username="trader1", password_hash=hash_password("x"), role="trader")
@@ -92,8 +95,7 @@ def no_active_day(fresh_db):
 
 
 def test_place_blocked_when_no_active_trading_day(client, no_active_day, monkeypatch):
-    """没激活交易日 → POST /place 返回 503 (先过 auth 屏障)"""
-    # patch 时段始终在交易时间，避免双重屏障
+    """没激活交易日 → POST /place 返回 503"""
     monkeypatch.setattr(
         "services.trading_clock.TradingClock.is_in_trading_session",
         classmethod(lambda cls: True)
@@ -112,6 +114,7 @@ def test_place_blocked_when_no_active_trading_day(client, no_active_day, monkeyp
     )
     assert r.status_code == 503
     assert r.json()["detail"]["code"] == "TRADING_DAY_NOT_INIT"
+    assert r.json()["detail"]["redirect"] == "/admin/sys-status"
 
 
 def test_get_works_when_no_active_trading_day(client, active_day):
@@ -141,7 +144,6 @@ def test_place_blocked_outside_session(client, active_day, monkeypatch):
 # ──── 幂等 ────
 
 def test_place_idempotent_returns_existing(client, active_day, monkeypatch):
-    """同 client_order_id 二次提交返原单"""
     monkeypatch.setattr(
         "services.trading_clock.TradingClock.is_in_trading_session",
         classmethod(lambda cls: True)
@@ -158,7 +160,6 @@ def test_place_idempotent_returns_existing(client, active_day, monkeypatch):
         "price_type": 11,
     }
     r1 = client.post("/api/orders/place", json=body, headers=headers)
-    print("DEBUG r1 status:", r1.status_code, "body:", r1.json())
     assert r1.status_code == 200
     order_id_1 = r1.json()["order"]["order_id"]
 
@@ -193,8 +194,8 @@ def test_place_success_writes_local_and_calls_rpc(client, active_day, monkeypatc
     assert body["status"] == "49"
     assert body["order_id"] == "BROKER-OID-1"
     assert body["order_no"] == "10000001"  # 第一次生成
-    assert body["order_remark"] == "10000001"  # ← 关键：order_no 写到 order_remark
-    assert body["TRD_DATE"] == "20260614"
+    assert "order_remark" not in body  # v5 字段已移除
+    assert body["trd_date"] == "20260614"
     assert mock_rpc.await_count == 1
     # 校验传给柜台的 remark
     call_kwargs = mock_rpc.await_args.kwargs
@@ -219,9 +220,9 @@ def test_place_rpc_fail_marks_rejected(client, active_day, monkeypatch):
               "order_type": "23", "volume": 100, "price": 12.5, "price_type": 11},
         headers=_auth(_trader_token(active_day)),
     )
-    assert r.status_code == 200  # ← 不 throw
+    assert r.status_code == 200
     body = r.json()["order"]
-    assert body["status"] == "55"  # 废单
+    assert body["status"] == "55"
     assert "RPC 失败" in body["status_msg"]
 
 
@@ -232,11 +233,10 @@ def test_cancel_calls_rpc_does_not_change_status(client, active_day, monkeypatch
         "services.trading_clock.TradingClock.is_in_trading_session",
         classmethod(lambda cls: True)
     )
-    # 准备一条 status=49 的委托
     db = SessionLocal()
     db.add(Order(
+        trd_date="20260614",
         order_id="OID-X", client_order_id="CID-X", order_no="10000010",
-        order_remark="10000010", TRD_DATE="20260614",
         stock_code="600030.SH", order_type="23", price_type=11, price=12.5, volume=100,
         status="49",
     ))
@@ -246,12 +246,16 @@ def test_cancel_calls_rpc_does_not_change_status(client, active_day, monkeypatch
     mock_rpc = AsyncMock(return_value={"code": 0, "msg": "ok", "list": []})
     monkeypatch.setattr("api.orders.cancel_order", mock_rpc)
 
-    r = client.delete("/api/orders/OID-X", headers=_auth(_trader_token(active_day)))
+    # v5: 复合主键需 trd_date
+    r = client.delete(
+        "/api/orders/OID-X?trd_date=20260614",
+        headers=_auth(_trader_token(active_day)),
+    )
     assert r.status_code == 200
     # 状态没改（等 push）
     db = SessionLocal()
-    row = db.query(Order).filter_by(order_id="OID-X").first()
-    assert row.status == "49"  # 没改
+    row = db.query(Order).filter_by(order_id="OID-X", trd_date="20260614").first()
+    assert row.status == "49"
     db.close()
 
 
@@ -262,8 +266,8 @@ def test_cancel_rpc_fail_returns_500(client, active_day, monkeypatch):
     )
     db = SessionLocal()
     db.add(Order(
+        trd_date="20260614",
         order_id="OID-Y", client_order_id="CID-Y", order_no="10000020",
-        order_remark="10000020", TRD_DATE="20260614",
         stock_code="600030.SH", order_type="23", price_type=11, price=12.5, volume=100,
         status="49",
     ))
@@ -273,7 +277,10 @@ def test_cancel_rpc_fail_returns_500(client, active_day, monkeypatch):
     mock_rpc = AsyncMock(side_effect=Exception("rpc 断连"))
     monkeypatch.setattr("api.orders.cancel_order", mock_rpc)
 
-    r = client.delete("/api/orders/OID-Y", headers=_auth(_trader_token(active_day)))
+    r = client.delete(
+        "/api/orders/OID-Y?trd_date=20260614",
+        headers=_auth(_trader_token(active_day)),
+    )
     assert r.status_code == 500
 
 
@@ -282,7 +289,10 @@ def test_cancel_not_found_returns_404(client, active_day, monkeypatch):
         "services.trading_clock.TradingClock.is_in_trading_session",
         classmethod(lambda cls: True)
     )
-    r = client.delete("/api/orders/NOT-EXIST", headers=_auth(_trader_token(active_day)))
+    r = client.delete(
+        "/api/orders/NOT-EXIST?trd_date=20260614",
+        headers=_auth(_trader_token(active_day)),
+    )
     assert r.status_code == 404
 
 
@@ -292,8 +302,8 @@ def test_list_orders_with_filter(client, active_day):
     db = SessionLocal()
     for i in range(3):
         db.add(Order(
+            trd_date="20260614",
             order_id=f"OID-{i}", client_order_id=f"CID-{i}", order_no=f"1000000{i}",
-            order_remark=f"1000000{i}", TRD_DATE="20260614",
             stock_code="600030.SH" if i < 2 else "000001.SZ",
             order_type="23", price_type=11, price=12.5, volume=100,
             status="49" if i == 0 else "51",
@@ -313,20 +323,20 @@ def test_list_orders_with_filter(client, active_day):
     r3 = client.get("/api/orders?status=49", headers=headers)
     assert len(r3.json()["list"]) == 1
 
-    r4 = client.get("/api/orders?trading_day=20260613", headers=headers)
+    r4 = client.get("/api/orders?trd_date=20260613", headers=headers)
     assert len(r4.json()["list"]) == 0
 
 
 def test_list_orders_default_trd_date_uses_active(client, active_day):
-    """未传 trading_day → 用激活日"""
+    """未传 trd_date → 用激活日"""
     db = SessionLocal()
     db.add(Order(
+        trd_date="20260614",
         order_id="OID-A", client_order_id="CID-A", order_no="10000099",
-        order_remark="10000099", TRD_DATE="20260614",
         stock_code="600030.SH", order_type="23", price_type=11, price=12.5, volume=100,
     ))
     db.commit()
     db.close()
     r = client.get("/api/orders", headers=_auth(_trader_token(active_day)))
     assert len(r.json()["list"]) == 1
-    assert r.json()["list"][0]["TRD_DATE"] == "20260614"
+    assert r.json()["list"][0]["trd_date"] == "20260614"

@@ -17,9 +17,9 @@
         </div>
       </template>
     </el-table-column>
-    <el-table-column prop="initial_position" label="期初" width="110" align="right">
+    <el-table-column prop="last_vol" label="期初" width="110" align="right">
       <template #default="{ row }">
-        <span class="text-mono">{{ formatNumber(row.initial_position) }}</span>
+        <span class="text-mono">{{ formatNumber(row.last_vol) }}</span>
       </template>
     </el-table-column>
     <el-table-column prop="today_buy" label="今日买入" width="110" align="right">
@@ -36,14 +36,14 @@
         </span>
       </template>
     </el-table-column>
-    <el-table-column prop="available" label="可用" width="110" align="right">
+    <el-table-column prop="avl_vol" label="可用" width="110" align="right">
       <template #default="{ row }">
-        <span class="text-mono">{{ formatNumber(row.available) }}</span>
+        <span class="text-mono">{{ formatNumber(row.avl_vol) }}</span>
       </template>
     </el-table-column>
-    <el-table-column prop="total" label="总持仓" width="110" align="right">
+    <el-table-column prop="vol" label="总持仓" width="110" align="right">
       <template #default="{ row }">
-        <span class="text-mono total-cell">{{ formatNumber(row.total) }}</span>
+        <span class="text-mono total-cell">{{ formatNumber(row.vol) }}</span>
       </template>
     </el-table-column>
     <el-table-column label="可用占比" min-width="160">
@@ -89,8 +89,8 @@ function rowClass({ row }) {
 }
 
 function getRatio(row) {
-  if (!row.total) return 0
-  return Math.round((row.available / row.total) * 100)
+  if (!row.vol) return 0
+  return Math.round((row.avl_vol / row.vol) * 100)
 }
 </script>
 

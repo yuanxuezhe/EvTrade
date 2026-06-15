@@ -5,29 +5,33 @@ import { http } from './index'
 // 后端路由前缀: /api/admin/*  /api/fee-config
 // ============================================================
 
-// 交易日管理
-export const tradingDayApi = {
+// 系统状态管理（含交易日）
+// v5 schema refactor: trading_day → sys_status
+export const sysStatusApi = {
   // 当前激活交易日
   async current() {
-    const res = await http.get('/admin/trading-day/active')
+    const res = await http.get('/admin/sys-status/active')
     return res.data
   },
   // 列出历史交易日
   async list() {
-    const res = await http.get('/admin/trading-day')
+    const res = await http.get('/admin/sys-status')
     return res.data
   },
   // 触发日初（对账 + 切日）
   async init(trdDate, mode = 'auto') {
-    const res = await http.post('/admin/trading-day/init', { trd_date: trdDate, mode })
+    const res = await http.post('/admin/sys-status/init', { trd_date: trdDate, mode })
     return res.data
   },
   // 关闭当前日
   async close() {
-    const res = await http.post('/admin/trading-day/close')
+    const res = await http.post('/admin/sys-status/close')
     return res.data
   }
 }
+
+// 兼容旧调用（SystemInit.vue 等已迁移完成；此处保留 alias 以防漏改）
+export const tradingDayApi = sysStatusApi
 
 // 对账管理
 export const reconcileApi = {
@@ -46,9 +50,11 @@ export const reconcileApi = {
     const res = await http.get('/admin/reconcile/reports', { params })
     return res.data
   },
-  // 单个报告
-  async getReport(id) {
-    const res = await http.get(`/admin/reconcile/reports/${id}`)
+  // 单个报告（v5: 复合主键 (trd_date, mode, created_at)）
+  async getReport(trdDate, mode, createdAt) {
+    const res = await http.get(
+      `/admin/reconcile/reports/${encodeURIComponent(trdDate)}/${encodeURIComponent(mode)}/${encodeURIComponent(createdAt)}`
+    )
     return res.data
   }
 }

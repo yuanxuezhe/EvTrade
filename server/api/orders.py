@@ -1,13 +1,20 @@
 """
-orders.py — v4 重构版
+orders.py — v5 重构版（schema refactor）
 
 写路径：先 DB 后 RPC
   POST /place                  → INSERT status=48 → 调 ord_stk(remark=order_no) → 改 status=49/55
-  DELETE /{id}                 → 调 RPC cancel_ord，不本地改 status（等 push）
+  DELETE /{order_id}           → 调 RPC cancel_ord，不本地改 status（等 push）
 
 读路径：纯 DB
-  GET /                        → 委托列表（DB 查，按 trading_day 默认）
-  GET /history?trading_day=    → 任意交易日历史
+  GET /                        → 委托列表（DB 查，按 trd_date 默认）
+  GET /history?trd_date=       → 任意交易日历史
+
+v5 改动：
+- 移除 order_remark 字段（v4 错误复用 broker 透传字段）
+- TRD_DATE → trd_date
+- TradingDay → SysStatus
+- 复合主键 (trd_date, order_id)
+- place_order INSERT 初始 order_id 用 order_no 占位（broker.remark 匹配用）
 """
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
@@ -19,7 +26,7 @@ import logging
 import json
 
 from db import get_db, SessionLocal
-from models.orm import Order
+from models.orm import Order, SysStatus
 from auth.deps import get_current_user
 from models.user import User
 from services.guards import require_trader, require_trading_day, require_trading_session
@@ -48,8 +55,7 @@ class OrderOut(BaseModel):
     order_id: str
     client_order_id: str
     order_no: str
-    order_remark: str
-    TRD_DATE: str
+    trd_date: str
     stock_code: str
     order_type: str
     price_type: int
@@ -98,17 +104,16 @@ async def place_order(req: PlaceOrderRequest, user: User = Depends(get_current_u
         raise HTTPException(status_code=400, detail={"code": "BAD_ORDER_TYPE", "msg": "order_type 必须 23(买) 24(卖)"})
 
     # 1. 取交易日内 client_order_id 幂等
-    trd_date = db.query(__import__("models.orm", fromlist=["TradingDay"]).TradingDay)\
-                 .filter_by(status='active').first().current_date
+    trd_date = db.query(SysStatus).filter_by(status='active').first().trd_date
     cid = req.client_order_id or f"cid-{int(datetime.utcnow().timestamp() * 1000)}"
-    existing = db.query(Order).filter_by(client_order_id=cid, TRD_DATE=trd_date).first()
+    existing = db.query(Order).filter_by(client_order_id=cid, trd_date=trd_date).first()
     if existing:
         return PlaceOrderResponse(
             code=0, msg="幂等: 已存在",
             order=OrderOut(
                 order_id=existing.order_id, client_order_id=existing.client_order_id,
-                order_no=existing.order_no, order_remark=existing.order_remark,
-                TRD_DATE=existing.TRD_DATE, stock_code=existing.stock_code,
+                order_no=existing.order_no, trd_date=existing.trd_date,
+                stock_code=existing.stock_code,
                 order_type=existing.order_type, price_type=existing.price_type,
                 price=existing.price, volume=existing.volume,
                 traded_volume=existing.traded_volume, traded_amount=existing.traded_amount,
@@ -131,11 +136,13 @@ async def place_order(req: PlaceOrderRequest, user: User = Depends(get_current_u
     gross, net = calc_net_amount(req.price, adjusted, fee_cfg, direction)
 
     # 4. INSERT status=48（待报）
+    # order_id 暂用 order_no 占位（复合主键 trd_date+order_id 不能 NULL）
+    # broker 返回真实 order_id 后会被 handle_ord_cfm / ack 分支覆盖
     order_no = next_order_no(db)
-    order_id = f"ORD-{order_no}"
     order = Order(
-        order_id=order_id, client_order_id=cid, order_no=order_no, order_remark=order_no,
-        TRD_DATE=trd_date,
+        trd_date=trd_date,
+        order_id=f"PENDING-{order_no}",
+        client_order_id=cid, order_no=order_no,
         stock_code=req.stock_code, order_type=req.order_type,
         price_type=req.price_type, price=req.price, volume=adjusted,
         traded_volume=0, traded_amount=0.0, avg_price=0.0,
@@ -162,8 +169,7 @@ async def place_order(req: PlaceOrderRequest, user: User = Depends(get_current_u
             code=1, msg="柜台调用失败",
             order=OrderOut(
                 order_id=order.order_id, client_order_id=order.client_order_id,
-                order_no=order.order_no, order_remark=order.order_remark,
-                TRD_DATE=order.TRD_DATE,
+                order_no=order.order_no, trd_date=order.trd_date,
                 stock_code=order.stock_code, order_type=order.order_type,
                 price_type=order.price_type, price=order.price, volume=order.volume,
                 traded_volume=order.traded_volume, traded_amount=order.traded_amount,
@@ -179,10 +185,35 @@ async def place_order(req: PlaceOrderRequest, user: User = Depends(get_current_u
     broker_order_id = ""
     if ack_code == 0 and ack_list and isinstance(ack_list[0], dict):
         broker_order_id = str(ack_list[0].get("order_id", ""))
-        if broker_order_id:
-            order.order_id = broker_order_id
-        order.status = "49"
-        order.status_msg = "已报"
+        if broker_order_id and broker_order_id != order.order_id:
+            # broker 返回真实 order_id 时，需要按 trd_date+order_id 更新主键
+            # SQLite/PostgreSQL 都支持"删后插"方式
+            new_order = Order(
+                trd_date=order.trd_date,
+                order_id=broker_order_id,
+                client_order_id=order.client_order_id,
+                order_no=order.order_no,
+                stock_code=order.stock_code,
+                order_type=order.order_type,
+                price_type=order.price_type,
+                price=order.price, volume=order.volume,
+                traded_volume=order.traded_volume,
+                traded_amount=order.traded_amount,
+                avg_price=order.avg_price,
+                status="49", status_msg="已报",
+                order_time=order.order_time,
+                created_at=order.created_at,
+                updated_at=datetime.utcnow(),
+                pushed_at=order.pushed_at,
+            )
+            db.delete(order)
+            db.add(new_order)
+            db.commit()
+            db.refresh(new_order)
+            order = new_order
+        else:
+            order.status = "49"
+            order.status_msg = "已报"
     else:
         order.status = "55"
         order.status_msg = ack.get("msg", "柜台拒单")
@@ -206,8 +237,7 @@ async def place_order(req: PlaceOrderRequest, user: User = Depends(get_current_u
         msg=order.status_msg,
         order=OrderOut(
             order_id=order.order_id, client_order_id=order.client_order_id,
-            order_no=order.order_no, order_remark=order.order_remark,
-            TRD_DATE=order.TRD_DATE, stock_code=order.stock_code,
+            order_no=order.order_no, trd_date=order.trd_date, stock_code=order.stock_code,
             order_type=order.order_type, price_type=order.price_type,
             price=order.price, volume=order.volume,
             traded_volume=order.traded_volume, traded_amount=order.traded_amount,
@@ -224,9 +254,10 @@ async def place_order(req: PlaceOrderRequest, user: User = Depends(get_current_u
 
 @router.delete("/{order_id}", response_model=CancelResponse,
                dependencies=[Depends(require_trader), Depends(require_trading_day), Depends(require_trading_session)])
-async def cancel_order(order_id: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+async def cancel_order(order_id: str, trd_date: str = Query(..., description="8 位数字 YYYYMMDD"),
+                      user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     """撤单：只调 RPC，不本地改 status（等 ord_cfm push）"""
-    order = db.query(Order).filter_by(order_id=order_id).first()
+    order = db.query(Order).filter_by(order_id=order_id, trd_date=trd_date).first()
     if not order:
         raise HTTPException(status_code=404, detail={"code": "NOT_FOUND", "msg": f"委托 {order_id} 不存在"})
 
@@ -262,19 +293,18 @@ async def cancel_order(order_id: str, user: User = Depends(get_current_user), db
 async def list_orders(
     stock_code: Optional[str] = None,
     status: Optional[str] = None,
-    trading_day: Optional[str] = None,
+    trd_date: Optional[str] = Query(None, description="8 位数字 YYYYMMDD，缺省 = 激活日"),
     limit: int = Query(100, le=500),
     offset: int = 0,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """委托列表（纯 DB，按 trading_day 默认 = 激活日）"""
-    if not trading_day:
-        active = db.query(__import__("models.orm", fromlist=["TradingDay"]).TradingDay)\
-                    .filter_by(status='active').first()
-        trading_day = active.current_date if active else None
+    """委托列表（纯 DB，按 trd_date 默认 = 激活日）"""
+    if not trd_date:
+        active = db.query(SysStatus).filter_by(status='active').first()
+        trd_date = active.trd_date if active else None
 
-    q = db.query(Order).filter(Order.TRD_DATE == trading_day) if trading_day else db.query(Order)
+    q = db.query(Order).filter(Order.trd_date == trd_date) if trd_date else db.query(Order)
     if stock_code:
         q = q.filter(Order.stock_code == stock_code)
     if status:
@@ -287,8 +317,7 @@ async def list_orders(
         list=[
             OrderOut(
                 order_id=r.order_id, client_order_id=r.client_order_id,
-                order_no=r.order_no, order_remark=r.order_remark,
-                TRD_DATE=r.TRD_DATE, stock_code=r.stock_code,
+                order_no=r.order_no, trd_date=r.trd_date, stock_code=r.stock_code,
                 order_type=r.order_type, price_type=r.price_type,
                 price=r.price, volume=r.volume,
                 traded_volume=r.traded_volume, traded_amount=r.traded_amount,
@@ -301,7 +330,7 @@ async def list_orders(
 
 @router.get("/history", response_model=ListOrdersResponse)
 async def orders_history(
-    trading_day: str = Query(..., description="8 位数字 YYYYMMDD"),
+    trd_date: str = Query(..., description="8 位数字 YYYYMMDD"),
     stock_code: Optional[str] = None,
     status: Optional[str] = None,
     limit: int = Query(500, le=2000),
@@ -309,7 +338,7 @@ async def orders_history(
     db: Session = Depends(get_db),
 ):
     """任意交易日历史委托（admin 也用）"""
-    q = db.query(Order).filter(Order.TRD_DATE == trading_day)
+    q = db.query(Order).filter(Order.trd_date == trd_date)
     if stock_code:
         q = q.filter(Order.stock_code == stock_code)
     if status:
@@ -321,8 +350,7 @@ async def orders_history(
         list=[
             OrderOut(
                 order_id=r.order_id, client_order_id=r.client_order_id,
-                order_no=r.order_no, order_remark=r.order_remark,
-                TRD_DATE=r.TRD_DATE, stock_code=r.stock_code,
+                order_no=r.order_no, trd_date=r.trd_date, stock_code=r.stock_code,
                 order_type=r.order_type, price_type=r.price_type,
                 price=r.price, volume=r.volume,
                 traded_volume=r.traded_volume, traded_amount=r.traded_amount,
