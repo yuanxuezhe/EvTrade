@@ -191,8 +191,14 @@ class RPClient:
                                 traceback.print_exc()
 
                             print(
-                                f"[RPClient.push] broadcast → {channel}: "
-                                f"{list(row.keys())[:6]}"
+                                f"[RPClient.push] broadcast → {channel}"
+                                + (
+                                    "\n" + "\n".join(
+                                        "  " + k + " = " + repr(v)
+                                        for k, v in sorted(row.items())
+                                    )
+                                    if row else " (empty row)"
+                                )
                             )
                             await ws_manager.broadcast(channel, payload)
                     except Exception as e:
