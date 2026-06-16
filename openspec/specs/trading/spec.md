@@ -35,6 +35,14 @@
   - 终态 (51/52/53/54/55/56) 一旦写入不再被 trd_cfm 覆盖
   - **前端必须镜像同一函数**：`client/src/utils/format.js` 提供 `inferOrderStatus(order, brokerStatus?)`，见 `frontend/spec.md` REQ-FE-006
   - **前端不再信任 broker 推的 status 字段**（broker 状态码 vs 本地推断码不完全相同：例如 broker 55=部成 → 本地 50=部成）
+- **v7 schema 调整**：
+  - `Order` 表删除 `client_order_id` 字段（不下发，幂等不再靠 DB UNIQUE 约束）
+  - `Order` 表删除 `uq_orders_client_trd` / `uq_orders_broker_id` 约束（order_id 下单时为空，broker 约束不可靠）
+  - `Order` 表新增 `user_def` 字段（`String(255)`，默认空字符串）记录外部自定义信息（前端幂等号 / 备注）
+  - `Trade` 表删除 `order_id` 字段（broker 号在 trd_cfm 到达时可能尚未到达）
+  - `Trade` 表新增 `order_no` 字段并入 PK（PK = `(trd_date, order_no, trade_id)`），关联键更稳定
+  - 下单 API `POST /api/orders/place` 接受可选 `user_def` 字段透传（无业务约束，仅落库）
+  - 下单幂等改由 `order_no` 单调递增保证（同 ord_stk RPC 第二次调用方会被 broker 拒绝）
 
 ### REQ-TRADE-003: 撤单
 

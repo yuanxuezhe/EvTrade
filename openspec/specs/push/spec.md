@@ -93,6 +93,11 @@ RS2: [{
 
 **v5 匹配规则**：`handle_ord_cfm` 先按 `order_id` 匹配本地 Order；未命中再用 `remark` (= `order_no`) 兜底匹配（应对 broker 端重新生成 `order_id` 但透传 `remark` 不变的场景）。
 
+**v7 落库调整**（`handle_trd_cfm`）：
+- 落 `Trade` 时**不再写 `order_id`**（broker 号在成交回报到达时可能尚未到达）
+- 用 `order_no`（解析 `remark` 字段得到）作为 Trade PK 第二段（PK = `(trd_date, order_no, trade_id)`）
+- 若 `remark` 解析失败 → 打 warning 日志，跳过该条成交（不要让一条缺关联的成交写入）
+
 ## Known Issues (from analysis)
 
 - 🟡 `position_update` 和 `asset_update` 频道路由待完善

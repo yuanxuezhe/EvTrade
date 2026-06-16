@@ -20,7 +20,7 @@ ORM 注释必须与本 spec 保持一致（diff 检查项之一）。
 | # | 表 | 分类 | 主键 | 单行？ | 业务入口 |
 |---|---|---|---|---|---|
 | 1 | `orders` | 业务 | `(trd_date, order_no)` | 否 | `server/api/orders.py` |
-| 2 | `trades` | 业务 | `(trd_date, trade_id)` | 否 | `server/api/trades.py` |
+| 2 | `trades` | 业务 | `(trd_date, order_no, trade_id)` | 否 | `server/api/trades.py` |
 | 3 | `positions` | 业务 | `stock_code` | 否（多股） | `server/api/positions.py` |
 | 4 | `assets` | 业务 | `id=1` 约束 | ✅ 单行 | `server/api/asset.py` |
 | 5 | `sys_status` | 配置 | `trd_date` | 否（多日） | `server/services/trading_day.py` |
@@ -41,8 +41,8 @@ ORM 注释必须与本 spec 保持一致（diff 检查项之一）。
 |---|---|---|---|---|
 | `trd_date` | String(8) | NO | — | 交易日 PK |
 | `order_no` | String(8) | NO | — | 本地 8 位序号 PK（10000000 起） |
-| `order_id` | String(64) | YES | NULL | 柜台真实委托号（ord_cfm 到达时写入） |
-| `client_order_id` | String(64) | NO | — | 客户端幂等号；UNIQUE(trd_date, client_order_id) |
+| `order_id` | String(64) | YES | NULL | 柜台真实委托号（ord_cfm 到达时写入；下单时为空） |
+| `user_def` | String(255) | NO | "" | 外部自定义信息（前端幂等号 / 备注等，不做幂等约束） |
 | `stock_code` | String(16) | NO | — | 股票代码 |
 | `order_type` | String(2) | NO | — | 23=买 24=卖 |
 | `price_type` | Integer | NO | 11 | 5/11/14/44 详见 trading spec |
@@ -59,26 +59,30 @@ ORM 注释必须与本 spec 保持一致（diff 检查项之一）。
 | `pushed_at` | DateTime | YES | NULL | 最近一次 broker push 写入时间 |
 
 **Unique/Index**:
-- `uq_orders_client_trd(client_order_id, trd_date)` — 幂等键
-- `uq_orders_broker_id(order_id, trd_date)` — broker 真实号定位
+- ~~`uq_orders_client_trd`~~ — **v7 删除**（幂等不再走 client_order_id 唯一约束；走 `order_no` 唯一 + RPC 返回确认）
+- ~~`uq_orders_broker_id(order_id, trd_date)`~~ — **v7 删除**（order_id 在下单时为空，不能进 UNIQUE；broker 定位用 `ix_orders_order_id` 普通索引）
 - `ix_orders_trd_status(trd_date, status)` — 按状态过滤
-- `ix_orders_order_id(order_id)` — trd_cfm 兜底
+- `ix_orders_order_id(order_id)` — trd_cfm 兜底定位
 - `ix_orders_stock(stock_code)` — 按股票过滤
 
 **业务规则**:
 - `status` 永远不直接抄 broker 推送值；由 `_infer_order_status(order, broker_status=None)` 推断（见 `push/spec.md`）
 - 终态（51/52/53/54/55/56）一旦写入不再被 trd_cfm 覆盖
 - 撤单定位用 `(trd_date, order_no)`，URL `/api/orders/{order_no}?trd_date=YYYYMMDD`
+- **v7 schema 调整动机**：
+  - `client_order_id` UNIQUE 约束无法用 — order_id 下单时为空，对应 broker 约束才能稳定
+  - `user_def` 是纯透传字段（前端可写可读），不参与任何 DB 约束
+  - `order_no` 本身就是 8 位唯一序号，下单流程幂等靠 RPC 客户端 `client_order_id` 透传 + 后端落表前查重（应用层去重）
 
 ### 2. `trades` — 成交表
 
-**PK**: `(trd_date, trade_id)`
+**PK**: `(trd_date, order_no, trade_id)`（**v7 改**：加入 `order_no` 入 PK，移除 `order_id`）
 
 | 字段 | 类型 | 可空 | 默认 | 说明 |
 |---|---|---|---|---|
 | `trd_date` | String(8) | NO | — | 交易日 PK |
+| `order_no` | String(8) | NO | — | 关联本地委托号 PK（→ orders.order_no） |
 | `trade_id` | String(64) | NO | — | 成交编号 PK（broker 唯一） |
-| `order_id` | String(64) | NO | — | 关联委托号（broker 真实号） |
 | `stock_code` | String(16) | NO | — | 股票代码 |
 | `order_type` | String(2) | NO | — | 23/24 |
 | `price` | Float | NO | 0.0 | 成交价 |
@@ -88,13 +92,17 @@ ORM 注释必须与本 spec 保持一致（diff 检查项之一）。
 | `created_at` | DateTime | NO | utcnow | DB 写入时间 |
 
 **Index**:
-- `ix_trades_order(order_id)` — 按委托号查
+- `ix_trades_order_no(order_no)` — **v7 重命名**（原 `ix_trades_order(order_id)` 改为按本地 order_no 查）
 - `ix_trades_trd_stock(trd_date, stock_code)` — 按股票查当日
 
 **业务规则**:
 - 幂等键 `(trd_date, trade_id)`；重复推送不重复插入
-- trade_id 缺失时 fallback `f"{order_id}-{trade_time}"`
+- trade_id 缺失时 fallback `f"{order_no}-{trade_time}"`
 - trd_date 缺失时用 `_get_active_trd_date(db)`
+- **v7 schema 调整动机**：
+  - `order_no` 是稳定关联键（下单即生成，写入即永久），`order_id` 在成交回报到达时可能尚未到达
+  - 成交回报通常早于 ord_cfm，用本地 order_no 关联比 broker order_id 更稳
+  - `order_no` 入 PK 同时保证 (trd_date, order_no) 下成交唯一，避免同一委托多次成交的重复插入风险
 
 ### 3. `positions` — 持仓表
 
