@@ -109,7 +109,7 @@ def test_ord_cfm_fills_order_id_via_remark():
     db.add(Order(
         trd_date="20260614",
         order_id=None,  # v6: 下单时 broker 还没回报
-        client_order_id="CID-1", order_no="10000001",
+        user_def="CID-1", order_no="10000001",
         stock_code="600030.SH", order_type="23", price_type=11, price=12.5, volume=100,
         status="48",  # 待报
     ))
@@ -135,7 +135,7 @@ def test_ord_cfm_does_not_update_traded_volume():
     db = SessionLocal()
     db.add(Order(
         trd_date="20260614",
-        order_id="OID-PART", client_order_id="CID-PART", order_no="10000002",
+        order_id="OID-PART", user_def="CID-PART", order_no="10000002",
         stock_code="600030.SH", order_type="23", price_type=11, price=12.5, volume=100,
         status="49",
         traded_volume=0, traded_amount=0.0, avg_price=0.0,
@@ -168,7 +168,7 @@ def test_ord_cfm_infers_status_53_when_broker_pushed_cancel():
     db = SessionLocal()
     db.add(Order(
         trd_date="20260614",
-        order_id="OID-CXL", client_order_id="CID-CXL", order_no="10000003",
+        order_id="OID-CXL", user_def="CID-CXL", order_no="10000003",
         stock_code="600030.SH", order_type="23", price_type=11, price=12.5, volume=100,
         status="49", traded_volume=0,
     ))
@@ -208,7 +208,7 @@ def test_trd_cfm_inserts_trade_and_updates_order_via_remark():
     db = SessionLocal()
     db.add(Order(
         trd_date="20260614",
-        order_id="OID-T", client_order_id="CID-T", order_no="10000010",
+        order_id="OID-T", user_def="CID-T", order_no="10000010",
         stock_code="600030.SH", order_type="23", price_type=11, price=12.5, volume=100,
         status="49", traded_volume=0, traded_amount=0,
     ))
@@ -229,7 +229,7 @@ def test_trd_cfm_inserts_trade_and_updates_order_via_remark():
     }, ts="20260614 09:31:00")
     db.commit()
 
-    t = db.query(Trade).filter_by(trade_id="TID-001", trd_date="20260614").first()
+    t = db.query(Trade).filter_by(trade_id="TID-001", order_no="10000010", trd_date="20260614").first()
     assert t is not None
     assert t.stock_code == "600030.SH"
     assert t.volume == 30
@@ -251,7 +251,7 @@ def test_trd_cfm_fills_status_to_51_when_full():
     db = SessionLocal()
     db.add(Order(
         trd_date="20260614",
-        order_id="OID-FULL", client_order_id="CID-FULL", order_no="10000011",
+        order_id="OID-FULL", user_def="CID-FULL", order_no="10000011",
         stock_code="600030.SH", order_type="23", price_type=11, price=12.5, volume=100,
         status="50", traded_volume=50, traded_amount=625.0,
     ))
@@ -278,7 +278,7 @@ def test_trd_cfm_idempotent():
     db = SessionLocal()
     db.add(Order(
         trd_date="20260614",
-        order_id="OID-IDEM", client_order_id="CID-IDEM", order_no="10000020",
+        order_id="OID-IDEM", user_def="CID-IDEM", order_no="10000020",
         stock_code="600030.SH", order_type="23", price_type=11, price=12.5, volume=100,
         status="49",
     ))
@@ -301,19 +301,20 @@ def test_trd_cfm_idempotent():
     db = SessionLocal()
     handle_push(db, "trd_cfm", payload, ts="x")
     db.commit()
-    assert db.query(Trade).filter_by(trade_id="TID-DUP", trd_date="20260614").count() == 1
+    assert db.query(Trade).filter_by(trade_id="TID-DUP", order_no="10000020", trd_date="20260614").count() == 1
     o = db.query(Order).filter_by(order_no="10000020", trd_date="20260614").first()
     # 累计只算了 1 次
     assert o.traded_volume == 10
     db.close()
 
 
-def test_trd_cfm_no_remark_fallback_to_order_id():
-    """v6 兜底:trd_cfm 不带 remark 时用 order_id 查"""
+def test_trd_cfm_no_remark_skipped_v7():
+    """v7: trd_cfm 不带 remark (order_no) → 跳过,不入 Trade 表(避免孤儿 Trade)
+    """
     db = SessionLocal()
     db.add(Order(
         trd_date="20260614",
-        order_id="OID-FB", client_order_id="CID-FB", order_no="10000030",
+        order_id="OID-FB", user_def="CID-FB", order_no="10000030",
         stock_code="600030.SH", order_type="23", price_type=11, price=12.5, volume=100,
         status="49", traded_volume=0,
     ))
@@ -324,15 +325,14 @@ def test_trd_cfm_no_remark_fallback_to_order_id():
     handle_push(db, "trd_cfm", {
         "trade_id": "TID-FB",
         "order_id": "OID-FB",
-        # 没有 remark
+        # 没有 remark (v7: 必须有 order_no 才能落 Trade)
         "stock_code": "600030.SH",
         "price": 12.5, "volume": 20, "amount": 250.0,
     }, ts="20260614 09:30:00")
     db.commit()
-    t = db.query(Trade).filter_by(trade_id="TID-FB", trd_date="20260614").first()
-    assert t is not None
-    o = db.query(Order).filter_by(order_id="OID-FB", trd_date="20260614").first()
-    assert o.traded_volume == 20
+    # v7: Trade 表不入记录（避免孤儿）
+    t = db.query(Trade).filter_by(trade_id="TID-FB", order_no="10000030", trd_date="20260614").first()
+    assert t is None
     db.close()
 
 
@@ -341,7 +341,7 @@ def test_trd_cfm_terminal_status_not_overridden():
     db = SessionLocal()
     db.add(Order(
         trd_date="20260614",
-        order_id="OID-TER", client_order_id="CID-TER", order_no="10000040",
+        order_id="OID-TER", user_def="CID-TER", order_no="10000040",
         stock_code="600030.SH", order_type="23", price_type=11, price=12.5, volume=100,
         status="56",  # 部成部撤终态
         traded_volume=30, traded_amount=375.0,

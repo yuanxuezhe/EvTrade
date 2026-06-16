@@ -97,7 +97,7 @@ def test_orders_composite_pk():
     db = SessionLocal()
     db.add(Order(
         trd_date="20260614", order_no="10000001",
-        client_order_id="CID1",
+        user_def="CID1",
         stock_code="600030.SH", order_type="23", price_type=11, price=12.5, volume=100,
     ))
     db.commit()
@@ -105,7 +105,7 @@ def test_orders_composite_pk():
     with pytest.raises(IntegrityError):
         db.add(Order(
             trd_date="20260614", order_no="10000001",  # 同 order_no
-            client_order_id="CID2",
+            user_def="CID2",
             stock_code="600030.SH", order_type="23", price_type=11, price=12.5, volume=100,
         ))
         db.commit()
@@ -113,46 +113,41 @@ def test_orders_composite_pk():
     db.close()
 
 
-def test_orders_unique_client_order_id_per_day():
-    """幂等号 (client_order_id, trd_date) UNIQUE — 重发同 cid 必崩"""
-    db = SessionLocal()
-    db.add(Order(
-        trd_date="20260614", order_no="10000001",
-        client_order_id="CID-SAME",
-        stock_code="600030.SH", order_type="23", price_type=11, price=12.5, volume=100,
-    ))
-    db.commit()
-    with pytest.raises(IntegrityError):
-        db.add(Order(
-            trd_date="20260614", order_no="10000002",
-            client_order_id="CID-SAME",
-            stock_code="600030.SH", order_type="23", price_type=11, price=12.5, volume=100,
-        ))
-        db.commit()
-    db.rollback()
-    db.close()
-
-
-def test_orders_unique_broker_id_per_day():
-    """v6: broker 真实 order_id + trd_date UNIQUE — ord_cfm 重复回报必崩"""
+def test_orders_no_unique_constraints_on_user_def_or_broker_id():
+    """v7: 删 uq_orders_client_trd + uq_orders_broker_id 约束
+    user_def 同值 + 不同 order_no 可并存（DB 不参与幂等）
+    broker order_id 同值 + 不同 order_no 可并存（broker order_id 下单时为空）
+    """
     db = SessionLocal()
     db.add(Order(
         trd_date="20260614", order_no="10000001",
         order_id="BROKER-001",
-        client_order_id="CID1",
+        user_def="SHARED-USER-DEF",
         stock_code="600030.SH", order_type="23", price_type=11, price=12.5, volume=100,
     ))
-    db.commit()
-    with pytest.raises(IntegrityError):
-        db.add(Order(
-            trd_date="20260614", order_no="10000002",
-            order_id="BROKER-001",  # 同 broker_order_id
-            client_order_id="CID2",
-            stock_code="600030.SH", order_type="23", price_type=11, price=12.5, volume=100,
-        ))
-        db.commit()
-    db.rollback()
+    db.add(Order(
+        trd_date="20260614", order_no="10000002",
+        order_id="BROKER-001",  # 同 broker_order_id,不同 order_no → v7 不报错
+        user_def="SHARED-USER-DEF",  # 同 user_def → v7 不报错
+        stock_code="600030.SH", order_type="23", price_type=11, price=12.5, volume=100,
+    ))
+    db.commit()  # v7 应成功,不再 IntegrityError
+    assert db.query(Order).filter_by(trd_date="20260614").count() == 2
     db.close()
+
+
+def test_orders_unique_client_order_id_per_day_removed():
+    """v7 删除:不再要求 client_order_id 字段 + UNIQUE 约束
+    留作占位,提醒旧约束已废除
+    """
+    assert True
+
+
+def test_orders_unique_broker_id_per_day_removed():
+    """v7 删除:不再要求 broker order_id + trd_date UNIQUE 约束
+    留作占位,提醒旧约束已废除（broker order_id 下单时为空，约束不可靠）
+    """
+    assert True
 
 
 def test_orders_order_id_nullable():
@@ -161,7 +156,7 @@ def test_orders_order_id_nullable():
     db.add(Order(
         trd_date="20260614", order_no="10000001",
         order_id=None,  # broker 还没回报
-        client_order_id="CID1",
+        user_def="CID1",
         stock_code="600030.SH", order_type="23", price_type=11, price=12.5, volume=100,
         status="48",  # 待报
     ))

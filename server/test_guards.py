@@ -67,7 +67,7 @@ def test_default_falls_back_to_max():
     db = SessionLocal()
     db.add(Order(
         trd_date="20260613", order_id="OID1",
-        client_order_id="CID1", order_no="10000001",
+        user_def="CID1", order_no="10000001",
         stock_code="600030.SH",
         order_type="23", price_type=11, price=12.5, volume=100,
     ))

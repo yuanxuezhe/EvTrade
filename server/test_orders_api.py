@@ -1,8 +1,9 @@
 """
-test_orders_api.py — 验证 v6 下单/撤单/查询（order-pk-by-orderno）
+test_orders_api.py — 验证 v7 下单/撤单/查询（schema refinement）
 
 mock RPC + TradingClock，覆盖：
-- 幂等（同 client_order_id 二次提交返原单）
+- v7: 幂等改由 order_no 单调递增保证（每次调用都创建新 Order）
+- v7: user_def 透传到 Order.user_def
 - 屏障（未激活 / 非时段拒绝）
 - 下单成功 → status=49,broker 带回 order_id 时写入
 - 下单成功 → broker 不带回 order_id 时 order_id 为空
@@ -142,7 +143,7 @@ def test_place_blocked_when_no_active_trading_day(client, no_active_day, monkeyp
     r = client.post(
         "/api/orders/place",
         json={
-            "client_order_id": "CID1",
+            "user_def": "CID1",
             "stock_code": "600030.SH",
             "order_type": "23",
             "volume": 100,
@@ -172,7 +173,7 @@ def test_place_blocked_outside_session(client, active_day, monkeypatch):
     )
     r = client.post(
         "/api/orders/place",
-        json={"client_order_id": "CID1", "stock_code": "600030.SH",
+        json={"user_def": "CID1", "stock_code": "600030.SH",
               "order_type": "23", "volume": 100, "price": 12.5, "price_type": 11},
         headers=_auth(_trader_token(active_day)),
     )
@@ -180,9 +181,12 @@ def test_place_blocked_outside_session(client, active_day, monkeypatch):
     assert r.json()["detail"]["code"] == "OUTSIDE_TRADING_SESSION"
 
 
-# ──── 幂等 ────
+# ──── v7 幂等改由 order_no 单调递增保证 ────
 
-def test_place_idempotent_returns_existing(client, active_day, monkeypatch):
+def test_place_each_call_creates_new_order_v7(client, active_day, monkeypatch):
+    """v7: 删 client_order_id UNIQUE 约束,幂等改由 order_no 单调递增保证
+    每次调用都生成新 order_no,broker 端重复 remark 由 broker 拒收
+    """
     monkeypatch.setattr(
         "services.trading_clock.TradingClock.is_in_trading_session",
         classmethod(lambda cls: True)
@@ -191,7 +195,7 @@ def test_place_idempotent_returns_existing(client, active_day, monkeypatch):
     monkeypatch.setattr("api.orders.ord_stk", mock_rpc)
     headers = _auth(_trader_token(active_day))
     body = {
-        "client_order_id": "CID-IDEM",
+        "user_def": "USER-DEF-A",
         "stock_code": "600030.SH",
         "order_type": "23",
         "volume": 100,
@@ -200,14 +204,38 @@ def test_place_idempotent_returns_existing(client, active_day, monkeypatch):
     }
     r1 = client.post("/api/orders/place", json=body, headers=headers)
     assert r1.status_code == 200
-    order_id_1 = r1.json()["order"]["order_id"]
+    order_no_1 = r1.json()["order"]["order_no"]
 
+    # v7: 第二次调用不幂等 — 创建新 Order,order_no 单调递增
     r2 = client.post("/api/orders/place", json=body, headers=headers)
     assert r2.status_code == 200
-    assert r2.json()["order"]["order_id"] == order_id_1
+    order_no_2 = r2.json()["order"]["order_no"]
 
-    # 只能调一次 RPC（第二次幂等不调）
-    assert mock_rpc.await_count == 1
+    assert order_no_1 != order_no_2
+    # broker 端调用次数 = 2(v7 不再应用层 dedup)
+    assert mock_rpc.await_count == 2
+
+
+def test_place_passes_user_def_to_order(client, active_day, monkeypatch):
+    """v7: user_def 透传到 Order.user_def"""
+    monkeypatch.setattr(
+        "services.trading_clock.TradingClock.is_in_trading_session",
+        classmethod(lambda cls: True)
+    )
+    mock_rpc = AsyncMock(return_value={"code": 0, "msg": "ok", "list": [{"order_id": "OID1"}]})
+    monkeypatch.setattr("api.orders.ord_stk", mock_rpc)
+    headers = _auth(_trader_token(active_day))
+    body = {
+        "user_def": "external-tag-12345",
+        "stock_code": "600030.SH",
+        "order_type": "23",
+        "volume": 100,
+        "price": 12.5,
+        "price_type": 11,
+    }
+    r = client.post("/api/orders/place", json=body, headers=headers)
+    assert r.status_code == 200
+    assert r.json()["order"]["user_def"] == "external-tag-12345"
 
 
 # ──── 下单成功 broker 带回 order_id → 写入 ────
@@ -225,7 +253,7 @@ def test_place_success_with_broker_order_id_writes(client, active_day, monkeypat
 
     r = client.post(
         "/api/orders/place",
-        json={"client_order_id": "CID-OK", "stock_code": "600030.SH",
+        json={"user_def": "CID-OK", "stock_code": "600030.SH",
               "order_type": "23", "volume": 100, "price": 12.5, "price_type": 11},
         headers=_auth(_trader_token(active_day)),
     )
@@ -264,7 +292,7 @@ def test_place_success_no_broker_order_id_leaves_empty(client, active_day, monke
 
     r = client.post(
         "/api/orders/place",
-        json={"client_order_id": "CID-NO-OID", "stock_code": "600030.SH",
+        json={"user_def": "CID-NO-OID", "stock_code": "600030.SH",
               "order_type": "23", "volume": 100, "price": 12.5, "price_type": 11},
         headers=_auth(_trader_token(active_day)),
     )
@@ -295,7 +323,7 @@ def test_place_rpc_fail_marks_rejected(client, active_day, monkeypatch):
 
     r = client.post(
         "/api/orders/place",
-        json={"client_order_id": "CID-FAIL", "stock_code": "600030.SH",
+        json={"user_def": "CID-FAIL", "stock_code": "600030.SH",
               "order_type": "23", "volume": 100, "price": 12.5, "price_type": 11},
         headers=_auth(_trader_token(active_day)),
     )
@@ -316,7 +344,7 @@ def test_cancel_calls_rpc_does_not_change_status(client, active_day, monkeypatch
     db = SessionLocal()
     db.add(Order(
         trd_date="20260614",
-        order_id="OID-X", client_order_id="CID-X", order_no="10000010",
+        order_id="OID-X", user_def="CID-X", order_no="10000010",
         stock_code="600030.SH", order_type="23", price_type=11, price=12.5, volume=100,
         status="49",
     ))
@@ -351,7 +379,7 @@ def test_cancel_broker_not_ready_returns_business_error(client, active_day, monk
     db.add(Order(
         trd_date="20260614",
         order_id=None,  # v6: broker 还没回报
-        client_order_id="CID-PENDING", order_no="10000011",
+        user_def="CID-PENDING", order_no="10000011",
         stock_code="600030.SH", order_type="23", price_type=11, price=12.5, volume=100,
         status="48",  # 待报
     ))
@@ -380,7 +408,7 @@ def test_cancel_rpc_fail_returns_500(client, active_day, monkeypatch):
     db = SessionLocal()
     db.add(Order(
         trd_date="20260614",
-        order_id="OID-Y", client_order_id="CID-Y", order_no="10000020",
+        order_id="OID-Y", user_def="CID-Y", order_no="10000020",
         stock_code="600030.SH", order_type="23", price_type=11, price=12.5, volume=100,
         status="49",
     ))
@@ -416,7 +444,7 @@ def test_list_orders_with_filter(client, active_day):
     for i in range(3):
         db.add(Order(
             trd_date="20260614",
-            order_id=f"OID-{i}", client_order_id=f"CID-{i}", order_no=f"1000000{i}",
+            order_id=f"OID-{i}", user_def=f"CID-{i}", order_no=f"1000000{i}",
             stock_code="600030.SH" if i < 2 else "000001.SZ",
             order_type="23", price_type=11, price=12.5, volume=100,
             status="49" if i == 0 else "51",
@@ -445,7 +473,7 @@ def test_list_orders_default_trd_date_uses_active(client, active_day):
     db = SessionLocal()
     db.add(Order(
         trd_date="20260614",
-        order_id="OID-A", client_order_id="CID-A", order_no="10000099",
+        order_id="OID-A", user_def="CID-A", order_no="10000099",
         stock_code="600030.SH", order_type="23", price_type=11, price=12.5, volume=100,
     ))
     db.commit()

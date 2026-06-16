@@ -171,7 +171,7 @@ def test_holdings_no_active_day_falls_back_to_max(client, fresh_db):
     # 放一个 Order 让 resolve_default_trd_date 兜底到 MAX(trd_date)
     from models.orm import Order
     db.add(Order(
-        trd_date="20260610", order_id="OID-FB", client_order_id="CID-FB", order_no="10000001",
+        trd_date="20260610", order_id="OID-FB", user_def="CID-FB", order_no="10000001",
         stock_code="600000.SH", order_type="23", price_type=11, price=10.0, volume=100,
     ))
     db.commit()
