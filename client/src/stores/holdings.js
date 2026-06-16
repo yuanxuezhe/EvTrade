@@ -4,6 +4,7 @@ import { api } from '../api'
 import { useQuoteStore } from './quote'
 import { useAssetStore } from './asset'
 import { useWsStore } from './ws'
+import { inferOrderStatus } from '../utils/format'
 
 /**
  * 持仓 + 资金 + 委托 + 成交 + 实时行情  全局缓存中心
@@ -379,10 +380,20 @@ export const useHoldingsStore = defineStore('holdings', () => {
     log('info', '交易', 'ws', `资产推送: 总资产 ¥${cachedAsset.value.total_asset.toLocaleString()}`)
   }
 
-  /** ws._onOrderCfm 调用：合并委托 + 写日志 */
+  /** ws._onOrderCfm 调用：合并委托 + 写日志
+   *  v6: 匹配键用 order_no（本地 8 位序号 PK），order_id 可能为 null
+   *      收到推送时调前端 inferOrderStatus 防御性重算 status
+   */
   function applyOrderPush(row, action /* 'open' | 'update' | 'status' */) {
-    if (!row || !row.order_id) return
-    const idx = orders.value.findIndex((o) => o.order_id === row.order_id)
+    if (!row || !row.order_no) return
+    // 防御性重算 status（与后端 _infer_order_status 一致）
+    if (row.volume != null && row.traded_volume != null) {
+      row.status = inferOrderStatus(
+        { status: row.status, volume: row.volume, traded_volume: row.traded_volume },
+        row.status
+      )
+    }
+    const idx = orders.value.findIndex((o) => o.order_no === row.order_no)
     if (idx >= 0) {
       orders.value[idx] = { ...orders.value[idx], ...row }
       log('info', '交易', 'ws', `委托状态: ${row.stock_code} ${action} (${row.status || ''})`)
