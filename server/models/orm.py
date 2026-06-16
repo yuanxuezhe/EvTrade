@@ -41,11 +41,14 @@ class Order(Base):
     - 加 uq_orders_broker_id(order_id, trd_date):broker 真实 order_id + 交易日 唯一
     - 加 ix_orders_order_id:trd_cfm 退路查找(理论上只走 remark,这是兜底)
     - status 字段保留,语义改为 "本地推断的委托状态"（见 _infer_order_status）
+    v7 schema 改动:
+    - 删 client_order_id 字段 + uq_orders_client_trd 约束（幂等不再走 DB UNIQUE）
+    - 删 uq_orders_broker_id 约束（order_id 下单时为空，UNIQUE 不可靠）
+    - 加 user_def 字段（String(255)，外部自定义信息透传，无约束）
+    - ix_orders_order_id 保留为普通 INDEX（非 UNIQUE），trd_cfm 兜底查找
     """
     __tablename__ = "orders"
     __table_args__ = (
-        UniqueConstraint("client_order_id", "trd_date", name="uq_orders_client_trd"),
-        UniqueConstraint("order_id", "trd_date", name="uq_orders_broker_id"),
         Index("ix_orders_trd_status", "trd_date", "status"),
         Index("ix_orders_order_id", "order_id"),
         Index("ix_orders_stock", "stock_code"),
@@ -54,7 +57,7 @@ class Order(Base):
     trd_date = Column(String(8), primary_key=True, nullable=False)  # 交易日
     order_no = Column(String(8), primary_key=True, nullable=False)  # 本地 8 位序号 (PK)
     order_id = Column(String(64), nullable=True)                    # 柜台号 (ord_cfm 到达时填入)
-    client_order_id = Column(String(64), nullable=False)             # 客户端幂等号
+    user_def = Column(String(255), nullable=False, default="")      # 外部自定义信息透传
     stock_code = Column(String(16), nullable=False)
     order_type = Column(String(2), nullable=False)                  # 23=买 24=卖
     price_type = Column(Integer, nullable=False, default=11)
@@ -74,19 +77,23 @@ class Order(Base):
 
 
 class Trade(Base):
-    """成交表（复合主键 trd_date + trade_id）
+    """成交表（复合主键 trd_date + order_no + trade_id）
 
     📖 详见 `openspec/specs/data-model/spec.md` §1（Trade 行）
+    v7 schema 改动:
+    - 删 order_id 字段（broker 真实号在 trd_cfm 到达时可能尚未到达）
+    - 加 order_no 字段并入 PK（PK = (trd_date, order_no, trade_id)）
+    - ix_trades_order(order_id) → ix_trades_order_no(order_no)（重命名）
     """
     __tablename__ = "trades"
     __table_args__ = (
-        Index("ix_trades_order", "order_id"),
+        Index("ix_trades_order_no", "order_no"),
         Index("ix_trades_trd_stock", "trd_date", "stock_code"),
     )
 
     trd_date = Column(String(8), primary_key=True, nullable=False)
+    order_no = Column(String(8), primary_key=True, nullable=False)   # 关联本地委托号 (PK)
     trade_id = Column(String(64), primary_key=True, nullable=False)
-    order_id = Column(String(64), nullable=False)
     stock_code = Column(String(16), nullable=False)
     order_type = Column(String(2), nullable=False)
     price = Column(Float, nullable=False, default=0.0)
