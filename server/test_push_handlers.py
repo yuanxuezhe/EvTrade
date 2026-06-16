@@ -1,11 +1,11 @@
 """
-test_push_handlers.py — v5 schema refactor 验证 4 类 push 落库
+test_push_handlers.py — v6 推送落库验证（order-pk-by-orderno）
 
-v5 改动：
-- ord_cfm 改用 broker.remark（= order_no）匹配本地 Order
-- pos_cfm 按 stock_code UPSERT（无 trd_date）
-- ast_cfm 单行资产（无 TRD_DATE）
-- trd_cfm 用 (trd_date, trade_id) 复合主键
+v6 改动:
+- ord_cfm 用 broker.remark (= order_no) 匹配本地 Order,只填 order_id + 推断 status
+- ord_cfm 不再更新 traded_volume (那是 trd_cfm 的事)
+- trd_cfm 用 remark 匹配 Order,累加 + 推断 status
+- 委托 status 统一由 _infer_order_status 本地推断(不再直接抄 broker 推的 status)
 """
 import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'server'))
@@ -14,7 +14,7 @@ import pytest
 from datetime import datetime
 from db import Base, engine, init_db, SessionLocal
 from models.orm import Order, Trade, Position, Asset, SysStatus
-from services.push_handlers import handle_push
+from services.push_handlers import handle_push, _infer_order_status, TERMINAL_STATUSES, _status_msg
 
 
 @pytest.fixture(autouse=True)
@@ -28,14 +28,88 @@ def fresh_db():
     yield
 
 
+# ──── _infer_order_status 状态推断矩阵 ────
+
+def test_infer_status_48_with_zero_volume():
+    """broker 推 48(待报) + 累计=0 + 非终态 → 推断 49(已报)"""
+    o = Order(volume=1000, traded_volume=0, status="48")
+    assert _infer_order_status(o, broker_status="48") == "49"
+
+
+def test_infer_status_49_with_zero_volume():
+    """broker 推 49(已报) + 累计=0 + 非终态 → 49"""
+    o = Order(volume=1000, traded_volume=0, status="48")
+    assert _infer_order_status(o, broker_status="49") == "49"
+
+
+def test_infer_status_52_with_zero_volume():
+    """broker 推 52(部撤) + 累计=0 + 非终态 → 53(已撤)"""
+    o = Order(volume=1000, traded_volume=0, status="48")
+    assert _infer_order_status(o, broker_status="52") == "53"
+
+
+def test_infer_status_53_with_zero_volume():
+    """broker 推 53(已撤) + 累计=0 → 53"""
+    o = Order(volume=1000, traded_volume=0, status="48")
+    assert _infer_order_status(o, broker_status="53") == "53"
+
+
+def test_infer_status_52_with_partial_volume():
+    """broker 推 52(部撤) + 累计<volume → 56(部成部撤)"""
+    o = Order(volume=1000, traded_volume=500, status="50")
+    assert _infer_order_status(o, broker_status="52") == "56"
+
+
+def test_infer_status_53_with_full_volume():
+    """broker 推 53(已撤) + 累计=volume → 51(已成,broker 撤单无意义)"""
+    o = Order(volume=1000, traded_volume=1000, status="50")
+    assert _infer_order_status(o, broker_status="53") == "51"
+
+
+def test_infer_status_trd_cfm_partial():
+    """trd_cfm 累计后(不传 broker_status) → 50(部成)"""
+    o = Order(volume=1000, traded_volume=300, status="49")
+    assert _infer_order_status(o, broker_status=None) == "50"
+
+
+def test_infer_status_trd_cfm_full():
+    """trd_cfm 累计到 volume → 51(已成)"""
+    o = Order(volume=1000, traded_volume=1000, status="50")
+    assert _infer_order_status(o, broker_status=None) == "51"
+
+
+def test_infer_status_terminal_51_not_overridden():
+    """终态 51(已成)被 trd_cfm 累计时保持"""
+    o = Order(volume=1000, traded_volume=500, status="51")  # 已成终态
+    assert _infer_order_status(o, broker_status=None) == "51"
+
+
+def test_infer_status_terminal_56_not_overridden():
+    """终态 56(部成部撤)被 trd_cfm 累计时保持"""
+    o = Order(volume=1000, traded_volume=200, status="56")
+    assert _infer_order_status(o, broker_status=None) == "56"
+
+
+def test_infer_status_terminal_53_not_overridden():
+    """终态 53(已撤)被 ord_cfm 再推时也保持"""
+    o = Order(volume=1000, traded_volume=0, status="53")
+    # broker 又推 49 也不覆盖
+    assert _infer_order_status(o, broker_status="49") == "53"
+
+
 # ──── ord_cfm ────
 
-def test_ord_cfm_updates_existing_order_by_remark():
-    """通过 broker.remark (= 本地 order_no) 匹配本地 Order"""
+def test_ord_cfm_fills_order_id_via_remark():
+    """v6: ord_cfm 通过 broker.remark (= order_no) 匹配本地 Order,填入 broker order_id
+
+    本地 Order 初始 order_id=None(下单时 broker 还没回报)
+    ord_cfm 到达后写入 broker 真实 order_id
+    """
     db = SessionLocal()
     db.add(Order(
         trd_date="20260614",
-        order_id="local-10000001", client_order_id="CID-1", order_no="10000001",
+        order_id=None,  # v6: 下单时 broker 还没回报
+        client_order_id="CID-1", order_no="10000001",
         stock_code="600030.SH", order_type="23", price_type=11, price=12.5, volume=100,
         status="48",  # 待报
     ))
@@ -47,25 +121,24 @@ def test_ord_cfm_updates_existing_order_by_remark():
         "order_id": "BROKER-OID-1",
         "remark": "10000001",   # ← broker 透传回来的 order_no
         "status": "49",          # 已报
-        "traded_volume": 0,
-        "traded_amount": 0,
-        "avg_price": 0,
     }, ts="20260614 09:30:01")
     db.commit()
     row = db.query(Order).filter_by(order_no="10000001", trd_date="20260614").first()
     assert row.order_id == "BROKER-OID-1"
+    # status 由 _infer_order_status 推断:broker_status=49 + 累计=0 + 非终态 → 49
     assert row.status == "49"
     db.close()
 
 
-def test_ord_cfm_updates_traded_volume():
-    """部成推送 → 更新 traded_volume/avg_price"""
+def test_ord_cfm_does_not_update_traded_volume():
+    """v6: ord_cfm 不更新 traded_volume(那是 trd_cfm 的事)"""
     db = SessionLocal()
     db.add(Order(
         trd_date="20260614",
         order_id="OID-PART", client_order_id="CID-PART", order_no="10000002",
         stock_code="600030.SH", order_type="23", price_type=11, price=12.5, volume=100,
         status="49",
+        traded_volume=0, traded_amount=0.0, avg_price=0.0,
     ))
     db.commit()
     db.close()
@@ -73,24 +146,53 @@ def test_ord_cfm_updates_traded_volume():
     db = SessionLocal()
     handle_push(db, "ord_cfm", {
         "order_id": "OID-PART",
-        "status": "50",  # 部成
-        "traded_volume": 30,
+        "remark": "10000002",
+        "status": "50",  # broker 推部成
+        "traded_volume": 30,      # 即使 broker 推了也忽略
         "traded_amount": 375.0,
         "avg_price": 12.5,
     }, ts="20260614 09:31:00")
     db.commit()
     row = db.query(Order).filter_by(order_id="OID-PART", trd_date="20260614").first()
-    assert row.status == "50"
-    assert row.traded_volume == 30
-    assert row.avg_price == 12.5
+    # v6: traded_* 不被 ord_cfm 覆盖
+    assert row.traded_volume == 0
+    assert row.traded_amount == 0.0
+    assert row.avg_price == 0.0
+    # status 由 _infer_order_status 推断:broker_status=50 + 累计=0 + 非终态 → 49(已报,还没真成交)
+    assert row.status == "49"
     db.close()
 
 
-def test_ord_cfm_logs_warn_when_no_local_order(capfd):
+def test_ord_cfm_infers_status_53_when_broker_pushed_cancel():
+    """broker ord_cfm 推 53(已撤) + 累计=0 → 推断 53"""
+    db = SessionLocal()
+    db.add(Order(
+        trd_date="20260614",
+        order_id="OID-CXL", client_order_id="CID-CXL", order_no="10000003",
+        stock_code="600030.SH", order_type="23", price_type=11, price=12.5, volume=100,
+        status="49", traded_volume=0,
+    ))
+    db.commit()
+    db.close()
+
+    db = SessionLocal()
+    handle_push(db, "ord_cfm", {
+        "order_id": "OID-CXL",
+        "remark": "10000003",
+        "status": "53",  # broker 推已撤
+    }, ts="20260614 10:00:00")
+    db.commit()
+    row = db.query(Order).filter_by(order_id="OID-CXL", trd_date="20260614").first()
+    assert row.status == "53"  # 已撤
+    db.close()
+
+
+def test_ord_cfm_logs_warn_when_no_local_order():
     """push 来了但本地无对应 Order → 打 WARN 不创建"""
     db = SessionLocal()
     handle_push(db, "ord_cfm", {
         "order_id": "GHOST-OID",
+        "remark": "99999999",  # 不存在的 order_no
         "status": "49",
     }, ts="20260614 09:30:00")
     db.commit()
@@ -101,7 +203,8 @@ def test_ord_cfm_logs_warn_when_no_local_order(capfd):
 
 # ──── trd_cfm ────
 
-def test_trd_cfm_inserts_trade_and_updates_order():
+def test_trd_cfm_inserts_trade_and_updates_order_via_remark():
+    """v6: trd_cfm 用 broker.remark (= order_no) 匹配 Order"""
     db = SessionLocal()
     db.add(Order(
         trd_date="20260614",
@@ -116,6 +219,7 @@ def test_trd_cfm_inserts_trade_and_updates_order():
     handle_push(db, "trd_cfm", {
         "trade_id": "TID-001",
         "order_id": "OID-T",
+        "remark": "10000010",  # ← v6: 关键,用来匹配本地 Order
         "stock_code": "600030.SH",
         "order_type": "23",
         "price": 12.5,
@@ -133,15 +237,44 @@ def test_trd_cfm_inserts_trade_and_updates_order():
     assert t.trd_date == "20260614"
 
     # Order 累计更新
-    o = db.query(Order).filter_by(order_id="OID-T", trd_date="20260614").first()
+    o = db.query(Order).filter_by(order_no="10000010", trd_date="20260614").first()
     assert o.traded_volume == 30
     assert o.traded_amount == 375.0
     assert o.avg_price == 12.5
+    # status 由 _infer_order_status 推断:累计=30 < volume=100 + 非终态 → 50(部成)
+    assert o.status == "50"
+    db.close()
+
+
+def test_trd_cfm_fills_status_to_51_when_full():
+    """trd_cfm 累计到 volume → 51(已成)"""
+    db = SessionLocal()
+    db.add(Order(
+        trd_date="20260614",
+        order_id="OID-FULL", client_order_id="CID-FULL", order_no="10000011",
+        stock_code="600030.SH", order_type="23", price_type=11, price=12.5, volume=100,
+        status="50", traded_volume=50, traded_amount=625.0,
+    ))
+    db.commit()
+    db.close()
+
+    db = SessionLocal()
+    handle_push(db, "trd_cfm", {
+        "trade_id": "TID-002",
+        "order_id": "OID-FULL",
+        "remark": "10000011",
+        "stock_code": "600030.SH",
+        "price": 12.5, "volume": 50, "amount": 625.0,
+    }, ts="20260614 09:32:00")
+    db.commit()
+    o = db.query(Order).filter_by(order_no="10000011", trd_date="20260614").first()
+    assert o.traded_volume == 100
+    assert o.status == "51"  # 已成
     db.close()
 
 
 def test_trd_cfm_idempotent():
-    """同 trade_id 二次推送 → 不会重复插入"""
+    """同 trade_id 二次推送 → 不会重复插入 + 不会重复累计"""
     db = SessionLocal()
     db.add(Order(
         trd_date="20260614",
@@ -155,6 +288,7 @@ def test_trd_cfm_idempotent():
     payload = {
         "trade_id": "TID-DUP",
         "order_id": "OID-IDEM",
+        "remark": "10000020",
         "stock_code": "600030.SH",
         "price": 12.5, "volume": 10, "amount": 125.0,
     }
@@ -168,6 +302,67 @@ def test_trd_cfm_idempotent():
     handle_push(db, "trd_cfm", payload, ts="x")
     db.commit()
     assert db.query(Trade).filter_by(trade_id="TID-DUP", trd_date="20260614").count() == 1
+    o = db.query(Order).filter_by(order_no="10000020", trd_date="20260614").first()
+    # 累计只算了 1 次
+    assert o.traded_volume == 10
+    db.close()
+
+
+def test_trd_cfm_no_remark_fallback_to_order_id():
+    """v6 兜底:trd_cfm 不带 remark 时用 order_id 查"""
+    db = SessionLocal()
+    db.add(Order(
+        trd_date="20260614",
+        order_id="OID-FB", client_order_id="CID-FB", order_no="10000030",
+        stock_code="600030.SH", order_type="23", price_type=11, price=12.5, volume=100,
+        status="49", traded_volume=0,
+    ))
+    db.commit()
+    db.close()
+
+    db = SessionLocal()
+    handle_push(db, "trd_cfm", {
+        "trade_id": "TID-FB",
+        "order_id": "OID-FB",
+        # 没有 remark
+        "stock_code": "600030.SH",
+        "price": 12.5, "volume": 20, "amount": 250.0,
+    }, ts="20260614 09:30:00")
+    db.commit()
+    t = db.query(Trade).filter_by(trade_id="TID-FB", trd_date="20260614").first()
+    assert t is not None
+    o = db.query(Order).filter_by(order_id="OID-FB", trd_date="20260614").first()
+    assert o.traded_volume == 20
+    db.close()
+
+
+def test_trd_cfm_terminal_status_not_overridden():
+    """终态(56 部成部撤)被 trd_cfm 累计时不被覆盖"""
+    db = SessionLocal()
+    db.add(Order(
+        trd_date="20260614",
+        order_id="OID-TER", client_order_id="CID-TER", order_no="10000040",
+        stock_code="600030.SH", order_type="23", price_type=11, price=12.5, volume=100,
+        status="56",  # 部成部撤终态
+        traded_volume=30, traded_amount=375.0,
+    ))
+    db.commit()
+    db.close()
+
+    db = SessionLocal()
+    handle_push(db, "trd_cfm", {
+        "trade_id": "TID-AFTER-CXL",
+        "order_id": "OID-TER",
+        "remark": "10000040",
+        "stock_code": "600030.SH",
+        "price": 12.5, "volume": 20, "amount": 250.0,  # 撤单后又来一笔
+    }, ts="20260614 10:00:00")
+    db.commit()
+    o = db.query(Order).filter_by(order_no="10000040", trd_date="20260614").first()
+    # 累计还是算了
+    assert o.traded_volume == 50
+    # 但 status 保持 56(终态保护)
+    assert o.status == "56"
     db.close()
 
 

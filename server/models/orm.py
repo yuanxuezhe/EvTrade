@@ -25,19 +25,30 @@ from db import Base
 # ─────────────── 业务表 ───────────────
 
 class Order(Base):
-    """委托主表（复合主键 trd_date + order_id）"""
+    """委托主表（复合主键 trd_date + order_no）
+
+    v6 schema 改动:
+    - PK (trd_date, order_id) → (trd_date, order_no)
+    - order_id 出 PK,变可空,由 ord_cfm 推送写入
+    - order_no 进 PK(原本就 UNIQUE,加 PK 不冲突)
+    - 删 uq_orders_order_no (被 PK 替代)
+    - 加 uq_orders_broker_id(order_id, trd_date):broker 真实 order_id + 交易日 唯一
+    - 加 ix_orders_order_id:trd_cfm 退路查找(理论上只走 remark,这是兜底)
+    - status 字段保留,语义改为 "本地推断的委托状态"
+    """
     __tablename__ = "orders"
     __table_args__ = (
         UniqueConstraint("client_order_id", "trd_date", name="uq_orders_client_trd"),
-        UniqueConstraint("order_no", name="uq_orders_order_no"),
+        UniqueConstraint("order_id", "trd_date", name="uq_orders_broker_id"),
         Index("ix_orders_trd_status", "trd_date", "status"),
+        Index("ix_orders_order_id", "order_id"),
         Index("ix_orders_stock", "stock_code"),
     )
 
     trd_date = Column(String(8), primary_key=True, nullable=False)  # 交易日
-    order_id = Column(String(64), primary_key=True, nullable=False)  # 柜台号
+    order_no = Column(String(8), primary_key=True, nullable=False)  # 本地 8 位序号 (PK)
+    order_id = Column(String(64), nullable=True)                    # 柜台号 (ord_cfm 到达时填入)
     client_order_id = Column(String(64), nullable=False)             # 客户端幂等号
-    order_no = Column(String(8), nullable=False)                    # 本地 8 位序号
     stock_code = Column(String(16), nullable=False)
     order_type = Column(String(2), nullable=False)                  # 23=买 24=卖
     price_type = Column(Integer, nullable=False, default=11)

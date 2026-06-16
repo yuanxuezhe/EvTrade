@@ -1,28 +1,67 @@
 """
-test_orders_api.py — 验证 v5 下单/撤单/查询（schema refactor）
+test_orders_api.py — 验证 v6 下单/撤单/查询（order-pk-by-orderno）
 
 mock RPC + TradingClock，覆盖：
 - 幂等（同 client_order_id 二次提交返原单）
 - 屏障（未激活 / 非时段拒绝）
-- 下单成功 → status=49
+- 下单成功 → status=49,broker 带回 order_id 时写入
+- 下单成功 → broker 不带回 order_id 时 order_id 为空
 - 下单失败 → status=55 废单
 - 撤单成功 → 不本地改 status
 - 撤单失败 → 500
+- 撤单时 broker order_id 还没回报 → BROKER_NOT_READY
 - 查询 DB
 
-v5 改动：
-- 移除 order_remark 字段（v4 错误复用 broker 透传字段）
-- TRD_DATE → trd_date
-- TradingDay → SysStatus
-- 复合主键 (trd_date, order_id)
-- DELETE /{order_id} 需要 trd_date 参数（复合主键定位）
+v6 改动（order-pk-by-orderno）：
+- 复合主键 (trd_date, order_no)；order_id 可空,broker ack/ord_cfm 到达时填入
+- DELETE /{order_no} 路径,内部用 order.order_id 调 RPC
+- OrderOut.order_id 默认空串,broker 未回报前为空
 """
 import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'server'))
 
+# Python 3.6 兼容:AsyncMock 3.8+ 才有
+if sys.version_info < (3, 8):
+    from unittest.mock import MagicMock as _MagicMock
+
+    class _Call:
+        def __init__(self, args, kwargs):
+            self.args = args
+            self.kwargs = kwargs
+
+    class AsyncMock(_MagicMock):
+        """AsyncMock 兼容垫片(3.6 友好版)
+
+        跟踪 await_count / await_args / await_args_list,模拟 3.8+ AsyncMock 行为。
+        """
+        def __init__(self, *args, **kwargs):
+            super(AsyncMock, self).__init__(*args, **kwargs)
+            self.await_count = 0
+            self.await_args = None
+            self.await_args_list = []
+
+        def __call__(self, *args, **kwargs):
+            async def _coro():
+                self.await_count += 1
+                call = _Call(args, kwargs)
+                self.await_args = call
+                self.await_args_list.append(call)
+                # side_effect 处理
+                if self.side_effect is not None:
+                    se = self.side_effect
+                    if isinstance(se, BaseException):
+                        raise se
+                    if callable(se):
+                        return se(*args, **kwargs)
+                    return se
+                return self.return_value
+            return _coro()
+else:
+    from unittest.mock import AsyncMock
+
 import pytest
 from datetime import datetime, time, timedelta
-from unittest.mock import AsyncMock, patch, MagicMock
+from unittest.mock import patch, MagicMock
 
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
@@ -171,9 +210,10 @@ def test_place_idempotent_returns_existing(client, active_day, monkeypatch):
     assert mock_rpc.await_count == 1
 
 
-# ──── 下单成功 → status=49 ────
+# ──── 下单成功 broker 带回 order_id → 写入 ────
 
-def test_place_success_writes_local_and_calls_rpc(client, active_day, monkeypatch):
+def test_place_success_with_broker_order_id_writes(client, active_day, monkeypatch):
+    """broker ack 带回 order_id → 写入 Order.order_id"""
     monkeypatch.setattr(
         "services.trading_clock.TradingClock.is_in_trading_session",
         classmethod(lambda cls: True)
@@ -193,8 +233,7 @@ def test_place_success_writes_local_and_calls_rpc(client, active_day, monkeypatc
     body = r.json()["order"]
     assert body["status"] == "49"
     assert body["order_id"] == "BROKER-OID-1"
-    assert body["order_no"] == "10000001"  # 第一次生成
-    assert "order_remark" not in body  # v5 字段已移除
+    assert body["order_no"] == "10000001"
     assert body["trd_date"] == "20260614"
     assert mock_rpc.await_count == 1
     # 校验传给柜台的 remark
@@ -202,6 +241,46 @@ def test_place_success_writes_local_and_calls_rpc(client, active_day, monkeypatc
     assert call_kwargs["remark"] == "10000001"
     # 推 WS
     assert mock_ws.await_count == 1
+
+    # DB 验证
+    db = SessionLocal()
+    row = db.query(Order).filter_by(order_no="10000001").first()
+    assert row.order_id == "BROKER-OID-1"
+    assert row.status == "49"
+    db.close()
+
+
+# ──── 下单成功 broker 不带回 order_id → 留空 ────
+
+def test_place_success_no_broker_order_id_leaves_empty(client, active_day, monkeypatch):
+    """broker ack 不带回 order_id → 响应 order_id=\"\";DB 留空"""
+    monkeypatch.setattr(
+        "services.trading_clock.TradingClock.is_in_trading_session",
+        classmethod(lambda cls: True)
+    )
+    # broker 协议可能不送 order_id(只回 ack)
+    mock_rpc = AsyncMock(return_value={"code": 0, "msg": "ok", "list": [{}]})
+    monkeypatch.setattr("api.orders.ord_stk", mock_rpc)
+
+    r = client.post(
+        "/api/orders/place",
+        json={"client_order_id": "CID-NO-OID", "stock_code": "600030.SH",
+              "order_type": "23", "volume": 100, "price": 12.5, "price_type": 11},
+        headers=_auth(_trader_token(active_day)),
+    )
+    assert r.status_code == 200
+    body = r.json()["order"]
+    # v6: 响应 order_id = "" (broker 没回报),不再有 PENDING- 占位
+    assert body["order_id"] == ""
+    assert body["status"] == "49"  # 仍写 49
+    assert body["order_no"] == "10000001"
+    assert "PENDING" not in body["order_id"]  # 显式断言:不再出现 PENDING-
+
+    # DB 验证:order_id 留空
+    db = SessionLocal()
+    row = db.query(Order).filter_by(order_no="10000001").first()
+    assert row.order_id is None or row.order_id == ""
+    db.close()
 
 
 # ──── 下单失败 → status=55 废单 ────
@@ -226,9 +305,10 @@ def test_place_rpc_fail_marks_rejected(client, active_day, monkeypatch):
     assert "RPC 失败" in body["status_msg"]
 
 
-# ──── 撤单：调 RPC，不本地改 status ────
+# ──── 撤单(v6:用 order_no) ────
 
 def test_cancel_calls_rpc_does_not_change_status(client, active_day, monkeypatch):
+    """v6: DELETE /{order_no} 调 RPC,order.order_id 传给 cancel_ord"""
     monkeypatch.setattr(
         "services.trading_clock.TradingClock.is_in_trading_session",
         classmethod(lambda cls: True)
@@ -244,19 +324,52 @@ def test_cancel_calls_rpc_does_not_change_status(client, active_day, monkeypatch
     db.close()
 
     mock_rpc = AsyncMock(return_value={"code": 0, "msg": "ok", "list": []})
-    monkeypatch.setattr("api.orders.cancel_order", mock_rpc)
+    monkeypatch.setattr("api.orders.rpc_cancel_order", mock_rpc)
 
-    # v5: 复合主键需 trd_date
     r = client.delete(
-        "/api/orders/OID-X?trd_date=20260614",
+        "/api/orders/10000010?trd_date=20260614",  # v6: 用 order_no
         headers=_auth(_trader_token(active_day)),
     )
     assert r.status_code == 200
-    # 状态没改（等 push）
+    # RPC 用查到的 broker order_id (不是 URL 参数)
+    call_kwargs = mock_rpc.await_args.kwargs
+    assert call_kwargs["order_id"] == "OID-X"
+    # 状态没改(等 push)
     db = SessionLocal()
-    row = db.query(Order).filter_by(order_id="OID-X", trd_date="20260614").first()
+    row = db.query(Order).filter_by(order_no="10000010", trd_date="20260614").first()
     assert row.status == "49"
     db.close()
+
+
+def test_cancel_broker_not_ready_returns_business_error(client, active_day, monkeypatch):
+    """v6: 撤单时 broker order_id 还没回报 → BROKER_NOT_READY,不调 RPC"""
+    monkeypatch.setattr(
+        "services.trading_clock.TradingClock.is_in_trading_session",
+        classmethod(lambda cls: True)
+    )
+    db = SessionLocal()
+    db.add(Order(
+        trd_date="20260614",
+        order_id=None,  # v6: broker 还没回报
+        client_order_id="CID-PENDING", order_no="10000011",
+        stock_code="600030.SH", order_type="23", price_type=11, price=12.5, volume=100,
+        status="48",  # 待报
+    ))
+    db.commit()
+    db.close()
+
+    mock_rpc = AsyncMock(return_value={"code": 0, "msg": "ok", "list": []})
+    monkeypatch.setattr("api.orders.rpc_cancel_order", mock_rpc)
+
+    r = client.delete(
+        "/api/orders/10000011?trd_date=20260614",
+        headers=_auth(_trader_token(active_day)),
+    )
+    assert r.status_code == 200  # 不是 HTTP 错误,是业务码
+    body = r.json()
+    assert body["code"] == 1
+    assert body["error"] == "BROKER_NOT_READY"
+    assert mock_rpc.await_count == 0  # RPC 不会被调
 
 
 def test_cancel_rpc_fail_returns_500(client, active_day, monkeypatch):
@@ -275,10 +388,10 @@ def test_cancel_rpc_fail_returns_500(client, active_day, monkeypatch):
     db.close()
 
     mock_rpc = AsyncMock(side_effect=Exception("rpc 断连"))
-    monkeypatch.setattr("api.orders.cancel_order", mock_rpc)
+    monkeypatch.setattr("api.orders.rpc_cancel_order", mock_rpc)
 
     r = client.delete(
-        "/api/orders/OID-Y?trd_date=20260614",
+        "/api/orders/10000020?trd_date=20260614",  # v6: order_no
         headers=_auth(_trader_token(active_day)),
     )
     assert r.status_code == 500
@@ -290,7 +403,7 @@ def test_cancel_not_found_returns_404(client, active_day, monkeypatch):
         classmethod(lambda cls: True)
     )
     r = client.delete(
-        "/api/orders/NOT-EXIST?trd_date=20260614",
+        "/api/orders/99999999?trd_date=20260614",  # v6: order_no
         headers=_auth(_trader_token(active_day)),
     )
     assert r.status_code == 404

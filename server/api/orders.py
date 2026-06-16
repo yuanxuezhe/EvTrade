@@ -1,20 +1,25 @@
 """
-orders.py — v5 重构版（schema refactor）
+orders.py — v6 重构版（order_no 作 PK, status 本地推断）
 
 写路径：先 DB 后 RPC
-  POST /place                  → INSERT status=48 → 调 ord_stk(remark=order_no) → 改 status=49/55
-  DELETE /{order_id}           → 调 RPC cancel_ord，不本地改 status（等 push）
+  POST /place                  → INSERT status=48 (order_id 空) → 调 ord_stk(remark=order_no)
+                                  → broker 带回 order_id 时 UPDATE 写入
+                                  → ord_cfm 到达时由 _infer_order_status 推断 status
+  DELETE /{order_no}           → 查 Order by (trd_date, order_no) → 内部用 order.order_id
+                                  调 RPC cancel_ord；order_id 未到达时返 409 BROKER_NOT_READY
+                                  → 不本地改 status（等 push）
 
 读路径：纯 DB
   GET /                        → 委托列表（DB 查，按 trd_date 默认）
   GET /history?trd_date=       → 任意交易日历史
 
-v5 改动：
-- 移除 order_remark 字段（v4 错误复用 broker 透传字段）
-- TRD_DATE → trd_date
-- TradingDay → SysStatus
-- 复合主键 (trd_date, order_id)
-- place_order INSERT 初始 order_id 用 order_no 占位（broker.remark 匹配用）
+v6 改动（order-pk-by-orderno change）：
+- 复合主键 (trd_date, order_no) — order_no 是 PK
+- order_id 改成 nullable,broker 推送到达时单条 UPDATE 写入
+- 删 PENDING-{order_no} 占位 + 删-插交换
+- 撤单 URL 参数从 order_id 改为 order_no
+- OrderOut.order_id 默认空串 (broker 未回报前)
+- 撤单时 broker order_id 尚未到达返 409 BROKER_NOT_READY
 """
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
@@ -52,7 +57,7 @@ class PlaceOrderRequest(BaseModel):
 
 
 class OrderOut(BaseModel):
-    order_id: str
+    order_id: str = ""  # 改:broker 未回报前为空串 (下单后 → ord_cfm 到达前的窗口期)
     client_order_id: str
     order_no: str
     trd_date: str
@@ -111,7 +116,7 @@ async def place_order(req: PlaceOrderRequest, user: User = Depends(get_current_u
         return PlaceOrderResponse(
             code=0, msg="幂等: 已存在",
             order=OrderOut(
-                order_id=existing.order_id, client_order_id=existing.client_order_id,
+                order_id=existing.order_id or "", client_order_id=existing.client_order_id,
                 order_no=existing.order_no, trd_date=existing.trd_date,
                 stock_code=existing.stock_code,
                 order_type=existing.order_type, price_type=existing.price_type,
@@ -136,13 +141,12 @@ async def place_order(req: PlaceOrderRequest, user: User = Depends(get_current_u
     gross, net = calc_net_amount(req.price, adjusted, fee_cfg, direction)
 
     # 4. INSERT status=48（待报）
-    # order_id 暂用 order_no 占位（复合主键 trd_date+order_id 不能 NULL）
-    # broker 返回真实 order_id 后会被 handle_ord_cfm / ack 分支覆盖
+    # v6: order_id 不预占,broker 回报时单条 UPDATE 写入
     order_no = next_order_no(db)
     order = Order(
         trd_date=trd_date,
-        order_id=f"PENDING-{order_no}",
-        client_order_id=cid, order_no=order_no,
+        order_no=order_no,
+        client_order_id=cid,
         stock_code=req.stock_code, order_type=req.order_type,
         price_type=req.price_type, price=req.price, volume=adjusted,
         traded_volume=0, traded_amount=0.0, avg_price=0.0,
@@ -168,7 +172,7 @@ async def place_order(req: PlaceOrderRequest, user: User = Depends(get_current_u
         return PlaceOrderResponse(
             code=1, msg="柜台调用失败",
             order=OrderOut(
-                order_id=order.order_id, client_order_id=order.client_order_id,
+                order_id=order.order_id or "", client_order_id=order.client_order_id,
                 order_no=order.order_no, trd_date=order.trd_date,
                 stock_code=order.stock_code, order_type=order.order_type,
                 price_type=order.price_type, price=order.price, volume=order.volume,
@@ -185,35 +189,12 @@ async def place_order(req: PlaceOrderRequest, user: User = Depends(get_current_u
     broker_order_id = ""
     if ack_code == 0 and ack_list and isinstance(ack_list[0], dict):
         broker_order_id = str(ack_list[0].get("order_id", ""))
-        if broker_order_id and broker_order_id != order.order_id:
-            # broker 返回真实 order_id 时，需要按 trd_date+order_id 更新主键
-            # SQLite/PostgreSQL 都支持"删后插"方式
-            new_order = Order(
-                trd_date=order.trd_date,
-                order_id=broker_order_id,
-                client_order_id=order.client_order_id,
-                order_no=order.order_no,
-                stock_code=order.stock_code,
-                order_type=order.order_type,
-                price_type=order.price_type,
-                price=order.price, volume=order.volume,
-                traded_volume=order.traded_volume,
-                traded_amount=order.traded_amount,
-                avg_price=order.avg_price,
-                status="49", status_msg="已报",
-                order_time=order.order_time,
-                created_at=order.created_at,
-                updated_at=datetime.utcnow(),
-                pushed_at=order.pushed_at,
-            )
-            db.delete(order)
-            db.add(new_order)
-            db.commit()
-            db.refresh(new_order)
-            order = new_order
-        else:
-            order.status = "49"
-            order.status_msg = "已报"
+        if broker_order_id:
+            # v6: 单条 UPDATE 写入 broker 真实 order_id (不再删-插交换)
+            order.order_id = broker_order_id
+        # status 由 _infer_order_status 推断更准;但 ack 成功就先写 49,ord_cfm 来了会重算
+        order.status = "49"
+        order.status_msg = "已报"
     else:
         order.status = "55"
         order.status_msg = ack.get("msg", "柜台拒单")
@@ -236,7 +217,7 @@ async def place_order(req: PlaceOrderRequest, user: User = Depends(get_current_u
         code=0 if order.status == "49" else 1,
         msg=order.status_msg,
         order=OrderOut(
-            order_id=order.order_id, client_order_id=order.client_order_id,
+            order_id=order.order_id or "", client_order_id=order.client_order_id,
             order_no=order.order_no, trd_date=order.trd_date, stock_code=order.stock_code,
             order_type=order.order_type, price_type=order.price_type,
             price=order.price, volume=order.volume,
@@ -252,38 +233,48 @@ async def place_order(req: PlaceOrderRequest, user: User = Depends(get_current_u
 
 # ────────────── 撤单 ──────────────
 
-@router.delete("/{order_id}", response_model=CancelResponse,
+@router.delete("/{order_no}", response_model=CancelResponse,
                dependencies=[Depends(require_trader), Depends(require_trading_day), Depends(require_trading_session)])
-async def cancel_order(order_id: str, trd_date: str = Query(..., description="8 位数字 YYYYMMDD"),
+async def cancel_order(order_no: str, trd_date: str = Query(..., description="8 位数字 YYYYMMDD"),
                       user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    """撤单：只调 RPC，不本地改 status（等 ord_cfm push）"""
-    order = db.query(Order).filter_by(order_id=order_id, trd_date=trd_date).first()
+    """撤单：只调 RPC，不本地改 status（等 ord_cfm push）
+
+    v6: URL 参数改为 order_no (本地 8 位序号),内部用查到的 order.order_id 调 RPC
+    """
+    order = db.query(Order).filter_by(order_no=order_no, trd_date=trd_date).first()
     if not order:
-        raise HTTPException(status_code=404, detail={"code": "NOT_FOUND", "msg": f"委托 {order_id} 不存在"})
+        raise HTTPException(status_code=404, detail={"code": "NOT_FOUND", "msg": f"委托 {order_no} 不存在"})
 
     if order.status not in ("48", "49"):
         # 已报才能撤
         return CancelResponse(
             code=1, msg=f"当前 status={order.status} 不可撤",
-            order_id=order_id, error=f"status {order.status} non-cancellable",
+            order_id=order.order_id or "", error=f"status {order.status} non-cancellable",
+        )
+
+    if not order.order_id:
+        # v6 防御:broker 尚未回报真实 order_id,不能调 cancel_ord
+        return CancelResponse(
+            code=1, msg="broker 尚未回报 order_id,暂不可撤",
+            order_id="", error="BROKER_NOT_READY",
         )
 
     try:
-        ack = await rpc_cancel_order(order_id=order_id)
+        ack = await rpc_cancel_order(order_id=order.order_id)
         ack_code = int(ack.get("code", -1))
         if ack_code == 0:
             # 成功 → 等 push 改 status
-            return CancelResponse(code=0, msg="撤单请求已发", order_id=order_id, cancel_ack=ack)
+            return CancelResponse(code=0, msg="撤单请求已发", order_id=order.order_id, cancel_ack=ack)
         else:
             return CancelResponse(
-                code=1, msg=ack.get("msg", "撤单失败"), order_id=order_id,
+                code=1, msg=ack.get("msg", "撤单失败"), order_id=order.order_id,
                 cancel_ack=ack, error=ack.get("msg", "cancel rejected"),
             )
     except Exception as e:
         raise HTTPException(
             status_code=500,
             detail={"code": "RPC_FAILED", "msg": f"撤单 RPC 失败: {e}",
-                    "order_id": order_id, "error": str(e)},
+                    "order_no": order_no, "order_id": order.order_id, "error": str(e)},
         )
 
 
@@ -316,7 +307,7 @@ async def list_orders(
         code=0, msg="", total=total,
         list=[
             OrderOut(
-                order_id=r.order_id, client_order_id=r.client_order_id,
+                order_id=r.order_id or "", client_order_id=r.client_order_id,
                 order_no=r.order_no, trd_date=r.trd_date, stock_code=r.stock_code,
                 order_type=r.order_type, price_type=r.price_type,
                 price=r.price, volume=r.volume,
@@ -349,7 +340,7 @@ async def orders_history(
         code=0, msg="", total=total,
         list=[
             OrderOut(
-                order_id=r.order_id, client_order_id=r.client_order_id,
+                order_id=r.order_id or "", client_order_id=r.client_order_id,
                 order_no=r.order_no, trd_date=r.trd_date, stock_code=r.stock_code,
                 order_type=r.order_type, price_type=r.price_type,
                 price=r.price, volume=r.volume,

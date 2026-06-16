@@ -1,5 +1,5 @@
 """
-push_handlers.py — v5 推送落库（schema refactor）
+push_handlers.py — v6 推送落库（order-pk-by-orderno）
 
 监听 4 类 push 事件，把柜台主动推送写/更新到本地 SQLite：
   - ord_cfm: 委托状态/成交通知（首次报单、状态变化）
@@ -7,15 +7,16 @@ push_handlers.py — v5 推送落库（schema refactor）
   - pos_cfm: 持仓变化
   - ast_cfm: 资金变化
 
-字段映射规则（v5）：
-  - ord_cfm: 用 broker.remark（= 本地 order_no）匹配本地 Order
-  - trd_cfm: 用 order_id 匹配本地 Order
+字段映射规则（v6）：
+  - ord_cfm: 用 broker.remark（= 本地 order_no）匹配本地 Order，写入 order_id
+  - trd_cfm: 同样用 broker.remark（= 本地 order_no）匹配本地 Order，累加 traded_*
+  - 委托 status 字段统一由 _infer_order_status 本地推断（不再直接抄 broker 推的 status）
   - pos_cfm: 按 stock_code UPSERT（positions 表无 trd_date）
   - ast_cfm: 单行资产表覆盖
 """
 from datetime import datetime
 from sqlalchemy import text
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 from sqlalchemy.orm import Session
 
 from models.orm import (
@@ -23,9 +24,9 @@ from models.orm import (
 )
 
 
-# 状态码映射（与柜台一致）
+# 状态码映射（与柜台一致,本地文字描述）
 ORDER_STATUS = {
-    "48": "已报待确认",
+    "48": "待报",
     "49": "已报",
     "50": "部成",
     "51": "已成",
@@ -33,8 +34,64 @@ ORDER_STATUS = {
     "53": "已撤",
     "54": "已撤单",
     "55": "废单",
-    "56": "部成已撤",
+    "56": "部成部撤",
 }
+
+# 终态:trd_cfm 累计推断时不再覆盖（避免 broker 撤单后又推 trd_cfm 把 status 改回 50）
+TERMINAL_STATUSES = ('51', '52', '53', '54', '55', '56')
+
+
+def _status_msg(status: str) -> str:
+    """状态码 → 本地文字"""
+    return ORDER_STATUS.get(status, '')
+
+
+def _infer_order_status(order: Order, broker_status: Optional[str] = None) -> str:
+    """委托 status 本地推断
+
+    Args:
+        order: Order 实例,需要 traded_volume / volume / status(当前值) 字段
+        broker_status: 可选,broker ord_cfm 推的 status 字段(52/53/54 视为撤单类)
+                     trd_cfm 调用时传 None(trd_cfm 永远不写撤单类状态)
+
+    Returns:
+        推断后的 status: 49 / 50 / 51 / 53 / 56
+
+    规则:
+      1. 当前 status 已是终态(51/52/53/54/55/56) → 保持,不再推断
+         (避免 trd_cfm 累计覆盖 ord_cfm 写的撤单终态)
+      2. broker_status 给出且在 (52, 53, 54) → 撤单类
+         - cumulative = 0           → 53 (已撤)
+         - 0 < cumulative < volume  → 56 (部成部撤)
+         - cumulative = volume      → 51 (已成,broker 推撤单但已全成)
+      3. 累计推断
+         - cumulative = 0           → 49 (已报)
+         - 0 < cumulative < volume  → 50 (部成)
+         - cumulative = volume      → 51 (已成)
+    """
+    current = order.status or '48'
+
+    # 1. 终态保持
+    if current in TERMINAL_STATUSES:
+        return current
+
+    cum = order.traded_volume or 0
+    vol = order.volume or 0
+
+    # 2. broker 推了撤单类 status
+    if broker_status and broker_status in ('52', '53', '54'):
+        if cum == 0:
+            return '53'
+        if cum < vol:
+            return '56'
+        return '51'  # 已成,broker 撤单无意义
+
+    # 3. 累计推断
+    if cum == 0:
+        return '49'
+    if cum < vol:
+        return '50'
+    return '51'
 
 
 def _get_active_trd_date(db: Session) -> str:
@@ -73,7 +130,7 @@ def _int(v: Any, default: int = 0) -> int:
 # ───── ord_cfm：委托确认 ─────
 
 def handle_ord_cfm(db: Session, row: Dict[str, Any], ts: str) -> None:
-    """处理 ord_cfm 推送
+    """处理 ord_cfm 推送（v6: 简化为只填 order_id + 推断 status）
 
     柜台字段（举例）：
       order_id       柜台委托号
@@ -83,66 +140,54 @@ def handle_ord_cfm(db: Session, row: Dict[str, Any], ts: str) -> None:
       price_type
       price
       volume
-      traded_volume
-      traded_amount
-      avg_price
-      status         48/49/50/51/52/53/55
+      status         48/49/50/51/52/53/55 — 临时喂给 _infer_order_status，不直接写
       status_msg
     """
     broker_order_id = _str(row.get('order_id', ''))
     broker_remark = _str(row.get('remark', ''))  # ← broker 透传回来的 order_no
-    status = _str(row.get('status', ''))
+    broker_status = _str(row.get('status', ''))
 
     if not broker_order_id and not broker_remark:
         print(f"[ord_cfm] skip: no order_id and no remark")
         return
 
-    # 优先用 broker_order_id 精确匹配；否则用 broker.remark (= 我们下传的 order_no)
+    # 用 broker.remark (= 我们下传的 order_no) 匹配本地 Order
     order = None
-    if broker_order_id:
-        order = db.query(Order).filter_by(order_id=broker_order_id).first()
-    if not order and broker_remark:
+    if broker_remark:
         order = db.query(Order).filter_by(order_no=broker_remark).first()
+    if not order and broker_order_id:
+        # 兜底:broker 没送 remark 时按 order_id 查
+        order = db.query(Order).filter_by(order_id=broker_order_id).first()
 
     if not order:
-        # 极端情况：push 来了但本地没有（重启后丢单）
-        # 不创建新单（避免错位），只打日志
+        # 极端情况:push 来了但本地没有(重启后丢单)
+        # 不创建新单(避免错位),只打日志
         print(f"[ord_cfm] WARN: no local order for order_id={broker_order_id} remark={broker_remark}")
         return
 
-    # PENDING- 占位 → broker 真值
-    # 原因: orders.py:144 下单时 order_id='PENDING-{order_no}' 占位 (Order.order_id 是复合主键, 不能 NULL)
-    # 第一次 ord_cfm 带回 broker 真实 order_id, 必须换掉, 否则后续 trd_cfm 按 order_id
-    # 查 Order 永远找不到 → 成交落库后无法累计到委托
-    if order.order_id.startswith('PENDING-') and broker_order_id:
-        print(f"[ord_cfm] order_id PENDING→{broker_order_id} (remark={broker_remark})")
+    # v6: 不再有 PENDING- 占位,broker order_id 直接写入(覆盖 NULL)
+    if broker_order_id and order.order_id != broker_order_id:
         order.order_id = broker_order_id
 
-    # 更新字段
-    if status:
-        order.status = status
-        order.status_msg = _str(row.get('status_msg', ''))
-    order.traded_volume = _int(row.get('traded_volume', order.traded_volume))
-    order.traded_amount = _float(row.get('traded_amount', order.traded_amount))
-    order.avg_price = _float(row.get('avg_price', order.avg_price))
-    if _str(row.get('price', '')):
-        order.price = _float(row.get('price', order.price))
-    if _str(row.get('volume', '')):
-        order.volume = _int(row.get('volume', order.volume))
+    # 委托 status 由 _infer_order_status 本地推断
+    # (broker_status 临时喂进去:52/53/54 视为撤单类信号)
+    order.status = _infer_order_status(order, broker_status=broker_status or None)
+    order.status_msg = _str(row.get('status_msg', '')) or _status_msg(order.status)
     order.pushed_at = datetime.utcnow()
     order.updated_at = datetime.utcnow()
 
-    print(f"[ord_cfm] updated order_id={order.order_id} status={order.status} traded={order.traded_volume}")
+    print(f"[ord_cfm] updated order_no={order.order_no} order_id={order.order_id} status={order.status} (broker_status={broker_status}, cum={order.traded_volume}/{order.volume})")
 
 
 # ───── trd_cfm：成交回报 ─────
 
 def handle_trd_cfm(db: Session, row: Dict[str, Any], ts: str) -> None:
-    """处理 trd_cfm 推送（每笔成交）
+    """处理 trd_cfm 推送（v6: 用 remark 匹配 Order,累加后推断 status）
 
     柜台字段（举例）：
-      trade_id       成交编号（UNIQUE）
-      order_id       关联委托号
+      trade_id       成交编号(UNIQUE,去重用)
+      order_id       关联委托号(填到 Trade.order_id,不再用做 Order 查找)
+      remark         委托备注(= 本地 order_no,匹配 Order 用)
       stock_code
       order_type     23=买 24=卖
       price          成交价
@@ -159,14 +204,20 @@ def handle_trd_cfm(db: Session, row: Dict[str, Any], ts: str) -> None:
         # 用 order_id + trade_time 作 fallback key
         trade_id = f"{row.get('order_id', '')}-{row.get('trade_time', '')}"
 
-    # 幂等：已存在则不重复插入
+    # 幂等:已存在则不重复插入
     existing = db.query(Trade).filter_by(trade_id=trade_id, trd_date=trd_date).first()
     if existing:
         return
 
     broker_order_id = _str(row.get('order_id', ''))
-    # 找本地 Order（同步更新累计）
-    order = db.query(Order).filter_by(order_id=broker_order_id).first() if broker_order_id else None
+    broker_remark = _str(row.get('remark', ''))  # v6: 用 remark 匹配 Order
+
+    # v6: 优先用 remark (= 本地 order_no) 查 Order,broker order_id 只作兜底
+    order = None
+    if broker_remark:
+        order = db.query(Order).filter_by(order_no=broker_remark, trd_date=trd_date).first()
+    if not order and broker_order_id:
+        order = db.query(Order).filter_by(order_id=broker_order_id, trd_date=trd_date).first()
 
     trade = Trade(
         trd_date=trd_date,
@@ -182,16 +233,21 @@ def handle_trd_cfm(db: Session, row: Dict[str, Any], ts: str) -> None:
     db.add(trade)
     db.flush()
 
-    # 同步更新 Order 累计
+    # 同步更新 Order 累计 + 推断 status
     if order:
         order.traded_volume = (order.traded_volume or 0) + trade.volume
         order.traded_amount = (order.traded_amount or 0) + trade.amount
         if trade.price and trade.volume:
             order.avg_price = order.traded_amount / order.traded_volume
+        # v6: 累计后本地推断 status(不传 broker_status,trd_cfm 永远不写撤单类状态)
+        order.status = _infer_order_status(order)
+        order.status_msg = _status_msg(order.status)
         order.pushed_at = datetime.utcnow()
         order.updated_at = datetime.utcnow()
+    else:
+        print(f"[trd_cfm] WARN: no order for trade_id={trade_id} (remark={broker_remark}, order_id={broker_order_id}) — Trade 行已留存")
 
-    print(f"[trd_cfm] inserted trade_id={trade_id} order_id={broker_order_id} vol={trade.volume} px={trade.price}")
+    print(f"[trd_cfm] inserted trade_id={trade_id} order_no={broker_remark or order.order_no if order else '?'} vol={trade.volume} px={trade.price} order_status={order.status if order else 'N/A'}")
 
 
 # ───── pos_cfm：持仓变化（单股 UPSERT） ─────
@@ -219,7 +275,7 @@ def handle_pos_cfm(db: Session, row: Dict[str, Any], ts: str) -> None:
     pos.avl_vol = _int(row.get('available', pos.vol))
     pos.cost_price = _float(row.get('cost_price', row.get('cost', 0)))
     # last_vol / today_buy / today_sell 由对账时设置（push 单次无法判定）
-    # market_value 由前端根据行情实时计算，后端不存储
+    # market_value 由前端根据行情实时计算,后端不存储
     pos.synced_at = datetime.utcnow()
     pos.synced_from = 'push_pos_cfm'
 
