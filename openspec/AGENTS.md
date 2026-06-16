@@ -53,7 +53,15 @@ Vue3 + FastAPI 量化交易 Web 平台。**业务数据本地 DB 优先**（v4 �
 
 ## 改东西的流程
 
+> **强约束（2026-06-16 立）**：每个需求 / BUG，**必须先检索知识库 → 补全/修正知识库 → 再创建 change 并动代码**。详见下方「步骤 0」。
+
 ```bash
+# 步骤 0【前置，必做】检索并补全知识库
+#   - Glob/Grep 扫 openspec/ 相关 capability 的 spec.md
+#   - 确认术语、约束、影响面在知识库里有完整说明
+#   - 若知识库缺说明 / 逻辑断裂 / 与现状脱节，先把 specs/<cap>/spec.md 改对
+#   - 这步不完成，禁止进入步骤 1
+
 # 1. 创建变更（用 AI 助手）
 /openspec:proposal <name>
 
@@ -68,6 +76,16 @@ ls openspec/changes/<name>/
 # 4. 归档（spec 已合并到 specs/<cap>/spec.md 后）
 mv openspec/changes/<name> openspec/changes/archive/<date>-<name>
 ```
+
+### 步骤 0 检查清单
+
+处理任何需求/BUG 前，对照打勾：
+
+- [ ] 已用 Glob/Grep 扫过相关 `specs/<cap>/spec.md` 与 `changes/` 现有条目
+- [ ] 涉及的术语、约束、影响面在知识库中有完整描述
+- [ ] 若知识库缺说明，先在 `specs/<cap>/spec.md` 补全；逻辑断裂处先修补
+- [ ] 步骤 1 的 `proposal.md` 引用了知识库对应章节（可点击跳转）
+- [ ] 知识库与现状一致后，才进入 `/openspec:proposal`
 
 ## 约定
 

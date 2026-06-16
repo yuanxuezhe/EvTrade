@@ -1,18 +1,23 @@
 """
 SQLAlchemy ORM models for EvTrade v5 (schema refactor).
 
+📖 **详细 schema 文档（single source of truth）**：
+  参见 `openspec/specs/data-model/spec.md` — 11 张表完整结构知识库
+  （字段、类型、PK、约束、业务规则、跨表引用、修改工作流）
+  本文件改动前必先改 spec; spec 改动后必同步本文件。
+
 设计原则（2026-06-15 重构）：
 - 表名 / 列名：snake_case
 - 日期字段：trd_date（8 位数字字符串如 '20260614'）
 - 单行表（assets 等）：无主键，按约定 .first() 访问
 - 含 trd_date 的表：trd_date 必入主键（复合主键）
 
-11 张表：
-  业务：orders, trades, positions, assets
-  配置：sys_status, trading_session, fee_config, reconcile_config
-  历史：reconcile_report
-  行情：quote_snapshots
-  序列：order_no_seq
+11 张表（详见 data-model/spec.md）：
+  §1 业务：orders, trades, positions, assets
+  §2 配置：sys_status, trading_session, fee_config, reconcile_config
+  §3 历史：reconcile_report
+  §4 行情：quote_snapshots
+  §5 序列：order_no_seq
 """
 from datetime import datetime
 from sqlalchemy import (
@@ -27,6 +32,7 @@ from db import Base
 class Order(Base):
     """委托主表（复合主键 trd_date + order_no）
 
+    📖 详见 `openspec/specs/data-model/spec.md` §1
     v6 schema 改动:
     - PK (trd_date, order_id) → (trd_date, order_no)
     - order_id 出 PK,变可空,由 ord_cfm 推送写入
@@ -34,7 +40,7 @@ class Order(Base):
     - 删 uq_orders_order_no (被 PK 替代)
     - 加 uq_orders_broker_id(order_id, trd_date):broker 真实 order_id + 交易日 唯一
     - 加 ix_orders_order_id:trd_cfm 退路查找(理论上只走 remark,这是兜底)
-    - status 字段保留,语义改为 "本地推断的委托状态"
+    - status 字段保留,语义改为 "本地推断的委托状态"（见 _infer_order_status）
     """
     __tablename__ = "orders"
     __table_args__ = (
@@ -68,7 +74,10 @@ class Order(Base):
 
 
 class Trade(Base):
-    """成交表（复合主键 trd_date + trade_id）"""
+    """成交表（复合主键 trd_date + trade_id）
+
+    📖 详见 `openspec/specs/data-model/spec.md` §1（Trade 行）
+    """
     __tablename__ = "trades"
     __table_args__ = (
         Index("ix_trades_order", "order_id"),
@@ -88,7 +97,12 @@ class Trade(Base):
 
 
 class Position(Base):
-    """持仓表（单股唯一，无 trd_date；当前快照语义）"""
+    """持仓表（单股唯一，无 trd_date；当前快照语义）
+
+    📖 详见 `openspec/specs/data-model/spec.md` §1（Position 行）
+    📌 vol 字段：pos_cfm 推送时,row.volume 缺字段或为 0 兜底为 avl_vol
+       （参见 change `2026-06-16-fix-position-vol-display`）
+    """
     __tablename__ = "positions"
 
     stock_code = Column(String(16), primary_key=True, nullable=False)
@@ -106,6 +120,7 @@ class Position(Base):
 class Asset(Base):
     """资金表（单行，SQLAlchemy ORM 强制需要主键，用 id=1 + CheckConstraint 限定单行）
 
+    📖 详见 `openspec/specs/data-model/spec.md` §1（Asset 行）
     v5 schema: 移除 TRD_DATE（不再有交易日维度），保留 cash / frozen_cash / market_value / total_asset。
     业务访问方式：db.query(Asset).first() / db.query(Asset).delete() + db.add(new)
     """
@@ -126,7 +141,10 @@ class Asset(Base):
 # ─────────────── 配置表 ───────────────
 
 class SysStatus(Base):
-    """系统级状态机（含交易日；主键 trd_date）"""
+    """系统级状态机（含交易日；主键 trd_date）
+
+    📖 详见 `openspec/specs/data-model/spec.md` §2（SysStatus 行）
+    """
     __tablename__ = "sys_status"
     __table_args__ = (
         Index("ix_sys_status_status", "status"),
@@ -144,7 +162,10 @@ class SysStatus(Base):
 
 
 class TradingSession(Base):
-    """交易时段配置（单行）"""
+    """交易时段配置（单行）
+
+    📖 详见 `openspec/specs/data-model/spec.md` §2（TradingSession 行）
+    """
     __tablename__ = "trading_session"
     __table_args__ = (
         CheckConstraint("id = 1", name="ck_session_single_row"),
@@ -159,7 +180,10 @@ class TradingSession(Base):
 
 
 class FeeConfig(Base):
-    """费率配置（单行）"""
+    """费率配置（单行）
+
+    📖 详见 `openspec/specs/data-model/spec.md` §2（FeeConfig 行）
+    """
     __tablename__ = "fee_config"
     __table_args__ = (
         CheckConstraint("id = 1", name="ck_fee_single_row"),
@@ -175,7 +199,10 @@ class FeeConfig(Base):
 
 
 class ReconcileConfig(Base):
-    """对账配置（单行）"""
+    """对账配置（单行）
+
+    📖 详见 `openspec/specs/data-model/spec.md` §2（ReconcileConfig 行）
+    """
     __tablename__ = "reconcile_config"
     __table_args__ = (
         CheckConstraint("id = 1", name="ck_reconcile_cfg_single_row"),
@@ -191,7 +218,10 @@ class ReconcileConfig(Base):
 # ─────────────── 历史 ───────────────
 
 class ReconcileReport(Base):
-    """对账历史报告（复合主键 trd_date + mode + created_at）"""
+    """对账历史报告（复合主键 trd_date + mode + created_at）
+
+    📖 详见 `openspec/specs/data-model/spec.md` §3
+    """
     __tablename__ = "reconcile_report"
     __table_args__ = (
         Index("ix_reconcile_report_trd", "trd_date"),
@@ -213,7 +243,10 @@ class ReconcileReport(Base):
 # ─────────────── 行情 ───────────────
 
 class QuoteSnapshot(Base):
-    """行情快照"""
+    """行情快照
+
+    📖 详见 `openspec/specs/data-model/spec.md` §4
+    """
     __tablename__ = "quote_snapshots"
     __table_args__ = (
         Index("ix_quote_stock_ts", "stock_code", "ts"),
@@ -254,7 +287,10 @@ class QuoteSnapshot(Base):
 # ─────────────── 序列 ───────────────
 
 class OrderNoSeq(Base):
-    """订单序号生成器（单行）"""
+    """订单序号生成器（单行）
+
+    📖 详见 `openspec/specs/data-model/spec.md` §5
+    """
     __tablename__ = "order_no_seq"
     __table_args__ = (
         CheckConstraint("id = 1", name="ck_order_no_seq_single_row"),

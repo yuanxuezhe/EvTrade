@@ -1,5 +1,7 @@
 # trading — 委托 / 成交 / 资金
 
+> 📖 **数据结构**详见 [`data-model/spec.md`](../data-model/spec.md) §1（orders / trades / assets）
+
 ## Purpose
 
 交易员通过 Web 平台对 QMT 柜台下达买卖指令、查询状态。
@@ -25,25 +27,33 @@
   - `client_order_id` 客户端幂等号（同 cid 二次提交返原单）
   - `order_no` 服务端本地生成 8 位序号（保证当日 + 全局唯一）
   - 下单时把 `order_no` 透传到柜台 RPC 的 `remark` 字段（柜台透传，pushed-back 时带回）
-  - 委托表复合主键 `(trd_date, order_id)`；初始 `order_id` 占位 `PENDING-{order_no}`，broker ack 后用真实 `order_id` 替换
+  - 委托表复合主键 `(trd_date, order_no)`；`order_id` 改为可空列，由 ord_cfm 推送时单条 UPDATE 写入（v6）
+- **`OrderOut.status` 语义（v6，本地推断）**：
+  - 委托表 `status` 字段 = **后端本地推断的委托状态**（48/49/50/51/52/53/54/55/56）
+  - 推断函数：`_infer_order_status(order, broker_status=None)`（`server/services/push_handlers.py`）
+  - 规则：累计成交 + broker 推的撤单类信号 (52/53/54) 推断 49/50/51/53/56
+  - 终态 (51/52/53/54/55/56) 一旦写入不再被 trd_cfm 覆盖
+  - **前端必须镜像同一函数**：`client/src/utils/format.js` 提供 `inferOrderStatus(order, brokerStatus?)`，见 `frontend/spec.md` REQ-FE-006
+  - **前端不再信任 broker 推的 status 字段**（broker 状态码 vs 本地推断码不完全相同：例如 broker 55=部成 → 本地 50=部成）
 
 ### REQ-TRADE-003: 撤单
 
-- `DELETE /api/orders/{order_id}?trd_date=YYYYMMDD`
-- 走 `cancel_ord` RPC，`order_id` + `trd_date` 复合主键定位
-- 状态变更由 push 队列异步推送（前端 WS 收到后更新 store）
-- **v5 改写**：本服务**不本地改 status**，由 ord_cfm push 异步回写（避免与柜台状态机分叉）
+- `DELETE /api/orders/{order_no}?trd_date=YYYYMMDD`
+- **v6 BREAKING**：URL 参数从 `order_id` 改为 `order_no`（本地 8 位序号）；后端按 `(trd_date, order_no)` 定位 Order
+- 内部用查到的 `order.order_id` 调 `rpc.cancel_ord`；`order_id` 尚未到达时返 `409 BROKER_NOT_READY`
+- 走 `cancel_ord` RPC，**不本地改 status**（由 ord_cfm push 异步回写）
+- **前端约定**：Trade.vue 撤单按钮 → `orderStore.cancelOrder(orderNo, trdDate)` → `api.cancelOrder(orderNo, trdDate)` → `DELETE /api/orders/${orderNo}?trd_date=${trdDate}`
 - **实现约定**：`api/orders.py` 中 import 使用别名 `from rpc.client import cancel_order as rpc_cancel_order`，避免与路由函数同名递归
 
 ### REQ-TRADE-004: 鉴权
 
 - 全部 `/api/orders` `/api/trades` `/api/asset` 路由必须登录
-- `POST /orders/place` 和 `DELETE /orders/{id}` 额外要求 `trader` 或 `admin` 角色
+- `POST /orders/place` 和 `DELETE /orders/{no}` 额外要求 `trader` 或 `admin` 角色
 
 ### REQ-TRADE-005: 前端实时性
 
 - 后端 RPC 客户端监听 `EvTrade.Test.Push` 队列
-- 收到 `ord_cfm` → 路由到 WS 频道 `order_update`
+- 收到 `ord_cfm` → 路由到 WS 频道 `order_update`，**status 字段是后端本地推断结果**，前端直接用
 - 收到 `trd_cfm` → 路由到 WS 频道 `trade_update`
 - 收到资产变更 → `asset_update`（当前**未识别**，待补）
 
@@ -82,5 +92,8 @@ Then 返回该股票的全部委托，**不包含**其他股票
 
 - 🟥 ~~`DELETE /orders/{id}` 之前只改内存假撤单~~ → **本轮已修**（走真 RPC）
 - 🟥 ~~`services/trading.py` 118 行内存仓~~ → **本轮已删**
+- 🟥 ~~撤单 URL 用 order_id~~ → **v6 已改用 order_no**，但前端 Trade.vue 还在传 order_id（参见 change `2026-06-16-trade-page-show-order-no-and-cancel`）
+- 🟡 前端 `order.js` `cancelOrder` 硬编码 `order.status = '54'`（与后端本地推断不一致）→ 参见 change `2026-06-16-frontend-infer-order-status`
+- 🟡 前端 Trade.vue / Orders.vue 状态码分组用了 broker 原始码（55=已成等）而不是后端本地推断码（56=已成）→ 同上 change
 - 🟡 `asset_update` 推送功能未实现（RPC 客户端收到资产变更无路由）
 - 🟡 价格类型枚举在 api 层用数字、后端 RPC 用数字、文档用文字 → 应统一映射

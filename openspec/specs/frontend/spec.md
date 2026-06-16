@@ -1,5 +1,7 @@
 # frontend — Vue3 前端
 
+> 📖 **DB schema**详见 [`data-model/spec.md`](../data-model/spec.md)（前端 store 与 DB schema 校对）
+
 ## Purpose
 
 单页应用，12 个视图，WebSocket 实时更新，JWT 鉴权。
@@ -45,6 +47,30 @@
 | `quote` | 行情订阅列表 | WS `quote_update` |
 | `ws` | WebSocket 连接管理 | — |
 
+### REQ-FE-006: 委托 status 本地推断（前端镜像后端）
+
+- **位置**：`client/src/utils/format.js` 导出 `inferOrderStatus(order, brokerStatus?)` 函数
+- **契约**：与 `server/services/push_handlers.py:_infer_order_status` **逐行一致**（同规则、同终态集合、同输入输出）
+- **调用点**：
+  - `holdings.js:applyOrderPush` 收到 `order_update` 时，对每条 order 调一次重算（防御性）
+  - `order.js:fetchOrders` 拉取完后批量重算
+- **视图层契约**：
+  - 状态码分组集合（`_PENDING_NUMERIC` / `_FILLED_NUMERIC` / `countByStatus`）必须用**本地推断码** 49/50/51/52/53/54/55/56
+  - 不要再用 broker 原始码（55=部成/56=已成）的旧逻辑
+
+### REQ-FE-007: 撤单 API 用 order_no + trd_date
+
+- `api.cancelOrder(orderNo, trdDate)` 调 `DELETE /api/orders/${orderNo}?trd_date=${trdDate}`
+- `orderStore.cancelOrder(orderNo, trdDate)` 不再接受 `orderId`
+- `trdDate` 默认值取自 `holdingsStore.cachedAsset.trd_date` 或当前激活日（active SysStatus）
+- **BREAKING**：旧的 `cancelOrder(orderId)` 调用方式全部改掉
+
+### REQ-FE-008: 委托表格显示 order_no
+
+- Trade.vue「今日委托」表格 + Orders.vue「委托查询」表格：增加 `order_no` 列
+- 撤单按钮：`@click="handleCancel(row.order_no, row.trd_date)"`
+- 显示：`<span class="text-mono text-secondary">{{ row.order_no }}</span>`
+
 ### REQ-FE-004: WebSocket
 
 - 业务频道（`order_update` 等）连 `ws://<host>:8000/ws/<channel>`
@@ -82,4 +108,7 @@ And Asset/Holdings 等视图若订阅了该股则自动刷新
 
 - 🟡 `TStrategy.vue` / `AlgoStrategy.vue` 各 43 行，**未实现内容**
 - 🟡 `auth.js` store 应该在 401 时自动清 token + 跳 login，目前**依赖** axios 拦截器调用 `setUnauthorizedHandler`
+- 🟥 ~~Trade.vue 撤单按钮传 `order_id`~~ → **本轮已修**（change `2026-06-16-trade-page-show-order-no-and-cancel`，改传 order_no + trd_date）
+- 🟥 ~~Trade.vue / Orders.vue 用 broker 原始 status 码分组~~ → **本轮已修**（change `2026-06-16-frontend-infer-order-status`，改本地推断码 + 镜像推断）
+- 🟥 ~~Trade.vue 今日委托表无 order_no 列~~ → **本轮已修**（同上 change）
 - 🟢 UI 偏好已沉淀到 user memory，UI 改动前先查

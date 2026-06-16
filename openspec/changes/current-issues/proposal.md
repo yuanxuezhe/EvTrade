@@ -1,11 +1,12 @@
 # 1. Why
 
-两轮深度分析（2026-06-14 / 2026-06-15）累计发现 EvTrade 项目 **26 项问题**，分级如下：
+三轮深度分析（2026-06-14 / 2026-06-15 / **2026-06-16**）累计发现 EvTrade 项目 **30 项问题**，分级如下：
 
 | 级别 | 数量 | 已修 | 待修 |
 |---|---|---|---|
 | 🔴 高（运行时崩溃/数据错误/功能不可用） | 5 | 3 | **2** |
 | 🟡 中（设计缺陷/契约不一致/代码质量） | 11 | 0 | **11** |
+| 🟡 中（2026-06-16 用户报 4 项新） | 4 | 0 | **4** |
 | 🟢 低（代码风格/文档/可优化项） | 10 | 2 | **8** |
 
 本 change 是**问题盘点 + 修复追踪表**，不直接实施任何改动。
@@ -56,7 +57,28 @@ v4 重构后 `api/orders.py` 只有 `POST /place`、`POST /place_t0`、`POST /pl
 - 前端拦截器只识别 `list` 解包，asset 需要 `_parseAsset(resp.data.data)` 特殊处理
 - 前端 `holdings.js:refreshAll` 中 `positions.value = Array.isArray(rPos.value) ? rPos.value : []` — 对 holdings 接口返的 `{code,msg,list}` 解包不彻底
 
-### 2.4 🟢 低
+### 2.4 🟡 中（2026-06-16 用户报 4 项新）
+
+| # | 问题 | 范围 | 建议 change |
+|---|---|---|---|
+| N1 | 成交回报到达 WS 后，前端 status 显示与后端 DB 不一致 | `frontend/order.js` + `Trade.vue` + `Orders.vue` | `2026-06-16-frontend-infer-order-status` |
+| N2 | 持仓表「总持仓」列（`row.vol`）不显示数据；T0Trade 用 `avl_vol` 兜底能显示 | `server/services/push_handlers.py:handle_pos_cfm` | `2026-06-16-fix-position-vol-display` |
+| N3 | 撤单按钮传 `order_id`、表格无 `order_no` 列，违反 v6 撤单契约 | `client/src/views/Trade.vue` + `Orders.vue` | `2026-06-16-trade-page-show-order-no-and-cancel` |
+| N4 | 11 张表 schema 散落 `orm.py` 注释，无独立 spec | `openspec/specs/` | `2026-06-16-data-model-knowledge-base` |
+
+**N1 详细分析：**
+v6（`order-pk-by-orderno`）后端 `_infer_order_status` 本地推断 status 后写 DB，但前端 store / 视图层还在用 broker 原始码（55=部成/56=已成）做分组。WS 收到的 `status=50`（本地推断"部成"）被前端用 broker 码 55（"已成"）逻辑误判。
+
+**N2 详细分析：**
+`handle_pos_cfm: pos.vol = _int(row.get('volume', 0))` — broker 实际生产中 pos_cfm 行只送 `available` 不送 `volume`，导致 `vol=0` → PositionTable "总持仓"列空。T0Trade 的 `currentVolume` 用 `p.avl_vol ?? p.vol ?? 0` 兜底所以能显示。
+
+**N3 详细分析：**
+v6 撤单 URL = `DELETE /api/orders/{order_no}?trd_date=YYYYMMDD`。但 `Trade.vue:82` 还是 `@click="handleCancel(row.order_id)"`，后端用 order_no 查不到 broker order_id → 必 404。
+
+**N4 详细分析：**
+v5 schema-refactor 改了 6 张表的 schema（PK / 字段名 / 约束），变更只写在 commit message 和 ORM 注释里。下次想改 schema（加列、调类型）的人没有 single source of truth 参考。
+
+### 2.5 🟢 低
 
 | # | 问题 | 备注 |
 |---|---|---|
@@ -103,6 +125,10 @@ v4 重构后 `api/orders.py` 只有 `POST /place`、`POST /place_t0`、`POST /pl
 - [ ] M9 服务层 Session 生命周期
 - [ ] M10 审计用户硬编码
 - [ ] M11 前端 store 统一
+- [ ] N1 前端 status 推断镜像（提案：`2026-06-16-frontend-infer-order-status`）
+- [ ] N2 持仓 vol 兜底（提案：`2026-06-16-fix-position-vol-display`）
+- [ ] N3 今日委托显示 order_no + 撤单改 order_no（提案：`2026-06-16-trade-page-show-order-no-and-cancel`）
+- [ ] N4 11 张表结构 knowledge base（提案：`2026-06-16-data-model-knowledge-base`）
 - [ ] L1 lifespan 替代 on_event
 - [ ] L2 logout 空 stub
 - [ ] L3 kb 文档对账
