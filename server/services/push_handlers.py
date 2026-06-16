@@ -110,6 +110,14 @@ def handle_ord_cfm(db: Session, row: Dict[str, Any], ts: str) -> None:
         print(f"[ord_cfm] WARN: no local order for order_id={broker_order_id} remark={broker_remark}")
         return
 
+    # PENDING- 占位 → broker 真值
+    # 原因: orders.py:144 下单时 order_id='PENDING-{order_no}' 占位 (Order.order_id 是复合主键, 不能 NULL)
+    # 第一次 ord_cfm 带回 broker 真实 order_id, 必须换掉, 否则后续 trd_cfm 按 order_id
+    # 查 Order 永远找不到 → 成交落库后无法累计到委托
+    if order.order_id.startswith('PENDING-') and broker_order_id:
+        print(f"[ord_cfm] order_id PENDING→{broker_order_id} (remark={broker_remark})")
+        order.order_id = broker_order_id
+
     # 更新字段
     if status:
         order.status = status
