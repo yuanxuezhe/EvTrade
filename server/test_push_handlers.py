@@ -405,6 +405,55 @@ def test_pos_cfm_upserts_position():
     db.close()
 
 
+def test_pos_cfm_vol_fallback_when_volume_missing():
+    """pos_cfm 行不送 volume 字段（broker 实际行为）→ vol 兜底为 avl_vol"""
+    db = SessionLocal()
+    handle_push(db, "pos_cfm", {
+        "stock_code": "600519.SH",
+        # 不送 volume
+        "available": 100,
+        "cost_price": 1500.0,
+    }, ts="20260614 09:30:00")
+    db.commit()
+    p = db.query(Position).filter_by(stock_code="600519.SH").first()
+    assert p is not None
+    assert p.vol == 100  # 兜底自 avl_vol
+    assert p.avl_vol == 100
+    assert p.cost_price == 1500.0
+    db.close()
+
+
+def test_pos_cfm_vol_explicit_takes_precedence():
+    """pos_cfm 显式送 volume → 不用 avl_vol 兜底"""
+    db = SessionLocal()
+    handle_push(db, "pos_cfm", {
+        "stock_code": "600519.SH",
+        "volume": 200,
+        "available": 150,  # vol 200 != avl 150（冻结 50）
+        "cost_price": 1500.0,
+    }, ts="20260614 09:30:00")
+    db.commit()
+    p = db.query(Position).filter_by(stock_code="600519.SH").first()
+    assert p.vol == 200  # 不兜底
+    assert p.avl_vol == 150
+    db.close()
+
+
+def test_pos_cfm_zero_holdings_no_fallback():
+    """pos_cfm 推 available=0 → vol 也应是 0（不兜底错）"""
+    db = SessionLocal()
+    handle_push(db, "pos_cfm", {
+        "stock_code": "EMPTY.SH",
+        "available": 0,
+    }, ts="x")
+    db.commit()
+    p = db.query(Position).filter_by(stock_code="EMPTY.SH").first()
+    assert p is not None
+    assert p.vol == 0
+    assert p.avl_vol == 0
+    db.close()
+
+
 # ──── ast_cfm ────
 
 def test_ast_cfm_upserts_asset():
