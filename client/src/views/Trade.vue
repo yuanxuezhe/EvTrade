@@ -40,6 +40,11 @@
               <span class="text-mono text-secondary">{{ row.order_time }}</span>
             </template>
           </el-table-column>
+          <el-table-column prop="order_no" label="单号" width="100" show-overflow-tooltip>
+            <template #default="{ row }">
+              <span class="text-mono text-secondary">{{ row.order_no }}</span>
+            </template>
+          </el-table-column>
           <el-table-column prop="stock_code" label="股票" width="100">
             <template #default="{ row }">
               <span class="stock-code-cell">{{ row.stock_code }}</span>
@@ -79,7 +84,7 @@
                 type="danger"
                 link
                 size="small"
-                @click="handleCancel(row.order_id)"
+                @click="handleCancel(row.order_no, row.trd_date)"
               >
                 撤单
               </el-button>
@@ -104,7 +109,7 @@ import QuotePanel from '../components/QuotePanel.vue'
 import { useOrderStore } from '../stores/order'
 import { useWsStore } from '../stores/ws'
 import {
-  formatMoney, formatNumber
+  formatMoney, formatNumber, TERMINAL_STATUSES
 } from '../utils/format'
 import OrderStatusBadge from '../components/OrderStatusBadge.vue'
 
@@ -118,19 +123,20 @@ const orderFormRef = ref(null)
 // 行情面板聚焦的股票代码：默认就是当前下单的代码
 const formStockCode = computed(() => quickStock.value || '')
 
-// 柜台数字：48 未报 / 49 待报 / 50 已报 / 51 已报待撤 / 52 部成待撤
-//           53 部撤 / 54 已撤 / 55 部成 / 56 已成 / 57 废单 / 255 未知
-const _PENDING_NUMERIC = new Set(['48', '49', '50', '51', '52', '55'])
-const _FILLED_NUMERIC = new Set(['56'])
+// 本地推断码（v6）：48=待报 / 49=已报 / 50=部成（均可撤,非终态）
+//   终态 (51/52/53/54/55/56)：51=已成 52=部撤 53=已撤 54=已撤单 55=废单 56=部成部撤
+// 详见 client/src/utils/format.js:TERMINAL_STATUSES 与 server/services/push_handlers.py
+const _FILLED_NUMERIC = new Set(['51'])  // 已成
+const _PENDING_NUMERIC = new Set(['48', '49', '50'])  // 仍可能变化
 
 const pendingCount = computed(() =>
-  orderStore.orders.filter((o) => _PENDING_NUMERIC.has(String(o.status || ''))).length
+  orderStore.orders.filter((o) => !TERMINAL_STATUSES.has(String(o.status || ''))).length
 )
 
 const filteredOrders = computed(() => {
   const list = orderStore.orders
   if (filter.value === 'pending') {
-    return list.filter((o) => _PENDING_NUMERIC.has(String(o.status || '')))
+    return list.filter((o) => !TERMINAL_STATUSES.has(String(o.status || '')))
   }
   if (filter.value === 'filled') {
     return list.filter((o) => _FILLED_NUMERIC.has(String(o.status || '')))
@@ -139,8 +145,8 @@ const filteredOrders = computed(() => {
 })
 
 function canCancel(status) {
-  // 已报到部成之间可撤；已成/已撤/废单 不可撤
-  return _PENDING_NUMERIC.has(String(status || ''))
+  // 非终态即可撤 (待报/已报/部成)
+  return !TERMINAL_STATUSES.has(String(status || ''))
 }
 
 async function handleOrderSubmit(orderData) {
@@ -152,17 +158,27 @@ async function handleOrderSubmit(orderData) {
   }
 }
 
-async function handleCancel(orderId) {
+async function handleCancel(orderNo, trdDate) {
   try {
-    await ElMessageBox.confirm('确定要撤销此委托？', '撤单确认', {
+    await ElMessageBox.confirm(`确定要撤销委托 ${orderNo}？`, '撤单确认', {
       confirmButtonText: '撤单',
       cancelButtonText: '取消',
       type: 'warning'
     })
-    await orderStore.cancelOrder(orderId)
-    ElMessage.success('撤单成功')
+    await orderStore.cancelOrder(orderNo, trdDate)
+    ElMessage.success('撤单请求已发送,等待回报')
   } catch (e) {
-    if (e !== 'cancel') ElMessage.error('撤单失败')
+    if (e === 'cancel') return  // 用户取消
+    // 友好处理 BROKER_NOT_READY 等错误
+    const detail = e?.response?.data?.detail
+    const code = detail?.code
+    if (code === 'BROKER_NOT_READY') {
+      ElMessage.warning('柜台尚未回报委托号,稍后再试')
+    } else if (detail?.msg) {
+      ElMessage.error(detail.msg)
+    } else {
+      ElMessage.error('撤单失败')
+    }
   }
 }
 

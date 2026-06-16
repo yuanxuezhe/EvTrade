@@ -25,12 +25,13 @@ export const useOrderStore = defineStore('order', () => {
     return (Array.isArray(list) && list[0]) || null
   }
 
-  async function cancelOrder(orderId) {
-    await api.cancelOrder(orderId)
-    const order = orders.value.find(o => o.order_id === orderId)
-    if (order) {
-      // 柜台数字 54 = 已撤
-      order.status = '54'
+  async function cancelOrder(orderNo, trdDate) {
+    // v6: 撤单用 order_no + trd_date；status 由 ord_cfm push 异步改, 不本地写
+    await api.cancelOrder(orderNo, trdDate)
+    // 乐观更新 UI: 标记为"已报待撤" (51), 等 push 改终态
+    const order = orders.value.find(o => o.order_no === orderNo)
+    if (order && !['51', '52', '53', '54', '55', '56'].includes(String(order.status))) {
+      order.status = '51'
     }
   }
 

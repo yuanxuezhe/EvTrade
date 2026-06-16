@@ -69,6 +69,11 @@
             <span class="stock-code">{{ row.stock_code }}</span>
           </template>
         </el-table-column>
+        <el-table-column prop="order_no" label="单号" width="100" show-overflow-tooltip>
+          <template #default="{ row }">
+            <span class="text-mono text-secondary">{{ row.order_no }}</span>
+          </template>
+        </el-table-column>
         <el-table-column prop="order_type" label="方向" width="80">
           <template #default="{ row }">
             <span class="dir-chip" :class="row.order_type === '23' ? 'buy' : 'sell'">
@@ -170,16 +175,16 @@ const filters = reactive({
 })
 
 const countByStatus = computed(() => {
-  // 柜台数字分组
-  // 已成: 56  部成: 55/52/53  待报/已报: 48/49/50  已撤: 54/51  废单: 57
+  // 本地推断码（v6）：51=已成 50/56=部成 48/49=待报/已报 52/53/54=已撤类 55=废单
+  // 详见 client/src/utils/format.js:STATUS_LABEL
   const map = { filled: 0, partial: 0, pending: 0, cancelled: 0, rejected: 0 }
   for (const o of orders.value) {
     const s = String(o.status || '')
-    if (s === '56') map.filled++
-    else if (s === '55' || s === '52' || s === '53') map.partial++
-    else if (s === '48' || s === '49' || s === '50') map.pending++
-    else if (s === '54' || s === '51') map.cancelled++
-    else if (s === '57') map.rejected++
+    if (s === '51') map.filled++
+    else if (s === '50' || s === '56') map.partial++
+    else if (s === '48' || s === '49') map.pending++
+    else if (s === '52' || s === '53' || s === '54') map.cancelled++
+    else if (s === '55') map.rejected++
   }
   return map
 })

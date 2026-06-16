@@ -139,8 +139,9 @@ export const api = {
     const res = await http.post('/orders/place', orderData)
     return res.data
   },
-  async cancelOrder(orderId) {
-    const res = await http.delete(`/orders/${orderId}`)
+  async cancelOrder(orderNo, trdDate) {
+    // v6: 撤单 URL = DELETE /api/orders/{order_no}?trd_date=YYYYMMDD
+    const res = await http.delete(`/orders/${orderNo}`, { params: { trd_date: trdDate } })
     return res.data
   },
 
