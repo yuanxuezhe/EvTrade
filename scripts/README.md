@@ -1,49 +1,105 @@
-# 脚本说明
+# EvTrade 启停脚本
 
-## `dev.{ps1,cmd,sh}` — 一键启停前后端
+单一 Python 入口, 跨平台 (Linux / Windows / git-bash) 管理开发期三个服务 (backend / frontend / hqserver) 的 start / stop / restart / status。
 
-| 操作 | 命令（PowerShell） | 命令（cmd / git-bash） |
-|------|--------------------|------------------------|
-| 启动 | `powershell -File scripts\dev.ps1 -Action start` | `scripts\dev.cmd start` |
-| 停止 | `powershell -File scripts\dev.ps1 -Action stop`  | `scripts\dev.cmd stop`  |
-| 重启 | `powershell -File scripts\dev.ps1 -Action restart`| `scripts\dev.cmd restart`|
-| 状态 | `powershell -File scripts\dev.ps1 -Action status` | `scripts\dev.cmd status` |
+## 用法
 
-## 端口约定
+```bash
+# Windows (git-bash / cmd / PowerShell)
+python scripts\evctl.py start
+python scripts\evctl.py stop
+python scripts\evctl.py restart
+python scripts\evctl.py status
 
-| 端口 | 服务 | 备注 |
-|------|------|------|
-| 8002 | FastAPI (uvicorn) | 8000/8001 被其他用户进程占着且无法 kill，**统一用 8002** |
-| 3000 | Vite dev server | Vite 代理自动转发 `/api`、`/ws` → 8002 |
+# Linux
+python3 scripts/evctl.py start
+```
 
-> 改端口：编辑 `scripts\dev.ps1` 顶部的 `$BackendPort` 常量，**同时**修改 `client\vite.config.js` 的 `proxy.target`（两者必须一致）。
+### 动作 × 服务矩阵
 
-## 配置（环境变量）
+| 动作 \ 服务 | 全部 (默认) | 仅 backend | 仅 frontend | frontend + hqserver |
+|---|---|---|---|---|
+| start | `python scripts\evctl.py start` | `… start backend` | `… start frontend` | `… start frontend hqserver` |
+| stop | `… stop` | `… stop backend` | `… stop frontend` | `… stop frontend hqserver` |
+| restart | `… restart` | `… restart backend` | `… restart frontend` | `… restart frontend hqserver` |
+| status | `… status` | `… status backend` | `… status frontend` | `… status frontend hqserver` |
 
-后端通过 `server\config.py` 加载以下环境变量（也可写到 `server\.env`）：
+合法动作: `start` / `stop` / `restart` / `status`。
+合法服务: `backend` / `frontend` / `hqserver`。
 
-| 变量 | 默认 | 说明 |
-|------|------|------|
-| `EVTRADE_RABBITMQ_URL` | `amqp://192.168.10.2:5672/` | RabbitMQ 地址 |
-| `EVTRADE_EXCHANGE_NAME` | `msgpacket.exchange` | topic exchange |
-| `EVTRADE_QUEUE_REQ` | `EvTrade.Test.Req` | 请求队列 |
-| `EVTRADE_QUEUE_REPLY` | `EvTrade.Test.Reply` | 应答队列 |
-| `EVTRADE_QUEUE_PUSH` | `EvTrade.Test.Push` | 推送队列 |
-| `EVTRADE_RPC_TIMEOUT` | `30` | RPC 单次 call 超时（秒） |
-| `EVTRADE_API_HOST` | `0.0.0.0` | uvicorn 监听 host |
-| `EVTRADE_API_PORT` | `8002` | uvicorn 监听 port |
+## 端口
 
-参考模板：`server\.env.example`。
+| 服务 | 端口 | 备注 |
+|---|---|---|
+| backend (FastAPI/uvicorn) | **8000** | `--reload` 模式, 改代码自动重启 |
+| frontend (Vite) | **50998** | `--strictPort` 模式, 端口被占直接退出 (不静默 fallback) |
+| hqserver (WebSocket quotes) | **8765** | hqserver.py 内部写死 |
 
-## 产物
+端口在 `scripts/evctl.py` 顶部硬编码, **不读环境变量**。改端口要同时改 `client/vite.config.js` 的 `proxy.target` (现指向 `http://localhost:8000`)。
 
-- `scripts\.logs\backend.log` — uvicorn stdout+stderr
-- `scripts\.logs\frontend.log` — Vite stdout+stderr
-- `scripts\.pids\backend.pid` / `frontend.pid` — 当前进程号
+## 目录布局
 
-## 行为
+```
+scripts/
+├── evctl.py          ← 唯一入口 (本文件配套使用)
+├── README.md         ← 本文档
+├── .logs/            ← 三服务 stdout+stderr 追加日志
+│   ├── backend.log
+│   ├── frontend.log
+│   └── hqserver.log
+└── .pids/            ← 三服务真实 PID (Popen 返回值, 不是壳进程)
+    ├── backend.pid
+    ├── frontend.pid
+    └── hqserver.pid
+```
 
-- 启动时按端口查占用，已占则跳过；不重复拉起
-- 停止时按端口反查 PID 强杀，uvicorn reloader 派生出的 worker 会被二次清理
-- 重启 = stop + sleep(2) + start
-- 状态 = 端口占用 + `/api/health` 健康检查
+## 行为细节
+
+### 启动
+
+- 端口被占 (非前端) → 跳过启动, warn
+- 前端端口被占 → 读占用进程 cmdline, 含 `vite` 或 `esbuild` 视为孤儿 (ctrl-C 切断终端后残留) → warn + 强杀 + 接管; 否则跳过
+- Vite 用 `--strictPort` — 端口被占时 vite 自身会报错退出, 不再静默跳到 50999
+- backend 起完后做 `/api/health` 健康检查 (10 次 × 1s); 失败 warn 不阻塞后续
+
+### 停止
+
+- 按 hqserver → frontend → backend 顺序反着停 (减少前端 WebSocket 断连噪音)
+- PID 文件里的进程先 SIGTERM → 等 3s → SIGKILL (Linux); Windows 用 `taskkill /F /T`
+- 停完再扫一次三个端口, 残留进程 `taskkill /F /T` / `pkill -KILL` 兜底
+
+### 状态
+
+- 三服务的端口占用 (LISTEN pid procname / free)
+- 三服务的 pidfile (alive / dead / missing)
+- backend `GET /api/health` 一次探测 (200 OK / FAIL)
+
+### 退出码
+
+- `0` — 全部动作成功
+- `1` — 部分失败 (例如某服务 spawn 失败)
+- `2` — 参数错误 (未知动作 / 未知服务名)
+
+## 平台差异 (库内吸收, 调用方无感)
+
+| 动作 | Linux | Windows |
+|---|---|---|
+| 查端口 PID | `ss -ltnp` | `netstat -ano` |
+| 读进程 cmdline | `/proc/<pid>/cmdline` | `wmic process get CommandLine` |
+| 进程是否存活 | `os.kill(pid, 0)` | `tasklist /FI /FO CSV` |
+| 杀进程树 | SIGTERM → SIGKILL, 走进程组 | `taskkill /F /T /PID` |
+| 后台进程 spawn | `start_new_session=True` | `DETACHED_PROCESS \| CREATE_NEW_PROCESS_GROUP` |
+
+## 常见问题
+
+**Q: 启动时端口被占怎么办?**
+A: 看 status 输出, 找到占用的 PID, 手动 taskkill / kill (或 `evctl.py stop` 先尝试走 pidfile 清理)。
+
+**Q: Vite 端口冲突但不是 vite 进程?**
+A: 这是别人 (其他应用) 占着 50998, `evctl.py` 不会强杀, 报 warn 跳过。先把占用的进程停了再 start。
+
+**Q: 删了 .pids/ 里的文件会怎样?**
+A: 下次 start 会读不到, 正常 spawn 新的; status 会显示 `pidfile missing`, 不影响。
+
+**Q: 能否跨平台共用同一份脚本?**
+A: 是, evctl.py 是单一 Python 文件, Linux / Windows / git-bash 行为一致。
