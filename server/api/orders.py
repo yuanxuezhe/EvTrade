@@ -47,7 +47,7 @@ router = APIRouter()
 # ────────────── Pydantic ──────────────
 
 class PlaceOrderRequest(BaseModel):
-    client_order_id: Optional[str] = None
+    user_def: str = ""                # 外部自定义信息透传（无业务约束）
     stock_code: str
     order_type: str          # 23=买 24=卖
     price_type: int = 11     # 11=限价
@@ -58,7 +58,7 @@ class PlaceOrderRequest(BaseModel):
 
 class OrderOut(BaseModel):
     order_id: str = ""  # 改:broker 未回报前为空串 (下单后 → ord_cfm 到达前的窗口期)
-    client_order_id: str
+    user_def: str = ""  # v7:外部自定义信息透传（替代原 client_order_id）
     order_no: str
     trd_date: str
     stock_code: str
@@ -108,24 +108,8 @@ async def place_order(req: PlaceOrderRequest, user: User = Depends(get_current_u
     if req.order_type not in ("23", "24"):
         raise HTTPException(status_code=400, detail={"code": "BAD_ORDER_TYPE", "msg": "order_type 必须 23(买) 24(卖)"})
 
-    # 1. 取交易日内 client_order_id 幂等
+    # 1. 取交易日 + order_no（v7：幂等改由 order_no 单调递增保证）
     trd_date = db.query(SysStatus).filter_by(status='active').first().trd_date
-    cid = req.client_order_id or f"cid-{int(datetime.utcnow().timestamp() * 1000)}"
-    existing = db.query(Order).filter_by(client_order_id=cid, trd_date=trd_date).first()
-    if existing:
-        return PlaceOrderResponse(
-            code=0, msg="幂等: 已存在",
-            order=OrderOut(
-                order_id=existing.order_id or "", client_order_id=existing.client_order_id,
-                order_no=existing.order_no, trd_date=existing.trd_date,
-                stock_code=existing.stock_code,
-                order_type=existing.order_type, price_type=existing.price_type,
-                price=existing.price, volume=existing.volume,
-                traded_volume=existing.traded_volume, traded_amount=existing.traded_amount,
-                avg_price=existing.avg_price, status=existing.status,
-                status_msg=existing.status_msg, order_time=existing.order_time,
-            ),
-        )
 
     # 2. T0 配平
     direction = "BUY" if req.order_type == "23" else "SELL"
@@ -142,11 +126,12 @@ async def place_order(req: PlaceOrderRequest, user: User = Depends(get_current_u
 
     # 4. INSERT status=48（待报）
     # v6: order_id 不预占,broker 回报时单条 UPDATE 写入
+    # v7: 删 client_order_id 字段 + uq_orders_client_trd 约束;加 user_def 透传
     order_no = next_order_no(db)
     order = Order(
         trd_date=trd_date,
         order_no=order_no,
-        client_order_id=cid,
+        user_def=req.user_def,
         stock_code=req.stock_code, order_type=req.order_type,
         price_type=req.price_type, price=req.price, volume=adjusted,
         traded_volume=0, traded_amount=0.0, avg_price=0.0,
@@ -172,7 +157,7 @@ async def place_order(req: PlaceOrderRequest, user: User = Depends(get_current_u
         return PlaceOrderResponse(
             code=1, msg="柜台调用失败",
             order=OrderOut(
-                order_id=order.order_id or "", client_order_id=order.client_order_id,
+                order_id=order.order_id or "", user_def=order.user_def,
                 order_no=order.order_no, trd_date=order.trd_date,
                 stock_code=order.stock_code, order_type=order.order_type,
                 price_type=order.price_type, price=order.price, volume=order.volume,
@@ -217,7 +202,7 @@ async def place_order(req: PlaceOrderRequest, user: User = Depends(get_current_u
         code=0 if order.status == "49" else 1,
         msg=order.status_msg,
         order=OrderOut(
-            order_id=order.order_id or "", client_order_id=order.client_order_id,
+            order_id=order.order_id or "", user_def=order.user_def,
             order_no=order.order_no, trd_date=order.trd_date, stock_code=order.stock_code,
             order_type=order.order_type, price_type=order.price_type,
             price=order.price, volume=order.volume,
@@ -307,7 +292,7 @@ async def list_orders(
         code=0, msg="", total=total,
         list=[
             OrderOut(
-                order_id=r.order_id or "", client_order_id=r.client_order_id,
+                order_id=r.order_id or "", user_def=r.user_def,
                 order_no=r.order_no, trd_date=r.trd_date, stock_code=r.stock_code,
                 order_type=r.order_type, price_type=r.price_type,
                 price=r.price, volume=r.volume,
@@ -340,7 +325,7 @@ async def orders_history(
         code=0, msg="", total=total,
         list=[
             OrderOut(
-                order_id=r.order_id or "", client_order_id=r.client_order_id,
+                order_id=r.order_id or "", user_def=r.user_def,
                 order_no=r.order_no, trd_date=r.trd_date, stock_code=r.stock_code,
                 order_type=r.order_type, price_type=r.price_type,
                 price=r.price, volume=r.volume,

@@ -182,12 +182,12 @@ def handle_ord_cfm(db: Session, row: Dict[str, Any], ts: str) -> None:
 # ───── trd_cfm：成交回报 ─────
 
 def handle_trd_cfm(db: Session, row: Dict[str, Any], ts: str) -> None:
-    """处理 trd_cfm 推送（v6: 用 remark 匹配 Order,累加后推断 status）
+    """处理 trd_cfm 推送（v7: Trade 用 order_no 入 PK，不写 order_id）
 
     柜台字段（举例）：
       trade_id       成交编号(UNIQUE,去重用)
-      order_id       关联委托号(填到 Trade.order_id,不再用做 Order 查找)
-      remark         委托备注(= 本地 order_no,匹配 Order 用)
+      order_id       关联委托号(v7 仅作 Order 兜底查找用，不再写 Trade)
+      remark         委托备注(= 本地 order_no,v7 写入 Trade.order_no 入 PK)
       stock_code
       order_type     23=买 24=卖
       price          成交价
@@ -195,34 +195,39 @@ def handle_trd_cfm(db: Session, row: Dict[str, Any], ts: str) -> None:
       amount         成交额
       trade_time     成交时间
     """
-    trade_id = _str(row.get('trade_id', ''))
     trd_date = _str(row.get('trade_date', '')) or _get_active_trd_date(db)
     if not trd_date or len(trd_date) != 8:
         trd_date = _get_active_trd_date(db)
 
-    if not trade_id:
-        # 用 order_id + trade_time 作 fallback key
-        trade_id = f"{row.get('order_id', '')}-{row.get('trade_time', '')}"
+    broker_order_id = _str(row.get('order_id', ''))
+    broker_remark = _str(row.get('remark', ''))  # v7: 本地 order_no
 
-    # 幂等:已存在则不重复插入
-    existing = db.query(Trade).filter_by(trade_id=trade_id, trd_date=trd_date).first()
+    # v7: order_no 是 Trade PK 第二段,缺则不写孤儿 Trade
+    if not broker_remark:
+        print(f"[trd_cfm] WARN: no order_no (remark 缺失),跳过 trade_id={row.get('trade_id', '')}")
+        return
+
+    trade_id = _str(row.get('trade_id', ''))
+    if not trade_id:
+        # v7: 用 order_no + trade_time 作 fallback key（替代原 order_id + trade_time）
+        trade_id = f"{broker_remark}-{row.get('trade_time', '')}"
+
+    # 幂等:已存在则不重复插入(PK = (trd_date, order_no, trade_id))
+    existing = db.query(Trade).filter_by(
+        trd_date=trd_date, order_no=broker_remark, trade_id=trade_id
+    ).first()
     if existing:
         return
 
-    broker_order_id = _str(row.get('order_id', ''))
-    broker_remark = _str(row.get('remark', ''))  # v6: 用 remark 匹配 Order
-
-    # v6: 优先用 remark (= 本地 order_no) 查 Order,broker order_id 只作兜底
-    order = None
-    if broker_remark:
-        order = db.query(Order).filter_by(order_no=broker_remark, trd_date=trd_date).first()
+    # v7: 优先用 remark (= 本地 order_no) 查 Order,broker order_id 只作兜底
+    order = db.query(Order).filter_by(order_no=broker_remark, trd_date=trd_date).first()
     if not order and broker_order_id:
         order = db.query(Order).filter_by(order_id=broker_order_id, trd_date=trd_date).first()
 
     trade = Trade(
         trd_date=trd_date,
+        order_no=broker_remark,
         trade_id=trade_id,
-        order_id=broker_order_id,
         stock_code=_str(row.get('stock_code', '')),
         order_type=_str(row.get('order_type', '')),
         price=_float(row.get('price', 0)),
@@ -245,9 +250,9 @@ def handle_trd_cfm(db: Session, row: Dict[str, Any], ts: str) -> None:
         order.pushed_at = datetime.utcnow()
         order.updated_at = datetime.utcnow()
     else:
-        print(f"[trd_cfm] WARN: no order for trade_id={trade_id} (remark={broker_remark}, order_id={broker_order_id}) — Trade 行已留存")
+        print(f"[trd_cfm] WARN: no order for trade_id={trade_id} (order_no={broker_remark}, order_id={broker_order_id}) — Trade 行已留存")
 
-    print(f"[trd_cfm] inserted trade_id={trade_id} order_no={broker_remark or order.order_no if order else '?'} vol={trade.volume} px={trade.price} order_status={order.status if order else 'N/A'}")
+    print(f"[trd_cfm] inserted trade_id={trade_id} order_no={broker_remark} vol={trade.volume} px={trade.price} order_status={order.status if order else 'N/A'}")
 
 
 # ───── pos_cfm：持仓变化（单股 UPSERT） ─────
