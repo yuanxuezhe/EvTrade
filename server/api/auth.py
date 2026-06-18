@@ -2,6 +2,7 @@
 Auth API: login, current user info, change password.
 """
 from datetime import datetime, timezone
+from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
@@ -28,13 +29,13 @@ class TokenResponse(BaseModel):
 class UserInfoResponse(BaseModel):
     id: int
     username: str
-    email: str = None
-    full_name: str = None
+    email: Optional[str] = None
+    full_name: Optional[str] = None
     role: str
     is_active: bool
     must_change_password: bool = False
-    created_at: str = None
-    last_login_at: str = None
+    created_at: Optional[str] = None
+    last_login_at: Optional[str] = None
 
 
 class ChangePasswordRequest(BaseModel):
