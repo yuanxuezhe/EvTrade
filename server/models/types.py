@@ -8,6 +8,7 @@ types.py — 内存 dataclass 模型（用于 service 层无 DB 上下文场景�
 from dataclasses import dataclass, field
 from typing import List, Optional
 from datetime import datetime
+from constants import PriceType
 
 @dataclass
 class Position:
@@ -35,8 +36,8 @@ class Order:
     order_type: str
     volume: int
     price: float
-    # 柜台 price_type 数字：5=最新价 11=指定价 14=对手价 44=市价 ...
-    price_type: int = 11
+    # 柜台 price_type 数字：5=最新价 11=指定价 (限价) 14=对手价 44=市价
+    price_type: int = PriceType.LIMIT
     status: str = "pending"  # pending / filled / cancelled / rejected
     traded_volume: int = 0
     traded_price: float = 0.0

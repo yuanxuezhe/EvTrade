@@ -39,6 +39,7 @@ from services.order_no import next_order_no
 from services.t0 import get_fee_config, calc_t0_volume, calc_net_amount
 from rpc.client import ord_stk, cancel_order as rpc_cancel_order, qry_orders
 from ws.manager import ws_manager
+from constants import PriceType, OrderType
 
 log = logging.getLogger(__name__)
 router = APIRouter()
@@ -50,7 +51,7 @@ class PlaceOrderRequest(BaseModel):
     user_def: str = ""                # 外部自定义信息透传（无业务约束）
     stock_code: str
     order_type: str          # 23=买 24=卖
-    price_type: int = 11     # 11=限价
+    price_type: int = PriceType.LIMIT  # 默认限价单
     price: float
     volume: int
     t0_coefficient: float = 1.0

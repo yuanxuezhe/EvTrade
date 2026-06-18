@@ -49,10 +49,10 @@
             <el-input-number
               v-model="form.price"
               :min="0"
-              :precision="form.price_type === 11 ? null : 2"
-              :step="form.price_type === 11 ? 0.01 : null"
-              :disabled="form.price_type !== 11"
-              :placeholder="form.price_type === 11 ? '输入价格' : '市价单无需输入'"
+              :precision="form.price_type === PriceType.LIMIT ? null : 2"
+              :step="form.price_type === PriceType.LIMIT ? 0.01 : null"
+              :disabled="form.price_type !== PriceType.LIMIT"
+              :placeholder="form.price_type === PriceType.LIMIT ? '输入价格' : '市价单无需输入'"
               controls-position="right"
               style="width: 100%"
             />
@@ -84,7 +84,7 @@
           <div class="summary-row">
             <span class="summary-label">预估金额</span>
             <span class="summary-value text-mono">
-              <template v-if="form.price_type === 11">¥{{ formatMoney(estimatedAmount) }}</template>
+              <template v-if="form.price_type === PriceType.LIMIT">¥{{ formatMoney(estimatedAmount) }}</template>
               <template v-else>— 市价单 —</template>
             </span>
           </div>
@@ -114,6 +114,7 @@ import { computed, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Search, Top, Bottom } from '@element-plus/icons-vue'
 import { formatMoney } from '../utils/format'
+import { PriceType, priceTypeOptions, OrderType } from '../constants/priceType'
 
 const props = defineProps({
   onSubmit: { type: Function, required: true },
@@ -127,28 +128,28 @@ const submitting = ref(false)
 const form = reactive({
   stock_code: props.defaultStockCode || '',
   // 柜台 order_type：股票 23=买入，24=卖出
-  order_type: '23',
-  // 柜台 price_type 数字：11=指定价(限价) 5=最新价 14=对手价 44=市价 ...
-  price_type: 11,
+  order_type: OrderType.BUY,
+  // 柜台 price_type 数字：5=最新价 11=指定价 (限价) 14=对手价 44=市价 ...
+  price_type: PriceType.LIMIT,
   price: 0,
   volume: 100
 })
 
-// 价格类型 → 柜台枚举数字（与后端/柜台一致）
-const priceTypeOptions = [
-  { label: '限价', value: 11 },
-  { label: '最新价', value: 5 },
-  { label: '挂单价', value: 14 },
-  { label: '市价', value: 44 }
-]
+// 价格类型选项（从常量导入）
+// const priceTypeOptions = [
+//   { label: '限价', value: 11 },
+//   { label: '最新价', value: 5 },
+//   { label: '挂单价', value: 14 },
+//   { label: '市价', value: 44 }
+// ]
 
 const volumeShortcuts = [100, 500, 1000, 5000, 10000]
 
 const estimatedAmount = computed(() => (form.price || 0) * (form.volume || 0))
 
-// 切换市价(44)时清空价格；切回限价(11)也清空（避免残留的旧值误下单）
+// 切换市价 (44) 时清空价格；切回限价 (11) 也清空（避免残留的旧值误下单）
 watch(() => form.price_type, (newType, oldType) => {
-  if (newType !== 11) {
+  if (newType !== PriceType.LIMIT) {
     // 市价单不依赖具体价格，但保留作为显示用也行；这里清空避免误读
     form.price = 0
   }
@@ -156,7 +157,7 @@ watch(() => form.price_type, (newType, oldType) => {
 
 // 外部双击行情价格带入：要求限价模式
 function onExternalApply(price) {
-  if (form.price_type !== 11) form.price_type = 11
+  if (form.price_type !== PriceType.LIMIT) form.price_type = PriceType.LIMIT
   form.price = Number(price)
 }
 defineExpose({ onExternalApply })
@@ -176,7 +177,7 @@ async function handleSubmit() {
     ElMessage.warning('请输入股票代码')
     return
   }
-  if (form.price_type === 11 && form.price <= 0) {
+  if (form.price_type === PriceType.LIMIT && form.price <= 0) {
     ElMessage.warning('限价单需要输入价格')
     return
   }
@@ -184,7 +185,7 @@ async function handleSubmit() {
     ElMessage.warning('请输入数量')
     return
   }
-  const amountNote = form.price_type === 11
+  const amountNote = form.price_type === PriceType.LIMIT
     ? `预估金额 ¥${formatMoney(estimatedAmount.value)}`
     : `市价单（价格类型 ${form.price_type}）`
   try {

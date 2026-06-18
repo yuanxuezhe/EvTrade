@@ -12,6 +12,7 @@ from api import t0_stats
 from api.admin import sys_status as admin_sys_status, reconcile as admin_reconcile, session as admin_session
 from ws.manager import ws_manager
 from rpc.client import get_rpc_client, close_rpc_client
+from config import validate_config
 # 注：行情订阅已解耦到 hq/hqserver.py 的内置 WebSocket 服务 (:8765)，
 # 前端 quote_update 频道直连 hqserver，不再经过本 server 转发。
 
@@ -38,6 +39,8 @@ app.add_middleware(
 @app.on_event("startup")
 def on_startup():
     """Create tables and seed default admin if no users exist."""
+    # 启动时验证配置
+    validate_config()
     init_db()
     db = SessionLocal()
     try:
