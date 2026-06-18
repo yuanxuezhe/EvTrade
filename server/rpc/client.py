@@ -1,5 +1,6 @@
 import asyncio
 import json
+import logging
 from datetime import datetime
 from typing import Optional, Dict, Any
 
@@ -11,12 +12,17 @@ from msgpacket import MsgPacket, MSG_TYPE_REQUEST, MSG_TYPE_PUSH
 from config import settings
 from ws.manager import ws_manager
 
+log = logging.getLogger(__name__)
+
 # 兼容旧引用：保留模块级常量名（值来自 config）
 RABBITMQ_URL = settings.RABBITMQ_URL
 EXCHANGE_NAME = settings.EXCHANGE_NAME
 QUEUE_REQ = settings.QUEUE_REQ
 QUEUE_REPLY = settings.QUEUE_REPLY
 QUEUE_PUSH = settings.QUEUE_PUSH
+
+# 在途 RPC 调用的最大并发数（防止柜台慢应答时无限累积）
+MAX_PENDING = 100
 
 # 推送类型 → WS channel
 _PUSH_CHANNEL = {
@@ -71,8 +77,9 @@ class RPClient:
         self.push_queue = await self.channel.declare_queue(QUEUE_PUSH, durable=True)
         asyncio.ensure_future(self._listen_replies())
         asyncio.ensure_future(self._listen_pushs())
-        print(
-            f"[RPClient] connected, listening on reply={QUEUE_REPLY} push={QUEUE_PUSH}"
+        log.info(
+            "RPClient connected, listening on reply=%s push=%s",
+            QUEUE_REPLY, QUEUE_PUSH,
         )
 
     async def _listen_replies(self):
@@ -82,12 +89,12 @@ class RPClient:
         这里的 "msg_id not in pending" 日志会指明收到的 msgid 是什么、
         以及当前等待的 msgid 列表，便于排查链路问题。
         """
-        print("[RPClient] reply listener started")
+        log.info("RPClient reply listener started")
         async with self.reply_queue.iterator() as qiter:
             async for msg in qiter:
                 async with msg.process():
                     wire_data = msg.body
-                    print(f"[RPClient] <<< reply wire_len={len(wire_data)}")
+                    log.info("RPClient <<< reply wire_len=%d", len(wire_data))
                     try:
                         pkt = MsgPacket.decode(wire_data)
                         msg_id = _clean_id(pkt.msg_id())
@@ -96,31 +103,28 @@ class RPClient:
                             mt = chr(pkt.msg_type())
                         except Exception:
                             mt = "?"
-                        print(
-                            f"[RPClient] decoded func={func!r} type={mt!r} "
-                            f"msg_id={msg_id!r} pending={list(self.pending.keys())}"
+                        log.info(
+                            "RPClient decoded func=%r type=%r msg_id=%r pending=%d",
+                            func, mt, msg_id, len(self.pending),
                         )
                         reply_dump = _wire_dump(pkt)
                         if reply_dump:
-                            print(f"[RPClient] <<< wire:\n{reply_dump}")
+                            log.debug("RPClient <<< wire:\n%s", reply_dump)
                         if msg_id and msg_id in self.pending:
                             future = self.pending.pop(msg_id)
                             if not future.done():
                                 future.set_result(pkt)
-                            print(
-                                f"[RPClient] resolved msg_id={msg_id}, "
-                                f"remaining_pending={len(self.pending)}"
+                            log.info(
+                                "RPClient resolved msg_id=%s, remaining_pending=%d",
+                                msg_id, len(self.pending),
                             )
                         else:
-                            print(
-                                f"[RPClient] WARN msg_id={msg_id!r} not in pending "
-                                f"(have {len(self.pending)} pending, "
-                                f"keys={list(self.pending.keys())})"
+                            log.warning(
+                                "RPClient msg_id=%r not in pending (have %d, keys=%s)",
+                                msg_id, len(self.pending), list(self.pending.keys()),
                             )
                     except Exception as e:
-                        import traceback
-                        print(f"[RPClient] decode/handle error: {type(e).__name__}: {e}")
-                        traceback.print_exc()
+                        log.exception("RPClient decode/handle error: %s", e)
 
     async def _listen_pushs(self):
         """监听 EvTrade.Test.Push 队列，把柜台主动推送转成 WS 消息。
@@ -135,9 +139,9 @@ class RPClient:
         协议格式与 ANSWER 类似（func + headers + rows），但无 error_code 语义。
         """
         if not self.push_queue:
-            print("[RPClient] push listener skipped: push_queue not declared")
+            log.warning("RPClient push listener skipped: push_queue not declared")
             return
-        print(f"[RPClient] push listener started, queue={QUEUE_PUSH}")
+        log.info("RPClient push listener started, queue=%s", QUEUE_PUSH)
         async with self.push_queue.iterator() as qiter:
             async for msg in qiter:
                 async with msg.process():
@@ -149,16 +153,14 @@ class RPClient:
                             mt = chr(pkt.msg_type())
                         except Exception:
                             mt = "?"
-                        print(
-                            f"[RPClient.push] <<< wire_len={len(wire)} "
-                            f"func={func!r} type={mt!r}"
+                        log.info(
+                            "RPClient.push <<< wire_len=%d func=%r type=%r",
+                            len(wire), func, mt,
                         )
 
                         channel = _PUSH_CHANNEL.get(func)
                         if not channel:
-                            print(
-                                f"[RPClient.push] ignore unknown func={func!r}"
-                            )
+                            log.warning("RPClient.push ignore unknown func=%r", func)
                             continue
 
                         rows = _parse_push_rows(pkt)
@@ -182,32 +184,23 @@ class RPClient:
                                     db.commit()
                                 except Exception as e:
                                     db.rollback()
-                                    print(f"[RPClient.push] handle_push error: {e}")
+                                    log.error("RPClient.push handle_push error: %s", e)
                                 finally:
                                     db.close()
                             except Exception as e:
-                                import traceback
-                                print(f"[RPClient.push] DB integration error: {e}")
-                                traceback.print_exc()
+                                log.exception("RPClient.push DB integration error: %s", e)
 
-                            print(
-                                f"[RPClient.push] broadcast → {channel}"
-                                + (
-                                    "\n" + "\n".join(
-                                        "  " + k + " = " + repr(v)
-                                        for k, v in sorted(row.items())
-                                    )
-                                    if row else " (empty row)"
-                                )
+                            log.info(
+                                "RPClient.push broadcast → %s%s",
+                                channel,
+                                "\n" + "\n".join(
+                                    "  " + k + " = " + repr(v)
+                                    for k, v in sorted(row.items())
+                                ) if row else " (empty row)",
                             )
                             await ws_manager.broadcast(channel, payload)
                     except Exception as e:
-                        import traceback
-                        print(
-                            f"[RPClient.push] decode/handle error: "
-                            f"{type(e).__name__}: {e}"
-                        )
-                        traceback.print_exc()
+                        log.exception("RPClient.push decode/handle error: %s", e)
 
     async def call(
         self,
@@ -227,6 +220,13 @@ class RPClient:
         """
         if timeout is None:
             timeout = settings.RPC_TIMEOUT
+
+        # 在途 RPC 数量保护（柜台慢应答时避免 pending 无限累积）
+        if len(self.pending) >= MAX_PENDING:
+            raise RuntimeError(
+                f"RPC pending 队列已满 (>{MAX_PENDING})，请等待柜台应答"
+            )
+
         pkt = MsgPacket(MSG_TYPE_REQUEST, "V1.0")
         pkt.set_func(func)
         if headers:
@@ -250,13 +250,13 @@ class RPClient:
         self.pending[msg_id] = future
 
         _, wire_data = pkt.encode()
-        print(
-            f"[RPClient.call] >>> func={func} msg_id={msg_id} "
-            f"pending={len(self.pending)} wire_len={len(wire_data)}"
+        log.info(
+            "RPClient.call >>> func=%s msg_id=%s pending=%d wire_len=%d",
+            func, msg_id, len(self.pending), len(wire_data),
         )
         req_dump = _wire_dump(pkt)
         if req_dump:
-            print(f"[RPClient.call] >>> wire:\n{req_dump}")
+            log.debug("RPClient.call >>> wire:\n%s", req_dump)
 
         await self.exchange.publish(
             Message(body=wire_data), routing_key=QUEUE_REQ
@@ -267,9 +267,9 @@ class RPClient:
         except asyncio.TimeoutError:
             # 超时清理 pending，避免内存泄漏 + 防止后续应答误匹配
             self.pending.pop(msg_id, None)
-            print(
-                f"[RPClient.call] TIMEOUT func={func} msg_id={msg_id} "
-                f"after {timeout}s"
+            log.warning(
+                "RPClient.call TIMEOUT func=%s msg_id=%s after %.1fs",
+                func, msg_id, timeout,
             )
             raise
 

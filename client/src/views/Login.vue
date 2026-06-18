@@ -168,8 +168,13 @@ async function handleLogin() {
       localStorage.removeItem(REMEMBER_KEY)
     }
     ElMessage.success(`欢迎回来，${user.full_name || user.username}`)
-    const redirect = route.query.redirect || '/'
-    router.replace(redirect)
+    if (user.must_change_password) {
+      ElMessage.warning('这是首次登录，请修改默认密码')
+      router.replace('/profile')
+    } else {
+      const redirect = route.query.redirect || '/'
+      router.replace(redirect)
+    }
   } catch (e) {
     const msg = e.response?.data?.detail || '登录失败'
     ElMessage.error(msg)

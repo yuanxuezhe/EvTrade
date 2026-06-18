@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from typing import Optional
 from sqlalchemy.orm import Session
-from datetime import datetime
+from datetime import datetime, timezone
 
 from db import get_db
 from models.orm import FeeConfig
@@ -56,7 +56,7 @@ async def update_fee_config(req: FeeConfigUpdate, db: Session = Depends(get_db))
         v = getattr(req, field)
         if v is not None:
             setattr(cfg, field, v)
-    cfg.updated_at = datetime.utcnow()
+    cfg.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
     db.commit()
     db.refresh(cfg)
     return FeeConfigOut(

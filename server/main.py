@@ -1,9 +1,10 @@
+import os
 from fastapi import FastAPI, Depends, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
 from db import init_db, SessionLocal
 from models.user import User
-from auth.security import hash_password
+from auth.security import hash_password, decode_token
 from auth.deps import get_current_user
 from api import positions, holdings, orders, trades, asset, auth as auth_api, users as users_api
 from api import clock, fee_config
@@ -16,9 +17,18 @@ from rpc.client import get_rpc_client, close_rpc_client
 
 app = FastAPI(title="EvTrade API")
 
+# CORS — comma-separated origins from env, default localhost
+_cors_origins = [
+    x.strip()
+    for x in os.environ.get(
+        "EVTRADE_CORS_ORIGINS", "http://localhost:50998"
+    ).split(",")
+    if x.strip()
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:50998"],
+    allow_origins=_cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -39,6 +49,7 @@ def on_startup():
                 role="admin",
                 full_name="系统管理员",
                 is_active=True,
+                must_change_password=True,
             )
             db.add(admin)
             db.commit()
@@ -104,7 +115,14 @@ def health():
 # ---- WebSocket ----------------------------------------------------------
 @app.websocket("/ws/{channel}")
 async def websocket_endpoint(websocket: WebSocket, channel: str):
-    """前端订阅推送。channel ∈ order_update | trade_update | position_update | asset_update。"""
+    """前端订阅推送。channel ∈ order_update | trade_update | position_update | asset_update。
+
+    通过 query param ?token=JWT 认证；无 token 则拒绝连接。
+    """
+    token = websocket.query_params.get("token")
+    if not token or not decode_token(token):
+        await websocket.close(code=4001, reason="Unauthorized")
+        return
     await ws_manager.connect(websocket, channel)
     try:
         # 服务端不依赖客户端消息；接收仅用于 keepalive / 触发 disconnect

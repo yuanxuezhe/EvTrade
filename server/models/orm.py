@@ -19,7 +19,11 @@ SQLAlchemy ORM models for EvTrade v5 (schema refactor).
   §4 行情：quote_snapshots
   §5 序列：order_no_seq
 """
-from datetime import datetime
+from datetime import datetime, timezone
+
+def _utcnow():
+    """UTC now, compatible with Python 3.6+."""
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 from sqlalchemy import (
     Column, Integer, String, Float, Text, DateTime, Boolean,
     CheckConstraint, Index, UniqueConstraint, Time,
@@ -69,9 +73,9 @@ class Order(Base):
     status = Column(String(2), nullable=False, default="48")  # 48=待报 49=已报 50=部成 51=已成 52=部撤 53=已撤 55=废单
     status_msg = Column(String(255), nullable=False, default="")
     order_time = Column(String(8), nullable=False, default="")  # HH:MM:SS
-    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    created_at = Column(DateTime, nullable=False, default=_utcnow)
     updated_at = Column(
-        DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow
+        DateTime, nullable=False, default=_utcnow, onupdate=_utcnow
     )
     pushed_at = Column(DateTime, nullable=True)
 
@@ -100,7 +104,7 @@ class Trade(Base):
     volume = Column(Integer, nullable=False, default=0)
     amount = Column(Float, nullable=False, default=0.0)
     trade_time = Column(String(8), nullable=False, default="")
-    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    created_at = Column(DateTime, nullable=False, default=_utcnow)
 
 
 class Position(Base):
@@ -120,7 +124,7 @@ class Position(Base):
     avl_vol = Column(Integer, nullable=False, default=0)   # 可用
     vol = Column(Integer, nullable=False, default=0)       # 总持仓
     cost_price = Column(Float, nullable=False, default=0.0)
-    synced_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    synced_at = Column(DateTime, nullable=False, default=_utcnow)
     synced_from = Column(String(16), nullable=False, default="")  # rpc_full / push_partial / manual
 
 
@@ -141,7 +145,7 @@ class Asset(Base):
     frozen_cash = Column(Float, nullable=False, default=0.0)   # 冻结
     market_value = Column(Float, nullable=False, default=0.0)
     total_asset = Column(Float, nullable=False, default=0.0)
-    synced_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    synced_at = Column(DateTime, nullable=False, default=_utcnow)
     synced_from = Column(String(16), nullable=False, default="")  # rpc_full / push_partial / manual
 
 
@@ -165,7 +169,7 @@ class SysStatus(Base):
     closed_at = Column(DateTime, nullable=True)
     closed_by = Column(Integer, nullable=True)
     remark = Column(String(255), nullable=False, default="")
-    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    created_at = Column(DateTime, nullable=False, default=_utcnow)
 
 
 class TradingSession(Base):
@@ -183,7 +187,7 @@ class TradingSession(Base):
     morning_end = Column(Time, nullable=False)          # 11:30
     afternoon_start = Column(Time, nullable=False)      # 13:00
     afternoon_end = Column(Time, nullable=False)        # 15:00
-    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    updated_at = Column(DateTime, nullable=False, default=_utcnow, onupdate=_utcnow)
 
 
 class FeeConfig(Base):
@@ -201,7 +205,7 @@ class FeeConfig(Base):
     stamp_tax_rate = Column(Float, nullable=False, default=0.001)     # 千 1
     slippage = Column(Float, nullable=False, default=0.001)            # 0.1%
     min_commission = Column(Float, nullable=False, default=5.0)         # 最低 5 元
-    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    updated_at = Column(DateTime, nullable=False, default=_utcnow, onupdate=_utcnow)
     updated_by = Column(Integer, nullable=True)
 
 
@@ -218,7 +222,7 @@ class ReconcileConfig(Base):
     id = Column(Integer, primary_key=True, default=1)
     auto_reconcile = Column(Integer, nullable=False, default=0)        # 0=人工 1=自动
     auto_use_broker_data = Column(Integer, nullable=False, default=1)  # 自动时 1=以柜台为准 0=以本地为准
-    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    updated_at = Column(DateTime, nullable=False, default=_utcnow, onupdate=_utcnow)
     updated_by = Column(Integer, nullable=True)
 
 
@@ -236,7 +240,7 @@ class ReconcileReport(Base):
 
     trd_date = Column(String(8), primary_key=True, nullable=False)
     mode = Column(String(16), primary_key=True, nullable=False)        # auto / manual
-    created_at = Column(DateTime, primary_key=True, nullable=False, default=datetime.utcnow)
+    created_at = Column(DateTime, primary_key=True, nullable=False, default=_utcnow)
     diffs_json = Column(Text, nullable=False, default="[]")
     broker_asset_json = Column(Text, nullable=False, default="")
     local_asset_json = Column(Text, nullable=False, default="")
@@ -288,7 +292,7 @@ class QuoteSnapshot(Base):
     ask4_vol = Column(Integer, nullable=False, default=0)
     ask5_price = Column(Float, nullable=False, default=0.0)
     ask5_vol = Column(Integer, nullable=False, default=0)
-    ts = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)
+    ts = Column(DateTime, nullable=False, default=_utcnow, index=True)
 
 
 # ─────────────── 序列 ───────────────
@@ -305,4 +309,4 @@ class OrderNoSeq(Base):
 
     id = Column(Integer, primary_key=True, default=1)
     last_value = Column(Integer, nullable=False, default=10000000)  # 8 位起
-    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    updated_at = Column(DateTime, nullable=False, default=_utcnow, onupdate=_utcnow)

@@ -24,7 +24,7 @@ router = APIRouter()
 class TradeOut(BaseModel):
     trade_id: str
     trd_date: str
-    order_id: str
+    order_no: str
     stock_code: str
     order_type: str
     price: float
@@ -55,7 +55,7 @@ async def list_trades(
         TradeOut(
             trade_id=r.trade_id,
             trd_date=r.trd_date,
-            order_id=r.order_id,
+            order_no=r.order_no,
             stock_code=r.stock_code,
             order_type=r.order_type,
             price=r.price,

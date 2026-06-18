@@ -1,6 +1,8 @@
 from fastapi import WebSocket
-from typing import Dict, Set
+from typing import Dict, Set, Optional
 import json
+
+from auth.security import decode_token
 
 class WSManager:
     def __init__(self):
@@ -12,11 +14,11 @@ class WSManager:
             "quote_update": set(),
         }
 
-    async def connect(self, websocket: WebSocket, channel: str = "order_update"):
+    async def connect(self, websocket: WebSocket, channel: str, token: Optional[str] = None):
         await websocket.accept()
         self.active_connections.setdefault(channel, set()).add(websocket)
 
-    def disconnect(self, websocket: WebSocket, channel: str = "order_update"):
+    def disconnect(self, websocket: WebSocket, channel: str):
         if channel in self.active_connections:
             self.active_connections[channel].discard(websocket)
 

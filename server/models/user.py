@@ -1,7 +1,7 @@
 """
 User ORM model.
 """
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy import Column, Integer, String, DateTime, Boolean
 from db import Base
 
@@ -17,12 +17,13 @@ class User(Base):
     # admin / trader / viewer
     role = Column(String(16), nullable=False, default="trader")
     is_active = Column(Boolean, nullable=False, default=True)
-    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    must_change_password = Column(Boolean, nullable=False, default=False)
+    created_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
     updated_at = Column(
         DateTime,
         nullable=False,
-        default=datetime.utcnow,
-        onupdate=datetime.utcnow,
+        default=lambda: datetime.now(timezone.utc).replace(tzinfo=None),
+        onupdate=lambda: datetime.now(timezone.utc).replace(tzinfo=None),
     )
     last_login_at = Column(DateTime, nullable=True)
 
@@ -34,6 +35,7 @@ class User(Base):
             "full_name": self.full_name,
             "role": self.role,
             "is_active": self.is_active,
+            "must_change_password": self.must_change_password,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
             "last_login_at": self.last_login_at.isoformat() if self.last_login_at else None,

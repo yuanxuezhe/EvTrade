@@ -18,7 +18,7 @@ v5 改动（schema refactor）：
 - Asset 去 TRD_DATE，单行无主键
 - ReconcileReport 复合主键 (trd_date, mode, created_at)
 """
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, Any, List
 from sqlalchemy.orm import Session
 
@@ -71,7 +71,7 @@ async def do_reconcile(
     cfg = get_reconcile_config(db)
 
     # 1. 拉柜台 2 类数据 (委托/成交靠 push 增量, 不在对账走)
-    diffs: Dict[str, Any] = {'fetched_at': datetime.utcnow().isoformat()}
+    diffs: Dict[str, Any] = {'fetched_at': datetime.now(timezone.utc).replace(tzinfo=None).isoformat()}
     rpc_errors: List[str] = []
 
     try:
@@ -105,7 +105,7 @@ async def do_reconcile(
         for a in db.query(Asset).all()
     ]
 
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
     report = ReconcileReport(
         trd_date=new_trd_date,
         mode="auto" if cfg.auto_reconcile else "manual",
@@ -217,7 +217,7 @@ def _apply_broker_data(
             avl_vol=int(p.get('avl_vol', p.get('available', 0)) or 0),
             vol=int(p.get('vol', p.get('volume', 0)) or 0),
             cost_price=float(p.get('cost_price', p.get('cost', 0)) or 0),
-            synced_at=datetime.utcnow(),
+            synced_at=datetime.now(timezone.utc).replace(tzinfo=None),
             synced_from='rpc_reconcile',
         ))
 
@@ -230,7 +230,7 @@ def _apply_broker_data(
             frozen_cash=float(a.get('frozen_cash', a.get('frozen', 0)) or 0),
             market_value=float(a.get('market_value', 0) or 0),
             total_asset=float(a.get('total_asset', 0) or 0),
-            synced_at=datetime.utcnow(),
+            synced_at=datetime.now(timezone.utc).replace(tzinfo=None),
             synced_from='rpc_reconcile',
         ))
 

@@ -14,7 +14,7 @@ push_handlers.py — v6 推送落库（order-pk-by-orderno）
   - pos_cfm: 按 stock_code UPSERT（positions 表无 trd_date）
   - ast_cfm: 单行资产表覆盖
 """
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy import text
 from typing import Dict, Any, Optional
 from sqlalchemy.orm import Session
@@ -22,6 +22,9 @@ from sqlalchemy.orm import Session
 from models.orm import (
     Order, Trade, Position, Asset, SysStatus,
 )
+
+def _utcnow():
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 # 状态码映射（与柜台一致,本地文字描述）
@@ -173,8 +176,8 @@ def handle_ord_cfm(db: Session, row: Dict[str, Any], ts: str) -> None:
     # (broker_status 临时喂进去:52/53/54 视为撤单类信号)
     order.status = _infer_order_status(order, broker_status=broker_status or None)
     order.status_msg = _str(row.get('status_msg', '')) or _status_msg(order.status)
-    order.pushed_at = datetime.utcnow()
-    order.updated_at = datetime.utcnow()
+    order.pushed_at = _utcnow()
+    order.updated_at = _utcnow()
 
     print(f"[ord_cfm] updated order_no={order.order_no} order_id={order.order_id} status={order.status} (broker_status={broker_status}, cum={order.traded_volume}/{order.volume})")
 
@@ -247,8 +250,8 @@ def handle_trd_cfm(db: Session, row: Dict[str, Any], ts: str) -> None:
         # v6: 累计后本地推断 status(不传 broker_status,trd_cfm 永远不写撤单类状态)
         order.status = _infer_order_status(order)
         order.status_msg = _status_msg(order.status)
-        order.pushed_at = datetime.utcnow()
-        order.updated_at = datetime.utcnow()
+        order.pushed_at = _utcnow()
+        order.updated_at = _utcnow()
     else:
         print(f"[trd_cfm] WARN: no order for trade_id={trade_id} (order_no={broker_remark}, order_id={broker_order_id}) — Trade 行已留存")
 
@@ -290,7 +293,7 @@ def handle_pos_cfm(db: Session, row: Dict[str, Any], ts: str) -> None:
     vol_val = _int(row.get('volume', 0))
     pos.vol = vol_val if vol_val > 0 else avl
     pos.cost_price = _float(row.get('cost_price', row.get('cost', 0)))
-    pos.synced_at = datetime.utcnow()
+    pos.synced_at = _utcnow()
     pos.synced_from = 'push_pos_cfm'
 
     # 异常时（broker 推的 vol 与 avl 不一致）打 info,便于排查
@@ -321,7 +324,7 @@ def handle_ast_cfm(db: Session, row: Dict[str, Any], ts: str) -> None:
     asset.cash = _float(row.get('cash', 0))
     asset.frozen_cash = _float(row.get('frozen', 0))
     asset.market_value = _float(row.get('market_value', 0))
-    asset.synced_at = datetime.utcnow()
+    asset.synced_at = _utcnow()
     asset.synced_from = 'push_ast_cfm'
 
     print(f"[ast_cfm] updated total={asset.total_asset} cash={asset.cash}")

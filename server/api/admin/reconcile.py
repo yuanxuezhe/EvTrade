@@ -11,7 +11,7 @@ v5 改动：
 - 响应中 id 字段改为 created_at 时间戳
 - TRD_DATE → trd_date
 """
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 from typing import Optional, List
@@ -82,7 +82,7 @@ async def update_config(
     if req.auto_use_broker_data is not None:
         cfg.auto_use_broker_data = 1 if req.auto_use_broker_data else 0
     cfg.updated_by = str(admin_user.id)
-    cfg.updated_at = datetime.utcnow()
+    cfg.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
     db.commit()
     db.refresh(cfg)
     return ReconcileConfigOut(
@@ -95,7 +95,7 @@ async def update_config(
 
 @router.get("/reports", response_model=List[ReconcileReportSummary])
 async def list_reports(db: Session = Depends(get_db), _=Depends(require_admin)):
-    cutoff = datetime.utcnow() - timedelta(days=REPORT_RETENTION_DAYS)
+    cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=REPORT_RETENTION_DAYS)
     rows = db.query(ReconcileReport).filter(
         ReconcileReport.created_at >= cutoff
     ).order_by(desc(ReconcileReport.created_at)).limit(200).all()

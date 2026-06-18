@@ -24,7 +24,7 @@ v6 改动（order-pk-by-orderno change）：
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from typing import Optional, List
-from datetime import datetime
+from datetime import datetime, timezone
 from pydantic import BaseModel
 from sqlalchemy import desc
 import logging
@@ -136,7 +136,7 @@ async def place_order(req: PlaceOrderRequest, user: User = Depends(get_current_u
         price_type=req.price_type, price=req.price, volume=adjusted,
         traded_volume=0, traded_amount=0.0, avg_price=0.0,
         status="48", status_msg="待报",
-        order_time=datetime.utcnow().isoformat(timespec='seconds'),
+        order_time=datetime.now(timezone.utc).replace(tzinfo=None).isoformat(timespec='seconds'),
     )
     db.add(order)
     db.commit()

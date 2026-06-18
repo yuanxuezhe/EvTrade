@@ -45,7 +45,10 @@ export const useWsStore = defineStore('ws', () => {
     if (channel === 'quote_update') {
       return `${proto}://${QUOTE_WS_HOST}/`
     }
-    return `${proto}://${window.location.host}/ws/${channel}`
+    // 后端 WS 需要 JWT token（查询参数）
+    const token = localStorage.getItem('evtrade-token') || ''
+    const sep = token ? '&' : '?'
+    return `${proto}://${window.location.host}/ws/${channel}${sep}token=${encodeURIComponent(token)}`
   }
 
   function _openChannel(channel) {

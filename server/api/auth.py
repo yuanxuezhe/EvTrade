@@ -1,7 +1,7 @@
 """
 Auth API: login, current user info, change password.
 """
-from datetime import datetime
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
@@ -32,6 +32,7 @@ class UserInfoResponse(BaseModel):
     full_name: str = None
     role: str
     is_active: bool
+    must_change_password: bool = False
     created_at: str = None
     last_login_at: str = None
 
@@ -61,7 +62,7 @@ def login(
     if not user.is_active:
         raise HTTPException(status_code=403, detail="账号已禁用")
     # Record last login
-    user.last_login_at = datetime.utcnow()
+    user.last_login_at = datetime.now(timezone.utc).replace(tzinfo=None)
     db.commit()
     db.refresh(user)
 
@@ -106,6 +107,7 @@ def change_password(
     if payload.new_password == payload.old_password:
         raise HTTPException(status_code=400, detail="新密码不能与原密码相同")
     current_user.password_hash = hash_password(payload.new_password)
+    current_user.must_change_password = False
     db.commit()
     return {"success": True, "message": "密码修改成功"}
 

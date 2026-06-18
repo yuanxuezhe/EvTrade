@@ -22,6 +22,8 @@ def next_order_no(db: SessionLocal) -> str:
       2. UPDATE last_value = last_value + 1
       3. SELECT 读新值
     SQLite 写入串行化，UPDATE 是原子的，所以序号唯一递增。
+
+    上限保护：8 位数字最大 99999999，达到上限时拒绝继续分配。
     """
     db.execute(text("""
         INSERT OR IGNORE INTO order_no_seq (id, last_value, updated_at)
@@ -35,6 +37,10 @@ def next_order_no(db: SessionLocal) -> str:
     row = db.execute(text("SELECT last_value FROM order_no_seq WHERE id = 1")).first()
     if not row:
         raise RuntimeError("order_no_seq 写入失败")
+    if row[0] >= 99999999:
+        raise RuntimeError(
+            f"order_no 已达上限 ({row[0]})，请手动扩容或迁移新序号段"
+        )
     return str(row[0])
 
 

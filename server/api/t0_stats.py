@@ -55,6 +55,7 @@ class T0StatsOut(BaseModel):
 async def t0_stats(
     stock_code: str,
     trd_date: Optional[str] = Query(None, description="8 位数字 YYYYMMDD，默认激活日"),
+    t0_only: bool = Query(False, description="只统计 user_def='T0' 标记的委托/成交"),
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -70,11 +71,25 @@ async def t0_stats(
     orders_today = db.query(Order).filter(
         Order.trd_date == trd,
         Order.stock_code == stock_code,
-    ).all()
+    )
+    if t0_only:
+        orders_today = orders_today.filter(Order.user_def == "T0")
+    orders_today = orders_today.all()
+
     trades_today = db.query(Trade).filter(
         Trade.trd_date == trd,
         Trade.stock_code == stock_code,
-    ).all()
+    )
+    if t0_only:
+        # 通过关联本地委托（user_def='T0'）来过滤成交
+        t0_order_nos = {
+            o.order_no for o in orders_today
+        }
+        if t0_order_nos:
+            trades_today = trades_today.filter(Trade.order_no.in_(t0_order_nos))
+        else:
+            trades_today = trades_today.filter(False)  # 强制空
+    trades_today = trades_today.all()
 
     today_buy_vol = 0
     today_sell_vol = 0
@@ -159,21 +174,28 @@ class T0HistoryOut(BaseModel):
 def t0_history(
     stock_code: str,
     days: int = Query(30, ge=1, le=180),
+    t0_only: bool = Query(False, description="只统计 user_def='T0' 标记的成交"),
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
     """近 N 天做T 每日买入/卖出/笔数 + 累计差额"""
     today = datetime.now().strftime("%Y%m%d")
     start = (datetime.now() - timedelta(days=days * 2)).strftime("%Y%m%d")
-    rows = (
-        db.query(Trade)
-        .filter(
-            Trade.stock_code == stock_code,
-            Trade.trd_date >= start,
-            Trade.trd_date <= today,
-        )
-        .all()
+    q = db.query(Trade).filter(
+        Trade.stock_code == stock_code,
+        Trade.trd_date >= start,
+        Trade.trd_date <= today,
     )
+    if t0_only:
+        # 关联 user_def='T0' 的 Order，过滤成交
+        t0_order_nos = {
+            o.order_no for o in db.query(Order).filter(Order.user_def == "T0").all()
+        }
+        if t0_order_nos:
+            q = q.filter(Trade.order_no.in_(t0_order_nos))
+        else:
+            q = q.filter(False)
+    rows = q.all()
     by_day = defaultdict(lambda: {
         "buy_amt": 0.0, "sell_amt": 0.0, "diff": 0.0, "n": 0
     })

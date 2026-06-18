@@ -4,7 +4,7 @@ admin/session.py — v4 交易时段配置
 GET   /api/admin/trading-session   读
 PATCH /api/admin/trading-session   改
 """
-from datetime import datetime, time as dtime
+from datetime import datetime, time as dtime, timezone
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from typing import Optional
@@ -87,7 +87,7 @@ async def update_session(req: SessionUpdate, db: Session = Depends(get_db), _=De
         if v:
             setattr(row, field, _parse_time(v))
     # is_half_day 暂不持久化（ORM 无字段）— 前端可看到但后端忽略
-    row.updated_at = datetime.utcnow()
+    row.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
     db.commit()
     db.refresh(row)
     # 清缓存

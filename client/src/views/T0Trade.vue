@@ -740,6 +740,7 @@ async function submitOrder({ orderType, volume, price }) {
       price: price,
       volume: volume,
       t0_coefficient: balanceCoeff.value,
+      user_def: 'T0',  // T0 页面下单调标记
     })
     if (res.code === 0) {
       const dir = orderType === '23' ? '买' : '卖'
