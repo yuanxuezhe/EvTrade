@@ -3,6 +3,7 @@ import { useQuoteStore } from '../stores/quote'
 import { useHoldingsStore } from '../stores/holdings'
 import { useAssetStore } from '../stores/asset'
 import { storeToRefs } from 'pinia'
+import { t0StatsApi } from '../api/t0_stats'
 
 /**
  * T0 配平计算 composable
@@ -166,6 +167,45 @@ export function useT0Balance(stockCodeRef) {
     targetVolume.value = Math.max(0, Math.floor(Number(v) || 0))
   }
 
+  // ---- 多标的敞口聚合（user_def='T0'） ----
+  const exposureList = ref([])            // [{stock_code, buy_vol, sell_vol, net_vol, ...}]
+  const exposureTotals = ref(null)        // {buy_vol, sell_vol, net_vol, realized_pnl, ...}
+  const exposureLoading = ref(false)
+  async function loadExposure(userDef = 'T0', trdDate = null) {
+    exposureLoading.value = true
+    try {
+      const data = await t0StatsApi.getExposure({ userDef, trdDate })
+      exposureList.value = data.positions || []
+      exposureTotals.value = data.totals || null
+    } catch (e) {
+      console.warn('[useT0Balance] loadExposure failed:', e)
+      exposureList.value = []
+      exposureTotals.value = null
+    } finally {
+      exposureLoading.value = false
+    }
+  }
+
+  // ---- 跨期累计（user_def='T0'，days=7/30/90） ----
+  const aggregate = ref(null)            // {summary, by_day, by_stock}
+  const aggregateLoading = ref(false)
+  async function loadAggregate(userDef = 'T0', days = 30) {
+    aggregateLoading.value = true
+    try {
+      aggregate.value = await t0StatsApi.getAggregate({ userDef, days })
+    } catch (e) {
+      console.warn('[useT0Balance] loadAggregate failed:', e)
+      aggregate.value = null
+    } finally {
+      aggregateLoading.value = false
+    }
+  }
+
+  // 衍生：哪些敞口需要一键配平（net_vol 绝对值 >= 100）
+  const needRebalance = computed(() =>
+    exposureList.value.filter((p) => Math.abs(p.net_volume) >= 100)
+  )
+
   return {
     // state
     targetVolume, balanceCoeff, priceType, limitPrice,
@@ -183,6 +223,10 @@ export function useT0Balance(stockCodeRef) {
     oneClickBuyQty, oneClickSellQty, oneClickBalanceQty,
     // 校验
     insufficientCash, insufficientPosition,
+    // 敞口聚合
+    exposureList, exposureTotals, exposureLoading, loadExposure, needRebalance,
+    // 跨期累计
+    aggregate, aggregateLoading, loadAggregate,
     // actions
     setTargetVolume, roundToLot
   }

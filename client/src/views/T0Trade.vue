@@ -149,6 +149,116 @@
       </el-card>
     </div>
 
+    <!-- T0 敞口聚合 + 累计收益 -->
+    <div class="content-card-row">
+      <el-card class="exposure-card" shadow="hover">
+        <template #header>
+          <div class="card-header-flex">
+            <span class="card-title">📋 T0 敞口聚合（当日）</span>
+            <el-button size="small" type="warning" plain :disabled="!exposureTotals || exposureTotals.net_volume === 0"
+              @click="onRebalanceAll">⚖ 全账户一键配平</el-button>
+          </div>
+        </template>
+        <div v-if="exposureLoading" class="empty-tip">加载中…</div>
+        <div v-else-if="!exposureList.length" class="empty-tip">当日暂无 T0 成交</div>
+        <el-table v-else :data="exposureList" stripe size="small" class="exposure-table">
+          <el-table-column prop="stock_code" label="标的" width="120" />
+          <el-table-column prop="buy_volume" label="买量" width="80" align="right" />
+          <el-table-column prop="sell_volume" label="卖量" width="80" align="right" />
+          <el-table-column label="净量" width="90" align="right">
+            <template #default="{ row }">
+              <span :class="row.net_volume > 0 ? 'pos' : row.net_volume < 0 ? 'neg' : ''">
+                {{ row.net_volume > 0 ? '+' : '' }}{{ row.net_volume }}
+              </span>
+            </template>
+          </el-table-column>
+          <el-table-column label="净额" width="110" align="right">
+            <template #default="{ row }">
+              <span :class="row.net_amount > 0 ? 'neg' : row.net_amount < 0 ? 'pos' : ''">
+                {{ row.net_amount > 0 ? '-' : row.net_amount < 0 ? '+' : '' }}{{ formatPrice(Math.abs(row.net_amount)) }}
+              </span>
+            </template>
+          </el-table-column>
+          <el-table-column label="已实现" width="100" align="right">
+            <template #default="{ row }">
+              <span :class="row.realized_pnl >= 0 ? 'pos' : 'neg'">
+                {{ row.realized_pnl >= 0 ? '+' : '' }}{{ formatPrice(row.realized_pnl) }}
+              </span>
+            </template>
+          </el-table-column>
+          <el-table-column label="操作" width="120" align="center" fixed="right">
+            <template #default="{ row }">
+              <el-button v-if="Math.abs(row.net_volume) >= 100" size="small" type="primary"
+                @click="onRebalanceRow(row)">
+                {{ row.net_volume > 0 ? '卖' + Math.abs(row.net_volume) : '买' + Math.abs(row.net_volume) }}
+              </el-button>
+              <span v-else class="muted">—</span>
+            </template>
+          </el-table-column>
+        </el-table>
+        <div v-if="exposureTotals" class="exposure-totals">
+          <span>合计：买 {{ exposureTotals.buy_volume }} / 卖 {{ exposureTotals.sell_volume }} /
+            净 <b :class="exposureTotals.net_volume > 0 ? 'pos' : exposureTotals.net_volume < 0 ? 'neg' : ''">
+              {{ exposureTotals.net_volume }}
+            </b> / 已实现
+            <b :class="exposureTotals.realized_pnl >= 0 ? 'pos' : 'neg'">
+              {{ formatPrice(exposureTotals.realized_pnl) }}
+            </b>
+          </span>
+        </div>
+      </el-card>
+
+      <el-card class="aggregate-card" shadow="hover">
+        <template #header>
+          <div class="card-header-flex">
+            <span class="card-title">📈 T0 累计收益</span>
+            <el-radio-group v-model="aggregateDays" size="small" @change="switchAggregateDays">
+              <el-radio-button :value="7">7 天</el-radio-button>
+              <el-radio-button :value="30">30 天</el-radio-button>
+              <el-radio-button :value="90">90 天</el-radio-button>
+            </el-radio-group>
+          </div>
+        </template>
+        <div v-if="aggregateLoading" class="empty-tip">加载中…</div>
+        <div v-else-if="!aggregate" class="empty-tip">暂无累计数据</div>
+        <div v-else class="aggregate-body">
+          <div class="metric-row">
+            <div class="metric">
+              <div class="metric-label">累计已实现</div>
+              <div class="metric-value" :class="aggregate.summary.total_realized >= 0 ? 'pos' : 'neg'">
+                {{ aggregate.summary.total_realized >= 0 ? '+' : '' }}{{ formatPrice(aggregate.summary.total_realized) }}
+              </div>
+            </div>
+            <div class="metric">
+              <div class="metric-label">回报率</div>
+              <div class="metric-value" :class="aggregate.summary.return_rate >= 0 ? 'pos' : 'neg'">
+                {{ (aggregate.summary.return_rate * 100).toFixed(2) }}%
+              </div>
+            </div>
+            <div class="metric">
+              <div class="metric-label">胜率</div>
+              <div class="metric-value">
+                {{ aggregate.summary.win_days }} / {{ aggregate.summary.total_days }}
+                ({{ (aggregate.summary.win_rate * 100).toFixed(0) }}%)
+              </div>
+            </div>
+            <div class="metric">
+              <div class="metric-label">笔数 / 标的</div>
+              <div class="metric-value">
+                {{ aggregate.summary.trade_count }} / {{ aggregate.summary.stocks_traded }}
+              </div>
+            </div>
+          </div>
+          <div class="metric-row sub">
+            <span>佣金 {{ formatPrice(aggregate.summary.total_commission) }}</span>
+            <span>印花税 {{ formatPrice(aggregate.summary.total_stamp_tax) }}</span>
+            <span>买入 {{ formatPrice(aggregate.summary.total_buy_amount) }}</span>
+            <span>卖出 {{ formatPrice(aggregate.summary.total_sell_amount) }}</span>
+          </div>
+        </div>
+      </el-card>
+    </div>
+
     <!-- 操作区：左一键动作，右配平 -->
     <div class="content-card-row">
       <el-card class="action-card" shadow="hover">
@@ -508,6 +618,8 @@ const {
   orderPrice,
   oneClickBuyQty, oneClickSellQty,
   insufficientCash, insufficientPosition,
+  exposureList, exposureTotals, exposureLoading, loadExposure, needRebalance,
+  aggregate, aggregateLoading, loadAggregate,
 } = t0
 
 // 手动下单
@@ -783,6 +895,48 @@ function onOneClickBalance() {
   submitOrder({ orderType, volume: Math.abs(balanceQty.value), price: orderPrice.value })
 }
 
+// ---- 一键配平（敞口表 row） ----
+function onRebalanceRow(row) {
+  if (!row || Math.abs(row.net_volume) === 0) return
+  const orderType = row.net_volume > 0 ? '24' : '23'   // 净买入 → 卖；净卖出 → 买
+  const vol = Math.abs(row.net_volume)
+  // 切换当前 stockCode 到目标股票 → 复用下单流
+  stockCode.value = row.stock_code
+  // 价格用 quote store 中的最新价（如果没有最新价用 cost_basis 兜底）
+  const last = quoteStore.getLastPrice(row.stock_code)
+  const fallback = Number(row.cost_basis) || last || 0
+  submitOrder({ orderType, volume: vol, price: last || fallback })
+}
+
+// ---- 全账户一键配平（按 totals.net_volume 选方向后下 1 单） ----
+function onRebalanceAll() {
+  const t = exposureTotals.value
+  if (!t || t.net_volume === 0) {
+    ElMessage.info('已配平，无净敞口')
+    return
+  }
+  if (!exposureList.value.length) return
+  ElMessageBox.confirm(
+    `当前 T0 总敞口 ${t.net_volume > 0 ? '净买入' : '净卖出'} ${Math.abs(t.net_volume)} 股，${
+      exposureList.value.length
+    } 个标的。确认下 1 单按主标的统一配平？`,
+    '全账户一键配平',
+    { confirmButtonText: '配平', cancelButtonText: '取消', type: 'warning' }
+  )
+    .then(() => {
+      // 选净敞口绝对值最大的标的
+      const top = exposureList.value[0]
+      if (top) onRebalanceRow(top)
+    })
+    .catch(() => {})
+}
+
+const aggregateDays = ref(30)   // 7/30/90
+function switchAggregateDays(d) {
+  aggregateDays.value = d
+  loadAggregate('T0', d)
+}
+
 // 监听 stockCode 变化 → 加载 stats
 watch(stockCode, () => {
   loadT0Stats()
@@ -815,10 +969,12 @@ function onKeyDown(e) {
 onMounted(async () => {
   await loadT0Stats()
   await loadT0History()
+  await loadExposure('T0')
+  await loadAggregate('T0', aggregateDays.value)
   // 监听 trades 变化（ws 推送会触发）
   _unwatchTrades = watch(
     () => holdingsStore.trades?.length,
-    () => loadT0Stats()
+    () => { loadT0Stats(); loadExposure('T0') }
   )
   // 监听全局快捷键
   window.addEventListener('keydown', onKeyDown)
@@ -896,6 +1052,76 @@ onUnmounted(() => {
 
 .up { color: #f56c6c; }   /* A股红涨绿跌 */
 .down { color: #67c23a; }
+
+/* T0 敞口聚合 + 累计收益 */
+.pos { color: #f56c6c; font-weight: 600; }
+.neg { color: #67c23a; font-weight: 600; }
+.muted { color: var(--el-color-info); }
+.empty-tip {
+  padding: 24px;
+  text-align: center;
+  color: var(--el-color-info);
+  font-size: 14px;
+}
+.exposure-card {
+  flex: 1;
+  min-width: 0;
+}
+.exposure-table {
+  width: 100%;
+}
+.exposure-totals {
+  margin-top: 12px;
+  padding: 8px 12px;
+  background: rgba(64, 158, 255, 0.06);
+  border-radius: 4px;
+  font-size: 13px;
+}
+.exposure-totals b {
+  font-weight: 600;
+  margin: 0 2px;
+}
+.aggregate-card {
+  flex: 1;
+  min-width: 0;
+}
+.aggregate-body {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 8px 4px;
+}
+.metric-row {
+  display: flex;
+  gap: 24px;
+  flex-wrap: wrap;
+}
+.metric-row.sub {
+  font-size: 12px;
+  color: var(--el-color-info);
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.metric {
+  flex: 1;
+  min-width: 120px;
+  text-align: center;
+}
+.metric-label {
+  font-size: 12px;
+  color: var(--el-color-info);
+  margin-bottom: 6px;
+}
+.metric-value {
+  font-size: 20px;
+  font-weight: 600;
+}
+.card-header-flex {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+}
 
 /* 行情价格跳动动画（最新推送时短暂高亮） */
 @keyframes priceFlash {
