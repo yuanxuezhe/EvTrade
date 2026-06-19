@@ -151,6 +151,8 @@ async def place_order(req: PlaceOrderRequest, user: User = Depends(get_current_u
             remark=order_no,
         )
     except Exception as e:
+        # v7 改: 加 log.exception 便于运维定位柜台故障
+        log.exception("place_order RPC failed: stock=%s order_no=%s", req.stock_code, order_no)
         order.status = "55"
         order.status_msg = f"RPC 失败: {e}"
         db.commit()
