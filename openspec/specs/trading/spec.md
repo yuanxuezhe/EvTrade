@@ -65,6 +65,137 @@
 - 收到 `trd_cfm` → 路由到 WS 频道 `trade_update`
 - 收到资产变更 → `asset_update`（当前**未识别**，待补）
 
+### REQ-TRADE-006: T0 敞口与累计收益（v1）
+
+> 📌 **范围**：本端点只读不写。T0 标签 = `Order.user_def == 'T0'`，由 T0Trade.vue 下单时自动注入。
+> 真实已实现盈亏用 `(sell_price - cost_basis) × sell_vol - 费用` 公式（见 `services/t0_aggregate.py::calc_realized_pnl`）。
+> 算法独立于 broker 回报延迟：成本基准取自**当前持仓的 `Position.cost_price`**，T+0 减仓时若仓位内含 T-1 底仓则视为锁仓部分，realized 算式仅作用于今日新进仓位的已实现部分。
+
+#### 端点契约
+
+- `GET /api/orders/t0-stats/{stock_code}?trd_date=YYYYMMDD&t0_only=true`
+  - **t0_only=false**：当且仅当 `Order.user_def == ''` 不计入；统计所有该 stock_code 当日成交（兼容旧行为，但 realized 改用真实算式）
+  - **t0_only=true**：仅 `Order.user_def == 'T0'` 的委托 / 成交计入
+  - 响应：`T0StatsOut`（`realized_pnl` 改用真实算式：`(avg_sell - cost_basis) × min(sell_vol, position_vol) - sell_commission - sell_stamp_tax`）
+  - **BREAKING**：`realized_pnl` 算式从「买/卖均价差 × 配对量」改为「(卖均价-成本基准)×卖量-费用」；不传 `t0_only` 时，旧实现相当于不区分 T0 标签，新实现仅在 `t0_only=false` 时回退到「全量」
+
+- `GET /api/orders/t0-history/{stock_code}?days=30&t0_only=true` — 行为不变（毛流 diff），但 `t0_only=true` 默认开启是建议而非强制
+
+- `GET /api/orders/t0-exposure?user_def=T0&trd_date=YYYYMMDD`（**新增**）
+  - 路径：单日 / 多标的 / 按 `user_def` 聚合
+  - 响应：
+    ```json
+    {
+      "trd_date": "20260619",
+      "user_def": "T0",
+      "positions": [
+        {
+          "stock_code": "600519.SH",
+          "buy_volume": 1000,
+          "sell_volume": 800,
+          "buy_amount": 180000.0,
+          "sell_amount": 145600.0,
+          "net_volume": 200,        // = buy_vol - sell_vol（正值=净买入，负值=净卖出）
+          "net_amount": 34400.0,    // = buy_amt - sell_amt（净流出）
+          "order_count": 5,
+          "trade_count": 3,
+          "open_order_count": 1
+        }
+      ],
+      "totals": {
+        "buy_volume": 5000,
+        "sell_volume": 4800,
+        "net_volume": 200,
+        "buy_amount": 1000000.0,
+        "sell_amount": 980000.0,
+        "realized_pnl": 1500.0,    // 当日所有标的总真实已实现
+        "commission_total": 100.0,
+        "stamp_tax_total": 980.0
+      }
+    }
+    ```
+  - **关键语义**：`net_volume` 为正 → 净买入敞口 → 一键配平需要"卖出"这些股；为负 → 净卖出 → 需要"补买"
+  - 排序：按 `abs(net_amount)` 降序
+  - **不要**与 `t0-stats` 重复（那个只算 1 个 stock_code 的当日汇总）
+
+- `GET /api/orders/t0-aggregate?user_def=T0&days=30`（**新增**）
+  - 路径：跨多日 / 多标的 / 按 `user_def` 聚合
+  - 响应：
+    ```json
+    {
+      "user_def": "T0",
+      "days": 30,
+      "summary": {
+        "total_realized": 5000.0,          // 全期真实已实现（已扣费）
+        "total_commission": 500.0,
+        "total_stamp_tax": 1500.0,
+        "total_buy_amount": 1000000.0,
+        "total_sell_amount": 1005000.0,
+        "win_days": 18,
+        "total_days": 25,
+        "win_rate": 0.72,
+        "return_rate": 0.005,             // = total_realized / total_buy_amount
+        "trade_count": 150,
+        "order_count": 80,
+        "stocks_traded": 12
+      },
+      "by_day": [
+        {
+          "trd_date": "20260619",
+          "realized_pnl": 200.0,
+          "buy_amount": 50000.0,
+          "sell_amount": 50200.0,
+          "trade_count": 3,
+          "stock_count": 2,
+          "cum_pnl": 5000.0
+        }
+      ],
+      "by_stock": [
+        {
+          "stock_code": "600519.SH",
+          "trade_count": 12,
+          "realized_pnl": 1200.0,
+          "buy_amount": 250000.0,
+          "sell_amount": 251200.0
+        }
+      ]
+    }
+    ```
+
+#### 计算函数（`services/t0_aggregate.py`）
+
+- `calc_realized_pnl(trades_sell, cost_basis, fee_cfg) -> Tuple[realized, commission, stamp_tax]`
+  - 入参：`trades_sell` = 卖方向 Trade 列表（已按 trd_date 过滤）
+  - 算法：
+    ```
+    sell_amt = Σ(t.price * t.volume) for t in trades_sell
+    commission = round(sell_amt * fee_cfg.commission_rate, 2)
+    stamp_tax = round(sell_amt * fee_cfg.stamp_tax_rate, 2)
+    realized = (sell_amt / sell_vol) * sell_vol - cost_basis * sell_vol
+              - commission - stamp_tax
+             = (avg_sell - cost_basis) * sell_vol - commission - stamp_tax
+    ```
+  - `cost_basis` 缺省为 0（无当前持仓）→ `realized = -commission - stamp_tax`（仅扣费）
+  - 当 `sell_vol == 0` 时返回 `(0, 0, 0)`
+
+- `calc_net_volume(orders, trades) -> Tuple[net_volume, buy_vol, sell_vol, buy_amt, sell_amt]`
+  - 基于 Order + Trade 关联，扣失败单（status=55 废单不计入）
+  - `net_volume = buy_vol - sell_vol`
+
+#### 前端约定
+
+- T0Trade.vue 新增组件 `<T0ExposureTable>`：
+  - 数据来源：`t0StatsApi.getExposure({ user_def: 'T0' })`
+  - 每行展示：代码 / 买量 / 卖量 / 净量 / 净额 / 委托数 / 状态
+  - **每行"一键配平"按钮**：调用 `submitOrder({ orderType, volume: |net_volume|, price: latest })`
+  - 表头合计行：所有标的的 net_volume 之和（用于"全账户一键配平"）
+- T0Trade.vue 新增卡片"📊 T0 累计"：
+  - 数据来源：`t0StatsApi.getAggregate({ user_def: 'T0', days: 30 })`
+  - 展示：累计已实现、回报率、胜率、胜/总天数、笔数、股票数
+  - 切换 7/30/90 天
+- `useT0Balance.js` 新增 `exposureList` / `aggregate` 响应式数据 + `loadExposure()` / `loadAggregate()` 加载函数
+- 提交下单时 `user_def` 始终为 `'T0'`（已在 T0Trade.vue:743 实现；新增：手动模式 / 一键配平也带 T0 标签）
+
 ## Scenarios
 
 ### S-TRADE-001: 下一笔限价买单
