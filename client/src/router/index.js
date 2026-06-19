@@ -25,7 +25,7 @@ const routes = [
     meta: { title: '登录', layout: 'blank', public: true }
   },
   { path: '/', name: 'Dashboard', component: Dashboard, meta: { title: '仪表盘' } },
-  { path: '/positions', redirect: '/to-management' },
+  { path: '/positions', redirect: '/t0-trade' },
   { path: '/trade', name: 'Trade', component: Trade, meta: { title: '交易下单', requiresTrader: true } },
   { path: '/asset', name: 'Asset', component: Asset, meta: { title: '账户资金' } },
   { path: '/orders', name: 'Orders', component: Orders, meta: { title: '委托查询' } },
