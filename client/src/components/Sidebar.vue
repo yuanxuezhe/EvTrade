@@ -94,7 +94,9 @@ const menuItems = computed(() => {
     { path: '/asset', label: '账户资金', icon: Wallet },
     // 策略交易分组
     { divider: true, label: '策略交易' },
-    { path: '/to-management', label: '快速做T', icon: Coin },
+    // Sidebar 入口: 真正指向 /t0-trade (T0Trade.vue)
+// 路由 /to-management 改 redirect 到 /t0-trade (兼容旧书签)
+    { path: '/t0-trade', label: '快速做T', icon: Coin },
     { path: '/t-strategy', label: '策略做T', icon: MagicStick },
     { path: '/algo-strategy', label: '策略交易', icon: Cpu }
   ]

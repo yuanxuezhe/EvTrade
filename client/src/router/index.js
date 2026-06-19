@@ -4,7 +4,6 @@ import { setUnauthorizedHandler } from '../api'
 
 const Login = () => import('../views/Login.vue')
 const Dashboard = () => import('../views/Dashboard.vue')
-const Position = () => import('../views/Position.vue')
 const Trade = () => import('../views/Trade.vue')
 const Asset = () => import('../views/Asset.vue')
 const Orders = () => import('../views/Orders.vue')
@@ -32,7 +31,8 @@ const routes = [
   { path: '/orders', name: 'Orders', component: Orders, meta: { title: '委托查询' } },
   { path: '/holdings', name: 'Holdings', component: Holdings, meta: { title: '持仓查询' } },
   { path: '/trades', name: 'Trades', component: Trades, meta: { title: '成交查询' } },
-  { path: '/to-management', name: 'ToManagement', component: Position, meta: { title: '快速做T' } },
+  // /to-management 旧路由 → redirect 到 /t0-trade (T0Trade.vue 真快速做T页面)
+  { path: '/to-management', redirect: '/t0-trade' },
   { path: '/t-strategy', name: 'TStrategy', component: TStrategy, meta: { title: '策略做T' } },
   { path: '/algo-strategy', name: 'AlgoStrategy', component: AlgoStrategy, meta: { title: '策略交易' } },
   {
