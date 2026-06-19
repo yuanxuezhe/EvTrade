@@ -50,7 +50,7 @@
           </div>
           <div class="metric-row">
             <span class="label">持仓成本</span>
-            <span class="value text-mono">¥{{ formatAmount(positionCostTotal) }}</span>
+            <span class="value text-mono">¥{{ formatAmount(costTotal) }}</span>
           </div>
           <div class="metric-row">
             <span class="label">实时市值</span>
@@ -503,7 +503,7 @@
               <div class="risk-label">建议配平系数</div>
               <div class="risk-value">{{ suggestedCoeff.toFixed(2) }}</div>
               <div class="risk-hint">
-                <el-link type="primary" :underline="false" @click="balanceCoeff = suggestedCoeff">应用</el-link>
+                <el-link type="primary" underline="never" @click="balanceCoeff = suggestedCoeff">应用</el-link>
               </div>
             </div>
           </el-col>
