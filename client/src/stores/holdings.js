@@ -408,13 +408,20 @@ export const useHoldingsStore = defineStore('holdings', () => {
     if (!row || !row.trade_id) return
     const idx = trades.value.findIndex((t) => t.trade_id === row.trade_id)
     if (idx < 0) {
+      // v7 增: 补全 trd_date / order_no / remark
+      //   跟后端 TradeOut schema 对齐 (v6 schema-refinement)
+      //   前端做 T 敞口/配平需要 order_no 关联委托
+      //   trd_date 用于跨日分组; remark 用于关联 Order.remark = 本地 order_no
       trades.value.unshift({
         trade_id: row.trade_id,
         order_id: row.order_id || '',
+        order_no: row.order_no || row.remark || '',  // 兼容 broker 透传 remark
+        trd_date: row.trd_date || _today_yyyymmdd(),
         stock_code: row.stock_code || '',
         order_type: row.order_type || '',
         volume: Number(row.volume) || 0,
         price: Number(row.price) || 0,
+        amount: Number(row.amount) || Number(row.volume || 0) * Number(row.price || 0),
         trade_time: row.trade_time || _now_hms()
       })
       log('ok', '交易', 'ws', `成交通知: ${row.stock_code} ${row.order_type === '23' ? '买' : '卖'} ${row.volume}@${row.price}`)
@@ -440,6 +447,13 @@ export const useHoldingsStore = defineStore('holdings', () => {
     const d = new Date()
     return [d.getHours(), d.getMinutes(), d.getSeconds()]
       .map((n) => String(n).padStart(2, '0')).join(':')
+  }
+
+  // v7 增: 跟后端 trd_date 格式对齐 (YYYYMMDD)
+  function _today_yyyymmdd() {
+    const d = new Date()
+    return [d.getFullYear(), d.getMonth() + 1, d.getDate()]
+      .map((n) => String(n).padStart(2, '0')).join('')
   }
 
   return {
