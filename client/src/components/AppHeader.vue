@@ -121,6 +121,12 @@ const pageMeta = {
   '/trades': { title: '成交查询', sub: '历史成交明细' },
   '/asset': { title: '账户资金', sub: '资金详情与资产分布' },
   '/users': { title: '用户管理', sub: '管理系统账号与权限' },
+  '/holdings': { title: '持仓查询', sub: '当前账户持仓明细' },
+  '/t0-trade': { title: '快速做T', sub: '日内做T开平仓与敞口管理' },
+  '/t-strategy': { title: '策略做T', sub: '自动化做T策略 (占位)' },
+  '/algo-strategy': { title: '策略交易', sub: '算法交易策略 (占位)' },
+  '/system-init': { title: '系统初始化', sub: '交易日 / 行情 / 柜台初始化' },
+  '/system-config': { title: '系统配置', sub: '对账 / 推送 / 风险参数配置' },
   '/profile': { title: '个人资料', sub: '查看与编辑个人信息' }
 }
 
