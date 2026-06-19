@@ -65,21 +65,33 @@ class RPClient:
         self.reply_queue: Optional[aio_pika.Queue] = None
         self.push_queue: Optional[aio_pika.Queue] = None
         self.pending: dict = {}  # msgid -> asyncio.Future
+        # publisher confirm 超时（防 broker 不 ack 时永久挂起）
+        self._publish_confirm_timeout: float = 5.0
 
     async def connect(self):
+        # 幂等守卫：已连接且未关闭 → 直接返回（避免 FastAPI 重启/双启动时重复 declare）
+        if self.conn is not None and not self.conn.is_closed:
+            log.debug("RPClient.connect: already connected, skip")
+            return
         self.conn = await aio_pika.connect_robust(self.url)
-        self.channel = await self.conn.channel()
+        # publisher_confirms=True 让 publish() 等 broker ack，broker 重启/磁盘满不再静默丢包
+        self.channel = await self.conn.channel(publisher_confirms=True)
         self.exchange = await self.channel.declare_exchange(
             EXCHANGE_NAME, ExchangeType.TOPIC, durable=True,
         )
-        await self.channel.declare_queue(QUEUE_REQ, durable=True)
+        # 显式 declare + bind 三条 durable 队列（REQ-RPC-007）
+        # routing_key 用队列名本身（topic exchange 支持字面 key，不依赖柜台预绑定）
+        req_q = await self.channel.declare_queue(QUEUE_REQ, durable=True)
+        await req_q.bind(self.exchange, routing_key=QUEUE_REQ)
         self.reply_queue = await self.channel.declare_queue(QUEUE_REPLY, durable=True)
+        await self.reply_queue.bind(self.exchange, routing_key=QUEUE_REPLY)
         self.push_queue = await self.channel.declare_queue(QUEUE_PUSH, durable=True)
+        await self.push_queue.bind(self.exchange, routing_key=QUEUE_PUSH)
         asyncio.ensure_future(self._listen_replies())
         asyncio.ensure_future(self._listen_pushs())
         log.info(
-            "RPClient connected, listening on reply=%s push=%s",
-            QUEUE_REPLY, QUEUE_PUSH,
+            "RPClient connected, listening on reply=%s push=%s (exchange=%s, confirms=on)",
+            QUEUE_REPLY, QUEUE_PUSH, EXCHANGE_NAME,
         )
 
     async def _listen_replies(self):
@@ -258,9 +270,24 @@ class RPClient:
         if req_dump:
             log.debug("RPClient.call >>> wire:\n%s", req_dump)
 
-        await self.exchange.publish(
-            Message(body=wire_data), routing_key=QUEUE_REQ
-        )
+        # publisher confirm（REQ-RPC-008）：等 broker ack，超时则清 pending + 抛错
+        try:
+            await asyncio.wait_for(
+                self.exchange.publish(
+                    Message(body=wire_data), routing_key=QUEUE_REQ
+                ),
+                timeout=self._publish_confirm_timeout,
+            )
+        except asyncio.TimeoutError:
+            self.pending.pop(msg_id, None)
+            log.error(
+                "RPClient.call publish TIMEOUT func=%s msg_id=%s after %.1fs (broker no-ack?)",
+                func, msg_id, self._publish_confirm_timeout,
+            )
+            raise RuntimeError(
+                f"RPC publish unconfirmed after {self._publish_confirm_timeout}s "
+                f"(broker not ack, check broker status / disk)"
+            )
 
         try:
             return await asyncio.wait_for(future, timeout=timeout)
