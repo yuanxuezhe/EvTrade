@@ -1,5 +1,5 @@
 """
-t0.py — T0 一键买卖 + 配平系数
+t0.py — T0 一键买卖 + 配平系数 + 费率
 
 设计：
 - 配平系数 (t0_coefficient): 默认 1.0（按目标股数实买）
@@ -9,9 +9,12 @@ t0.py — T0 一键买卖 + 配平系数
 - T0 一键买: 根据目标股数自动取整到 100 股倍数
 - T0 一键卖: 直接平仓所有可用
 
-费率 (fee):
-- commission_rate 默认 0.0001（万一）
-- min_commission 默认 5.0
+费率 (fee) — v7 schema 后 ORM 完整字段：
+- commission_rate  默认 0.0001（万一）
+- stamp_tax_rate   默认 0.001（卖出千 1）
+- min_commission   默认 5.0（A 股规则：佣金 < 5 元按 5 元收）
+- slippage         默认 0.001（滑点，备用）
+- 真实已实现盈亏算法见 services.t0_aggregate.calc_realized_pnl
 """
 from decimal import Decimal, ROUND_DOWN, ROUND_UP
 from typing import Optional, Tuple
@@ -35,6 +38,8 @@ def get_fee_config() -> FeeConfig:
             cfg = FeeConfig(
                 commission_rate=0.0001,
                 stamp_tax_rate=0.001,  # 卖出印花税千 1
+                min_commission=5.0,    # A 股最低佣金 5 元
+                slippage=0.001,
             )
             db.add(cfg)
             db.commit()
@@ -81,7 +86,10 @@ def calc_t0_volume(target_volume: int, coefficient: float, direction: str) -> in
 def calc_commission(amount: float, cfg: FeeConfig, direction: str) -> Tuple[float, float]:
     """算手续费 + 印花税（卖出）
 
-    注：ORM FeeConfig 没有 min_commission / transfer_fee_rate 字段
+    注：v7 schema 后 ORM FeeConfig 完整字段：
+        commission_rate / stamp_tax_rate / min_commission / slippage
+    min_commission 兜底逻辑在 services.t0_aggregate.calc_commission_and_tax 中实现，
+    本函数保留原签名（不带 min 兜底）以兼容既有调用方。
     """
     commission = round(amount * cfg.commission_rate, 2)
     stamp_tax = 0.0

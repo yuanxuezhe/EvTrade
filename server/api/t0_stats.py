@@ -1,5 +1,5 @@
 """
-t0_stats.py — v5 重构版（schema refactor）
+t0_stats.py — v5 重构版（schema refactor）+ v6 真实已实现算法
 
 GET /api/orders/t0-stats/{stock_code}?trd_date=YYYYMMDD   单日统计
 GET /api/orders/t0-history/{stock_code}?days=30            历史曲线
@@ -9,6 +9,14 @@ v5 改动：
 - Position.TRD_DATE 去掉（无此字段）
 - Position 字段重命名：cost→cost_price, total→vol
 - T0StatsOut 响应字段 trd_date 小写
+
+v6 改动（2026-06-19 t0-exposure-and-aggregate change）：
+- realized_pnl 改用 t0_aggregate.calc_realized_pnl（真实算法）
+  旧 = (avg_sell - avg_buy) * paired → 实际是毛流，忽略持仓成本基准和费用
+  新 = (avg_sell - cost_basis) * sell_vol - commission - stamp_tax
+- unrealized_pnl 改为基于当前持仓（position_vol × cost_basis），不再叠加当日已实现
+  旧 = (avg_sell - cost_basis) * paired
+  新 = (avg_sell - cost_basis) * position_vol  // 持仓浮动（用当日卖出均价作为市场价近似）
 """
 from collections import defaultdict
 from datetime import datetime, timedelta
@@ -23,6 +31,8 @@ from models.orm import Order, Trade, Position
 from auth.deps import get_current_user
 from models.user import User
 from services.guards import resolve_default_trd_date
+from services.t0 import get_fee_config
+from services.t0_aggregate import calc_realized_pnl
 
 router = APIRouter()
 
@@ -105,25 +115,30 @@ async def t0_stats(
             today_sell_vol += vol
             today_sell_amt += price * vol
 
-    # 已实现盈亏（FIFO 简化：买入先入 → 卖出按当日买入均价匹配）
-    if today_buy_vol > 0 and today_sell_vol > 0:
-        avg_buy = today_buy_amt / today_buy_vol
-        avg_sell = today_sell_amt / today_sell_vol
-        paired = min(today_buy_vol, today_sell_vol)
-        realized = (avg_sell - avg_buy) * paired
-    else:
-        realized = 0.0
-
-    # 持仓（按 stock_code PK 单行）
+    # 持仓（按 stock_code PK 单行）— 先取 cost_basis 再算 realized
     pos = db.query(Position).filter(Position.stock_code == stock_code).first()
     cost_basis = float(pos.cost_price) if pos else 0.0
     position_vol = int(pos.vol) if pos and pos.vol else 0
     position_cost_total = cost_basis * position_vol
 
-    # 浮动盈亏
-    if today_sell_vol > 0:
+    # 已实现盈亏（真实算法：基于持仓成本基准 + 卖出方向费用）
+    # 算法见 services.t0_aggregate.calc_realized_pnl
+    sell_trades_today = [t for t in trades_today if t.order_type == "24"]
+    fee_cfg = get_fee_config()
+    realized, _commission, _stamp_tax = calc_realized_pnl(
+        sell_trades_today, cost_basis, fee_cfg
+    )
+
+    # 浮动盈亏（v6 新语义：基于当前持仓 × 持仓成本基准，用当日卖出均价作为市场价近似）
+    #   - 不包含当日已实现（已用 realized_pnl 单独返回）
+    #   - 持仓 vol=0 时无浮动盈亏
+    if today_sell_vol > 0 and position_vol > 0:
         avg_sell = today_sell_amt / today_sell_vol
-        unrealized = (avg_sell - cost_basis) * min(today_sell_vol, position_vol) if cost_basis > 0 else 0
+        unrealized = (avg_sell - cost_basis) * position_vol if cost_basis > 0 else 0.0
+    elif today_sell_vol == 0 and position_vol > 0 and cost_basis > 0:
+        # 当日无卖出但有持仓：用 0 作为市场价近似（亏全）
+        # 实际应传最新价；当前 Position 表无最新价字段，此处保守返回 0 让前端用 quote
+        unrealized = 0.0
     else:
         unrealized = 0.0
 

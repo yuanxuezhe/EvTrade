@@ -8,7 +8,7 @@ from auth.security import hash_password, decode_token
 from auth.deps import get_current_user
 from api import positions, holdings, orders, trades, asset, auth as auth_api, users as users_api
 from api import clock, fee_config
-from api import t0_stats
+from api import t0_stats, t0_aggregate
 from api.admin import sys_status as admin_sys_status, reconcile as admin_reconcile, session as admin_session
 from ws.manager import ws_manager
 from rpc.client import get_rpc_client, close_rpc_client
@@ -97,6 +97,7 @@ app.include_router(positions.router, prefix="/api/positions", tags=["positions"]
 app.include_router(holdings.router, prefix="/api/holdings", tags=["holdings"], dependencies=_AUTH)
 app.include_router(orders.router, prefix="/api/orders", tags=["orders"], dependencies=_AUTH)
 app.include_router(t0_stats.router, prefix="/api/orders", tags=["t0-stats"], dependencies=_AUTH)
+app.include_router(t0_aggregate.router, prefix="/api/orders", tags=["t0-aggregate"], dependencies=_AUTH)
 app.include_router(trades.router, prefix="/api/trades", tags=["trades"], dependencies=_AUTH)
 app.include_router(asset.router, prefix="/api/asset", tags=["asset"], dependencies=_AUTH)
 app.include_router(fee_config.router, prefix="/api/fee-config", tags=["fee-config"], dependencies=_AUTH)
