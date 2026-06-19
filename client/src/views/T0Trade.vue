@@ -356,7 +356,11 @@
               class="big-btn"
             >
               {{ manualDirection === '23' ? '下买单' : '下卖单' }}
-              <div class="btn-sub">{{ formatNumber(manualVolume) }} 股 × ¥{{ formatPrice(orderPrice) }}</div>
+              <div class="btn-sub">
+                {{ manualVolume > 0
+                  ? `${formatNumber(manualVolume)} 股 × ¥${formatPrice(orderPrice)}`
+                  : `填入数量后下单` }}
+              </div>
             </el-button>
           </div>
 
@@ -628,9 +632,9 @@ const {
   aggregate, aggregateLoading, loadAggregate,
 } = t0
 
-// 手动下单
+// 手动下单（0 = 留空，自动用一键算法的量）
 const manualDirection = ref('23')   // 23=买 24=卖
-const manualVolume = ref(100)
+const manualVolume = ref(0)
 const priceTypeLabel = computed(() => {
   return { latest: '最新', oppose: '对手', limit: '限价', market: '市价' }[priceType.value] || ''
 })
