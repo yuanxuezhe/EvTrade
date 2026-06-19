@@ -1,7 +1,5 @@
 <template>
-  <div class="system-init">
-    <h2>系统初始化</h2>
-
+  <div class="system-init fade-in-up">
     <!-- 当前交易日状态 -->
     <el-card class="status-card" shadow="hover">
       <template #header>
@@ -275,7 +273,6 @@ onUnmounted(() => {
 
 <style scoped>
 .system-init { padding: 16px; }
-h2 { margin: 0 0 16px 0; }
 .status-card, .action-card, .config-card, .reports-card {
   margin-bottom: 16px;
 }

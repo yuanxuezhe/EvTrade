@@ -1,7 +1,5 @@
 <template>
-  <div class="system-config">
-    <h2>系统配置</h2>
-
+  <div class="system-config fade-in-up">
     <!-- 对账配置 -->
     <el-card class="config-card" shadow="hover">
       <template #header>
@@ -192,7 +190,6 @@ onMounted(() => {
 
 <style scoped>
 .system-config { padding: 16px; }
-h2 { margin: 0 0 16px 0; }
 .config-card { margin-bottom: 16px; }
 .card-title { font-weight: 600; }
 .hint { color: #909399; font-size: 12px; margin-left: 8px; }
