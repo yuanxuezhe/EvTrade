@@ -109,7 +109,9 @@ const menuItems = computed(() => {
 
 function isActive(path) {
   if (path === '/') return route.path === '/'
-  return route.path.startsWith(path)
+  // 严格前缀匹配：path 必须等于 route.path 或以 'path/' 开头
+  // 避免 /trade 误匹配 /trades（V7 修复）
+  return route.path === path || route.path.startsWith(path + '/')
 }
 </script>
 
