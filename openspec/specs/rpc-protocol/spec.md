@@ -58,6 +58,23 @@ pkt = await client.call(
 - 超时 → 同上 + log warning
 - 解析失败 → log + 返回 `{code: -1, msg: "<error>", list: []}`
 
+### REQ-RPC-007: 队列拓扑与绑定（v2 收紧）
+
+- `connect()` 时**显式声明并绑定**三条 durable 队列到 `EXCHANGE_NAME`（topic）：
+  - `EvTrade.Test.Req`    ← 发送 routing_key `EvTrade.Test.Req`
+  - `EvTrade.Test.Reply`  ← 接收 routing_key `EvTrade.Test.Reply`
+  - `EvTrade.Test.Push`   ← 接收 routing_key `EvTrade.Test.Push`
+- 队列名直接作 routing_key（topic 通配 `*` / `#` 不依赖柜台侧预绑定）
+- 重复 `connect()` 不报错（幂等）：已 connected 则直接返回
+- 队列绑定失败（exchange 不存在 / 权限不足）→ 启动抛异常，不静默降级
+
+### REQ-RPC-008: Publisher Confirms（v2 新增）
+
+- channel 开启 `publisher_confirms=True`
+- `exchange.publish()` 后**等 broker ack** 才返回（防 broker 重启/磁盘满导致静默丢包）
+- 超时 5s 未 ack → 抛 `RuntimeError("publish unconfirmed")`，不挂起调用方
+- RPClient 内部用 `_publish_confirm_timeout` 控制（默认 5s）
+
 ## Scenarios
 
 ### S-RPC-001: 正常查询
@@ -78,6 +95,20 @@ And 期间调用的 `_parse_*` 返回 `{code: -1, ...}`
 When `ord_stk(order_type="invalid")`  
 Then 柜台返回 `{code: -100, msg: "order_type 非法", list: []}`  
 And 后端原样透传
+
+### S-RPC-004: 队列绑定（v2）
+
+Given 服务启动 `connect()`  
+When 检查 broker 队列表  
+Then `EvTrade.Test.Req` / `EvTrade.Test.Reply` / `EvTrade.Test.Push` 均存在  
+And 三条队列的 binding source exchange = `EXCHANGE_NAME`，routing_key = 各自队列名
+
+### S-RPC-005: Publisher Confirm 超时（v2）
+
+Given broker 停止 ack（mock 故障）  
+When `call("qry_ast")`  
+Then 5s 内抛 `RuntimeError("publish unconfirmed")`  
+And `pending` dict 不残留（避免后续应答误匹配）
 
 ## Code Reference
 
