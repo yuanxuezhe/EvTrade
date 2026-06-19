@@ -9,7 +9,11 @@ import { useHoldingsStore } from './holdings'
 import { STATUS_LABEL } from '../utils/format'
 
 const CHANNELS = ['order_update', 'trade_update', 'position_update', 'asset_update', 'quote_update']
-const RECONNECT_DELAY = 3000
+// v7 改: WS 重连从固定 3s 改为指数退避
+//   delay = min(1000 * 2^retryCount, 30000)
+//   broker 长时间故障时不会 3s 一次疯狂重连
+const RECONNECT_BASE_DELAY = 1000
+const RECONNECT_MAX_DELAY = 30000
 // 行情直连 hqserver :8765，不再走 server 后端转发
 const QUOTE_WS_HOST = (() => {
   // 优先用环境变量；否则复用当前 host（hqserver 通常跟前端同机部署）
@@ -38,6 +42,7 @@ export const useWsStore = defineStore('ws', () => {
   const lastEvent = ref(null)
   const _sockets = {}    // channel -> WebSocket
   const _reconnectTimer = {}
+  const _retryCount = {}  // v7 增: 指数退避计数, per-channel
 
   function _wsUrl(channel) {
     const proto = window.location.protocol === 'https:' ? 'wss' : 'ws'
@@ -60,13 +65,18 @@ export const useWsStore = defineStore('ws', () => {
 
     ws.onopen = () => {
       connected.value = true
+      _retryCount[channel] = 0  // v7 增: 连接成功重置退避计数
       // eslint-disable-next-line no-console
       console.log(`[WS] ${channel} connected`)
     }
 
     ws.onclose = () => {
+      // v7 改: 指数退避
+      const c = (_retryCount[channel] || 0) + 1
+      _retryCount[channel] = c
+      const delay = Math.min(RECONNECT_BASE_DELAY * 2 ** (c - 1), RECONNECT_MAX_DELAY)
       // eslint-disable-next-line no-console
-      console.log(`[WS] ${channel} closed, reconnect in ${RECONNECT_DELAY}ms`)
+      console.log(`[WS] ${channel} closed, reconnect in ${delay}ms (attempt #${c})`)
       _scheduleReconnect(channel)
     }
 
@@ -93,10 +103,12 @@ export const useWsStore = defineStore('ws', () => {
 
   function _scheduleReconnect(channel) {
     if (_reconnectTimer[channel]) return
+    const c = _retryCount[channel] || 1
+    const delay = Math.min(RECONNECT_BASE_DELAY * 2 ** (c - 1), RECONNECT_MAX_DELAY)
     _reconnectTimer[channel] = setTimeout(() => {
       _reconnectTimer[channel] = null
       _openChannel(channel)
-    }, RECONNECT_DELAY)
+    }, delay)
   }
 
   function connect() {
@@ -109,6 +121,7 @@ export const useWsStore = defineStore('ws', () => {
         clearTimeout(_reconnectTimer[ch])
         _reconnectTimer[ch] = null
       }
+      _retryCount[ch] = 0  // v7 增: 主动断开也清计数
       if (_sockets[ch]) {
         _sockets[ch].onclose = null
         _sockets[ch].close()
