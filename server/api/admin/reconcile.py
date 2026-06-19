@@ -59,11 +59,14 @@ async def get_config(db: Session = Depends(get_db), _=Depends(require_admin)):
         db.add(cfg)
         db.commit()
         db.refresh(cfg)
+    # v5 schema: ORM updated_by=Integer (历史遗留), Pydantic 期望 str
+    # 统一在序列化时 str() 包一下, 兼容 DB 里 int / None 两种
+    _ub = cfg.updated_by
     return ReconcileConfigOut(
         auto_reconcile=bool(cfg.auto_reconcile),
         auto_use_broker_data=int(cfg.auto_use_broker_data),
         updated_at=cfg.updated_at.isoformat() if cfg.updated_at else None,
-        updated_by=cfg.updated_by or 'init',
+        updated_by=str(_ub) if _ub is not None else 'init',
     )
 
 
@@ -89,7 +92,7 @@ async def update_config(
         auto_reconcile=bool(cfg.auto_reconcile),
         auto_use_broker_data=int(cfg.auto_use_broker_data),
         updated_at=cfg.updated_at.isoformat() if cfg.updated_at else None,
-        updated_by=cfg.updated_by,
+        updated_by=str(cfg.updated_by) if cfg.updated_by is not None else '',
     )
 
 
