@@ -44,6 +44,28 @@ def _clean_id(raw: str) -> str:
     return raw.strip().rstrip("\x00").strip()
 
 
+def _run_handle_push(func: str, row: Dict[str, Any], ts: str) -> None:
+    """push 落库 helper（REQ-PUSH-006）：新线程内跑 SessionLocal + handle_push + commit。
+
+    设计要点：
+    - 在新线程中执行（asyncio.to_thread 包裹），不阻塞 push listener 的 event loop
+    - SessionLocal 每次新建，独立 session 安全无共享状态
+    - 异常向上抛回 await 处，由 listener 捕获并 log
+    - handle_push 同步签名不变（向后兼容 test_push_handlers.py 11 用例）
+    """
+    from db import SessionLocal
+    from services.push_handlers import handle_push
+    db = SessionLocal()
+    try:
+        handle_push(db, func, row, ts)
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+
 def _wire_dump(pkt: "MsgPacket") -> str:
     """用 msgpacket 自带的 wire_to_string 抓报文字符串视图，便于排查。
 
@@ -186,21 +208,12 @@ class RPClient:
                                 "data": row,
                             }
 
-                            # v4 持久化：先写 DB，再推 WS
+                            # v8 持久化（异步）：to_thread 包裹，不阻塞 event loop（REQ-PUSH-006）
+                            # 抽 _run_handle_push 到新线程跑，listener 主线程继续消费后续 push
                             try:
-                                from db import SessionLocal
-                                from services.push_handlers import handle_push
-                                db = SessionLocal()
-                                try:
-                                    handle_push(db, func, row, ts)
-                                    db.commit()
-                                except Exception as e:
-                                    db.rollback()
-                                    log.error("RPClient.push handle_push error: %s", e)
-                                finally:
-                                    db.close()
+                                await asyncio.to_thread(_run_handle_push, func, row, ts)
                             except Exception as e:
-                                log.exception("RPClient.push DB integration error: %s", e)
+                                log.error("RPClient.push handle_push error: %s", e)
 
                             log.info(
                                 "RPClient.push broadcast → %s%s",
