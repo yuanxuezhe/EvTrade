@@ -70,17 +70,13 @@
               </div>
             </div>
             <el-dropdown-item command="profile" :icon="User">个人资料</el-dropdown-item>
-            <el-dropdown-item command="password" :icon="Lock">修改密码</el-dropdown-item>
-            <el-dropdown-item v-if="authStore.isAdmin" command="users" :icon="UserFilled">
-              用户管理
-            </el-dropdown-item>
+            <!-- 修改密码入口在个人资料页, 不再放菜单 -->
+            <!-- 用户管理入口在侧栏, 不再重复 -->
             <el-dropdown-item command="logout" divided :icon="SwitchButton">退出登录</el-dropdown-item>
           </el-dropdown-menu>
         </template>
       </el-dropdown>
     </div>
-
-    <ChangePasswordDialog v-model="pwdDialogVisible" />
   </header>
 </template>
 
@@ -100,7 +96,7 @@ import { useHoldingsStore } from '../stores/holdings'
 import { useAuthStore } from '../stores/auth'
 import { formatMoney } from '../utils/format'
 import { api } from '../api'
-import ChangePasswordDialog from './ChangePasswordDialog.vue'
+// 修改密码弹窗已移入 Profile.vue, AppHeader 不再需要
 
 const route = useRoute()
 const router = useRouter()
@@ -114,7 +110,6 @@ const authStore = useAuthStore()
 
 const refreshing = ref(false)
 const currentTime = ref('')
-const pwdDialogVisible = ref(false)
 // 交易时段：以后端 /api/trading/clock 为准（DB 配的 trading_session）
 const tradingClock = ref({ is_in_session: false })
 
@@ -204,7 +199,6 @@ async function handleRefresh() {
 async function handleUserCmd(cmd) {
   if (cmd === 'profile') router.push('/profile')
   else if (cmd === 'users') router.push('/users')
-  else if (cmd === 'password') pwdDialogVisible.value = true
   else if (cmd === 'logout') {
     try {
       await ElMessageBox.confirm('确定要退出登录？', '提示', {

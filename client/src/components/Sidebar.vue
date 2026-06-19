@@ -91,8 +91,7 @@ const menuItems = computed(() => {
     },
     { path: '/holdings', label: '持仓查询', icon: Files },
     { path: '/trades', label: '成交查询', icon: Tickets },
-    { path: '/asset', label: '账户资金', icon: Wallet },
-    { path: '/profile', label: '个人资料', icon: UserFilled },
+    // 账户资金 / 个人资料 入口移到头部用户菜单, 不再放侧栏
     // 策略交易分组
     { divider: true, label: '策略交易' },
     // Sidebar 入口: 真正指向 /t0-trade (T0Trade.vue)
