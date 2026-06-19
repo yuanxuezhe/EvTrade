@@ -47,7 +47,7 @@ export const useWsStore = defineStore('ws', () => {
     }
     // 后端 WS 需要 JWT token（查询参数）
     const token = localStorage.getItem('evtrade-token') || ''
-    const sep = token ? '&' : '?'
+    const sep = token ? '?' : ''  // 第一个 query 参数用 ?，不是 &
     return `${proto}://${window.location.host}/ws/${channel}${sep}token=${encodeURIComponent(token)}`
   }
 
