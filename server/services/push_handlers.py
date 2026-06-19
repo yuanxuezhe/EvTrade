@@ -15,6 +15,7 @@ push_handlers.py — v6 推送落库（order-pk-by-orderno）
   - ast_cfm: 单行资产表覆盖
 """
 from datetime import datetime, timezone
+import logging
 from sqlalchemy import text
 from typing import Dict, Any, Optional
 from sqlalchemy.orm import Session
@@ -22,6 +23,8 @@ from sqlalchemy.orm import Session
 from models.orm import (
     Order, Trade, Position, Asset, SysStatus,
 )
+
+log = logging.getLogger(__name__)
 
 def _utcnow():
     return datetime.now(timezone.utc).replace(tzinfo=None)
@@ -344,5 +347,7 @@ def handle_push(db: Session, func: str, row: Dict[str, Any], ts: str) -> None:
     """统一入口"""
     handler = HANDLERS.get(func)
     if not handler:
+        # v7 改: 缺 handler 不再静默 return, 方便 broker 加新 func 时能被定位
+        log.warning("handle_push: unknown func=%r row=%r ts=%s", func, row, ts)
         return
     handler(db, row, ts)
