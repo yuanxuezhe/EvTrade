@@ -171,7 +171,7 @@ export function useT0Balance(stockCodeRef) {
   const exposureList = ref([])            // [{stock_code, buy_vol, sell_vol, net_vol, ...}]
   const exposureTotals = ref(null)        // {buy_vol, sell_vol, net_vol, realized_pnl, ...}
   const exposureLoading = ref(false)
-  async function loadExposure(userDef = 'T0', trdDate = null) {
+  async function loadExposure(userDef = 'T0', trdDate = null, onError = null) {
     exposureLoading.value = true
     try {
       const data = await t0StatsApi.getExposure({ userDef, trdDate })
@@ -181,6 +181,7 @@ export function useT0Balance(stockCodeRef) {
       console.warn('[useT0Balance] loadExposure failed:', e)
       exposureList.value = []
       exposureTotals.value = null
+      if (typeof onError === 'function') onError(e)
     } finally {
       exposureLoading.value = false
     }
@@ -189,13 +190,14 @@ export function useT0Balance(stockCodeRef) {
   // ---- 跨期累计（user_def='T0'，days=7/30/90） ----
   const aggregate = ref(null)            // {summary, by_day, by_stock}
   const aggregateLoading = ref(false)
-  async function loadAggregate(userDef = 'T0', days = 30) {
+  async function loadAggregate(userDef = 'T0', days = 30, onError = null) {
     aggregateLoading.value = true
     try {
       aggregate.value = await t0StatsApi.getAggregate({ userDef, days })
     } catch (e) {
       console.warn('[useT0Balance] loadAggregate failed:', e)
       aggregate.value = null
+      if (typeof onError === 'function') onError(e)
     } finally {
       aggregateLoading.value = false
     }
