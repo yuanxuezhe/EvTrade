@@ -46,7 +46,7 @@
         <span class="text-mono total-cell">{{ formatNumber(row.vol) }}</span>
       </template>
     </el-table-column>
-    <el-table-column label="可用占比" min-width="160">
+    <el-table-column label="可用占比" width="120" align="left">
       <template #default="{ row }">
         <div class="ratio-bar-wrap">
           <div class="ratio-bar">
