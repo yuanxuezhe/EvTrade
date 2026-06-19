@@ -7,7 +7,7 @@
           v-model="stockCode"
           placeholder="股票代码 (如 600519.SH)"
           style="width: 220px"
-          @keyup.enter="onSubmit"
+          @keyup.enter="onManualSubmit"
           @change="onStockCodeChange"
         >
           <template #prefix>
