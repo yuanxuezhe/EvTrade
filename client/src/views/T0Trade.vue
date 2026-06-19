@@ -476,7 +476,7 @@
           <el-radio-button value="aggressive">激进</el-radio-button>
         </el-radio-group>
 
-        <el-row :gutter="16" class="risk-grid">
+        <el-row :gutter="12" class="risk-grid">
           <el-col :span="6">
             <div class="risk-item">
               <div class="risk-label">单股仓位上限</div>
@@ -508,6 +508,27 @@
             </div>
           </el-col>
         </el-row>
+
+        <!-- 一键开仓 / 一键平仓 / 一键配平（V9 紧凑入口，函数复用下方表单的 onOneClickBuy/Sell/Balance） -->
+        <div class="quick-actions">
+          <el-button class="quick-btn" type="primary" size="large"
+            :disabled="!canBuy"
+            @click="onOneClickBuy">
+            ⚡ 一键开仓 <span class="btn-sub">buy {{ formatNumber(effectiveBuyQty) }} 股</span>
+          </el-button>
+          <el-button class="quick-btn" type="danger" size="large"
+            :disabled="!canSell"
+            @click="onOneClickSell">
+            ⚠ 一键平仓 <span class="btn-sub">sell {{ formatNumber(effectiveSellQty) }} 股</span>
+          </el-button>
+          <el-button class="quick-btn" type="warning" size="large"
+            :disabled="!canBalanceSubmit"
+            @click="onOneClickBalance">
+            ⚖ 一键配平 <span class="btn-sub" v-if="Math.abs(effectiveBalanceQty) >= 100">
+              {{ direction === 'buy' ? 'buy' : 'sell' }} {{ formatNumber(Math.abs(effectiveBalanceQty)) }} 股
+            </span>
+          </el-button>
+        </div>
 
         <el-alert
           v-if="riskWarnings.length > 0"
@@ -1360,17 +1381,40 @@ onUnmounted(() => {
 .risk-item {
   background: var(--el-fill-color-light);
   border-radius: 8px;
-  padding: 12px 16px;
+  padding: 8px 10px;       /* V9: 12px 16px -> 8px 10px 收紧 */
   text-align: center;
+  min-width: 0;            /* 防止数字溢出撑宽 */
 }
 .risk-label { font-size: 12px; color: #909399; margin-bottom: 4px; }
-.risk-value { font-size: 22px; font-weight: 700; color: #303133; }
+.risk-value { font-size: 16px; font-weight: 700; color: #303133; line-height: 1.2; }  /* V9: 22px -> 16px */
 .risk-hint { font-size: 11px; color: #909399; margin-top: 2px; }
 .risk-tag {
   padding: 2px 10px;
   border-radius: 10px;
   font-size: 12px;
   font-weight: 600;
+}
+
+/* V9: 一键开仓 / 一键平仓 / 一键配平（3 按钮等宽紧凑行） */
+.quick-actions {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.quick-actions .quick-btn {
+  flex: 1;
+  font-weight: 600;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 8px 4px;
+}
+.quick-actions .quick-btn .btn-sub {
+  font-size: 11px;
+  font-weight: 400;
+  opacity: 0.85;
+  letter-spacing: 0.3px;
 }
 .risk-tag.safe { background: #f0f9eb; color: #67c23a; }
 .risk-tag.low { background: #fdf6ec; color: #e6a23c; }
