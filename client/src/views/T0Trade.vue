@@ -156,7 +156,7 @@
           <div class="card-header-flex">
             <span class="card-title">📋 T0 敞口聚合（当日）</span>
             <el-button size="small" type="warning" plain :disabled="!exposureTotals || exposureTotals.net_volume === 0"
-              @click="onRebalanceAll">⚖ 全账户一键配平</el-button>
+              @click="onRebalanceAll">⚖ 一键配平（当前标的）</el-button>
           </div>
         </template>
         <div v-if="exposureLoading" class="empty-tip">加载中…</div>
@@ -277,7 +277,7 @@
               class="big-btn"
             >
               一键全仓买入
-              <div class="btn-sub">{{ formatNumber(oneClickBuyQty) }} 股 (B)</div>
+              <div class="btn-sub">{{ formatNumber(effectiveBuyQty) }} 股 (B)</div>
             </el-button>
             <el-button
               type="danger"
@@ -289,13 +289,14 @@
               class="big-btn"
             >
               一键全仓卖出
-              <div class="btn-sub">{{ formatNumber(oneClickSellQty) }} 股 (S)</div>
+              <div class="btn-sub">{{ formatNumber(effectiveSellQty) }} 股 (S)</div>
             </el-button>
           </div>
 
           <el-divider />
 
-          <el-form :inline="true" class="order-form">
+          <!-- 本次交易表单（一键买/卖/配平/手动单 都共用这组价/量） -->
+          <el-form :inline="true" class="order-form manual-trade-form">
             <el-form-item label="方向">
               <el-radio-group v-model="manualDirection" size="large">
                 <el-radio-button value="23">买入</el-radio-button>
@@ -329,6 +330,7 @@
                 :step="100"
                 :precision="0"
                 style="width: 140px"
+                placeholder="留空=自动"
               />
             </el-form-item>
             <el-form-item label="配平系数">
@@ -356,6 +358,10 @@
               {{ manualDirection === '23' ? '下买单' : '下卖单' }}
               <div class="btn-sub">{{ formatNumber(manualVolume) }} 股 × ¥{{ formatPrice(orderPrice) }}</div>
             </el-button>
+          </div>
+
+          <div class="hint" v-if="Number(manualVolume) > 0">
+            📌 当前「数量」已填值，一键买/卖/配平按钮将使用此数量（替代自动值）
           </div>
 
           <div class="hint" v-if="insufficientCash">
@@ -428,7 +434,7 @@
             >
               一键配平{{ direction === 'flat' ? '（无差额）' : (direction === 'buy' ? '买入' : '卖出') }}
               <div class="btn-sub" v-if="direction !== 'flat'">
-                {{ formatNumber(Math.abs(balanceQty)) }} 股 × ¥{{ formatPrice(orderPrice) }} (F)
+                {{ formatNumber(effectiveBalanceQty) }} 股 × ¥{{ formatPrice(orderPrice) }} (F)
               </div>
             </el-button>
           </div>
@@ -631,6 +637,20 @@ const priceTypeLabel = computed(() => {
 
 // 持仓列表
 const holdingsPositions = computed(() => positions.value)
+
+// ---- 本次交易表单的"有效值"：用户填了用填的，否则走自动 ----
+const effectiveBuyQty = computed(() => {
+  const v = Number(manualVolume.value)
+  return v > 0 ? Math.floor(v / 100) * 100 : oneClickBuyQty.value
+})
+const effectiveSellQty = computed(() => {
+  const v = Number(manualVolume.value)
+  return v > 0 ? Math.floor(v / 100) * 100 : oneClickSellQty.value
+})
+const effectiveBalanceQty = computed(() => {
+  const v = Number(manualVolume.value)
+  return v > 0 ? Math.floor(v / 100) * 100 : balanceQty.value
+})
 
 // ---- 仓位管理（4 档 + 风险建议） -----------------------------------------
 const riskProfile = ref('balanced')  // 'conservative' | 'balanced' | 'aggressive'
@@ -879,11 +899,11 @@ async function submitOrder({ orderType, volume, price }) {
 
 function onOneClickBuy() {
   if (!canBuy.value) return
-  submitOrder({ orderType: '23', volume: oneClickBuyQty.value, price: orderPrice.value })
+  submitOrder({ orderType: '23', volume: effectiveBuyQty.value, price: orderPrice.value })
 }
 function onOneClickSell() {
   if (!canSell.value) return
-  submitOrder({ orderType: '24', volume: oneClickSellQty.value, price: orderPrice.value })
+  submitOrder({ orderType: '24', volume: effectiveSellQty.value, price: orderPrice.value })
 }
 function onManualSubmit() {
   if (!canManualSubmit.value) return
@@ -892,7 +912,7 @@ function onManualSubmit() {
 function onOneClickBalance() {
   if (!canBalanceSubmit.value) return
   const orderType = direction.value === 'buy' ? '23' : '24'
-  submitOrder({ orderType, volume: Math.abs(balanceQty.value), price: orderPrice.value })
+  submitOrder({ orderType, volume: Math.abs(effectiveBalanceQty.value), price: orderPrice.value })
 }
 
 // ---- 一键配平（敞口表 row） ----
@@ -908,26 +928,39 @@ function onRebalanceRow(row) {
   submitOrder({ orderType, volume: vol, price: last || fallback })
 }
 
-// ---- 全账户一键配平（按 totals.net_volume 选方向后下 1 单） ----
+// ---- 全账户一键配平（只对当前 stockCode 下 1 单；如当前标的无敞口提示切股） ----
 function onRebalanceAll() {
   const t = exposureTotals.value
   if (!t || t.net_volume === 0) {
     ElMessage.info('已配平，无净敞口')
     return
   }
-  if (!exposureList.value.length) return
+  if (!exposureList.value.length) {
+    ElMessage.info('当日暂无 T0 成交')
+    return
+  }
+  // 仅当前标的下的敞口才下单（用户明确要求：只当前标的，不要多笔）
+  const current = exposureList.value.find((p) => p.stock_code === stockCode.value)
+  if (!current) {
+    const other = exposureList.value
+      .filter((p) => Math.abs(p.net_volume) >= 100)
+      .map((p) => p.stock_code)
+      .join('、')
+    ElMessage.warning(
+      other
+        ? `当前 ${stockCode.value} 无 T0 敞口；有敞口的标的：${other}，请先切换到对应标的再配平`
+        : `当前 ${stockCode.value} 无 T0 敞口`
+    )
+    return
+  }
   ElMessageBox.confirm(
-    `当前 T0 总敞口 ${t.net_volume > 0 ? '净买入' : '净卖出'} ${Math.abs(t.net_volume)} 股，${
-      exposureList.value.length
-    } 个标的。确认下 1 单按主标的统一配平？`,
-    '全账户一键配平',
+    `当前 ${current.stock_code} 净${current.net_volume > 0 ? '买入' : '卖出'} ${Math.abs(
+      current.net_volume
+    )} 股，确认按当前 stockCode 下 1 单配平？`,
+    '一键配平（当前标的）',
     { confirmButtonText: '配平', cancelButtonText: '取消', type: 'warning' }
   )
-    .then(() => {
-      // 选净敞口绝对值最大的标的
-      const top = exposureList.value[0]
-      if (top) onRebalanceRow(top)
-    })
+    .then(() => onRebalanceRow(current))
     .catch(() => {})
 }
 
