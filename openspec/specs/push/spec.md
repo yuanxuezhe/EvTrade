@@ -41,6 +41,14 @@ QMT 柜台通过 RabbitMQ 主动推送（`EvTrade.Test.Push` 队列）异步通�
 - **后端函数位置**：`server/services/push_handlers.py:_infer_order_status`
 - **前端函数位置**：`client/src/utils/format.js:inferOrderStatus`
 
+### REQ-PUSH-006: 异步落库（v8）
+
+- push listener 调用 `handle_push(db, func, row, ts)` 时，**必须**走 `asyncio.to_thread(...)` 包裹，**禁止**在 event loop 中直接同步执行 SQLAlchemy
+- 原因：push 消息密集到达时同步 SQL 操作阻塞 event loop，导致 reply 队列消费延迟、WebSocket 推送卡顿
+- 实现：push listener 内部用 `await asyncio.to_thread(_run_handle_push, func, row, ts)`，helper 在新线程中新建 SessionLocal + handle_push + commit
+- 错误处理：to_thread 内异常被 listener 捕获，打 error 日志（已存在），**不重试**（broker 推过的消息不会再来）
+- 向后兼容：`handle_push` 同步签名不变，test_push_handlers.py 现有 11 用例继续通过
+
 ### REQ-PUSH-004: 健壮性
 
 - 解析失败的 push 消息打 warning 日志，不影响后续消息
@@ -69,6 +77,13 @@ And 前端 store 替换 orders 中同 order_no 的项；前端 store 调前端 `
 ⚠️ **已知问题**：QMT 端有时把 ord_cfm 路由到 `qry_pos` 队列名  
 Then 解析时只有 `{code, msg}` 字段，没有 stock_code/evt_type  
 Action: 打 warning 日志，**不重派**（避免循环）
+
+### S-PUSH-004: push 落库不阻塞 event loop（v8）
+
+Given push listener 收到 1 条 `ord_cfm`（handle_push 内部 SQLAlchemy 同步操作 50ms）  
+When 主线程同时处理 1 个 RPC reply（0.5ms 应答）  
+Then reply 消费延迟 < 5ms（不被 push 阻塞）  
+And `handle_push` 在子线程执行（to_thread 包裹）
 
 ## Push 消息结构
 
