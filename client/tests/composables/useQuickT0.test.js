@@ -34,9 +34,9 @@ describe('useQuickT0 常量', () => {
   })
   it('PRICE_TYPE_OPTIONS 3 档 (用户拍板)', () => {
     expect(PRICE_TYPE_OPTIONS.map((o) => o.value)).toEqual(['last', 'market', 'bidask'])
-    expect(PRICE_TYPE_OPTIONS[0].code).toBe(11)  // last 限价
-    expect(PRICE_TYPE_OPTIONS[1].code).toBe(44)  // market xtquant
-    expect(PRICE_TYPE_OPTIONS[2].code).toBe(11)  // bidask 限价
+    expect(PRICE_TYPE_OPTIONS[0].priceTypeCode).toBe(11)  // last 限价
+    expect(PRICE_TYPE_OPTIONS[1].priceTypeCode).toBe(44)  // market xtquant
+    expect(PRICE_TYPE_OPTIONS[2].priceTypeCode).toBe(11)  // bidask 限价
   })
   it('DEFAULT_* 是 50 + last', () => {
     expect(DEFAULT_PCT).toBe(50)

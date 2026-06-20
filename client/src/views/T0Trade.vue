@@ -62,16 +62,37 @@
             </span>
           </template>
         </el-table-column>
-        <el-table-column label="操作" align="center" width="100" fixed="right">
+        <el-table-column label="操作" align="center" width="170" fixed="right">
           <template #default="{ row }">
-            <el-button type="primary" link size="small" @click.stop="onOpenDrawer(row)">
-              <span style="display: inline-flex; align-items: center; gap: 4px; font-weight: 600;">
-                详情
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                  <path d="M5 12h14M13 5l7 7-7 7"/>
-                </svg>
-              </span>
-            </el-button>
+            <div class="op-col">
+              <!-- 第一行: 买 / 卖 / 配平 (M-008 v3) -->
+              <div class="op-row op-row-actions">
+                <el-tooltip :content="isBuyDisabled(row) ? `${row.stock_code} 持仓为 0, 无法按比例买` : `按 ${quickPct}% 仓位买入`" placement="top">
+                  <el-button type="primary" size="small" :disabled="isBuyDisabled(row) || submitting" @click.stop="onQuickBuy(row)" class="op-btn-buy">
+                    买{{ quickPct }}%
+                  </el-button>
+                </el-tooltip>
+                <el-tooltip content="按全局 % 仓位卖出 (0 持仓自动跳过)" placement="top">
+                  <el-button type="danger" size="small" :disabled="submitting" @click.stop="onQuickSell(row)" class="op-btn-sell">
+                    卖{{ quickPct }}%
+                  </el-button>
+                </el-tooltip>
+                <el-tooltip content="配平: 抵消今日净买卖, 回到当前持仓" placement="top">
+                  <el-button type="warning" size="small" :disabled="submitting" @click.stop="onQuickBalance(row)" class="op-btn-balance">
+                    配平
+                  </el-button>
+                </el-tooltip>
+              </div>
+              <!-- 第二行: 详情 (整行可点也开抽屉, 此按钮是移动端友好入口) -->
+              <div class="op-row op-row-detail">
+                <el-button type="primary" link size="small" @click.stop="onOpenDrawer(row)" class="op-btn-detail">
+                  详情
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M5 12h14M13 5l7 7-7 7"/>
+                  </svg>
+                </el-button>
+              </div>
+            </div>
           </template>
         </el-table-column>
       </el-table>
@@ -636,6 +657,7 @@ import { useT0Balance } from '../composables/useT0Balance'
 import {
   PCT_OPTIONS, PRICE_TYPE_OPTIONS,
   loadQuickDefaults, saveQuickDefaults,
+  isBuyDisabled, buildQuickOrder, calcBalanceQty,
 } from '../composables/useQuickT0'
 import { api } from '../api'
 import { t0StatsApi } from '../api/t0_stats'
@@ -969,8 +991,43 @@ function onManualSubmit() {
 }
 function onOneClickBalance() {
   if (!canBalanceSubmit.value) return
-  const orderType = direction.value === 'buy' ? '23' : '24'
+  const orderType = effectiveBalanceQty.value > 0 ? '23' : '24'
   submitOrder({ orderType, volume: Math.abs(effectiveBalanceQty.value), price: orderPrice.value })
+}
+
+// ---- M-008 v3: 行内快捷买卖 (按当前持仓百分比, 全局 quickPct / quickPriceType) ----
+function onQuickBuy(row) {
+  if (isBuyDisabled(row)) return ElMessage.warning(`${row.stock_code} 持仓为 0, 无法按比例买`)
+  const r = buildQuickOrder(row, 'buy', quickPct.value, quickPriceType.value, quoteStore)
+  if (r.error) return ElMessage.warning(r.error)
+  ElMessageBox.confirm(
+    `${row.stock_code} 买 ${r.qty} 股 @ ¥${formatPrice(r.price)} (${r.label})`,
+    '一键买入', { confirmButtonText: '确认买入', cancelButtonText: '取消', type: 'info' }
+  ).then(() => submitOrder({ orderType: '23', volume: r.qty, price: r.price }))
+    .catch(() => {})
+}
+function onQuickSell(row) {
+  const r = buildQuickOrder(row, 'sell', quickPct.value, quickPriceType.value, quoteStore)
+  if (r.error) return ElMessage.warning(r.error)
+  ElMessageBox.confirm(
+    `${row.stock_code} 卖 ${r.qty} 股 @ ¥${formatPrice(r.price)} (${r.label})`,
+    '一键卖出', { confirmButtonText: '确认卖出', cancelButtonText: '取消', type: 'warning' }
+  ).then(() => submitOrder({ orderType: '24', volume: r.qty, price: r.price }))
+    .catch(() => {})
+}
+function onQuickBalance(row) {
+  // 配平: 净持仓 + (今日买-今日卖) 决定方向
+  const bal = calcBalanceQty(row, row.today_buy_volume || 0, row.today_sell_volume || 0)
+  if (bal.error) return ElMessage.warning(bal.error)
+  const r = buildQuickOrder(row, bal.side, 100, quickPriceType.value, quoteStore)
+  if (r.error) return ElMessage.warning(r.error)
+  // buildQuickOrder 算的 qty 是按 vol*pct, 配平要覆盖成 bal.qty
+  r.qty = bal.qty
+  ElMessageBox.confirm(
+    `${row.stock_code} ${bal.side === 'buy' ? '买入' : '卖出'} ${bal.qty} 股 配平 (净额归零)`,
+    '一键配平', { confirmButtonText: '确认配平', cancelButtonText: '取消', type: 'info' }
+  ).then(() => submitOrder({ orderType: bal.side === 'buy' ? '23' : '24', volume: bal.qty, price: r.price }))
+    .catch(() => {})
 }
 
 // ---- 一键配平（敞口表 row） ----
@@ -1541,5 +1598,40 @@ onUnmounted(() => {
   font-size: 11px;
   color: #909399;
   font-family: var(--mono-font);
+}
+
+/* M-008 v3: 行内 3 按钮 + 详情 (操作列两行) */
+.op-col {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+  padding: 2px 0;
+}
+.op-row {
+  display: flex;
+  gap: 3px;
+  align-items: center;
+  justify-content: center;
+}
+.op-row-actions :deep(.el-button) {
+  flex: 1;
+  min-width: 0;
+  padding: 4px 2px !important;
+  font-size: 12px !important;
+  font-weight: 600;
+}
+.op-btn-buy :deep(span), .op-btn-sell :deep(span), .op-btn-balance :deep(span) {
+  color: #fff !important;
+}
+.op-row-detail {
+  justify-content: stretch;
+  border-top: 1px dashed var(--el-border-color-lighter);
+  padding-top: 4px;
+}
+.op-btn-detail {
+  width: 100% !important;
+  font-size: 12px !important;
+  font-weight: 500;
 }
 </style>

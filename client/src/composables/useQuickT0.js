@@ -1,199 +1,232 @@
 /**
  * useQuickT0.js — 快速做T 纯函数工具集 (M-008)
  *
- * 用户需求: "按当前持仓数量的百分比" + 价格 3 档 + 仓位 4 档.
+ * 用户需求 (M-008 v3 拍板 B+A+A):
+ *   - 行内 3 按钮 (买/卖/配平) + 1 详情
+ *   - 整行可点 → 打开明细抽屉
+ *   - 委托记录走后端 t0_history API
  *
  * 设计原则:
  *   - 纯函数 (无副作用, 无 store 依赖)
- *   - 易测试 (vitest 8 个用例覆盖)
+ *   - 易测试 (vitest 12+ 用例覆盖)
  *   - 易复用 (T0Trade.vue 行内按钮 / 未来策略页都用)
  *
- * 仓位计算公式 (用户拍板):
- *   qty = round(vol × pct / 100 / 100) × 100   // 整百股 (A股最小手)
- *
- * 价格档位 (3 档):
- *   - 'last'    最新价 (默认)
- *   - 'market'  市价 (price=0 让 broker 端按市价)
- *   - 'bidask'  卖1买1 (优先 ask1, 退化为最新价)
- *
- * 价格类型码 (后端 PriceType 枚举, server/models/orm.py):
- *   - 11 限价  (LIMIT)
- *   - 12 即成剩撤 (MARKET 部分券商)
- *   - 14 对手方最优 (bidask 走 11 + ask1 价格)
- *   - 44 市价 (xtquant 专用)
+ * v1/v2 history:
+ *   - 2026-06-20 v1: 9 函数 + 8 用例
+ *   - 2026-06-20 v2: + 顶置条 + 整行可点
+ *   - 2026-06-20 v3: + calcBalanceQty + label 返回 + 无行情检查
  */
-import { ElMessage } from 'element-plus'
 
-// 仓位 4 档 (用户拍板)
+/** 4 档仓位百分比 (UI 用) */
 export const PCT_OPTIONS = [25, 50, 75, 100]
 
-// 价格 3 档 (用户拍板)
+/** 3 档价格类型 (UI 用) */
 export const PRICE_TYPE_OPTIONS = [
-  { value: 'last',   label: '最新价', code: 11 },
-  { value: 'market', label: '市价',   code: 44 },
-  { value: 'bidask', label: '卖1买1', code: 11 },  // bidask 限价 + ask1 价格
+  { value: 'last', label: '最新价', priceTypeCode: 11 },
+  { value: 'market', label: '市价', priceTypeCode: 44 },
+  { value: 'bidask', label: '卖1买1', priceTypeCode: 11 },
 ]
 
-// localStorage 键
-const LS_KEY_PCT = 't0.quickPct'
-const LS_KEY_PRICE_TYPE = 't0.quickPriceType'
-
-// 默认值
+/** 默认值 */
 export const DEFAULT_PCT = 50
 export const DEFAULT_PRICE_TYPE = 'last'
 
+/** A 股最小手 (整百股) */
+export const LOT_SIZE = 100
+
+/** localStorage key */
+const LS_PCT = 't0.quickPct'
+const LS_PRICE = 't0.quickPriceType'
+
+
+// ================== 数量计算 ==================
 
 /**
- * 整百股取整 (向下取整, 不超用户预期).
- *
- * 金融语义: A 股最小手 100 股, 委托零碎股 (如 250) 会被券商拒.
- * 向下取整 (floor) 保证不超用户设置的百分比, 避免"我买 25% 却买了 30%".
- *
- *   roundToLot(123) = 100
- *   roundToLot(250) = 200   // 250 不可委托, 退到 200
- *   roundToLot(1000)= 1000
- *   roundToLot(0)   = 0
- *   roundToLot(-150)= -200  // 卖空时向下 (绝对值更大)
+ * 整百股截断 (金融 floor, 向 -∞ 方向)
+ *   250 → 200, 150 → 100, -150 → -200
+ *   0/NaN/null → 0
  */
-export function roundToLot(vol, lot = 100) {
-  if (!Number.isFinite(vol)) return 0
-  // 金融 floor: 统一向下取整 (向 -∞ 方向), 不论正负
-  //   150  → 100 (不足 1 手, 退到 0 手)
-  //   -150 → -200 (卖出更多, 绝对值更大, 保守)
-  return Math.floor(vol / lot) * lot
+export function roundToLot(vol) {
+  const n = Number(vol)
+  if (!Number.isFinite(n)) return 0
+  return Math.floor(n / LOT_SIZE) * LOT_SIZE
 }
 
-
 /**
- * 计算快买数量 = vol × pct / 100 (整百股).
- *   vol=1000, pct=50 → 500
- *   vol=1000, pct=25 → 250 → roundToLot → 200 (优先满足"≥pct 比例"的最近整百)
- *
- * 注: 严格按用户"按当前持仓数量百分比"语义, 不超额.
+ * 按"当前持仓数量 × 百分比" 算买量
+ *   calcBuyQty({vol:1000}, 50) = 500
+ *   calcBuyQty({vol:0}, 50) = 0 (被 isBuyDisabled 截)
  */
-export function calcBuyQty(row, pct = 50) {
-  if (!row || !Number.isFinite(row.vol) || row.vol <= 0) return 0
-  if (!Number.isFinite(pct) || pct <= 0) return 0
-  return roundToLot(row.vol * pct / 100)
+export function calcBuyQty(row, pct) {
+  return calcQuickQty(Number(row?.vol) || 0, pct)
 }
 
-
 /**
- * 计算快卖数量 (同 calcBuyQty 镜像).
+ * 按"当前持仓数量 × 百分比" 算卖量 (与 calcBuyQty 镜像)
  */
-export function calcSellQty(row, pct = 50) {
-  return calcBuyQty(row, pct)
+export function calcSellQty(row, pct) {
+  return calcQuickQty(Number(row?.vol) || 0, pct)
 }
 
-
 /**
- * 计算快买数量 (按 4 档 25/50/75/100).
- * 选 N% → 买 (vol × N/100) 整百股.
+ * 行内快捷版 calcQuickQty(vol, pct) — 直接接受数字
+ *   0/无效 → 0
  */
 export function calcQuickQty(vol, pct) {
-  if (!Number.isFinite(vol) || vol <= 0) return 0
-  if (!Number.isFinite(pct) || pct <= 0) return 0
-  return roundToLot(vol * pct / 100)
+  const v = Number(vol) || 0
+  const p = Number(pct)
+  if (!Number.isFinite(p)) return 0
+  return roundToLot((v * p) / 100)
 }
 
 
+// ================== 价格解析 ==================
+
 /**
- * 解析价格 (3 档).
- *   - 'last'    → quoteStore.getLastPrice(code)
- *   - 'market'  → 0  (broker 端按市价处理)
- *   - 'bidask'  → quoteStore.getQuote(code).ask1 ?? getLastPrice(code)
+ * 3 档价格解析 (调用 quote store)
+ *   'last'   → { price: 最新价, priceTypeCode: 11, label }
+ *   'market' → { price: 0 (xtquant 内部撮合), priceTypeCode: 44, label }
+ *   'bidask' → { price: ask1 (优先于 last), priceTypeCode: 11, label }
  *
- * 返回 { price, priceTypeCode, label }.
+ * mock 形式 (用于测试):
+ *   {
+ *     getLastPrice: (code) => number,
+ *     getField: (code, field) => number | null,   // 'ask1' 取卖1
+ *   }
  */
 export function resolvePrice(priceType, code, quoteStore) {
-  const opt = PRICE_TYPE_OPTIONS.find((o) => o.value === priceType)
-  if (!opt) {
-    return { price: 0, priceTypeCode: 11, label: '限价' }
-  }
-
-  if (priceType === 'market') {
-    return { price: 0, priceTypeCode: opt.code, label: opt.label }
-  }
-
-  // last / bidask 都用最新价 (bidask 优先 ask1, 没有就退 last)
+  const opt = PRICE_TYPE_OPTIONS.find((o) => o.value === priceType) || PRICE_TYPE_OPTIONS[0]
   const last = quoteStore?.getLastPrice?.(code) ?? 0
-  let price = last
-  if (priceType === 'bidask') {
-    const ask = quoteStore?.getQuote?.(code)?.ask1 ?? quoteStore?.getField?.(code, 'ask1')
-    if (Number.isFinite(ask) && ask > 0) price = ask
+  if (priceType === 'last') {
+    return { price: last, priceTypeCode: opt.priceTypeCode, label: opt.label }
   }
-  return { price, priceTypeCode: opt.code, label: opt.label }
+  if (priceType === 'market') {
+    return { price: 0, priceTypeCode: opt.priceTypeCode, label: opt.label }  // xtquant 市价不传价
+  }
+  if (priceType === 'bidask') {
+    const ask1 = quoteStore?.getField?.(code, 'ask1') ?? null
+    return { price: ask1 || last, priceTypeCode: opt.priceTypeCode, label: opt.label }
+  }
+  return { price: last, priceTypeCode: 11, label: '最新价' }
 }
 
 
+// ================== 校验 ==================
+
 /**
- * 检查 0 持仓买按钮是否应禁用 (用户拍板 A).
- * 卖按钮: 永远不因 0 持仓禁用 (但提交时若 qty=0 仍会拦截).
+ * 0 持仓买按钮是否禁用 (用户拍板 A)
+ *   vol > 0 → false (不禁)
+ *   vol ≤ 0 / 缺 → true (禁)
  */
 export function isBuyDisabled(row) {
-  if (!row) return true
-  if (!Number.isFinite(row.vol) || row.vol <= 0) return true
-  return false
+  const v = Number(row?.vol)
+  return !Number.isFinite(v) || v <= 0
 }
 
-
 /**
- * 校验快买快卖提交 (返回 null = OK, 字符串 = 错误信息).
- * 错误时调用方应 ElMessage.warning(err) 并 return.
+ * 提交前校验 — 返回 null = OK, 字符串 = 错误信息
+ *   - 缺 stock_code → "无效行, 缺少 stock_code"
+ *   - 0 持仓买 → "0 持仓无法按比例买"
+ *   - 0 持仓卖 → "持仓数量为 0, 无法卖"
+ *   - 0 股 → "0 股 无效"
  */
 export function validateQuick(row, qty, side /* 'buy' | 'sell' */) {
-  if (!row || !row.stock_code) return '无效的持仓行'
+  const code = row?.stock_code
+  if (!code) return '无效行, 缺少 stock_code'
   if (side === 'buy' && isBuyDisabled(row)) {
-    return '0 持仓无法按比例买, 请用「固定数量」模式建仓'
+    return `0 持仓无法按比例买 (${code})`
   }
-  if (!Number.isFinite(qty) || qty === 0) {
-    return side === 'buy'
-      ? '仓位比例折算 0 股, 调大比例或先建仓'
-      : '持仓数量为 0, 无法卖出'
+  if (side === 'sell') {
+    const v = Number(row?.vol) || 0
+    if (v <= 0) return `${code} 持仓数量为 0, 无法卖`
+  }
+  if (qty <= 0) {
+    return `0 股 无效 (${code})`
   }
   return null
 }
 
 
-/**
- * localStorage 持久化 (default 50 + 'last').
- */
+// ================== localStorage 持久化 ==================
+
 export function loadQuickDefaults() {
   let pct = DEFAULT_PCT
   let priceType = DEFAULT_PRICE_TYPE
   try {
-    const p = localStorage.getItem(LS_KEY_PCT)
-    if (p && PCT_OPTIONS.includes(Number(p))) pct = Number(p)
-    const pt = localStorage.getItem(LS_KEY_PRICE_TYPE)
-    if (pt && PRICE_TYPE_OPTIONS.find((o) => o.value === pt)) priceType = pt
-  } catch (_) {
-    // localStorage 可能被禁用 (隐私模式) — 静默降级
+    const rawPct = localStorage.getItem(LS_PCT)
+    const n = Number(rawPct)
+    if (Number.isFinite(n) && PCT_OPTIONS.includes(n)) {
+      pct = n
+    }
+    const rawPt = localStorage.getItem(LS_PRICE)
+    if (PRICE_TYPE_OPTIONS.some((o) => o.value === rawPt)) {
+      priceType = rawPt
+    }
+  } catch {
+    // localStorage 不可用 (SSR / 隐私模式) → 静默回退默认
   }
   return { pct, priceType }
 }
 
-
 export function saveQuickDefaults(pct, priceType) {
   try {
-    localStorage.setItem(LS_KEY_PCT, String(pct))
-    localStorage.setItem(LS_KEY_PRICE_TYPE, String(priceType))
-  } catch (_) {
-    // 静默失败, 不影响主流程
+    localStorage.setItem(LS_PCT, String(pct))
+    localStorage.setItem(LS_PRICE, String(priceType))
+  } catch {
+    // 静默失败
   }
 }
 
 
+// ================== 配平 (M-008 v3 新增) ==================
+
 /**
- * 一站式: 给定持仓行 + 仓位 + 价格档, 返回 { qty, price, priceTypeCode, error }.
- * T0Trade.vue 行内 [买 N%] 按钮直接调这个, 然后传 submitOrder.
+ * 配平量计算 (M-008 v3):
+ *   net = 今日买量 - 今日卖量
+ *   净持仓 = row.vol
+ *   应配平量 = 净持仓 + net
+ *     负数 → 需卖出  |  正数 → 需买入
+ *
+ * 配平用例: 用户早盘买了 100, 下午想锁仓 → 卖 100
+ *  返回: { qty, side, error }
+ */
+export function calcBalanceQty(row, todayBuy = 0, todaySell = 0) {
+  const code = row?.stock_code || 'N/A'
+  const v = Number(row?.vol) || 0
+  const net = (Number(todayBuy) || 0) - (Number(todaySell) || 0)
+  const need = v + net
+  if (need === 0) {
+    return { qty: 0, side: null, error: `${code} 已平仓, 无需配平` }
+  }
+  const side = need > 0 ? 'buy' : 'sell'
+  const qty = roundToLot(Math.abs(need))
+  return { qty, side, error: null }
+}
+
+
+// ================== 端到端 buildQuickOrder ==================
+
+/**
+ * 行内 [买 50%] [卖 50%] [配平] 按钮调用
+ *   返回: { qty, price, priceTypeCode, label, error }
+ *   error 非空 = 不应下单
  */
 export function buildQuickOrder(row, side, pct, priceType, quoteStore) {
-  const qty = calcQuickQty(Number(row?.vol) || 0, pct)
-  const err = validateQuick(row, qty, side)
-  if (err) return { qty: 0, price: 0, priceTypeCode: 11, error: err }
-  const { price, priceTypeCode } = resolvePrice(priceType, row.stock_code, quoteStore)
-  if (!Number.isFinite(price) || price <= 0) {
-    return { qty, price: 0, priceTypeCode, error: `${row.stock_code} 无行情, 请稍后再试` }
+  const code = row?.stock_code
+  if (!code) return { qty: 0, error: '无效行, 缺少 stock_code' }
+
+  // 行情检查
+  const last = quoteStore?.getLastPrice?.(code) ?? 0
+  if (!last) {
+    return { qty: 0, error: `无行情 (${code})` }
   }
-  return { qty, price, priceTypeCode, error: null }
+
+  // 数量 (配平由调用方传 pct=100 + 自行传 todayBuy/Sell, 或独立 calcBalanceQty)
+  const qty = side === 'buy' ? calcBuyQty(row, pct) : calcSellQty(row, pct)
+  const err = validateQuick(row, qty, side)
+  if (err) return { qty: 0, price: 0, priceTypeCode: 0, label: '', error: err }
+
+  // 价格
+  const p = resolvePrice(priceType, code, quoteStore)
+  return { qty, price: p.price, priceTypeCode: p.priceTypeCode, label: p.label, error: null }
 }
