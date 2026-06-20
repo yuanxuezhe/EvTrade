@@ -1,38 +1,5 @@
 <template>
   <div class="t0-trade fade-in-up">
-    <!-- 顶部：股票选择 + 实时报价 -->
-    <div class="content-card quote-bar">
-      <div class="quote-left">
-        <el-input
-          v-model="stockCode"
-          placeholder="股票代码 (如 600519.SH)"
-          style="width: 220px"
-          @keyup.enter="onManualSubmit"
-          @change="onStockCodeChange"
-        >
-          <template #prefix>
-            <el-icon><Search /></el-icon>
-          </template>
-        </el-input>
-        <el-button @click="showPicker = true" :icon="List">选择持仓</el-button>
-      </div>
-      <div class="quote-mid" v-if="lastPrice != null">
-        <div class="price-line">
-          <span class="last-price" :class="[priceClass, flashClass]">{{ formatPrice(lastPrice) }}</span>
-          <span class="change" :class="priceClass">
-            {{ changePct >= 0 ? '+' : '' }}{{ changePct?.toFixed(2) }}%
-          </span>
-        </div>
-        <div class="quote-meta">
-          <span v-if="isStale" class="stale">⚠ 行情过期</span>
-          <span v-else class="fresh">● 实时</span>
-        </div>
-      </div>
-      <div class="quote-mid placeholder" v-else>
-        <span>输入代码获取实时行情</span>
-      </div>
-    </div>
-
     <!-- 快速做T 设置条 (M-008): 全局默认仓位 % + 价格档 (行内可覆盖) -->
     <el-card class="quick-settings-bar" shadow="never">
       <div class="qs-row">
@@ -55,8 +22,59 @@
             :label="opt.label"
           />
         </el-radio-group>
-        <span class="qs-tip">行内按钮将按此设置下单，可临时调整</span>
+        <span class="qs-tip">点击行或 [详情] 打开右侧抽屉做T 操作</span>
       </div>
+    </el-card>
+
+    <!-- 快速做T 主表 (M-008 v2 表格驱动布局) -->
+    <el-card class="position-table-card" shadow="never">
+      <template #header>
+        <div class="pt-header">
+          <span class="card-title">📋 持仓快速做T</span>
+          <span class="pt-tip">点击行或 [→] 打开右侧抽屉进行做T 操作</span>
+        </div>
+      </template>
+      <el-table
+        :data="holdingsPositions"
+        :row-class-name="ptRowClass"
+        @row-click="onOpenDrawer"
+        class="position-table"
+        empty-text="暂无持仓"
+      >
+        <el-table-column prop="stock_code" label="代码" width="120" />
+        <el-table-column label="名称" width="100">
+          <template #default="{ row }">{{ row.stock_name || row.stock_code }}</template>
+        </el-table-column>
+        <el-table-column label="持仓" align="right" width="100">
+          <template #default="{ row }">{{ formatNumber(row.vol) }}</template>
+        </el-table-column>
+        <el-table-column label="现价" align="right" width="100">
+          <template #default="{ row }">
+            <span :class="quoteStore.getChangePct(row.stock_code) >= 0 ? 'up' : 'down'">
+              {{ formatPrice(quoteStore.getLastPrice(row.stock_code)) }}
+            </span>
+          </template>
+        </el-table-column>
+        <el-table-column label="涨跌幅" align="right" width="100">
+          <template #default="{ row }">
+            <span :class="quoteStore.getChangePct(row.stock_code) >= 0 ? 'up' : 'down'">
+              {{ quoteStore.getChangePct(row.stock_code)?.toFixed(2) }}%
+            </span>
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" align="center" width="100" fixed="right">
+          <template #default="{ row }">
+            <el-button type="primary" link size="small" @click.stop="onOpenDrawer(row)">
+              <span style="display: inline-flex; align-items: center; gap: 4px; font-weight: 600;">
+                详情
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M5 12h14M13 5l7 7-7 7"/>
+                </svg>
+              </span>
+            </el-button>
+          </template>
+        </el-table-column>
+      </el-table>
     </el-card>
 
     <!-- 3 个核心卡片：敞口 / T0 成本 / 预期收益 -->
@@ -472,21 +490,6 @@
       </el-card>
     </div>
 
-    <!-- 持仓选择弹窗 -->
-    <el-dialog v-model="showPicker" title="选择持仓" width="500px">
-      <el-table :data="holdingsPositions" @row-click="onPickPosition">
-        <el-table-column prop="stock_code" label="代码" width="120" />
-        <el-table-column prop="vol" label="持仓" align="right">
-          <template #default="{ row }">{{ formatNumber(row.vol) }}</template>
-        </el-table-column>
-        <el-table-column label="现价" align="right">
-          <template #default="{ row }">
-            {{ formatPrice(quoteStore.getLastPrice(row.stock_code)) }}
-          </template>
-        </el-table-column>
-      </el-table>
-    </el-dialog>
-
     <!-- 仓位管理建议卡 -->
     <el-card class="risk-card" shadow="hover">
       <template #header>
@@ -535,27 +538,7 @@
           </el-col>
         </el-row>
 
-        <!-- 一键开仓 / 一键平仓 / 一键配平（V9 紧凑入口，函数复用下方表单的 onOneClickBuy/Sell/Balance） -->
-        <div class="quick-actions">
-          <el-button class="quick-btn" type="primary" size="large"
-            :disabled="!canBuy"
-            @click="onOneClickBuy">
-            ⚡ 一键开仓 <span class="btn-sub">buy {{ formatNumber(effectiveBuyQty) }} 股</span>
-          </el-button>
-          <el-button class="quick-btn" type="danger" size="large"
-            :disabled="!canSell"
-            @click="onOneClickSell">
-            ⚠ 一键平仓 <span class="btn-sub">sell {{ formatNumber(effectiveSellQty) }} 股</span>
-          </el-button>
-          <el-button class="quick-btn" type="warning" size="large"
-            :disabled="!canBalanceSubmit"
-            @click="onOneClickBalance">
-            ⚖ 一键配平 <span class="btn-sub" v-if="Math.abs(effectiveBalanceQty) >= 100">
-              {{ direction === 'buy' ? 'buy' : 'sell' }} {{ formatNumber(Math.abs(effectiveBalanceQty)) }} 股
-            </span>
-          </el-button>
-        </div>
-
+        <!-- 一键开仓 / 一键平仓 / 一键配平 已在抽屉 (M-008 v2), 此处仅保留参考 -->
         <el-alert
           v-if="riskWarnings.length > 0"
           :title="riskWarnings.length + ' 项风险提示'"
@@ -644,7 +627,7 @@
 <script setup>
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Search, Top, Bottom, List, Check } from '@element-plus/icons-vue'
+import { Search, Top, Bottom, List, Check, ArrowRight } from '@element-plus/icons-vue'
 import { storeToRefs } from 'pinia'
 import { useHoldingsStore } from '../stores/holdings'
 import { useAssetStore } from '../stores/asset'
@@ -667,6 +650,18 @@ const { asset } = storeToRefs(assetStore)
 const stockCode = ref('600519.SH')
 const showPicker = ref(false)
 const submitting = ref(false)
+
+// M-008 v2: 抽屉控制
+const drawerVisible = ref(false)
+function onOpenDrawer(row) {
+  if (!row || !row.stock_code) return
+  stockCode.value = row.stock_code
+  drawerVisible.value = true
+}
+function ptRowClass({ row }) {
+  // 当前抽屉选中的行高亮
+  return row.stock_code === stockCode.value ? 'is-selected' : ''
+}
 
 // 快速做T 全局设置 (顶部设置条, 持久化到 localStorage)
 const _quickDefaults = loadQuickDefaults()
@@ -1132,6 +1127,40 @@ onUnmounted(() => {
 /* 快速做T 顶部设置条 (M-008) */
 .quick-settings-bar {
   margin: 0;
+}
+
+/* M-008 v2: 主表 */
+.position-table-card {
+  margin: 0;
+}
+.position-table-card :deep(.el-card__body) {
+  padding: 12px;
+}
+.position-table {
+  /* 限制主表最大高度, 避免 16+ 行撑爆视口 (M-008 v2) */
+  max-height: 480px;
+  overflow-y: auto;
+}
+.position-table :deep(.el-table__header-wrapper) {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--el-bg-color);
+}
+.position-table-card .pt-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.position-table-card .pt-tip {
+  font-size: 12px;
+  color: var(--el-text-color-placeholder);
+}
+.position-table :deep(tr) {
+  cursor: pointer;
+}
+.position-table :deep(tr.is-selected td) {
+  background-color: var(--el-color-primary-light-9) !important;
 }
 .quick-settings-bar :deep(.el-card__body) {
   padding: 8px 12px;
