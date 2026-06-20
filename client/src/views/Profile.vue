@@ -1,49 +1,27 @@
 <template>
   <div class="profile-view fade-in-up" v-loading="loading">
-    <!-- 顶部个人信息卡 -->
-    <section class="hero-card">
-      <div class="hero-bg"></div>
-      <div class="hero-content">
-        <div class="hero-avatar" :class="`role-${authStore.user?.role || 'viewer'}`">
-          {{ avatarText }}
-        </div>
-        <div class="hero-info">
-          <div class="hero-name">
-            {{ authStore.user?.full_name || authStore.user?.username }}
-            <span class="role-badge" :class="`role-${authStore.user?.role || 'viewer'}`">
-              {{ ROLE_LABEL[authStore.user?.role] || '用户' }}
-            </span>
-          </div>
-          <div class="hero-username text-mono">@{{ authStore.user?.username }}</div>
-          <div class="hero-meta">
-            <div class="meta-item">
-              <el-icon><Message /></el-icon>
-              <span>{{ authStore.user?.email || '未设置邮箱' }}</span>
-            </div>
-            <div class="meta-item">
-              <el-icon><Clock /></el-icon>
-              <span>上次登录: {{ formatDateTime(authStore.user?.last_login_at) }}</span>
-            </div>
-            <div class="meta-item">
-              <el-icon><Calendar /></el-icon>
-              <span>注册时间: {{ formatDateTime(authStore.user?.created_at) }}</span>
-            </div>
-          </div>
-        </div>
-        <div class="hero-actions">
-          <el-button :icon="Lock" @click="pwdDialogVisible = true">
-            修改密码
-          </el-button>
-        </div>
-      </div>
-    </section>
-
-    <!-- 资料编辑 -->
+    <!-- 资料编辑 (B 组统一: 直接 .content-card + .card-header, 不再有独立 hero-card) -->
     <div class="content-card">
       <div class="card-header">
         <div>
           <h3 class="card-title">个人资料</h3>
           <p class="card-sub">更新你的姓名和邮箱信息</p>
+        </div>
+        <!-- 原 hero-card 用户信息合并到 card-header 右侧 + 修改密码按钮 -->
+        <div class="card-header-extra">
+          <span class="profile-avatar" :class="`role-${authStore.user?.role || 'viewer'}`">
+            {{ avatarText }}
+          </span>
+          <div class="profile-meta">
+            <span class="profile-name">
+              {{ authStore.user?.full_name || authStore.user?.username }}
+              <el-tag size="small" :type="ROLE_TAG_TYPE[authStore.user?.role] || 'info'" effect="light">
+                {{ ROLE_LABEL[authStore.user?.role] || '用户' }}
+              </el-tag>
+            </span>
+            <span class="profile-line">{{ authStore.user?.email || '未设置邮箱' }}</span>
+          </div>
+          <el-button :icon="Lock" @click="pwdDialogVisible = true">修改密码</el-button>
         </div>
       </div>
       <el-form
@@ -129,11 +107,8 @@
 <script setup>
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
-import {
-  Lock, Check, Message, Clock, Calendar, View, TrendCharts, UserFilled
-} from '@element-plus/icons-vue'
+import { Lock, Check, View, TrendCharts, UserFilled } from '@element-plus/icons-vue'
 import { useAuthStore } from '../stores/auth'
-import { formatDateTime } from '../utils/format'
 import ChangePasswordDialog from '../components/ChangePasswordDialog.vue'
 
 const authStore = useAuthStore()
@@ -142,6 +117,8 @@ const saving = ref(false)
 const pwdDialogVisible = ref(false)
 
 const ROLE_LABEL = { admin: '管理员', trader: '交易员', viewer: '只读用户' }
+// el-tag type 映射 (admin=red, trader=warning, viewer=info)
+const ROLE_TAG_TYPE = { admin: 'danger', trader: 'warning', viewer: 'info' }
 
 const avatarText = computed(() => {
   const n = authStore.user?.full_name || authStore.user?.username
@@ -219,118 +196,47 @@ onMounted(async () => {
   width: 100%;
 }
 
-.hero-card {
-  position: relative;
-  background: var(--bg-elevated);
-  border: 1px solid var(--border-base);
-  border-radius: var(--radius-lg);
-  padding: var(--space-6);
-  overflow: hidden;
-}
-
-.hero-bg {
-  position: absolute;
-  inset: 0;
-  background: var(--brand-gradient);
-  opacity: 0.05;
-  pointer-events: none;
-}
-
-.hero-bg::after {
-  content: '';
-  position: absolute;
-  top: -120px;
-  right: -120px;
-  width: 320px;
-  height: 320px;
-  background: var(--brand-gradient);
-  border-radius: 50%;
-  opacity: 0.18;
-  filter: blur(50px);
-}
-
-.hero-content {
-  position: relative;
+/* card-header 右侧合并: 原 hero 信息 + 修改密码按钮 */
+.card-header-extra {
   display: flex;
   align-items: center;
-  gap: var(--space-6);
+  gap: var(--space-4);
   flex-wrap: wrap;
 }
 
-.hero-avatar {
-  width: 96px;
-  height: 96px;
+.profile-avatar {
+  width: 44px;
+  height: 44px;
   border-radius: 50%;
   display: grid;
   place-items: center;
   color: white;
-  font-size: 38px;
+  font-size: 18px;
   font-weight: 700;
   flex-shrink: 0;
   box-shadow: var(--shadow-glow);
 }
+.profile-avatar.role-admin { background: var(--brand-gradient); }
+.profile-avatar.role-trader { background: var(--color-up-gradient); }
+.profile-avatar.role-viewer { background: linear-gradient(135deg, #5fa8ff, #82b9ff); }
 
-.hero-avatar.role-admin { background: var(--brand-gradient); }
-.hero-avatar.role-trader { background: var(--color-up-gradient); }
-.hero-avatar.role-viewer { background: linear-gradient(135deg, #5fa8ff, #82b9ff); }
-
-.hero-info {
-  flex: 1;
-  min-width: 220px;
+.profile-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  line-height: 1.4;
 }
-
-.hero-name {
-  font-size: 22px;
-  font-weight: 700;
+.profile-name {
+  font-size: 14px;
+  font-weight: 600;
   color: var(--text-primary);
   display: flex;
   align-items: center;
-  gap: var(--space-3);
-  flex-wrap: wrap;
+  gap: var(--space-2);
 }
-
-.role-badge {
-  font-size: 11px;
-  font-weight: 600;
-  padding: 2px 10px;
-  border-radius: var(--radius-xs);
-  color: white;
-}
-
-.role-badge.role-admin { background: var(--brand-gradient); }
-.role-badge.role-trader { background: var(--color-up-gradient); }
-.role-badge.role-viewer { background: linear-gradient(135deg, #5fa8ff, #82b9ff); }
-
-.hero-username {
-  font-size: 13px;
+.profile-line {
+  font-size: 12px;
   color: var(--text-secondary);
-  margin-top: 4px;
-}
-
-.hero-meta {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-  margin-top: var(--space-3);
-}
-
-.meta-item {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  font-size: 13px;
-  color: var(--text-regular);
-}
-
-.meta-item .el-icon {
-  color: var(--text-secondary);
-  font-size: 14px;
-}
-
-.hero-actions {
-  display: flex;
-  gap: var(--space-2);
-  align-items: flex-start;
 }
 
 .content-card {
@@ -423,6 +329,6 @@ onMounted(async () => {
 
 @media (max-width: 720px) {
   .perm-grid { grid-template-columns: 1fr; }
-  .hero-content { flex-direction: column; align-items: flex-start; }
+  .card-header-extra { width: 100%; flex-direction: row; }
 }
 </style>
