@@ -11,6 +11,7 @@ import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'server'))
 
 import pytest
+import logging
 from datetime import datetime
 from db import Base, engine, init_db, SessionLocal
 from models.orm import Order, Trade, Position, Asset, SysStatus
@@ -497,3 +498,22 @@ def test_unknown_func_skipped_silently():
     handle_push(db, "unknown_func", {"foo": "bar"}, ts="x")
     db.commit()  # 不报错即 OK
     db.close()
+
+
+def test_unknown_func_logs_warning(caplog):
+    """未知 func 应记 warning 日志，含 func 名 + 字段上下文（c44ffa4）。
+
+    之前: 静默 return，broker 加新 evt_type 时悄无声息丢失，排查极难。
+    之后: 记 warning 日志，便于定位缺失 handler。
+    """
+    db = SessionLocal()
+    with caplog.at_level(logging.WARNING, logger="services.push_handlers"):
+        handle_push(db, "bogus_func", {"foo": "bar", "baz": 123}, ts="2026-06-20T10:00:00")
+    db.commit()
+    db.close()
+    # 至少一条 warning 包含 func 名 + 字段 dump
+    matched = [r for r in caplog.records
+               if r.levelno == logging.WARNING and "bogus_func" in r.getMessage()]
+    assert matched, f"expected warning containing 'bogus_func', got: {[r.getMessage() for r in caplog.records]}"
+    # 字段上下文也应被记录（便于排查 broker 推了什么）
+    assert any("foo" in r.getMessage() for r in matched)

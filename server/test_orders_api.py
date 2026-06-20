@@ -333,6 +333,37 @@ def test_place_rpc_fail_marks_rejected(client, active_day, monkeypatch):
     assert "RPC 失败" in body["status_msg"]
 
 
+def test_place_rpc_fail_logs_exception(client, active_day, monkeypatch, caplog):
+    """RPC 抛异常时记 log.exception（含 stack trace）— 2ccac60。
+
+    之前: bare except 吃掉异常，broker 断连时只在 status_msg 里看到一行字。
+    之后: log.exception 带 traceback，便于排查 broker / 网络 / 序列化问题。
+    """
+    import logging
+    monkeypatch.setattr(
+        "services.trading_clock.TradingClock.is_in_trading_session",
+        classmethod(lambda cls: True)
+    )
+    mock_rpc = AsyncMock(side_effect=Exception("柜台断连"))
+    monkeypatch.setattr("api.orders.ord_stk", mock_rpc)
+
+    with caplog.at_level(logging.ERROR, logger="api.orders"):
+        r = client.post(
+            "/api/orders/place",
+            json={"user_def": "CID-FAIL-LOG", "stock_code": "600030.SH",
+                  "order_type": "23", "volume": 100, "price": 12.5, "price_type": 11},
+            headers=_auth(_trader_token(active_day)),
+        )
+
+    assert r.status_code == 200
+    # log.exception 会附 exc_info（traceback）→ r.exc_info is not None
+    exc_records = [r for r in caplog.records if r.exc_info is not None]
+    assert exc_records, (
+        f"expected log.exception with traceback, got: "
+        f"{[(r.levelname, r.getMessage()) for r in caplog.records]}"
+    )
+
+
 # ──── 撤单(v6:用 order_no) ────
 
 def test_cancel_calls_rpc_does_not_change_status(client, active_day, monkeypatch):
