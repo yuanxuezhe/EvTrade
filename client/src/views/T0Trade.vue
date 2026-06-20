@@ -98,6 +98,100 @@
       </el-table>
     </el-card>
 
+    <!-- M-008 v3: 右侧明细抽屉 (点击行/详情打开) -->
+    <el-drawer
+      v-model="drawerVisible"
+      :size="drawerSize"
+      direction="rtl"
+      :with-header="false"
+      :modal="true"
+      :modal-class="'t0-drawer-modal'"
+      custom-class="t0-detail-drawer"
+    >
+      <div class="t0-drawer" v-loading="drawerLoading">
+        <header class="t0-drawer-header">
+          <div class="t0-drawer-title">
+            <span class="t0-drawer-code">{{ stockCode }}</span>
+            <el-tag size="small" type="info" effect="plain">做T 明细</el-tag>
+          </div>
+          <el-button link @click="drawerVisible = false">
+            <el-icon><Close /></el-icon>
+          </el-button>
+        </header>
+
+        <section class="t0-drawer-stats">
+          <div class="stat-block">
+            <span class="stat-label">今日成交</span>
+            <span class="stat-value text-mono">{{ drawerStats.trade_count || 0 }} 笔</span>
+          </div>
+          <div class="stat-block">
+            <span class="stat-label">已实现</span>
+            <span class="stat-value text-mono" :class="(drawerStats.realized_pnl || 0) >= 0 ? 'up' : 'down'">
+              {{ (drawerStats.realized_pnl >= 0 ? '+' : '') + formatAmount(drawerStats.realized_pnl) }}
+            </span>
+          </div>
+          <div class="stat-block">
+            <span class="stat-label">今日买/卖</span>
+            <span class="stat-value text-mono">{{ formatNumber(drawerStats.today_buy_volume) }} / {{ formatNumber(drawerStats.today_sell_volume) }}</span>
+          </div>
+          <div class="stat-block">
+            <span class="stat-label">总盈亏</span>
+            <span class="stat-value text-mono" :class="(drawerStats.total_pnl || 0) >= 0 ? 'up' : 'down'">
+              {{ (drawerStats.total_pnl >= 0 ? '+' : '') + formatAmount(drawerStats.total_pnl) }}
+            </span>
+          </div>
+        </section>
+
+        <section class="t0-drawer-section">
+          <div class="t0-drawer-section-title">
+            📈 累计收益曲线
+            <el-radio-group v-model="drawerDays" size="small" @change="onDrawerChangeDays">
+              <el-radio-button :value="7">7 天</el-radio-button>
+              <el-radio-button :value="30">30 天</el-radio-button>
+              <el-radio-button :value="90">90 天</el-radio-button>
+            </el-radio-group>
+          </div>
+          <div v-if="!drawerHistory || !drawerHistory.points || drawerHistory.points.length === 0" class="t0-drawer-empty">
+            暂无历史数据
+          </div>
+          <div v-else class="t0-drawer-chart">
+            <svg :viewBox="`0 0 ${drawerChartW} ${drawerChartH}`" preserveAspectRatio="none" width="100%" :height="drawerChartH">
+              <line :x1="drawerChartPad" :y1="drawerZeroY" :x2="drawerChartW - drawerChartPad" :y2="drawerZeroY" stroke="#dcdfe6" stroke-width="1" />
+              <path :d="drawerCumPath" :stroke="(drawerCumHistory[drawerCumHistory.length - 1]?.cum_pnl || 0) >= 0 ? '#f56c6c' : '#67c23a'" stroke-width="2" fill="none" />
+              <path :d="drawerCumAreaPath" :fill="(drawerCumHistory[drawerCumHistory.length - 1]?.cum_pnl || 0) >= 0 ? 'rgba(245,108,108,0.12)' : 'rgba(103,194,58,0.12)'" />
+            </svg>
+            <div class="t0-drawer-chart-tip">
+              累计 ¥{{ formatAmount(drawerCumHistory[drawerCumHistory.length - 1]?.cum_pnl || 0) }} ({{ drawerCumHistory.length }} 天)
+            </div>
+          </div>
+        </section>
+
+        <section class="t0-drawer-section">
+          <div class="t0-drawer-section-title">📋 累计统计 (全部历史)</div>
+          <el-descriptions :column="2" size="small" border>
+            <el-descriptions-item label="已实现盈亏">
+              <span :class="(drawerAggregate?.summary?.realized_pnl || 0) >= 0 ? 'up' : 'down'">
+                {{ formatAmount(drawerAggregate?.summary?.realized_pnl || 0) }}
+              </span>
+            </el-descriptions-item>
+            <el-descriptions-item label="胜率">
+              {{ ((drawerAggregate?.summary?.win_rate || 0) * 100).toFixed(1) }}%
+            </el-descriptions-item>
+            <el-descriptions-item label="平均回报">
+              {{ ((drawerAggregate?.summary?.avg_return || 0) * 100).toFixed(2) }}%
+            </el-descriptions-item>
+            <el-descriptions-item label="交易笔数">
+              {{ drawerAggregate?.summary?.trade_count || 0 }}
+            </el-descriptions-item>
+          </el-descriptions>
+        </section>
+
+        <footer class="t0-drawer-footer">
+          <el-button size="default" @click="drawerVisible = false">关闭</el-button>
+        </footer>
+      </div>
+    </el-drawer>
+
     <!-- 3 个核心卡片：敞口 / T0 成本 / 预期收益 -->
     <div class="content-card-row">
       <el-card class="metric-card" shadow="hover">
@@ -648,7 +742,7 @@
 <script setup>
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Search, Top, Bottom, List, Check, ArrowRight } from '@element-plus/icons-vue'
+import { Search, Top, Bottom, List, Check, ArrowRight, Close } from '@element-plus/icons-vue'
 import { storeToRefs } from 'pinia'
 import { useHoldingsStore } from '../stores/holdings'
 import { useAssetStore } from '../stores/asset'
@@ -675,11 +769,95 @@ const submitting = ref(false)
 
 // M-008 v2: 抽屉控制
 const drawerVisible = ref(false)
+// M-008 v3: 抽屉详情独立 state (避免与主页 t0Stats/historyData 互相覆盖)
+const drawerLoading = ref(false)
+const drawerStats = ref({ order_count: 0, trade_count: 0, realized_pnl: 0, unrealized_pnl: 0, total_pnl: 0, today_buy_volume: 0, today_sell_volume: 0, today_buy_amount: 0, today_sell_amount: 0 })
+const drawerHistory = ref(null)
+const drawerDays = ref(30)
 function onOpenDrawer(row) {
   if (!row || !row.stock_code) return
-  stockCode.value = row.stock_code
+  const code = row.stock_code
+  stockCode.value = code  // 同步主页 (影响 ptRowClass 高亮 + 主页 load)
   drawerVisible.value = true
+  drawerLoading.value = true
+  // 并行加载抽屉详情 (与主页 loadT0Stats/History 完全独立, 避免互相覆盖)
+  Promise.all([
+    t0StatsApi.get(code).catch((e) => { console.warn('drawer t0 stats failed', e); return null }),
+    t0StatsApi.getHistory(code, drawerDays.value).catch((e) => { console.warn('drawer t0 history failed', e); return null }),
+  ]).then(([stats, hist]) => {
+    if (stats) drawerStats.value = stats
+    drawerHistory.value = hist
+  }).finally(() => { drawerLoading.value = false })
 }
+function onDrawerChangeDays(days) {
+  drawerDays.value = days
+  if (!stockCode.value) return
+  t0StatsApi.getHistory(stockCode.value, days).then((h) => { drawerHistory.value = h }).catch(() => {})
+}
+
+// 抽屉宽度: 视口宽 < 1100 时压缩到 420, 否则 540
+const drawerSize = computed(() => (typeof window !== 'undefined' && window.innerWidth < 1100 ? '420px' : '540px'))
+// 抽屉历史累计曲线
+const drawerCumHistory = computed(() => {
+  const pts = drawerHistory.value?.points || []
+  let cum = 0
+  return pts.map(p => ({ ...p, cum_pnl: (cum += p.realized_pnl) }))
+})
+const drawerChartW = 460
+const drawerChartH = 140
+const drawerChartPad = 16
+const drawerZeroY = computed(() => {
+  const pts = drawerCumHistory.value
+  if (!pts.length) return drawerChartH / 2
+  const max = Math.max(...pts.map(p => p.cum_pnl), 0)
+  const min = Math.min(...pts.map(p => p.cum_pnl), 0)
+  if (max === min) return drawerChartH / 2
+  // 0 线在 max/min 区间的相对位置
+  return drawerChartH - drawerChartPad - ((-min) / (max - min)) * (drawerChartH - 2 * drawerChartPad)
+})
+const drawerCumPath = computed(() => {
+  const pts = drawerCumHistory.value
+  if (!pts.length) return ''
+  const w = drawerChartW - 2 * drawerChartPad
+  const h = drawerChartH - 2 * drawerChartPad
+  const max = Math.max(...pts.map(p => p.cum_pnl), 0)
+  const min = Math.min(...pts.map(p => p.cum_pnl), 0)
+  const range = max - min || 1
+  return pts.map((p, i) => {
+    const x = drawerChartPad + (i / (pts.length - 1 || 1)) * w
+    const y = drawerChartPad + (1 - (p.cum_pnl - min) / range) * h
+    return `${i === 0 ? 'M' : 'L'} ${x.toFixed(1)} ${y.toFixed(1)}`
+  }).join(' ')
+})
+const drawerCumAreaPath = computed(() => {
+  const line = drawerCumPath.value
+  if (!line) return ''
+  // 0 线 y 位置
+  const pts = drawerCumHistory.value
+  const max = Math.max(...pts.map(p => p.cum_pnl), 0)
+  const min = Math.min(...pts.map(p => p.cum_pnl), 0)
+  const range = max - min || 1
+  const h = drawerChartH - 2 * drawerChartPad
+  const yZero = drawerChartPad + (1 - (0 - min) / range) * h
+  const last = pts.length - 1
+  const w = drawerChartW - 2 * drawerChartPad
+  const xLast = drawerChartPad + (last / (last || 1)) * w
+  return `${line} L ${xLast.toFixed(1)} ${yZero.toFixed(1)} L ${drawerChartPad} ${yZero.toFixed(1)} Z`
+})
+// 抽屉累计统计 (跨期 aggregate API, 后端已存在 /api/orders/t0-aggregate?stock_code=...)
+const drawerAggregate = ref(null)
+watch(drawerVisible, async (v) => {
+  if (v && stockCode.value) {
+    try {
+      // 注意: t0StatsApi.getAggregate 直接返回 data (非 axios wrapper)
+      const agg = await t0StatsApi.getAggregate({ userDef: 'T0', days: 90 })
+      // 过滤当前标的
+      drawerAggregate.value = (agg?.by_stock || []).find(s => s.stock_code === stockCode.value) || agg
+    } catch (e) {
+      console.warn('drawer aggregate failed', e)
+    }
+  }
+})
 function ptRowClass({ row }) {
   // 当前抽屉选中的行高亮
   return row.stock_code === stockCode.value ? 'is-selected' : ''
@@ -833,10 +1011,11 @@ const t0Stats = ref({
   order_count: 0, trade_count: 0, open_order_count: 0
 })
 
-async function loadT0Stats() {
-  if (!stockCode.value) return
+async function loadT0Stats(code) {
+  const c = code || stockCode.value
+  if (!c) return
   try {
-    t0Stats.value = await t0StatsApi.get(stockCode.value)
+    t0Stats.value = await t0StatsApi.get(c)
   } catch (e) {
     console.warn('load t0 stats failed', e)
   }
@@ -844,10 +1023,11 @@ async function loadT0Stats() {
 
 const historyDays = ref(30)
 const historyData = ref(null)
-async function loadT0History() {
-  if (!stockCode.value) return
+async function loadT0History(code) {
+  const c = code || stockCode.value
+  if (!c) return
   try {
-    historyData.value = await t0StatsApi.getHistory(stockCode.value, historyDays.value)
+    historyData.value = await t0StatsApi.getHistory(c, historyDays.value)
   } catch (e) {
     console.warn('load t0 history failed', e)
     historyData.value = null
