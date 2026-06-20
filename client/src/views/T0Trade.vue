@@ -33,6 +33,32 @@
       </div>
     </div>
 
+    <!-- 快速做T 设置条 (M-008): 全局默认仓位 % + 价格档 (行内可覆盖) -->
+    <el-card class="quick-settings-bar" shadow="never">
+      <div class="qs-row">
+        <span class="qs-label">⚡ 默认仓位</span>
+        <el-radio-group v-model="quickPct" size="default">
+          <el-radio-button
+            v-for="p in PCT_OPTIONS"
+            :key="p"
+            :value="p"
+            :label="String(p) + '%'"
+          />
+        </el-radio-group>
+        <span class="qs-divider">|</span>
+        <span class="qs-label">💰 默认价格</span>
+        <el-radio-group v-model="quickPriceType" size="default">
+          <el-radio-button
+            v-for="opt in PRICE_TYPE_OPTIONS"
+            :key="opt.value"
+            :value="opt.value"
+            :label="opt.label"
+          />
+        </el-radio-group>
+        <span class="qs-tip">行内按钮将按此设置下单，可临时调整</span>
+      </div>
+    </el-card>
+
     <!-- 3 个核心卡片：敞口 / T0 成本 / 预期收益 -->
     <div class="content-card-row">
       <el-card class="metric-card" shadow="hover">
@@ -624,6 +650,10 @@ import { useHoldingsStore } from '../stores/holdings'
 import { useAssetStore } from '../stores/asset'
 import { useQuoteStore } from '../stores/quote'
 import { useT0Balance } from '../composables/useT0Balance'
+import {
+  PCT_OPTIONS, PRICE_TYPE_OPTIONS,
+  loadQuickDefaults, saveQuickDefaults,
+} from '../composables/useQuickT0'
 import { api } from '../api'
 import { t0StatsApi } from '../api/t0_stats'
 import { formatNumber, formatPrice, formatAmount } from '../utils/format'
@@ -637,6 +667,14 @@ const { asset } = storeToRefs(assetStore)
 const stockCode = ref('600519.SH')
 const showPicker = ref(false)
 const submitting = ref(false)
+
+// 快速做T 全局设置 (顶部设置条, 持久化到 localStorage)
+const _quickDefaults = loadQuickDefaults()
+const quickPct = ref(_quickDefaults.pct)
+const quickPriceType = ref(_quickDefaults.priceType)
+watch([quickPct, quickPriceType], ([p, pt]) => {
+  saveQuickDefaults(p, pt)
+})
 
 // T0 配平 composable
 const t0 = useT0Balance(stockCode)
@@ -1089,6 +1127,34 @@ onUnmounted(() => {
 .quote-mid.placeholder {
   color: var(--el-text-color-secondary);
   font-size: 14px;
+}
+
+/* 快速做T 顶部设置条 (M-008) */
+.quick-settings-bar {
+  margin: 0;
+}
+.quick-settings-bar :deep(.el-card__body) {
+  padding: 8px 12px;
+}
+.qs-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.qs-label {
+  font-size: 13px;
+  color: var(--el-text-color-secondary);
+  font-weight: 500;
+}
+.qs-divider {
+  color: var(--el-border-color);
+  font-weight: 300;
+}
+.qs-tip {
+  font-size: 12px;
+  color: var(--el-text-color-placeholder);
+  margin-left: auto;
 }
 
 .price-line {
