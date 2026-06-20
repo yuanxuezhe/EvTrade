@@ -18,7 +18,7 @@ __pycache__/
 *.pyo
 *.pyd
 .env
-.venv
+.venv/
 
 # Rust
 target/
@@ -45,6 +45,7 @@ dist/
 *.log
 *.pid
 *.db
+*.bak
 *.sqlite
 *.sqlite3
 server/2.0
