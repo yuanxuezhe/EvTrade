@@ -43,6 +43,8 @@ export const useWsStore = defineStore('ws', () => {
   const _sockets = {}    // channel -> WebSocket
   const _reconnectTimer = {}
   const _retryCount = {}  // v7 增: 指数退避计数, per-channel
+  const _heartbeatTimer = {}  // v10 增: 客户端主动 ping 定时器, per-channel
+  const _pongMissed = {}      // v10 增: 累计未回 pong 次数, per-channel
 
   function _wsUrl(channel) {
     const proto = window.location.protocol === 'https:' ? 'wss' : 'ws'
@@ -66,8 +68,25 @@ export const useWsStore = defineStore('ws', () => {
     ws.onopen = () => {
       connected.value = true
       _retryCount[channel] = 0  // v7 增: 连接成功重置退避计数
+      _pongMissed[channel] = 0  // v10 增: 重置 pong 计数
       // eslint-disable-next-line no-console
       console.log(`[WS] ${channel} connected`)
+      // v10 增: 客户端 30s 主动 ping（quote_update 走 hqserver 不需要）
+      if (channel !== 'quote_update' && !_heartbeatTimer[channel]) {
+        _heartbeatTimer[channel] = setInterval(() => {
+          if (_sockets[channel]?.readyState === WebSocket.OPEN) {
+            try {
+              _sockets[channel].send(JSON.stringify({ type: 'ping', ts: Date.now() }))
+              _pongMissed[channel] = (_pongMissed[channel] || 0) + 1
+              // 连续 3 次 (90s) 没回 pong → 主动断开触发重连
+              if (_pongMissed[channel] >= 3) {
+                console.warn(`[WS] ${channel} pong missed ${_pongMissed[channel]}x, force close`)
+                _sockets[channel]?.close()
+              }
+            } catch (_) { /* 忽略发送失败 */ }
+          }
+        }, 30000)
+      }
     }
 
     ws.onclose = () => {
@@ -77,6 +96,12 @@ export const useWsStore = defineStore('ws', () => {
       const delay = Math.min(RECONNECT_BASE_DELAY * 2 ** (c - 1), RECONNECT_MAX_DELAY)
       // eslint-disable-next-line no-console
       console.log(`[WS] ${channel} closed, reconnect in ${delay}ms (attempt #${c})`)
+      // v10 增: 清理心跳定时器
+      if (_heartbeatTimer[channel]) {
+        clearInterval(_heartbeatTimer[channel])
+        _heartbeatTimer[channel] = null
+      }
+      _pongMissed[channel] = 0
       _scheduleReconnect(channel)
     }
 
@@ -92,6 +117,18 @@ export const useWsStore = defineStore('ws', () => {
       } catch (err) {
         // eslint-disable-next-line no-console
         console.warn('[WS] bad payload', e.data, err)
+        return
+      }
+      // v10 增: ping/pong 双向心跳 (M-005)
+      //   服务端 30s 发 ping → 客户端立即回 pong (重置服务端 timeout)
+      //   客户端 30s 发 ping → 服务端回 pong (重置 _pongMissed 计数)
+      const t = payload?.type
+      if (t === 'ping') {
+        try { ws.send(JSON.stringify({ type: 'pong', ts: payload.ts })) } catch (_) { /* socket 已关 */ }
+        return
+      }
+      if (t === 'pong') {
+        _pongMissed[channel] = 0
         return
       }
       // eslint-disable-next-line no-console
@@ -121,7 +158,12 @@ export const useWsStore = defineStore('ws', () => {
         clearTimeout(_reconnectTimer[ch])
         _reconnectTimer[ch] = null
       }
+      if (_heartbeatTimer[ch]) {  // v10 增
+        clearInterval(_heartbeatTimer[ch])
+        _heartbeatTimer[ch] = null
+      }
       _retryCount[ch] = 0  // v7 增: 主动断开也清计数
+      _pongMissed[ch] = 0  // v10 增
       if (_sockets[ch]) {
         _sockets[ch].onclose = null
         _sockets[ch].close()
