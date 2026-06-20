@@ -1,9 +1,8 @@
 <template>
   <div class="algo-strategy-view fade-in-up">
     <div class="placeholder-card">
+      <!-- 标题/描述由 AppHeader pageMeta 统一显示, 此处仅保留占位图标 -->
       <el-icon :size="64" class="placeholder-icon"><Cpu /></el-icon>
-      <h2 class="placeholder-title">算法策略</h2>
-      <p class="placeholder-desc">敬请期待</p>
     </div>
   </div>
 </template>
@@ -27,17 +26,5 @@ import { Cpu } from '@element-plus/icons-vue'
 
 .placeholder-icon {
   color: var(--text-placeholder);
-}
-
-.placeholder-title {
-  margin: var(--space-4) 0 var(--space-2);
-  font-size: 24px;
-  color: var(--text-primary);
-  font-weight: 600;
-}
-
-.placeholder-desc {
-  color: var(--text-secondary);
-  font-size: 14px;
 }
 </style>
