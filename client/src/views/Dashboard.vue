@@ -335,15 +335,10 @@ const assetChartOption = computed(() => {
 })
 
 onMounted(async () => {
-  // Dashboard 数据获取：
-  //   - 持仓/资金：App 启动时 holdings store 已 bootstrap，这里只做兜底
-  //   - 委托/成交：仍由本页拉（holdings 不管这两个）
+  // Dashboard 数据获取（v8: 委托/成交由 holdings bootstrap 统一加载, ws push 增量更新）
+  //   - 资金/持仓/委托/成交：App 启动时 holdings store 已 bootstrap,这里只做兜底
   //   - 持仓 top 5：从 holdings.positions 读（统一来源）
-  await Promise.all([
-    assetStore.fetchAsset(),
-    orderStore.fetchOrders(),
-    orderStore.fetchTrades()
-  ])
+  await assetStore.fetchAsset()
   // 兜底：若 holdings 还没 bootstrap（例如直接打开 /dashboard）
   if (!holdingsStore.bootstrapped) {
     holdingsStore.bootstrap()

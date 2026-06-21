@@ -132,8 +132,7 @@ async function refresh() {
 
 function handleSelect(stockCode) {
   positionStore.selectStock(stockCode)
-  orderStore.fetchOrders(stockCode)
-  orderStore.fetchTrades(stockCode)
+  // v8: 该股委托/成交走 holdings.orders/trades 全量缓存 + ws push 增量更新
   drawerVisible.value = true
 }
 

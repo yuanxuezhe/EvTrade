@@ -184,13 +184,12 @@ onUnmounted(() => {
 async function handleRefresh() {
   refreshing.value = true
   try {
-    // 全部走 holdings store 缓存（统一日志 + 加载状态）
+    // v8: 全部走 holdings store 缓存（统一日志 + 加载状态）
+    //   委托/成交由 ws push 增量更新, 不再单独 fetch
     await holdingsStore.refreshAll()
-    // 同步刷新 order/asset/position store（兼容老 view）
+    // 同步刷新 asset/position store（兼容老 view）
     await Promise.allSettled([
       assetStore.fetchAsset(),
-      orderStore.fetchOrders(),
-      orderStore.fetchTrades(),
       positionStore.fetchPositions()
     ])
     uiStore.markRefreshed()
