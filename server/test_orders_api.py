@@ -512,3 +512,91 @@ def test_list_orders_default_trd_date_uses_active(client, active_day):
     r = client.get("/api/orders", headers=_auth(_trader_token(active_day)))
     assert len(r.json()["list"]) == 1
     assert r.json()["list"][0]["trd_date"] == "20260614"
+
+
+# ──── v8: PlaceOrderResponse 加 list 字段（统一 RPC 格式） ────
+
+def test_place_response_has_list_field_with_one_order(client, active_day, monkeypatch):
+    """v8: POST /place 响应有 list 字段,内容是 1 个 OrderOut(冗余但统一)
+    前端 axios 拦截器解包后 res.data = list[0]
+    """
+    monkeypatch.setattr(
+        "services.trading_clock.TradingClock.is_in_trading_session",
+        classmethod(lambda cls: True)
+    )
+    mock_rpc = AsyncMock(return_value={"code": 0, "msg": "ok", "list": [{"order_id": "BROKER-OID-LIST"}]})
+    monkeypatch.setattr("api.orders.ord_stk", mock_rpc)
+    monkeypatch.setattr("api.orders.ws_manager.broadcast", AsyncMock())
+
+    r = client.post(
+        "/api/orders/place",
+        json={"user_def": "CID-LIST", "stock_code": "600030.SH",
+              "order_type": "23", "volume": 100, "price": 12.5, "price_type": 11},
+        headers=_auth(_trader_token(active_day)),
+    )
+    assert r.status_code == 200
+    body = r.json()
+    # 旧字段保留(向后兼容)
+    assert body["order"]["order_no"] == "10000001"
+    # 新字段:list 含 1 个 OrderOut,内容跟 order 一致
+    assert "list" in body
+    assert isinstance(body["list"], list)
+    assert len(body["list"]) == 1
+    o = body["list"][0]
+    assert o["order_no"] == "10000001"
+    assert o["stock_code"] == "600030.SH"
+    assert o["status"] == "49"
+    assert o["order_id"] == "BROKER-OID-LIST"
+    assert o["trd_date"] == "20260614"
+
+
+def test_place_response_list_field_on_rpc_fail(client, active_day, monkeypatch):
+    """v8: 柜台 RPC 失败时,list 字段也要返(里面是 55 废单)"""
+    monkeypatch.setattr(
+        "services.trading_clock.TradingClock.is_in_trading_session",
+        classmethod(lambda cls: True)
+    )
+    mock_rpc = AsyncMock(side_effect=Exception("柜台断"))
+    monkeypatch.setattr("api.orders.ord_stk", mock_rpc)
+
+    r = client.post(
+        "/api/orders/place",
+        json={"user_def": "CID-FAIL-LIST", "stock_code": "600030.SH",
+              "order_type": "23", "volume": 100, "price": 12.5, "price_type": 11},
+        headers=_auth(_trader_token(active_day)),
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["code"] == 1
+    assert len(body["list"]) == 1
+    assert body["list"][0]["status"] == "55"
+    # 旧字段仍可用
+    assert body["order"]["status"] == "55"
+
+
+def test_place_response_ws_payload_has_trd_date_and_order_no(client, active_day, monkeypatch):
+    """v8: POST /place 推 WS 时,payload 必带 trd_date + order_no(前端推送守门)"""
+    monkeypatch.setattr(
+        "services.trading_clock.TradingClock.is_in_trading_session",
+        classmethod(lambda cls: True)
+    )
+    mock_rpc = AsyncMock(return_value={"code": 0, "msg": "ok", "list": [{"order_id": "OID-WS"}]})
+    monkeypatch.setattr("api.orders.ord_stk", mock_rpc)
+    mock_ws = AsyncMock()
+    monkeypatch.setattr("api.orders.ws_manager.broadcast", mock_ws)
+
+    client.post(
+        "/api/orders/place",
+        json={"user_def": "CID-WS", "stock_code": "600030.SH",
+              "order_type": "23", "volume": 100, "price": 12.5, "price_type": 11},
+        headers=_auth(_trader_token(active_day)),
+    )
+
+    # 检查 broadcast 调用:order_update channel
+    call_args = mock_ws.await_args
+    payload = call_args.args[1]  # broadcast(channel, payload)
+    assert payload["trd_date"] == "20260614"
+    assert payload["order_no"] == "10000001"
+    assert payload["remark"] == "10000001"  # broker 透传字段
+    assert payload["order_id"] == "OID-WS"  # broker 带回
+    assert payload["status"] == "49"

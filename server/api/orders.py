@@ -79,6 +79,10 @@ class PlaceOrderResponse(BaseModel):
     code: int = 0
     msg: str = ""
     order: Optional[OrderOut] = None
+    # v8: 统一 RPC 格式 list 字段（冗余 1 行，跟 GET /orders list 风格一致）
+    #   - 前端 axios 拦截器解包后 res.data = list[0] = OrderOut
+    #   - 保留 order 字段以兼容老代码
+    list: List[OrderOut] = []
     broker_order_id: str = ""
     fee_breakdown: Optional[dict] = None
     t0_adjusted_volume: Optional[int] = None
@@ -98,6 +102,19 @@ class CancelResponse(BaseModel):
     order_id: str
     cancel_ack: Optional[dict] = None
     error: Optional[str] = None
+
+
+# v8 增:Order → OrderOut 转换（消除 3 处重复；list 包装由调用方做）
+def _to_order_out(o: "Order") -> OrderOut:
+    return OrderOut(
+        order_id=o.order_id or "", user_def=o.user_def,
+        order_no=o.order_no, trd_date=o.trd_date, stock_code=o.stock_code,
+        order_type=o.order_type, price_type=o.price_type,
+        price=o.price, volume=o.volume,
+        traded_volume=o.traded_volume, traded_amount=o.traded_amount,
+        avg_price=o.avg_price, status=o.status,
+        status_msg=o.status_msg, order_time=o.order_time,
+    )
 
 
 # ────────────── 写路径 ──────────────
@@ -159,15 +176,8 @@ async def place_order(req: PlaceOrderRequest, user: User = Depends(get_current_u
         db.refresh(order)
         return PlaceOrderResponse(
             code=1, msg="柜台调用失败",
-            order=OrderOut(
-                order_id=order.order_id or "", user_def=order.user_def,
-                order_no=order.order_no, trd_date=order.trd_date,
-                stock_code=order.stock_code, order_type=order.order_type,
-                price_type=order.price_type, price=order.price, volume=order.volume,
-                traded_volume=order.traded_volume, traded_amount=order.traded_amount,
-                avg_price=order.avg_price, status=order.status,
-                status_msg=order.status_msg, order_time=order.order_time,
-            ),
+            order=_to_order_out(order),
+            list=[_to_order_out(order)],
             error=str(e), t0_adjusted_volume=adjusted,
         )
 
@@ -190,11 +200,19 @@ async def place_order(req: PlaceOrderRequest, user: User = Depends(get_current_u
     db.refresh(order)
 
     # 7. 推 WS
+    # v8 增: payload 加 trd_date + order_no + remark,前端 holdings 推送守门用
+    #   - trd_date: 跟 OrderOut 字段保持一致,前端做激活日守门
+    #   - order_no: 本地 PK,前端推送匹配缓存用(等同 broker.remark)
+    #   - remark:   broker 透传字段(等同 order_no),兼容 ws.js 旧逻辑
     try:
         await ws_manager.broadcast("order_update", {
-            "order_id": order.order_id,
+            "trd_date": order.trd_date,
+            "order_no": order.order_no,
+            "remark": order.order_no,  # 冗余:等 broker 推回来时能 match
+            "order_id": order.order_id or "",
             "stock_code": order.stock_code,
             "status": order.status,
+            "status_msg": order.status_msg,
             "volume": order.volume,
             "traded_volume": order.traded_volume,
         })
@@ -204,15 +222,8 @@ async def place_order(req: PlaceOrderRequest, user: User = Depends(get_current_u
     return PlaceOrderResponse(
         code=0 if order.status == "49" else 1,
         msg=order.status_msg,
-        order=OrderOut(
-            order_id=order.order_id or "", user_def=order.user_def,
-            order_no=order.order_no, trd_date=order.trd_date, stock_code=order.stock_code,
-            order_type=order.order_type, price_type=order.price_type,
-            price=order.price, volume=order.volume,
-            traded_volume=order.traded_volume, traded_amount=order.traded_amount,
-            avg_price=order.avg_price, status=order.status,
-            status_msg=order.status_msg, order_time=order.order_time,
-        ),
+        order=_to_order_out(order),
+        list=[_to_order_out(order)],
         broker_order_id=broker_order_id,
         fee_breakdown={"gross": gross, "net": net, "commission_rate": fee_cfg.commission_rate},
         t0_adjusted_volume=adjusted,

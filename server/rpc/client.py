@@ -66,6 +66,31 @@ def _run_handle_push(func: str, row: Dict[str, Any], ts: str) -> None:
         db.close()
 
 
+def _resolve_active_trd_date_safe() -> Optional[str]:
+    """短连接查当前激活交易日（v8 增：push 链路注入 trd_date 用）
+
+    Returns:
+        8 位 YYYYMMDD,或 None（未做日初 / DB 异常时）
+
+    设计要点：
+    - 每次调用都新开 SessionLocal（无状态依赖，安全）
+    - 异常返回 None 而非 raise（不阻塞 push listener 主循环）
+    - 不传 row 参数给 ws：返回 None 时不注入 trd_date,前端用 _today_yyyymmdd 兜底
+    """
+    try:
+        from db import SessionLocal
+        from services.guards import resolve_active_trd_date
+        db = SessionLocal()
+        try:
+            return resolve_active_trd_date(db)
+        finally:
+            db.close()
+    except Exception as e:
+        # 短连接异常（DB 锁 / disconnect）不应中断 push 链路
+        log.warning("_resolve_active_trd_date_safe failed: %s", e)
+        return None
+
+
 def _wire_dump(pkt: "MsgPacket") -> str:
     """用 msgpacket 自带的 wire_to_string 抓报文字符串视图，便于排查。
 
@@ -200,28 +225,38 @@ class RPClient:
                         rows = _parse_push_rows(pkt)
                         ts = _clean_id(pkt.timestamp()) or ""
 
+                        # v8 增: 推送 payload 注入 trd_date(权威源 = 当前激活交易日)
+                        #   - 前端 holdings.applyOrderPush/applyTradePush 用此做激活日守门
+                        #   - broker 推回来的 trd_date 可能为空 / 格式不规范,统一用 DB 权威源
+                        #   - 用新 session 短查（不持有长连接,listener 不会卡）
+                        active_trd_date = _resolve_active_trd_date_safe()
+
                         for row in rows:
+                            # 注入:trd_date 用激活日(覆盖 broker 推的,保证权威)
+                            enriched_row = {**row, "trd_date": active_trd_date} if active_trd_date else row
+
                             payload = {
                                 "type": func,
                                 "channel": channel,
                                 "ts": ts,
-                                "data": row,
+                                "data": enriched_row,
                             }
 
                             # v8 持久化（异步）：to_thread 包裹，不阻塞 event loop（REQ-PUSH-006）
                             # 抽 _run_handle_push 到新线程跑，listener 主线程继续消费后续 push
                             try:
-                                await asyncio.to_thread(_run_handle_push, func, row, ts)
+                                await asyncio.to_thread(_run_handle_push, func, enriched_row, ts)
                             except Exception as e:
                                 log.error("RPClient.push handle_push error: %s", e)
 
                             log.info(
-                                "RPClient.push broadcast → %s%s",
+                                "RPClient.push broadcast → %s (trd_date=%s)%s",
                                 channel,
+                                active_trd_date or "?",
                                 "\n" + "\n".join(
                                     "  " + k + " = " + repr(v)
-                                    for k, v in sorted(row.items())
-                                ) if row else " (empty row)",
+                                    for k, v in sorted(enriched_row.items())
+                                ) if enriched_row else " (empty row)",
                             )
                             await ws_manager.broadcast(channel, payload)
                     except Exception as e:
