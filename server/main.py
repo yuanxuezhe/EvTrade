@@ -11,6 +11,7 @@ from auth.security import hash_password, decode_token
 from auth.deps import get_current_user
 from api import positions, holdings, orders, trades, asset, auth as auth_api, users as users_api
 from api import clock, fee_config
+from api import system as system_api  # v8: 系统级查询（active-day）
 from api import t0_stats, t0_aggregate
 from api.admin import sys_status as admin_sys_status, reconcile as admin_reconcile, session as admin_session
 from ws.manager import ws_manager
@@ -104,6 +105,7 @@ app.include_router(t0_aggregate.router, prefix="/api/orders", tags=["t0-aggregat
 app.include_router(trades.router, prefix="/api/trades", tags=["trades"], dependencies=_AUTH)
 app.include_router(asset.router, prefix="/api/asset", tags=["asset"], dependencies=_AUTH)
 app.include_router(fee_config.router, prefix="/api/fee-config", tags=["fee-config"], dependencies=_AUTH)
+app.include_router(system_api.router, prefix="/api/system", tags=["system"], dependencies=_AUTH)  # v8
 
 
 # ---- Admin routes (login required, role checked by handler) ----------------
