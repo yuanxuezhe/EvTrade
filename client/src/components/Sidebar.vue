@@ -63,6 +63,7 @@ import { computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { useUiStore } from '../stores/ui'
 import { useOrderStore } from '../stores/order'
+import { useHoldingsStore } from '../stores/holdings'
 import {
   Odometer, Wallet, Money, DataAnalysis, List, Tickets,
   Fold, Expand, TrendCharts, UserFilled, Files,
@@ -73,10 +74,12 @@ import { useAuthStore } from '../stores/auth'
 const route = useRoute()
 const uiStore = useUiStore()
 const orderStore = useOrderStore()
+const holdingsStore = useHoldingsStore()  // v8: orders 唯一权威源
 const authStore = useAuthStore()
 
+// v8: 委托/成交统一从 holdings 拿, orderStore 已不暴露 orders (REQ-FE-009)
 const pendingCount = computed(() =>
-  orderStore.orders.filter((o) => o.status === 'pending' || o.status === 'partial').length
+  holdingsStore.orders.filter((o) => o.status === 'pending' || o.status === 'partial').length
 )
 
 const menuItems = computed(() => {
