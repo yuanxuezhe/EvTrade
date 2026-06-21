@@ -35,6 +35,13 @@ export const useHoldingsStore = defineStore('holdings', () => {
     cash: 0, frozen_cash: 0, market_value: 0, total_asset: 0
   })
 
+  // ---- v8: 激活交易日权威源 -----------------------------------------
+  //   后端 push 链路已强制覆盖 trd_date = activeTrdDate
+  //   前端守门: applyOrderPush/applyTradePush 必须按 (activeTrdDate, order_no) 匹配
+  //   - null: bootstrap 失败 / 未做日初 → 降级放行(不崩),但 log 警告
+  const activeTrdDate = ref(null)   // 8 位 YYYYMMDD 或 null
+  const activeDayStatus = ref(null) // 'active' | 'inactive' | null
+
   // ---- 运行时状态 -----------------------------------------------------
   const loading = ref(false)         // bootstrap / refresh 中
   const bootstrapped = ref(false)    // 至少 bootstrap 过一次
@@ -161,14 +168,35 @@ export const useHoldingsStore = defineStore('holdings', () => {
 
   /**
    * App 启动 / 登录后调用：
-   *   并行拉 4 个 RPC（asset / holdings / orders / trades）→ 写缓存 → 写日志
-   *   启动 ws + 实时市值 watcher
+   *   1) 先拉激活日 (api.getActiveDay) → 写 activeTrdDate (v8: 推送守门用)
+   *   2) 并行拉 4 个 RPC（asset / holdings / orders / trades）→ 写缓存 → 写日志
+   *   3) 启动 ws + 实时市值 watcher
    */
   async function bootstrap() {
     if (loading.value) return
     loading.value = true
     log('info', '缓存', 'bootstrap', '开始加载账户缓存 (资金 / 持仓 / 委托 / 成交)')
     try {
+      // v8: 先拉激活交易日（推送守门权威源）
+      //   失败不中断 bootstrap，降级为 activeTrdDate=null（applyXxx 守门放行）
+      try {
+        const activeList = await api.getActiveDay()
+        const active = Array.isArray(activeList) ? activeList[0] : activeList
+        if (active && active.status === 'active' && active.trd_date) {
+          activeTrdDate.value = active.trd_date
+          activeDayStatus.value = 'active'
+          log('ok', '缓存', 'bootstrap', `激活交易日 = ${active.trd_date}`)
+        } else {
+          activeTrdDate.value = null
+          activeDayStatus.value = active?.status || 'inactive'
+          log('warn', '缓存', 'bootstrap', `未激活交易日 (status=${active?.status || '?'}),推送守门降级`)
+        }
+      } catch (e) {
+        activeTrdDate.value = null
+        activeDayStatus.value = null
+        log('warn', '缓存', 'rpc', '激活日拉取失败,推送守门降级', String(e?.message || e))
+      }
+
       refCounts.value = { asset: 'loading', positions: 'loading', orders: 'loading', trades: 'loading' }
 
       const results = await Promise.allSettled([
@@ -383,9 +411,18 @@ export const useHoldingsStore = defineStore('holdings', () => {
   /** ws._onOrderCfm 调用：合并委托 + 写日志
    *  v6: 匹配键用 order_no（本地 8 位序号 PK），order_id 可能为 null
    *      收到推送时调前端 inferOrderStatus 防御性重算 status
+   *  v8: 守门 = (activeTrdDate, order_no)
+   *      - 推送 row.trd_date != activeTrdDate → 忽略（broker 偶尔推老委托的历史变更）
+   *      - activeTrdDate == null（降级）→ 放行（log warn）
+   *      - 已有订单的 trd_date 也要守门（防止 push 覆盖跨日缓存）
    */
   function applyOrderPush(row, action /* 'open' | 'update' | 'status' */) {
     if (!row || !row.order_no) return
+    // v8 激活日守门
+    if (activeTrdDate.value && row.trd_date && row.trd_date !== activeTrdDate.value) {
+      log('warn', '交易', 'ws', `委托推送忽略: trd_date=${row.trd_date} != active=${activeTrdDate.value} (${row.stock_code} ${row.order_no})`)
+      return
+    }
     // 防御性重算 status（与后端 _infer_order_status 一致）
     if (row.volume != null && row.traded_volume != null) {
       row.status = inferOrderStatus(
@@ -403,9 +440,17 @@ export const useHoldingsStore = defineStore('holdings', () => {
     }
   }
 
-  /** ws._onTradeCfm 调用 */
+  /** ws._onTradeCfm 调用
+   *  v8: 守门 = (activeTrdDate, trade_id) → 推送 row.trd_date != active 忽略
+   *      成交按 trade_id 唯一, trd_date 是额外维度
+   */
   function applyTradePush(row) {
     if (!row || !row.trade_id) return
+    // v8 激活日守门
+    if (activeTrdDate.value && row.trd_date && row.trd_date !== activeTrdDate.value) {
+      log('warn', '交易', 'ws', `成交推送忽略: trd_date=${row.trd_date} != active=${activeTrdDate.value} (${row.stock_code})`)
+      return
+    }
     const idx = trades.value.findIndex((t) => t.trade_id === row.trade_id)
     if (idx < 0) {
       // v7 增: 补全 trd_date / order_no / remark
@@ -461,6 +506,8 @@ export const useHoldingsStore = defineStore('holdings', () => {
     positions, orders, trades, cachedAsset,
     loading, bootstrapped, lastUpdated, refCounts,
     loadHistory,
+    // v8: 激活交易日权威源（推送守门用）
+    activeTrdDate, activeDayStatus,
     // computed
     liveMarketValue, liveTotalAsset, positionCodes,
     // actions

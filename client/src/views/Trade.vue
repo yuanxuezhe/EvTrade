@@ -17,12 +17,12 @@
         />
       </div>
 
-      <!-- 右侧：今日委托 -->
+        <!-- 右侧：今日委托 -->
       <div class="trade-orders-col content-card">
         <div class="orders-header">
           <div>
             <h3 class="orders-title">今日委托</h3>
-            <p class="orders-sub">共 {{ orderStore.orders.length }} 笔，{{ pendingCount }} 笔待成交</p>
+            <p class="orders-sub">共 {{ holdings.orders.length }} 笔，{{ pendingCount }} 笔待成交</p>
           </div>
           <div class="orders-actions">
             <el-radio-group v-model="filter" size="small">
@@ -30,11 +30,11 @@
               <el-radio-button value="pending">未完成</el-radio-button>
               <el-radio-button value="filled">已成交</el-radio-button>
             </el-radio-group>
-            <el-button size="small" :icon="Refresh" @click="refresh" :loading="loading" circle />
+            <el-button size="small" :icon="Refresh" @click="refresh" :loading="refreshing" circle title="刷新" />
           </div>
         </div>
 
-        <el-table :data="filteredOrders" v-loading="loading" style="width: 100%" max-height="640">
+        <el-table :data="filteredOrders" v-loading="refreshing" style="width: 100%" max-height="640">
           <el-table-column prop="order_time" label="时间" width="90">
             <template #default="{ row }">
               <span class="text-mono text-secondary">{{ row.order_time }}</span>
@@ -101,23 +101,27 @@
 </template>
 
 <script setup>
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Refresh } from '@element-plus/icons-vue'
 import OrderForm from '../components/OrderForm.vue'
 import QuotePanel from '../components/QuotePanel.vue'
 import { useOrderStore } from '../stores/order'
-import { useWsStore } from '../stores/ws'
+import { useHoldingsStore } from '../stores/holdings'
 import {
   formatMoney, formatNumber, TERMINAL_STATUSES
 } from '../utils/format'
 import OrderStatusBadge from '../components/OrderStatusBadge.vue'
 
+// v8: 单一缓存源架构
+//   - holdings 是权威 (orders/trades ref + applyOrderPush/applyTradePush)
+//   - orderStore 只暴露 actions (placeOrder/cancelOrder)
+//   - view 不在 onMounted fetch, 不 5s 轮询
 const orderStore = useOrderStore()
-const wsStore = useWsStore()
+const holdings = useHoldingsStore()
 const filter = ref('all')
 const quickStock = ref('')
-const loading = ref(false)
+const refreshing = ref(false)
 const orderFormRef = ref(null)
 
 // 行情面板聚焦的股票代码：默认就是当前下单的代码
@@ -130,11 +134,11 @@ const _FILLED_NUMERIC = new Set(['51'])  // 已成
 const _PENDING_NUMERIC = new Set(['48', '49', '50'])  // 仍可能变化
 
 const pendingCount = computed(() =>
-  orderStore.orders.filter((o) => !TERMINAL_STATUSES.has(String(o.status || ''))).length
+  holdings.orders.filter((o) => !TERMINAL_STATUSES.has(String(o.status || ''))).length
 )
 
 const filteredOrders = computed(() => {
-  const list = orderStore.orders
+  const list = holdings.orders
   if (filter.value === 'pending') {
     return list.filter((o) => !TERMINAL_STATUSES.has(String(o.status || '')))
   }
@@ -151,8 +155,9 @@ function canCancel(status) {
 
 async function handleOrderSubmit(orderData) {
   try {
+    // v8: placeOrder 内部已 _upsertToHoldings 写缓存(等 WS 推送二次确认)
+    //     删 5s 轮询; 删 fetchOrders() 重复拉
     await orderStore.placeOrder(orderData)
-    await orderStore.fetchOrders()
   } catch (e) {
     // 错误已由 axios 拦截器统一弹 ElMessage.error
   }
@@ -189,31 +194,23 @@ function onApplyPrice(price) {
   }
 }
 
+// v8: 手动刷新按钮（兜底, 不再轮询）
+//   正常情况下: WS 推送 → applyOrderPush → UI 实时更新
+//   异常情况: 用户怀疑数据滞后, 点此按钮重拉 4 个 RPC
 async function refresh() {
-  loading.value = true
+  if (refreshing.value) return
+  refreshing.value = true
   try {
-    await orderStore.fetchOrders()
+    await holdings.refreshAll()
   } finally {
-    loading.value = false
+    refreshing.value = false
   }
 }
 
-let timer = null
-onMounted(async () => {
-  loading.value = true
-  try {
-    await orderStore.fetchOrders()
-  } finally {
-    loading.value = false
-  }
-  // 5s 自动刷新委托
-  timer = setInterval(() => orderStore.fetchOrders(), 5000)
-  // 启动 WS（含 quote_update 频道）
-  wsStore.connect()
-})
-
-onUnmounted(() => {
-  if (timer) clearInterval(timer)
+onMounted(() => {
+  // v8: 不再 onMounted fetch(违反单一源纪律; holdings 已在 AppHeader 启动 bootstrap)
+  //     不再 5s 轮询(WS 推送已覆盖实时性)
+  //     holdings 缓存可能是空的(用户首登 / 切换账号),此处不再做补救
 })
 </script>
 

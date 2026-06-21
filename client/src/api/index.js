@@ -132,10 +132,15 @@ export const api = {
     return res.data
   },
   async createOrder(orderData) {
+    // v8: 后端返 {code, msg, order, list, broker_order_id, fee_breakdown, t0_adjusted_volume}
+    //     拦截器解包后 res.data = list 数组
+    //     调用方应取 res.data[0] 当 OrderOut(或保留 res.order 兼容旧代码)
     const res = await http.post('/orders/place', orderData)
     return res.data
   },
   async placeOrder(orderData) {
+    // v8: 跟 createOrder 同接口,返 list[0] = OrderOut
+    //     orderStore.upsertLocal(res.data[0]) 立即写缓存
     const res = await http.post('/orders/place', orderData)
     return res.data
   },
@@ -161,6 +166,15 @@ export const api = {
   // 交易时段（公开接口）
   async getTradingClock() {
     const res = await http.get('/trading/clock')
+    return res.data
+  },
+
+  // v8: 系统级查询（激活交易日权威源）
+  //   - 返 {code, msg, list: [{trd_date, status: 'active'|'inactive'}]}
+  //   - 拦截器解包后 res.data = list 数组
+  //   - holdings.bootstrap() 调, 取 list[0]?.trd_date
+  async getActiveDay() {
+    const res = await http.get('/system/active-day')
     return res.data
   }
 }

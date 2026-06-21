@@ -1,7 +1,8 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { ElNotification } from 'element-plus'
-import { useOrderStore } from './order'
+// v8: 删 useOrderStore - orderStore 不再持有 orders/trades, 单一缓存源在 holdings
+// import { useOrderStore } from './order'  // 移除
 import { usePositionStore } from './position'
 import { useAssetStore } from './asset'
 import { useQuoteStore } from './quote'
@@ -205,79 +206,60 @@ export const useWsStore = defineStore('ws', () => {
   }
 
   function _onOrderCfm(row) {
-    const orderStore = useOrderStore()
-    const orderId = row.order_id || row.order_sysid || ''
+    // v8: 单一缓存源 - 只走 holdings.applyOrderPush
+    //   - 匹配键 = order_no（本地 PK），broker 推的 row.order_no 由后端注入（OrderOut 字段）
+    //   - 兜底: row.remark ≡ order_no（broker 透传）
+    //   - 后端 push 链路已注入 trd_date = activeTrdDate（权威）, 前端守门在 holdings 内部
+    //   - 防御性 status 重算 holdings 内部完成
+    const orderNo = row.order_no || row.remark || ''
+    if (!orderNo) {
+      console.warn('[ws._onOrderCfm] 缺 order_no/remark, 跳过:', row)
+      return
+    }
     const status = row.status || row.order_status || ''
     const code = row.stock_code || ''
     const mapped = _mapOrderStatus(status)
 
-    const existing = orderStore.orders.find(
-      (o) => o.order_id === orderId || o.order_sysid === orderId
-    )
-    if (existing) {
-      if (mapped) existing.status = mapped
-      const tv = Number(row.traded_volume)
-      if (!Number.isNaN(tv)) existing.traded_volume = tv
-      const tp = Number(row.traded_price)
-      if (!Number.isNaN(tp)) existing.traded_price = tp
-      // v5 schema: 柜台透传字段名是 remark (= 本地 order_no)
-      if (row.remark) existing.remark = String(row.remark)
-      if (row.status_msg) existing.status_msg = String(row.status_msg)
-    } else if (orderId) {
-      orderStore.orders.unshift({
-        order_id: orderId,
-        stock_code: code,
-        // 柜台 order_type 数字串：股票 23=买入，24=卖出
-        order_type: row.order_type || '23',
-        volume: Number(row.volume || row.order_volume) || 0,
-        price: Number(row.price) || 0,
-        // 柜台 price_type 数字：5=最新价 11=指定价 14=对手价 44=市价
-        price_type: row.price_type != null ? Number(row.price_type) : 11,
-        status: mapped || status || 'reported',
-        traded_volume: Number(row.traded_volume) || 0,
-        traded_price: Number(row.traded_price) || 0,
-        order_time: row.order_time || payload_ts_to_hms(),
-        remark: row.remark ? String(row.remark) : '',
-        status_msg: row.status_msg ? String(row.status_msg) : ''
-      })
+    // 构造完整 row（兜底 remark, status_msg; 调一次 holdings.applyOrderPush 单点入口）
+    const enriched = {
+      ...row,
+      order_no: orderNo,
+      // v8: 兜底 status 字符串（holdings.applyOrderPush 会再用 inferOrderStatus 重算）
+      status: mapped || status || row.status || ''
     }
 
-    // 同步到 holdings store 缓存（操作记录 + 数据保持一致）
     try {
       const holdings = useHoldingsStore()
-      holdings.applyOrderPush(row, existing ? 'update' : 'open')
-    } catch (_) { /* 同上 */ }
+      holdings.applyOrderPush(enriched, 'update')
+    } catch (e) {
+      console.error('[ws._onOrderCfm] applyOrderPush failed:', e)
+    }
 
-    _notifyOrder(code, mapped || status, row)
+    _notifyOrder(code, mapped || status, enriched)
   }
 
   function _onTradeCfm(row) {
-    const orderStore = useOrderStore()
-    orderStore.trades.unshift({
-      // 柜台报文字段名是 traded_id / traded_time；保留 trade_id / trade_time 作兼容
-      trade_id: row.traded_id || row.trade_id || '',
-      order_id: row.order_id || '',
-      stock_code: row.stock_code || '',
-      // 柜台 order_type 数字串：股票 23=买入，24=卖出
-      order_type: row.order_type || '',
-      volume: Number(row.volume) || 0,
-      price: Number(row.price) || 0,
-      trade_time: row.traded_time || row.trade_time || payload_ts_to_hms()
-    })
+    // v8: 单一缓存源 - 只走 holdings.applyTradePush
+    //   - 匹配键 = trade_id（broker 推 traded_id 兼容 trade_id）
+    //   - trd_date 由后端 push 链路注入 = activeTrdDate
+    //   - order_no: 兜底 row.remark（broker 透传）
+    const tradeId = row.traded_id || row.trade_id || ''
+    if (!tradeId) {
+      console.warn('[ws._onTradeCfm] 缺 trade_id/traded_id, 跳过:', row)
+      return
+    }
+    const enriched = {
+      ...row,
+      trade_id: tradeId,
+      order_no: row.order_no || row.remark || ''
+    }
 
-    // 同步到 holdings 缓存（操作记录 + 视图立刻反映）
     try {
       const holdings = useHoldingsStore()
-      holdings.applyTradePush({
-        trade_id: row.traded_id || row.trade_id || '',
-        order_id: row.order_id || '',
-        stock_code: row.stock_code || '',
-        order_type: row.order_type || '',
-        volume: Number(row.volume) || 0,
-        price: Number(row.price) || 0,
-        trade_time: row.traded_time || row.trade_time || payload_ts_to_hms()
-      })
-    } catch (_) { /* 同上 */ }
+      holdings.applyTradePush(enriched)
+    } catch (e) {
+      console.error('[ws._onTradeCfm] applyTradePush failed:', e)
+    }
 
     ElNotification({
       title: '成交通知',

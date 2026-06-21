@@ -747,6 +747,7 @@ import { storeToRefs } from 'pinia'
 import { useHoldingsStore } from '../stores/holdings'
 import { useAssetStore } from '../stores/asset'
 import { useQuoteStore } from '../stores/quote'
+import { useOrderStore } from '../stores/order'
 import { useT0Balance } from '../composables/useT0Balance'
 import {
   PCT_OPTIONS, PRICE_TYPE_OPTIONS,
@@ -758,6 +759,7 @@ import { t0StatsApi } from '../api/t0_stats'
 import { formatNumber, formatPrice, formatAmount } from '../utils/format'
 
 const holdingsStore = useHoldingsStore()
+const orderStore = useOrderStore()  // v8: 下单后立即 upsert 缓存
 const assetStore = useAssetStore()
 const quoteStore = useQuoteStore()
 const { positions } = storeToRefs(holdingsStore)
@@ -1125,7 +1127,9 @@ async function submitOrder({ orderType, volume, price }) {
     const priceTypeCode = priceType.value === 'market' ? 44
       : priceType.value === 'oppose' ? 14
       : 11  // 'latest' / 'limit'
-    const res = await api.placeOrder({
+    // v8: 走 orderStore 统一处理（已 _upsertToHoldings 写缓存 + 防御性 status 重算）
+    //     res = api 拦截器解包后的 list 数组(1 个 OrderOut)
+    const res = await orderStore.placeOrder({
       stock_code: stockCode.value,
       order_type: orderType,
       price_type: priceTypeCode,
@@ -1134,12 +1138,12 @@ async function submitOrder({ orderType, volume, price }) {
       t0_coefficient: balanceCoeff.value,
       user_def: 'T0',  // T0 页面下单调标记
     })
-    if (res.code === 0) {
+    if (res) {
       const dir = orderType === '23' ? '买' : '卖'
       ElMessage.success(`${dir}单已报：${volume} 股 @ ¥${formatPrice(price)}`)
       loadT0Stats()
     } else {
-      ElMessage.error(res.msg || res.error || '下单失败')
+      ElMessage.error('下单失败')
     }
   } catch (e) {
     const detail = e?.response?.data?.detail
