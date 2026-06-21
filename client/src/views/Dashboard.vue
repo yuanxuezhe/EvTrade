@@ -223,7 +223,7 @@ const recentOrders = computed(() =>
 const todayPnL = computed(() => {
   let buy = 0
   let sell = 0
-  for (const t of orderStore.trades) {
+  for (const t of holdingsStore.trades) {
     if (t.order_type === '23') buy += t.volume * t.price
     else if (t.order_type === '24') sell += t.volume * t.price
   }
@@ -236,7 +236,7 @@ const todayPnLPercent = computed(() => {
 })
 
 const orderStats = computed(() => {
-  const orders = orderStore.orders
+  const orders = holdingsStore.orders
   const total = orders.length || 1
   // 按 tone 分组聚合 11 个细粒度状态（柜台数字）
   //   48 未报 / 49 待报 / 50 已报

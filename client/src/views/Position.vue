@@ -62,8 +62,8 @@
         v-if="positionStore.selectedStockCode"
         :stock-code="positionStore.selectedStockCode"
         :position="positionStore.selectedPosition"
-        :orders="orderStore.orders"
-        :trades="orderStore.trades"
+        :orders="holdingsStore.orders"
+        :trades="holdingsStore.trades"
       />
     </el-drawer>
   </div>
@@ -78,11 +78,13 @@ import PositionTable from '../components/PositionTable.vue'
 import PositionDetail from '../components/PositionDetail.vue'
 import { usePositionStore } from '../stores/position'
 import { useOrderStore } from '../stores/order'
+import { useHoldingsStore } from '../stores/holdings'
 import { formatNumber } from '../utils/format'
 
 const router = useRouter()
 const positionStore = usePositionStore()
 const orderStore = useOrderStore()
+const holdingsStore = useHoldingsStore()
 
 const loading = ref(false)
 const searchKeyword = ref('')
