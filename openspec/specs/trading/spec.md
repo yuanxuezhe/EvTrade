@@ -65,6 +65,16 @@
 - 收到 `trd_cfm` → 路由到 WS 频道 `trade_update`
 - 收到资产变更 → `asset_update`（当前**未识别**，待补）
 
+### REQ-TRADE-007: 响应统一性 + list 字段（v8）
+
+- `POST /api/orders/place` 响应模型 `{code, msg, order: OrderOut, list: List[OrderOut]}`
+  - `list` 字段是冗余 1 行（与 GET /api/orders 风格统一），前端 axios 拦截器自动解包后 `res.data` 是 1 元素数组
+  - 旧 `order` 字段保留（**v8 向后兼容**），不破既有 `r.json()["order"]["order_no"]` 风格调用
+- 柜台 RPC 失败时 `list` 也要返（不报错）
+- 实施位置：`server/api/orders.py::PlaceOrderResponse` + `_to_order_out` helper
+- WS broadcast payload 加 `trd_date + order_no + remark`（供前端推送守门匹配）
+- 详见归档 `archive/2026-06-21-order-push-trd-date-authority/spec-deltas/trading.md`
+
 ### REQ-TRADE-006: T0 敞口与累计收益（v1）
 
 > 📌 **范围**：本端点只读不写。T0 标签 = `Order.user_def == 'T0'`，由 T0Trade.vue 下单时自动注入。
@@ -226,13 +236,16 @@ Then 返回该股票的全部委托，**不包含**其他股票
 | DELETE | `/api/orders/{id}` | `cancel_ord` | trader |
 | GET | `/api/trades` | `qry_mch` | login |
 | GET | `/api/asset` | `qry_asset` | login |
+| GET | `/api/system/active-day` | - | login |
 
 ## Known Issues (from analysis)
 
 - 🟥 ~~`DELETE /orders/{id}` 之前只改内存假撤单~~ → **本轮已修**（走真 RPC）
 - 🟥 ~~`services/trading.py` 118 行内存仓~~ → **本轮已删**
-- 🟥 ~~撤单 URL 用 order_id~~ → **v6 已改用 order_no**，但前端 Trade.vue 还在传 order_id（参见 change `2026-06-16-trade-page-show-order-no-and-cancel`）
+- 🟥 ~~撤单 URL 用 order_id~~ → **v8 已修**（change `2026-06-21-order-push-trd-date-authority`，Trade.vue handleCancel 改传 order_no + trd_date）
 - 🟡 前端 `order.js` `cancelOrder` 硬编码 `order.status = '54'`（与后端本地推断不一致）→ 参见 change `2026-06-16-frontend-infer-order-status`
 - 🟡 前端 Trade.vue / Orders.vue 状态码分组用了 broker 原始码（55=已成等）而不是后端本地推断码（56=已成）→ 同上 change
 - 🟡 `asset_update` 推送功能未实现（RPC 客户端收到资产变更无路由）
 - 🟡 价格类型枚举在 api 层用数字、后端 RPC 用数字、文档用文字 → 应统一映射
+- 🟢 ~~POST /orders/place 响应缺 list 字段，前端 T0Trade.vue 误读 res.code~~ → **v8 已修**（change `2026-06-21-order-push-trd-date-authority`，list 冗余 1 行 + res 直接是 OrderOut）
+- 🟢 ~~前端 5s 轮询 fetchOrders + 缓存双源（orderStore/holdings）~~ → **v8 已修**（change `2026-06-21-order-push-trd-date-authority`，统一 holdings 单一源 + 删 5s 轮询改手动刷新）

@@ -49,6 +49,29 @@ QMT 柜台通过 RabbitMQ 主动推送（`EvTrade.Test.Push` 队列）异步通�
 - 错误处理：to_thread 内异常被 listener 捕获，打 error 日志（已存在），**不重试**（broker 推过的消息不会再来）
 - 向后兼容：`handle_push` 同步签名不变，test_push_handlers.py 现有 11 用例继续通过
 
+### REQ-PUSH-007: 推送按 (activeTrdDate, order_no) 匹配（v8）
+
+#### 权威日注入（后端）
+
+- **唯一权威**：`server/api/system.py::GET /api/system/active-day` 返激活交易日
+  - 查 `SysStatus` 表 `status='active'` 的 `trd_date`
+  - 响应 `{code: 0, msg: "ok", list: [{trd_date: "YYYYMMDD", status: "active"}]}`，拦截器解包后 `data[0].trd_date`
+  - **不**复用 `/api/trading/clock`（flat object，非 RPC 风格）
+- `server/rpc/client.py::_listen_pushs` 在 broadcast 前，用权威日**覆盖** broker 推的 trd_date（broker 偶尔推隔夜老委托）
+  - `_resolve_active_trd_date_safe` 短连接 helper：动态导入 `from db import SessionLocal`，异常降级为 None
+  - 注入位置：payload.data（在 broadcast 之前）+ 持久化 row（在 handle_push 之前）
+  - **None 降级**：helper 异常不中断 push 链路
+
+#### 前端守门
+
+- `client/src/stores/holdings.js::applyOrderPush/applyTradePush` 在 merge 前校验：
+  - `if (activeTrdDate.value && row.trd_date && row.trd_date !== activeTrdDate.value) return`
+  - 缺 `row.trd_date`（broker 旧版本透传字段名不同）放行，**只拒绝明确的非激活日**
+- `activeTrdDate` 在 `bootstrap` 第 1 步拉，失败降级为 null（push 守门不拦）
+- **匹配键**：`order_no`，WS payload 兜底 `row.order_no || row.remark`（v6 `order-pk-by-orderno` 决定）
+
+详见归档 `archive/2026-06-21-order-push-trd-date-authority/spec-deltas/push.md`
+
 ### REQ-PUSH-004: 健壮性
 
 - 解析失败的 push 消息打 warning 日志，不影响后续消息

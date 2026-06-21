@@ -40,12 +40,28 @@
 |---|---|---|
 | `auth` | JWT、用户信息、角色 | `/api/auth/*` |
 | `ui` | 通用 UI 状态（侧栏折叠等） | localStorage |
-| `order` | 委托列表 | `/api/orders` + WS `order_update` |
+| `order` | 委托操作 actions（不持有数据） | `/api/orders/place` + `holdings` |
 | `position` | 持仓 | `/api/positions` |
 | `asset` | 资金 | `/api/asset` |
-| `holdings` | 持仓聚合视图（含资金/委托/成交/持仓） | 批量 `/api/...` |
+| `holdings` | **唯一缓存源**（资金/委托/成交/持仓/activeTrdDate） | 批量 `/api/...` + WS `order_update`/`trade_update` |
 | `quote` | 行情订阅列表 | WS `quote_update` |
 | `ws` | WebSocket 连接管理 | — |
+
+### REQ-FE-009: 委托/成交单一缓存源（v8）
+
+- **唯一权威**：`holdings` store 持有 `orders / trades / positions / asset / activeTrdDate`
+- **`order.js` 重写为纯 actions**（不持有 orders/trades）：
+  - `placeOrder` → RPC 调用 → 拦截器解包 → `_upsertToHoldings(list[0])` 立即 unshift 到 holdings.orders
+  - `cancelOrder` → 委托 `holdings.applyOrderPush(...)` 写一条 status=53 占位（broker ord_cfm 真正到达时再覆盖）
+  - **不暴露** `orders / trades` getter，强制 view 显式 `useHoldingsStore().orders`
+- **`ws.js` 推送单点入口**：`_onOrderCfm` / `_onTradeCfm` **只调** `holdings.applyOrderPush/applyTradePush`
+  - 删 `useOrderStore` 引用
+  - 匹配键 `order_no`，兜底 `row.remark`
+  - WS 不再双写 orderStore + holdings
+- **视图层约束**：
+  - `Trade.vue`：删 `onMounted(fetchOrders)` 与 `setInterval(fetchOrders, 5000)` 轮询；改用 `holdings.refreshAll` 手动刷新按钮（兜底）
+  - `T0Trade.vue`：`submitOrder` 改走 `orderStore.placeOrder`（自动 upsert holdings）；旧 `res.code === 0` 检查改为 `res`（拦截器解包后是 OrderOut 对象）
+- 详见归档 `archive/2026-06-21-order-push-trd-date-authority/spec-deltas/frontend.md`
 
 ### REQ-FE-006: 委托 status 本地推断（前端镜像后端）
 
@@ -112,3 +128,6 @@ And Asset/Holdings 等视图若订阅了该股则自动刷新
 - 🟥 ~~Trade.vue / Orders.vue 用 broker 原始 status 码分组~~ → **本轮已修**（change `2026-06-16-frontend-infer-order-status`，改本地推断码 + 镜像推断）
 - 🟥 ~~Trade.vue 今日委托表无 order_no 列~~ → **本轮已修**（同上 change）
 - 🟢 UI 偏好已沉淀到 user memory，UI 改动前先查
+- 🟢 ~~前端 5s 轮询 fetchOrders + 缓存双源（orderStore/holdings）~~ → **v8 已修**（change `2026-06-21-order-push-trd-date-authority`，统一 holdings 单一源 + 删 5s 轮询改手动刷新）
+- 🟢 ~~T0Trade.vue submitOrder 误读 res.code 永远走 else 分支~~ → **v8 已修**（同上 change，submitOrder 改 orderStore.placeOrder）
+- 🟢 ~~ws.test.js / useT0Balance.test.js 10 个预存失败~~ → **未修**（独立 issue，与 v8 改造无关）
