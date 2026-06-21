@@ -63,6 +63,16 @@
   - `T0Trade.vue`：`submitOrder` 改走 `orderStore.placeOrder`（自动 upsert holdings）；旧 `res.code === 0` 检查改为 `res`（拦截器解包后是 OrderOut 对象）
 - 详见归档 `archive/2026-06-21-order-push-trd-date-authority/spec-deltas/frontend.md`
 
+#### REQ-FE-009.3: 禁止直接访问 `orderStore` state（v8 视图约束）
+
+- **MUST NOT** 视图组件直接访问 `orderStore.{orders, trades, positions, asset, activeTrdDate}`
+  - v8 后 `order.js` 显式 **不暴露** 这 5 个 getter（`order.js` L74-82 注释："避免独立缓存误解"）
+  - 视图层访问 → undefined → Vue render 崩 (`X is not iterable` / `Cannot read properties of undefined`)
+- **MUST** 改用 `useHoldingsStore()`（权威源）：
+  - `holdingsStore.orders` / `holdingsStore.trades` / `holdingsStore.positions` / `holdingsStore.cachedAsset` / `holdingsStore.liveTotalAsset`
+- **唯一允许**：调用 `orderStore` 的 **actions**（`placeOrder` / `cancelOrder` / `createOrder`）
+- 详见归档 `archive/2026-06-22-fix-v8-single-source-violations/spec-deltas/frontend.md`
+
 ### REQ-FE-006: 委托 status 本地推断（前端镜像后端）
 
 - **位置**：`client/src/utils/format.js` 导出 `inferOrderStatus(order, brokerStatus?)` 函数
