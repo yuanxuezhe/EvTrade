@@ -73,6 +73,13 @@
 - **唯一允许**：调用 `orderStore` 的 **actions**（`placeOrder` / `cancelOrder` / `createOrder`）
 - 详见归档 `archive/2026-06-22-fix-v8-single-source-violations/spec-deltas/frontend.md`
 
+#### REQ-FE-009.4: 禁止调用 v8 已删除的 fetcher
+
+- **`orderStore.fetchOrders()` / `orderStore.fetchOrders(stockCode)`** 已删除 — v8 委托由 ws `order_update` push 兜底
+- **`orderStore.fetchTrades()` / `orderStore.fetchTrades(stockCode)`** 已删除 — v8 成交由 ws `trade_update` push 兜底
+- **MUST**: 委托/成交加载走 `holdingsStore.bootstrap()` (App 启动) 或 `holdingsStore.refreshAll()` (手动刷新)
+- 详见归档 `archive/2026-06-22-fix-v8-single-source-violations-r2/spec-deltas/frontend.md`
+
 ### REQ-FE-006: 委托 status 本地推断（前端镜像后端）
 
 - **位置**：`client/src/utils/format.js` 导出 `inferOrderStatus(order, brokerStatus?)` 函数
