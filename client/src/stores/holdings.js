@@ -228,10 +228,11 @@ export const useHoldingsStore = defineStore('holdings', () => {
         refCounts.value.positions = 'fail'
         log('err', '缓存', 'rpc', '持仓加载失败', String(rPos.reason?.message || rPos.reason))
       }
-      // orders
+      // orders（v8: 防御性 status 重算 —— 不信任后端推的 status 字段）
       if (rOrd.status === 'fulfilled') {
-        orders.value = Array.isArray(rOrd.value) ? rOrd.value
+        const rawOrders = Array.isArray(rOrd.value) ? rOrd.value
           : (Array.isArray(rOrd.value?.list) ? rOrd.value.list : [])
+        orders.value = rawOrders.map(_recomputeStatus)
         refCounts.value.orders = 'ok'
         log('ok', '缓存', 'bootstrap', `委托加载成功 (${orders.value.length} 条)`)
       } else {
@@ -305,7 +306,9 @@ export const useHoldingsStore = defineStore('holdings', () => {
         log('err', '缓存', 'rpc', '持仓刷新失败', String(rPos.reason?.message || rPos.reason))
       }
       if (rOrd.status === 'fulfilled') {
-        orders.value = Array.isArray(rOrd.value) ? rOrd.value : []
+        // v8: 防御性 status 重算 —— 不信任后端推的 status 字段
+        const rawOrders = Array.isArray(rOrd.value) ? rOrd.value : []
+        orders.value = rawOrders.map(_recomputeStatus)
         refCounts.value.orders = 'ok'
         summary.push(`委托 ${orders.value.length} 条`)
       } else {
@@ -408,6 +411,31 @@ export const useHoldingsStore = defineStore('holdings', () => {
     log('info', '交易', 'ws', `资产推送: 总资产 ¥${cachedAsset.value.total_asset.toLocaleString()}`)
   }
 
+  /**
+   * v8 增: 委托 status 防御性重算 helper
+   *   - 入参 row (任意对象,只要含 volume/traded_volume 可选)
+   *   - 返回新对象(不可变),status = inferOrderStatus({...row}, null)
+   *   - 不传 brokerStatus: 完全按 traded_volume / volume 推断
+   *     满足用户需求"按已成数量计算状态"(cancelled_volume 字段后续 PR 引入)
+   *   - 缺 volume 或 traded_volume 时原样返回
+   *   - 用于: bootstrap / refresh / applyOrderPush 三处入口
+   */
+  function _recomputeStatus(o) {
+    if (o == null) return o
+    if (o.volume == null || o.traded_volume == null) return o
+    return {
+      ...o,
+      status: inferOrderStatus(
+        {
+          status: o.status,
+          volume: o.volume,
+          traded_volume: o.traded_volume
+        },
+        null
+      )
+    }
+  }
+
   /** ws._onOrderCfm 调用：合并委托 + 写日志
    *  v6: 匹配键用 order_no（本地 8 位序号 PK），order_id 可能为 null
    *      收到推送时调前端 inferOrderStatus 防御性重算 status
@@ -423,13 +451,8 @@ export const useHoldingsStore = defineStore('holdings', () => {
       log('warn', '交易', 'ws', `委托推送忽略: trd_date=${row.trd_date} != active=${activeTrdDate.value} (${row.stock_code} ${row.order_no})`)
       return
     }
-    // 防御性重算 status（与后端 _infer_order_status 一致）
-    if (row.volume != null && row.traded_volume != null) {
-      row.status = inferOrderStatus(
-        { status: row.status, volume: row.volume, traded_volume: row.traded_volume },
-        row.status
-      )
-    }
+    // 防御性重算 status（与后端 _infer_order_status 一致;不传 brokerStatus 完全按 cum/vol 算）
+    row.status = _recomputeStatus(row).status
     const idx = orders.value.findIndex((o) => o.order_no === row.order_no)
     if (idx >= 0) {
       orders.value[idx] = { ...orders.value[idx], ...row }

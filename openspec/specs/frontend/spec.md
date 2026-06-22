@@ -84,9 +84,12 @@
 
 - **位置**：`client/src/utils/format.js` 导出 `inferOrderStatus(order, brokerStatus?)` 函数
 - **契约**：与 `server/services/push_handlers.py:_infer_order_status` **逐行一致**（同规则、同终态集合、同输入输出）
-- **调用点**：
-  - `holdings.js:applyOrderPush` 收到 `order_update` 时，对每条 order 调一次重算（防御性）
-  - `order.js:fetchOrders` 拉取完后批量重算
+- **v8 修订**：前端不再信任 broker 推的 status 字段（broker 码 vs 本地推断码不完全一致），所有显示路径必须经 `inferOrderStatus` 防御性重算
+- **调用点**（v8 修订）：
+  - `holdings.js:bootstrap` 拉取 `/api/orders` 后批量重算
+  - `holdings.js:refresh` 拉取 `/api/orders` 后批量重算
+  - `holdings.js:applyOrderPush` 收到 `order_update` 时重算
+  - 统一通过 `holdings.js:_recomputeStatus(row)` helper 实现（不传 brokerStatus，按 traded_volume / volume 推断）
 - **视图层契约**：
   - 状态码分组集合（`_PENDING_NUMERIC` / `_FILLED_NUMERIC` / `countByStatus`）必须用**本地推断码** 49/50/51/52/53/54/55/56
   - 不要再用 broker 原始码（55=部成/56=已成）的旧逻辑
@@ -136,7 +139,6 @@ When QMT 推一条 `600030.SH|...|12.34|...` 到 RabbitMQ
 Then hqserver WS 推 `{"channel":"quote_update","data":{...}}`  
 And 前端 `quote` store 更新对应 stock_code 的 last_price  
 And Asset/Holdings 等视图若订阅了该股则自动刷新
-
 ## Known Issues (from analysis)
 
 - 🟡 `TStrategy.vue` / `AlgoStrategy.vue` 各 43 行，**未实现内容**

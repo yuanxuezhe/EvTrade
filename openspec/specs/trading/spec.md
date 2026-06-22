@@ -34,7 +34,8 @@
   - 规则：累计成交 + broker 推的撤单类信号 (52/53/54) 推断 49/50/51/53/56
   - 终态 (51/52/53/54/55/56) 一旦写入不再被 trd_cfm 覆盖
   - **前端必须镜像同一函数**：`client/src/utils/format.js` 提供 `inferOrderStatus(order, brokerStatus?)`，见 `frontend/spec.md` REQ-FE-006
-  - **前端不再信任 broker 推的 status 字段**（broker 状态码 vs 本地推断码不完全相同：例如 broker 55=部成 → 本地 50=部成）
+  - **v8 前端不再信任 broker 推的 status 字段**（broker 状态码 vs 本地推断码不完全相同：例如 broker 55=部成 → 本地 50=部成），前端展示态由 `_recomputeStatus` 完全按 traded_volume/volume 推断（不传 brokerStatus）
+  - `OrderOut` v8 增 `cancelled_volume` 字段（默认 0），由 `handle_ord_cfm` 累加 broker 推送的撤单量
 - **v7 schema 调整**：
   - `Order` 表删除 `client_order_id` 字段（不下发，幂等不再靠 DB UNIQUE 约束）
   - `Order` 表删除 `uq_orders_client_trd` / `uq_orders_broker_id` 约束（order_id 下单时为空，broker 约束不可靠）
