@@ -28,13 +28,19 @@
   - `order_no` 服务端本地生成 8 位序号（保证当日 + 全局唯一）
   - 下单时把 `order_no` 透传到柜台 RPC 的 `remark` 字段（柜台透传，pushed-back 时带回）
   - 委托表复合主键 `(trd_date, order_no)`；`order_id` 改为可空列，由 ord_cfm 推送时单条 UPDATE 写入（v6）
-- **`OrderOut.status` 语义（v6，本地推断）**：
+- **`OrderOut.status` 语义（v6，本地推断；v8 改 `cancelled_volume` 主轴）**：
   - 委托表 `status` 字段 = **后端本地推断的委托状态**（48/49/50/51/52/53/54/55/56）
   - 推断函数：`_infer_order_status(order, broker_status=None)`（`server/services/push_handlers.py`）
-  - 规则：累计成交 + broker 推的撤单类信号 (52/53/54) 推断 49/50/51/53/56
+  - **v8 规则改**：以 `cancelled_volume` 主轴
+    - `cancelled_volume >= volume` → 53（已撤）
+    - `cancelled_volume > 0 && traded_volume > 0` → 56（部成部撤）
+    - `cancelled_volume > 0`（无成交）→ 53
+    - `broker_status in (52,53,54)` 兼容老 broker 协议（无 `cancelled_volume` 字段）
+    - 累计推断：`traded_volume` 决定 49/50/51
   - 终态 (51/52/53/54/55/56) 一旦写入不再被 trd_cfm 覆盖
   - **前端必须镜像同一函数**：`client/src/utils/format.js` 提供 `inferOrderStatus(order, brokerStatus?)`，见 `frontend/spec.md` REQ-FE-006
-  - **v8 前端不再信任 broker 推的 status 字段**（broker 状态码 vs 本地推断码不完全相同：例如 broker 55=部成 → 本地 50=部成），前端展示态由 `_recomputeStatus` 完全按 traded_volume/volume 推断（不传 brokerStatus）
+  - **前端不再信任 broker 推的 status 字段**（broker 状态码 vs 本地推断码不完全相同：例如 broker 55=部成 → 本地 50=部成）
+  - `OrderOut` v8 增 `cancelled_volume` 字段（默认 0），由 `handle_ord_cfm` 累加 broker 推送的撤单量
   - `OrderOut` v8 增 `cancelled_volume` 字段（默认 0），由 `handle_ord_cfm` 累加 broker 推送的撤单量
 - **v7 schema 调整**：
   - `Order` 表删除 `client_order_id` 字段（不下发，幂等不再靠 DB UNIQUE 约束）

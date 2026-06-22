@@ -84,15 +84,19 @@
 
 - **位置**：`client/src/utils/format.js` 导出 `inferOrderStatus(order, brokerStatus?)` 函数
 - **契约**：与 `server/services/push_handlers.py:_infer_order_status` **逐行一致**（同规则、同终态集合、同输入输出）
-- **v8 修订**：前端不再信任 broker 推的 status 字段（broker 码 vs 本地推断码不完全一致），所有显示路径必须经 `inferOrderStatus` 防御性重算
+- **v8 修订**：入参 `order` 增加 `cancelled_volume` 字段；推断规则以 `cancelled_volume` 主轴（详见 `push/spec.md` REQ-PUSH-005 v8 修订部分）
 - **调用点**（v8 修订）：
   - `holdings.js:bootstrap` 拉取 `/api/orders` 后批量重算
   - `holdings.js:refresh` 拉取 `/api/orders` 后批量重算
   - `holdings.js:applyOrderPush` 收到 `order_update` 时重算
-  - 统一通过 `holdings.js:_recomputeStatus(row)` helper 实现（不传 brokerStatus，按 traded_volume / volume 推断）
+  - 统一通过 `holdings.js:_recomputeStatus(row)` helper 实现（不传 brokerStatus，按 cancelled_volume + traded_volume / volume 推断）
 - **视图层契约**：
   - 状态码分组集合（`_PENDING_NUMERIC` / `_FILLED_NUMERIC` / `countByStatus`）必须用**本地推断码** 49/50/51/52/53/54/55/56
   - 不要再用 broker 原始码（55=部成/56=已成）的旧逻辑
+  - **不信任后端 / broker 推的 status 字段**：所有显示路径必须经 `inferOrderStatus` 重算（防御性）
+- **Trade.vue 列展示**：
+  - 数量 / 价格 / 已成 / **已撤** / 状态 / 操作
+  - "已撤"列直接展示 `row.cancelled_volume || 0`（与状态列联动：已撤时显示撤单数）
 
 ### REQ-FE-007: 撤单 API 用 order_no + trd_date
 

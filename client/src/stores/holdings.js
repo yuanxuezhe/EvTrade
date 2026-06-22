@@ -413,10 +413,10 @@ export const useHoldingsStore = defineStore('holdings', () => {
 
   /**
    * v8 增: 委托 status 防御性重算 helper
-   *   - 入参 row (任意对象,只要含 volume/traded_volume 可选)
+   *   - 入参 row (任意对象,只要含 volume/traded_volume/cancelled_volume 可选)
    *   - 返回新对象(不可变),status = inferOrderStatus({...row}, null)
-   *   - 不传 brokerStatus: 完全按 traded_volume / volume 推断
-   *     满足用户需求"按已成数量计算状态"(cancelled_volume 字段后续 PR 引入)
+   *   - 不传 brokerStatus: 完全按 traded_volume / cancelled_volume / volume 推断
+   *     满足用户需求"按已成/撤单数量计算状态"
    *   - 缺 volume 或 traded_volume 时原样返回
    *   - 用于: bootstrap / refresh / applyOrderPush 三处入口
    */
@@ -429,7 +429,8 @@ export const useHoldingsStore = defineStore('holdings', () => {
         {
           status: o.status,
           volume: o.volume,
-          traded_volume: o.traded_volume
+          traded_volume: o.traded_volume,
+          cancelled_volume: o.cancelled_volume
         },
         null
       )

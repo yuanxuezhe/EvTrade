@@ -40,7 +40,14 @@ QMT 柜台通过 RabbitMQ 主动推送（`EvTrade.Test.Push` 队列）异步通�
   - 视图层（Trade.vue / Orders.vue）的 status 分组集合（`_PENDING_NUMERIC` / `_FILLED_NUMERIC` / `countByStatus`）必须用**后端本地推断码**：49/50/51/52/53/54/55/56（不是 broker 原始码 55/56 等）
 - **后端函数位置**：`server/services/push_handlers.py:_infer_order_status`
 - **前端函数位置**：`client/src/utils/format.js:inferOrderStatus`
-- **v8 修订**：前端不再信任 broker / WS payload 的 status 字段（broker 原始码与本地推断码语义不完全一致，例如 broker 55=部成 vs 本地 50=部成）。前端展示态由 `client/src/stores/holdings.js:_recomputeStatus` 统一按 `traded_volume / volume` 推断（不传 brokerStatus），详见 REQ-FE-006
+- **v8 修订**：推断规则以 `cancelled_volume` 为主轴：
+  1. 当前 status 已是终态（51/52/53/54/55/56）→ 保持
+  2. `cancelled_volume >= volume` → 53（已撤）
+  3. `cancelled_volume > 0 && traded_volume > 0` → 56（部成部撤）
+  4. `cancelled_volume > 0`（无成交）→ 53
+  5. broker_status in (52,53,54) → 撤单类信号（兼容老 broker 无 cancelled_volume 字段）
+  6. 累计推断：`traded_volume` 决定 49/50/51
+- **重要：WS payload status 字段可能不可信**（broker 原始 status 与本地推断码语义不一致时）。前端展示态由 `client/src/stores/holdings.js:_recomputeStatus` 统一按 `cancelled_volume + traded_volume / volume` 推断（不传 brokerStatus），详见 REQ-FE-006
 
 ### REQ-PUSH-006: 异步落库（v8）
 

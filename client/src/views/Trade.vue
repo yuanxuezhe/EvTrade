@@ -72,6 +72,11 @@
               <span class="text-mono">{{ formatNumber(row.traded_volume || 0) }}</span>
             </template>
           </el-table-column>
+          <el-table-column prop="cancelled_volume" label="已撤" align="right" width="80">
+            <template #default="{ row }">
+              <span class="text-mono">{{ formatNumber(row.cancelled_volume || 0) }}</span>
+            </template>
+          </el-table-column>
           <el-table-column prop="status" label="状态" width="100">
             <template #default="{ row }">
               <OrderStatusBadge :status="row.status" :remark="row.remark" :status_msg="row.status_msg" />

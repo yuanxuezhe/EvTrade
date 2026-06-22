@@ -51,6 +51,7 @@ ORM 注释必须与本 spec 保持一致（diff 检查项之一）。
 | `traded_volume` | Integer | NO | 0 | 累计成交量 |
 | `traded_amount` | Float | NO | 0.0 | 累计成交额 |
 | `avg_price` | Float | NO | 0.0 | 成交均价 = traded_amount / traded_volume |
+| `cancelled_volume` | Integer | NO | 0 | **累计撤单量**（v8 新增：broker ord_cfm 累加；用于推断已撤/部成部撤） |
 | `status` | String(2) | NO | "48" | **本地推断的委托状态**（48/49/50/51/52/53/54/55/56） |
 | `status_msg` | String(255) | NO | "" | 状态中文或 broker 错误信息 |
 | `order_time` | String(8) | NO | "" | HH:MM:SS |
@@ -69,6 +70,10 @@ ORM 注释必须与本 spec 保持一致（diff 检查项之一）。
 - `status` 永远不直接抄 broker 推送值；由 `_infer_order_status(order, broker_status=None)` 推断（见 `push/spec.md`）
 - 终态（51/52/53/54/55/56）一旦写入不再被 trd_cfm 覆盖
 - 撤单定位用 `(trd_date, order_no)`，URL `/api/orders/{order_no}?trd_date=YYYYMMDD`
+- **v8 schema 调整**：
+  - 新增 `cancelled_volume` 字段：累计撤单量，broker ord_cfm 推送 `cancelled_volume` / `cancel_volume` / `withdrawn_volume` 任一字段名时累加（兼容多版本）
+  - 状态推断规则改：`cancelled_volume >= volume` → 53（已撤）；`cancelled_volume > 0 && traded_volume > 0` → 56（部成部撤）；`cancelled_volume > 0` → 53
+  - DB 迁移脚本：`ALTER TABLE orders ADD COLUMN cancelled_volume INTEGER NOT NULL DEFAULT 0`
 - **v7 schema 调整动机**：
   - `client_order_id` UNIQUE 约束无法用 — order_id 下单时为空，对应 broker 约束才能稳定
   - `user_def` 是纯透传字段（前端可写可读），不参与任何 DB 约束

@@ -264,18 +264,22 @@ export const TERMINAL_STATUSES = new Set(['51', '52', '53', '54', '55', '56'])
  * 委托 status 本地推断（前端镜像后端 _infer_order_status）
  * 与 `server/services/push_handlers.py:_infer_order_status` 逐行一致
  *
- * 规则:
+ * 规则 (v8: cancelled_volume 主轴):
  *   1. 当前 status 已是终态 (51/52/53/54/55/56) → 保持
- *   2. broker_status 给出且在 (52, 53, 54) → 撤单类
+ *   2. 撤单主轴 (cum_cancelled):
+ *      - cum_cancelled >= vol                 → 53 (已撤)
+ *      - cum_cancelled > 0 && cum_traded > 0  → 56 (部成部撤)
+ *      - cum_cancelled > 0                    → 53 (部分撤单无成交,视作已撤)
+ *   3. broker_status 给出且在 (52, 53, 54) → 撤单类（兼容老 broker）
  *      - cumulative = 0          → 53 (已撤)
  *      - 0 < cumulative < volume → 56 (部成部撤)
  *      - cumulative = volume     → 51 (已成)
- *   3. 累计推断
+ *   4. 累计推断
  *      - cumulative = 0          → 49 (已报)
  *      - 0 < cumulative < volume → 50 (部成)
  *      - cumulative = volume     → 51 (已成)
  *
- * @param {Object} order - { status, traded_volume, volume }
+ * @param {Object} order - { status, traded_volume, cancelled_volume, volume }
  * @param {string|null} brokerStatus - 可选,broker ord_cfm 推的 status 字段
  * @returns {string} 推断后的 status
  */
@@ -286,16 +290,22 @@ export function inferOrderStatus(order, brokerStatus = null) {
   if (TERMINAL_STATUSES.has(current)) return current
 
   const cum = Number(order?.traded_volume) || 0
+  const cumCancelled = Number(order?.cancelled_volume) || 0
   const vol = Number(order?.volume) || 0
 
-  // 2. broker 推了撤单类 status
+  // 2. 撤单主轴（v8 新增,优先于 broker_status 判定）
+  if (cumCancelled >= vol && vol > 0) return '53'  // 已撤
+  if (cumCancelled > 0 && cum > 0) return '56'  // 部成部撤
+  if (cumCancelled > 0 && cum === 0) return '53'  // 部分撤单无成交 → 已撤
+
+  // 3. broker 推了撤单类 status
   if (brokerStatus && ['52', '53', '54'].includes(String(brokerStatus))) {
     if (cum === 0) return '53'
     if (cum < vol) return '56'
     return '51'
   }
 
-  // 3. 累计推断
+  // 4. 累计推断
   if (cum === 0) return '49'
   if (cum < vol) return '50'
   return '51'
