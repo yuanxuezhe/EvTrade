@@ -71,7 +71,7 @@ def next_order_no(db) -> str:
 - 优点：兼容老 SQLite（< 3.24）
 - 缺点：仍 3 步 IO，性能差；不能解决 docstring 撒谎
 
-**选 A**：项目 SQLite 实际 3.50.4，无兼容性顾虑。
+**选 A**：~~项目 SQLite 实际 3.50.4，无兼容性顾虑。~~ **【勘误 2026-06-22】实际 Python 3.6.8 自带 SQLite 3.21.0，方案 A 不可用。已降级到方案 B（3 步分离 + 函数内 commit），详见 `2026-06-22-order-no-sqlite-compat` change。**
 
 ### 2.2 改 docstring
 

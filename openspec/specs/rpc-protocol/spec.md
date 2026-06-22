@@ -79,7 +79,10 @@ pkt = await client.call(
 
 `server/services/order_no.py:next_order_no(db)` 必须保证:
 
-- **REQ-RPC-009.1** 单语句原子自增, 使用 SQLite ≥ 3.35 `INSERT ... ON CONFLICT DO UPDATE ... RETURNING` 模式
+- **REQ-RPC-009.1** 原子自增, 实现允许两条路径:
+  - (a) 理想方案: SQLite ≥ 3.35 单语句 `INSERT ... ON CONFLICT DO UPDATE ... RETURNING` 模式 (1 步)
+  - (b) 兼容方案: SQLite ≥ 3.21 三步分离 `INSERT OR IGNORE` + `UPDATE` + `SELECT` 模式 (3 步, 函数内 commit)
+  - 当前生产环境 Python 3.6.8 自带 SQLite 3.21.0, **必须使用方案 (b)**; 升级 Python 或 libsqlite3 后可切到 (a)
 - **REQ-RPC-009.2** 函数内自动 commit (破坏旧"调用方负责 commit"约定), 消除"调用方异常回滚导致序号回退"风险
 - **REQ-RPC-009.3** 返回 8 位数字字符串 '10000001'-'99999999', 达到上限时 raise RuntimeError
 - **REQ-RPC-009.4** docstring 必须真实描述实现 (不得注释与代码不符)
