@@ -187,7 +187,7 @@ async def test_reply_resolves_future():
         await client.connect()
 
     # 启动 call（不 await，注入 reply 后再 await）
-    call_task = asyncio.create_task(client.call("qry_ast", timeout=2.0))
+    call_task = asyncio.ensure_future(client.call("qry_ast", timeout=2.0))  # Py3.6.8 compat
 
     # 等 publish 被调用、msgid 被记录
     for _ in range(20):

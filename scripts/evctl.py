@@ -492,19 +492,26 @@ def start_service(svc):
         log_err('failed to spawn ' + name + ': ' + str(e))
         return False
 
-    # 启动后 0.5s 验证: 子进程不能秒死 (缺模块 / 命令拼错 / 端口已被占等)
-    time.sleep(0.5)
-    if not pid_alive(p.pid):
-        try:
-            os.unlink(svc.pid_file)
-        except OSError:
-            pass
-        log_err(
-            name + ' (pid=' + str(p.pid) + ') died shortly after start. ' +
-            'tail of ' + svc.log_file + ':'
-        )
-        _tail_log(svc.log_file, 15)
-        return False
+    # 启动后多轮存活检查 (0.5s / 1.5s / 3.0s)
+    # 父进程 (uvicorn reloader) 早期打印 "Uvicorn running" 后才 fork 子进程去 import main:app;
+    # 子进程若在中段崩 (e.g. PEP 585 语法触发 TypeError), 父进程会延迟才感知并退出.
+    # 单次 0.5s 检查只能挡住秒挂场景, 挡不住"父进程晚感知"型死亡.
+    _SURVIVAL_CHECKPOINTS = (0.5, 1.5, 3.0)
+    last_cp = 0.0
+    for cp in _SURVIVAL_CHECKPOINTS:
+        time.sleep(cp - last_cp)
+        last_cp = cp
+        if not pid_alive(p.pid):
+            try:
+                os.unlink(svc.pid_file)
+            except OSError:
+                pass
+            log_err(
+                name + ' (pid=' + str(p.pid) + ') died within ' +
+                str(cp) + 's after start. tail of ' + svc.log_file + ':'
+            )
+            _tail_log(svc.log_file, 15)
+            return False
 
     log_ok(name + ' started (pid=' + str(p.pid) + ', log=' + svc.log_file + ')')
     return True

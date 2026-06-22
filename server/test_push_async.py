@@ -108,11 +108,11 @@ async def test_listener_does_not_block_event_loop(monkeypatch):
 
     async def run_push_with_replies():
         # 启动 push 落库（to_thread 不阻塞主 loop）
-        push_task = asyncio.create_task(
+        push_task = asyncio.ensure_future(  # Py3.6.8 compat (asyncio.create_task is 3.7+)
             asyncio.to_thread(rpc_client_mod._run_handle_push, "ord_cfm", {}, "")
         )
         # 同时启动 10 个 reply
-        reply_tasks = [asyncio.create_task(fake_reply()) for _ in range(10)]
+        reply_tasks = [asyncio.ensure_future(fake_reply()) for _ in range(10)]
         await asyncio.gather(push_task, *reply_tasks)
 
     await run_push_with_replies()

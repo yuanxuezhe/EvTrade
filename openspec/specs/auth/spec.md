@@ -50,9 +50,24 @@ EvTrade 是多用户交易平台，必须区分：
 
 ### S-AUTH-001: 新用户首次登录
 
-Given 系统中无用户  
-When FastAPI 启动  
-Then 自动创建 admin/admin123 账户，日志提示首次登录后改密码
+Given users 表为空（count == 0；首启动 / 开发期 wipe / 全新 DB）
+When FastAPI 启动
+Then 自动创建两个默认账号：
+
+| username | password | role | must_change_password |
+|---|---|---|---|
+| admin | admin123 | admin | true |
+| trader | trader123 | trader | true |
+
+And 日志提示首次登录后必须改密码
+
+### S-AUTH-006: 开发期 wipe users 表后重启
+
+Given 用户通过 SQLite 工具手动 `DELETE FROM users`（清空 users 表但保留 schema）
+When FastAPI 重启
+Then `on_startup` 检测到 `count == 0`，自动补 admin 和 trader 两个默认账号
+And `[INIT] Created default accounts` 日志出现
+And 不影响其他表（orders / trades / positions 等）的数据
 
 ### S-AUTH-002: 401 拦截
 

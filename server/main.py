@@ -42,7 +42,7 @@ app.add_middleware(
 
 @app.on_event("startup")
 def on_startup():
-    """Create tables and seed default admin if no users exist."""
+    """Create tables and seed default accounts if no users exist."""
     # 启动时验证配置
     validate_config()
     init_db()
@@ -58,9 +58,20 @@ def on_startup():
                 is_active=True,
                 must_change_password=True,
             )
+            trader = User(
+                username="trader",
+                password_hash=hash_password("trader123"),
+                role="trader",
+                full_name="默认交易员",
+                is_active=True,
+                must_change_password=True,
+            )
             db.add(admin)
+            db.add(trader)
             db.commit()
-            print("[INIT] Created default admin account: admin / admin123")
+            print("[INIT] Created default accounts (users table was empty):")
+            print("[INIT]   - admin / admin123 (role=admin)")
+            print("[INIT]   - trader / trader123 (role=trader)")
             print("[INIT] Please change the password after first login.")
     finally:
         db.close()
@@ -160,7 +171,7 @@ async def websocket_endpoint(websocket: WebSocket, channel: str):
         except (WebSocketDisconnect, Exception):
             return
 
-    sender_task = asyncio.create_task(heartbeat_sender())
+    sender_task = asyncio.ensure_future(heartbeat_sender())  # Py3.6.8 compat (asyncio.create_task is 3.7+)
     try:
         while True:
             data = await websocket.receive_text()

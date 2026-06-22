@@ -7,7 +7,7 @@ GET /api/orders/t0-exposure?user_def=T0&trd_date=YYYYMMDD
 GET /api/orders/t0-aggregate?user_def=T0&days=30
   → 跨期累计 + 按日/按股双视角 + 胜率/回报率
 """
-from typing import Optional
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
@@ -63,7 +63,7 @@ class ExposureTotalsOut(BaseModel):
 class T0ExposureOut(BaseModel):
     trd_date: str
     user_def: str
-    positions: list[ExposurePositionOut]
+    positions: List[ExposurePositionOut]
     totals: ExposureTotalsOut
 
 
@@ -106,8 +106,8 @@ class T0AggregateOut(BaseModel):
     user_def: str
     days: int
     summary: AggregateSummaryOut
-    by_day: list[AggregateByDayOut]
-    by_stock: list[AggregateByStockOut]
+    by_day: List[AggregateByDayOut]
+    by_stock: List[AggregateByStockOut]
 
 
 # ──────── Endpoints ────────
