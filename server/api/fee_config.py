@@ -10,9 +10,9 @@ from typing import Optional
 from sqlalchemy.orm import Session
 from datetime import datetime, timezone
 
-from db import get_db
-from models.orm import FeeConfig
-from services.guards import require_admin
+from server.db import get_db
+from server.models.orm import FeeConfig
+from server.services.guards import require_admin
 
 router = APIRouter()
 

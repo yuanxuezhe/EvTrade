@@ -28,7 +28,7 @@ from sqlalchemy import (
     Column, Integer, String, Float, Text, DateTime, Boolean,
     CheckConstraint, Index, UniqueConstraint, Time,
 )
-from db import Base
+from server.db import Base
 
 
 # ─────────────── 业务表 ───────────────
@@ -70,6 +70,7 @@ class Order(Base):
     traded_volume = Column(Integer, nullable=False, default=0)
     traded_amount = Column(Float, nullable=False, default=0.0)
     avg_price = Column(Float, nullable=False, default=0.0)
+    cancelled_volume = Column(Integer, nullable=False, default=0)  # 累计撤单量（broker ord_cfm 累加）
     status = Column(String(2), nullable=False, default="48")  # 48=待报 49=已报 50=部成 51=已成 52=部撤 53=已撤 55=废单
     status_msg = Column(String(255), nullable=False, default="")
     order_time = Column(String(8), nullable=False, default="")  # HH:MM:SS

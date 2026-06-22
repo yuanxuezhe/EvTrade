@@ -11,10 +11,10 @@ GET /api/system/active-day
 依赖：services.guards.resolve_active_trd_date（已存在）
 """
 from fastapi import APIRouter, Depends
-from db import SessionLocal
-from services.guards import resolve_active_trd_date
-from auth.deps import get_current_user
-from models.user import User
+from server.db import SessionLocal
+from server.services.guards import resolve_active_trd_date
+from server.auth.deps import get_current_user
+from server.models.user import User
 
 router = APIRouter()
 

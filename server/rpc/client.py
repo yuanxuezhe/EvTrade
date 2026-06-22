@@ -9,8 +9,8 @@ from aio_pika import ExchangeType, Message
 
 from msgpacket import MsgPacket, MSG_TYPE_REQUEST, MSG_TYPE_PUSH
 
-from config import settings
-from ws.manager import ws_manager
+from server.config import settings
+from server.ws.manager import ws_manager
 
 log = logging.getLogger(__name__)
 

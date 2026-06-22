@@ -20,7 +20,7 @@ from sqlalchemy import text
 from typing import Dict, Any, Optional
 from sqlalchemy.orm import Session
 
-from models.orm import (
+from server.models.orm import (
     Order, Trade, Position, Asset, SysStatus,
 )
 
@@ -53,27 +53,31 @@ def _status_msg(status: str) -> str:
 
 
 def _infer_order_status(order: Order, broker_status: Optional[str] = None) -> str:
-    """委托 status 本地推断
+    """委托 status 本地推断（v8 改：cancelled_volume 主轴）
 
     Args:
-        order: Order 实例,需要 traded_volume / volume / status(当前值) 字段
+        order: Order 实例,需要 traded_volume / cancelled_volume / volume / status(当前值) 字段
         broker_status: 可选,broker ord_cfm 推的 status 字段(52/53/54 视为撤单类)
                      trd_cfm 调用时传 None(trd_cfm 永远不写撤单类状态)
 
     Returns:
         推断后的 status: 49 / 50 / 51 / 53 / 56
 
-    规则:
+    规则 (v8: cancelled_volume 主轴):
       1. 当前 status 已是终态(51/52/53/54/55/56) → 保持,不再推断
          (避免 trd_cfm 累计覆盖 ord_cfm 写的撤单终态)
-      2. broker_status 给出且在 (52, 53, 54) → 撤单类
-         - cumulative = 0           → 53 (已撤)
-         - 0 < cumulative < volume  → 56 (部成部撤)
-         - cumulative = volume      → 51 (已成,broker 推撤单但已全成)
-      3. 累计推断
-         - cumulative = 0           → 49 (已报)
-         - 0 < cumulative < volume  → 50 (部成)
-         - cumulative = volume      → 51 (已成)
+      2. 撤单主轴(cum_cancelled):
+         - cum_cancelled >= vol                 → 53 (已撤)
+         - cum_cancelled > 0 && cum_traded > 0  → 56 (部成部撤)
+         - cum_cancelled > 0                    → 53 (部分撤单无成交,也视作已撤)
+      3. broker_status 给出且在 (52, 53, 54) → 撤单类信号(兼容老 broker 协议)
+         - cum_traded = 0                       → 53 (已撤)
+         - 0 < cum_traded < vol                 → 56 (部成部撤)
+         - cum_traded = vol                     → 51 (已成)
+      4. 累计推断 (cum_traded)
+         - cum_traded = 0                       → 49 (已报)
+         - 0 < cum_traded < vol                 → 50 (部成)
+         - cum_traded = vol                     → 51 (已成)
     """
     current = order.status or '48'
 
@@ -82,9 +86,18 @@ def _infer_order_status(order: Order, broker_status: Optional[str] = None) -> st
         return current
 
     cum = order.traded_volume or 0
+    cum_cancelled = order.cancelled_volume or 0
     vol = order.volume or 0
 
-    # 2. broker 推了撤单类 status
+    # 2. 撤单主轴(v8 新增,优先于 broker_status 判定)
+    if cum_cancelled >= vol and vol > 0:
+        return '53'  # 已撤:撤单数 ≥ 委托数
+    if cum_cancelled > 0 and cum > 0:
+        return '56'  # 部成部撤:既有成交又有撤单
+    if cum_cancelled > 0 and cum == 0:
+        return '53'  # 部分撤单(无成交) → 视作已撤(运营角度)
+
+    # 3. broker 推了撤单类 status(兼容老 broker 协议,无 cancelled_volume 字段时)
     if broker_status and broker_status in ('52', '53', '54'):
         if cum == 0:
             return '53'
@@ -92,7 +105,7 @@ def _infer_order_status(order: Order, broker_status: Optional[str] = None) -> st
             return '56'
         return '51'  # 已成,broker 撤单无意义
 
-    # 3. 累计推断
+    # 4. 累计推断
     if cum == 0:
         return '49'
     if cum < vol:
@@ -174,6 +187,18 @@ def handle_ord_cfm(db: Session, row: Dict[str, Any], ts: str) -> None:
     # v6: 不再有 PENDING- 占位,broker order_id 直接写入(覆盖 NULL)
     if broker_order_id and order.order_id != broker_order_id:
         order.order_id = broker_order_id
+
+    # v8: 累加 cancelled_volume(broker 不同版本字段名兼容)
+    cancelled = _int(row.get('cancelled_volume', None), 0) \
+        or _int(row.get('cancel_volume', None), 0) \
+        or _int(row.get('withdrawn_volume', None), 0)
+    if cancelled > 0:
+        # 累加(避免 broker 重推时丢数)
+        new_cancelled = (order.cancelled_volume or 0) + cancelled
+        # 不超过委托数
+        if order.volume and new_cancelled > order.volume:
+            new_cancelled = order.volume
+        order.cancelled_volume = new_cancelled
 
     # 委托 status 由 _infer_order_status 本地推断
     # (broker_status 临时喂进去:52/53/54 视为撤单类信号)

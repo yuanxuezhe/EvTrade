@@ -6,9 +6,9 @@ GET /api/trading/clock
 from datetime import datetime
 from fastapi import APIRouter
 
-from db import SessionLocal
-from services.trading_clock import TradingClock
-from services.guards import resolve_default_trd_date, resolve_active_trd_date
+from server.db import SessionLocal
+from server.services.trading_clock import TradingClock
+from server.services.guards import resolve_default_trd_date, resolve_active_trd_date
 
 router = APIRouter()
 

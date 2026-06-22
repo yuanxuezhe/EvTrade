@@ -111,12 +111,12 @@ def validate_config():
     if validator.warnings:
         print("[CONFIG] Warnings:")
         for w in validator.warnings:
-            print(f"  ⚠ {w}")
+            print(f"  [WARN] {w}")
 
     if not passed:
         print("[CONFIG] Errors:")
         for e in validator.errors:
-            print(f"  ✗ {e}")
+            print(f"  [ERROR] {e}")
         raise RuntimeError(f"Config validation failed: {validator.errors}")
 
     print("[CONFIG] All validations passed")

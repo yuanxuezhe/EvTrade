@@ -10,9 +10,9 @@ from pydantic import BaseModel
 from typing import Optional
 from sqlalchemy.orm import Session
 
-from db import get_db
-from models.orm import TradingSession
-from services.guards import require_admin
+from server.db import get_db
+from server.models.orm import TradingSession
+from server.services.guards import require_admin
 
 router = APIRouter()
 
@@ -91,7 +91,7 @@ async def update_session(req: SessionUpdate, db: Session = Depends(get_db), _=De
     db.commit()
     db.refresh(row)
     # 清缓存
-    from services.trading_clock import TradingClock
+    from server.services.trading_clock import TradingClock
     TradingClock.invalidate_cache()
     return SessionOut(
         morning_start=row.morning_start.isoformat(),

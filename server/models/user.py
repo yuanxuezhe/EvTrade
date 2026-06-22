@@ -3,7 +3,7 @@ User ORM model.
 """
 from datetime import datetime, timezone
 from sqlalchemy import Column, Integer, String, DateTime, Boolean
-from db import Base
+from server.db import Base
 
 
 class User(Base):

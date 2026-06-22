@@ -13,8 +13,8 @@ from typing import Optional, List
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from db import get_db
-from models.orm import Asset
+from server.db import get_db
+from server.models.orm import Asset
 
 router = APIRouter()
 

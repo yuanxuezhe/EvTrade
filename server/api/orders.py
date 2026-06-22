@@ -30,16 +30,16 @@ from sqlalchemy import desc
 import logging
 import json
 
-from db import get_db, SessionLocal
-from models.orm import Order, SysStatus
-from auth.deps import get_current_user
-from models.user import User
-from services.guards import require_trader, require_trading_day, require_trading_session
-from services.order_no import next_order_no
-from services.t0 import get_fee_config, calc_t0_volume, calc_net_amount
-from rpc.client import ord_stk, cancel_order as rpc_cancel_order, qry_orders
-from ws.manager import ws_manager
-from constants import PriceType, OrderType
+from server.db import get_db, SessionLocal
+from server.models.orm import Order, SysStatus
+from server.auth.deps import get_current_user
+from server.models.user import User
+from server.services.guards import require_trader, require_trading_day, require_trading_session
+from server.services.order_no import next_order_no
+from server.services.t0 import get_fee_config, calc_t0_volume, calc_net_amount
+from server.rpc.client import ord_stk, cancel_order as rpc_cancel_order, qry_orders
+from server.ws.manager import ws_manager
+from server.constants import PriceType, OrderType
 
 log = logging.getLogger(__name__)
 router = APIRouter()
@@ -70,6 +70,7 @@ class OrderOut(BaseModel):
     traded_volume: int
     traded_amount: float
     avg_price: float
+    cancelled_volume: int = 0  # v8:累计撤单量（broker ord_cfm 累加）
     status: str
     status_msg: str
     order_time: str
@@ -112,7 +113,8 @@ def _to_order_out(o: "Order") -> OrderOut:
         order_type=o.order_type, price_type=o.price_type,
         price=o.price, volume=o.volume,
         traded_volume=o.traded_volume, traded_amount=o.traded_amount,
-        avg_price=o.avg_price, status=o.status,
+        avg_price=o.avg_price, cancelled_volume=o.cancelled_volume or 0,
+        status=o.status,
         status_msg=o.status_msg, order_time=o.order_time,
     )
 

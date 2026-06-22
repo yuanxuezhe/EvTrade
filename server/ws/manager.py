@@ -2,7 +2,7 @@ from fastapi import WebSocket
 from typing import Dict, Set, Optional
 import json
 
-from auth.security import decode_token
+from server.auth.security import decode_token
 
 class WSManager:
     def __init__(self):

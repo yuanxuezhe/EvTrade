@@ -1,3 +1,3 @@
-from ws.manager import ws_manager, WSManager
+from server.ws.manager import ws_manager, WSManager
 
 __all__ = ["ws_manager", "WSManager"]

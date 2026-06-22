@@ -32,5 +32,5 @@ def get_db():
 def init_db():
     """Create all tables. Called at startup."""
     # Import models so they are registered on the metadata
-    from models import user, orm  # noqa: F401
+    from server.models import user, orm  # noqa: F401
     Base.metadata.create_all(bind=engine)

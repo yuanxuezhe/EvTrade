@@ -5,18 +5,18 @@ import time
 from fastapi import FastAPI, Depends, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
-from db import init_db, SessionLocal
-from models.user import User
-from auth.security import hash_password, decode_token
-from auth.deps import get_current_user
-from api import positions, holdings, orders, trades, asset, auth as auth_api, users as users_api
-from api import clock, fee_config
-from api import system as system_api  # v8: 系统级查询（active-day）
-from api import t0_stats, t0_aggregate
-from api.admin import sys_status as admin_sys_status, reconcile as admin_reconcile, session as admin_session
-from ws.manager import ws_manager
-from rpc.client import get_rpc_client, close_rpc_client
-from config import validate_config
+from server.db import init_db, SessionLocal
+from server.models.user import User
+from server.auth.security import hash_password, decode_token
+from server.auth.deps import get_current_user
+from server.api import positions, holdings, orders, trades, asset, auth as auth_api, users as users_api
+from server.api import clock, fee_config
+from server.api import system as system_api  # v8: 系统级查询（active-day）
+from server.api import t0_stats, t0_aggregate
+from server.api.admin import sys_status as admin_sys_status, reconcile as admin_reconcile, session as admin_session
+from server.ws.manager import ws_manager
+from server.rpc.client import get_rpc_client, close_rpc_client
+from server.config import validate_config
 # 注：行情订阅已解耦到 hq/hqserver.py 的内置 WebSocket 服务 (:8765)，
 # 前端 quote_update 频道直连 hqserver，不再经过本 server 转发。
 

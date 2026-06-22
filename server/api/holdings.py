@@ -11,8 +11,8 @@ from typing import List, Optional
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from db import get_db
-from models.orm import Position
+from server.db import get_db
+from server.models.orm import Position
 
 router = APIRouter()
 
