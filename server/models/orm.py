@@ -50,6 +50,10 @@ class Order(Base):
     - 删 uq_orders_broker_id 约束（order_id 下单时为空，UNIQUE 不可靠）
     - 加 user_def 字段（String(255)，外部自定义信息透传，无约束）
     - ix_orders_order_id 保留为普通 INDEX（非 UNIQUE），trd_cfm 兜底查找
+    v9 schema 改动:
+    - 加 order_flag 字段（Integer，0=normal 1=cancel-order，NOT NULL DEFAULT 0）
+      标识本地代理的「撤单委托」行（user_def="CANCEL:{orig_order_no}"）
+      broker ord_cfm 用 remark 匹配原 order_no,不会更新本行
     """
     __tablename__ = "orders"
     __table_args__ = (
@@ -71,6 +75,7 @@ class Order(Base):
     traded_amount = Column(Float, nullable=False, default=0.0)
     avg_price = Column(Float, nullable=False, default=0.0)
     cancelled_volume = Column(Integer, nullable=False, default=0)  # 累计撤单量（broker ord_cfm 累加）
+    order_flag = Column(Integer, nullable=False, default=0)  # 0=normal 1=cancel-order (v9:本地代理撤单委托行)
     status = Column(String(2), nullable=False, default="48")  # 48=待报 49=已报 50=部成 51=已成 52=部撤 53=已撤 55=废单
     status_msg = Column(String(255), nullable=False, default="")
     order_time = Column(String(8), nullable=False, default="")  # HH:MM:SS
@@ -89,6 +94,10 @@ class Trade(Base):
     - 删 order_id 字段（broker 真实号在 trd_cfm 到达时可能尚未到达）
     - 加 order_no 字段并入 PK（PK = (trd_date, order_no, trade_id)）
     - ix_trades_order(order_id) → ix_trades_order_no(order_no)（重命名）
+    v9 schema 改动:
+    - 加 trade_type 字段（Integer，0=normal 1=cancel-fill，NOT NULL DEFAULT 0）
+      标识本地代理的「撤单成交」行（order_no 指向 cancel-order 行的 order_no）
+      broker 协议撤单不推 trd_cfm,本地由 DELETE 端点同步插入
     """
     __tablename__ = "trades"
     __table_args__ = (
@@ -105,6 +114,7 @@ class Trade(Base):
     volume = Column(Integer, nullable=False, default=0)
     amount = Column(Float, nullable=False, default=0.0)
     trade_time = Column(String(8), nullable=False, default="")
+    trade_type = Column(Integer, nullable=False, default=0)  # 0=normal 1=cancel-fill (v9:本地代理撤单成交行)
     created_at = Column(DateTime, nullable=False, default=_utcnow)
 
 

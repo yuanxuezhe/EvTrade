@@ -31,6 +31,7 @@ class TradeOut(BaseModel):
     volume: int
     amount: float
     trade_time: str
+    trade_type: int = 0  # v9: 0=normal 1=cancel-fill (本地代理撤单成交行)
 
 
 class TradesListResponse(BaseModel):
@@ -62,5 +63,6 @@ async def list_trades(
             volume=r.volume,
             amount=r.amount,
             trade_time=r.trade_time,
+            trade_type=r.trade_type or 0,
         ) for r in rows
     ])

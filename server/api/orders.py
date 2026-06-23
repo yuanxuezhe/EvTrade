@@ -71,6 +71,7 @@ class OrderOut(BaseModel):
     traded_amount: float
     avg_price: float
     cancelled_volume: int = 0  # v8:累计撤单量（broker ord_cfm 累加）
+    order_flag: int = 0  # v9:0=normal 1=cancel-order (本地代理撤单委托行)
     status: str
     status_msg: str
     order_time: str
@@ -102,6 +103,8 @@ class CancelResponse(BaseModel):
     msg: str = ""
     order_id: str
     cancel_ack: Optional[dict] = None
+    # v9: 本地代理的「撤单委托」行（pre-check 失败时为 None;成功/失败时含 status=53/55）
+    cancel_order: Optional[OrderOut] = None
     error: Optional[str] = None
 
 
@@ -114,6 +117,7 @@ def _to_order_out(o: "Order") -> OrderOut:
         price=o.price, volume=o.volume,
         traded_volume=o.traded_volume, traded_amount=o.traded_amount,
         avg_price=o.avg_price, cancelled_volume=o.cancelled_volume or 0,
+        order_flag=o.order_flag or 0,
         status=o.status,
         status_msg=o.status_msg, order_time=o.order_time,
     )
@@ -313,7 +317,8 @@ async def list_orders(
                 order_type=r.order_type, price_type=r.price_type,
                 price=r.price, volume=r.volume,
                 traded_volume=r.traded_volume, traded_amount=r.traded_amount,
-                avg_price=r.avg_price, status=r.status,
+                avg_price=r.avg_price, order_flag=r.order_flag or 0,
+                status=r.status,
                 status_msg=r.status_msg, order_time=r.order_time,
             ) for r in rows
         ],
@@ -346,7 +351,8 @@ async def orders_history(
                 order_type=r.order_type, price_type=r.price_type,
                 price=r.price, volume=r.volume,
                 traded_volume=r.traded_volume, traded_amount=r.traded_amount,
-                avg_price=r.avg_price, status=r.status,
+                avg_price=r.avg_price, order_flag=r.order_flag or 0,
+                status=r.status,
                 status_msg=r.status_msg, order_time=r.order_time,
             ) for r in rows
         ],
