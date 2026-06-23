@@ -49,7 +49,7 @@
             <el-input-number
               v-model="form.price"
               :min="0"
-              :precision="form.price_type === PriceType.LIMIT ? null : 2"
+              :precision="2"
               :step="form.price_type === PriceType.LIMIT ? 0.01 : null"
               :disabled="form.price_type !== PriceType.LIMIT"
               :placeholder="form.price_type === PriceType.LIMIT ? '输入价格' : '市价单无需输入'"

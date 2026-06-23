@@ -143,6 +143,16 @@ When QMT 推一条 `600030.SH|...|12.34|...` 到 RabbitMQ
 Then hqserver WS 推 `{"channel":"quote_update","data":{...}}`  
 And 前端 `quote` store 更新对应 stock_code 的 last_price  
 And Asset/Holdings 等视图若订阅了该股则自动刷新
+
+### REQ-FE-010: 委托价格输入支持小数（v8）
+
+- **位置**：`client/src/components/OrderForm.vue`
+- **契约**：
+  - 限价单（`price_type === PriceType.LIMIT`）委托价格输入支持 2 位小数（A 股最小变动单位 0.01 元）
+  - `el-input-number` 属性：`precision=2`, `step=0.01`
+  - 提交时 `form.price` 已是 float，直接走 `OrderOut.price: float` 后端 schema
+- **非限价单**（市价/最新价/挂单价）：input disabled，precision 无实际作用
+
 ## Known Issues (from analysis)
 
 - 🟡 `TStrategy.vue` / `AlgoStrategy.vue` 各 43 行，**未实现内容**
