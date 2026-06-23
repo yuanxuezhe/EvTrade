@@ -444,12 +444,26 @@ export const useHoldingsStore = defineStore('holdings', () => {
    *      - 推送 row.trd_date != activeTrdDate → 忽略（broker 偶尔推老委托的历史变更）
    *      - activeTrdDate == null（降级）→ 放行（log warn）
    *      - 已有订单的 trd_date 也要守门（防止 push 覆盖跨日缓存）
+   *  v9: cancel-row (order_flag=1) 短路 _recomputeStatus
+   *      - cancel-row volume=0,traded_volume=0,会被推算成 49(已报)污染显示
+   *      - cancel-row 由 DELETE 端点写好 status,前端只 merge 不重算
    */
   function applyOrderPush(row, action /* 'open' | 'update' | 'status' */) {
     if (!row || !row.order_no) return
     // v8 激活日守门
     if (activeTrdDate.value && row.trd_date && row.trd_date !== activeTrdDate.value) {
       log('warn', '交易', 'ws', `委托推送忽略: trd_date=${row.trd_date} != active=${activeTrdDate.value} (${row.stock_code} ${row.order_no})`)
+      return
+    }
+    // v9 短路: cancel-row 不走 _recomputeStatus (volume=0 会被推算成 49)
+    if (Number(row.order_flag) === 1) {
+      const idx = orders.value.findIndex((o) => o.order_no === row.order_no)
+      if (idx >= 0) {
+        orders.value[idx] = { ...orders.value[idx], ...row }
+      } else {
+        orders.value.unshift(row)
+      }
+      log('info', '交易', 'ws', `撤单审计: ${row.stock_code} ${row.order_no} status=${row.status} (order_flag=1)`)
       return
     }
     // 防御性重算 status（与后端 _infer_order_status 一致;不传 brokerStatus 完全按 cum/vol 算）
@@ -467,6 +481,7 @@ export const useHoldingsStore = defineStore('holdings', () => {
   /** ws._onTradeCfm 调用
    *  v8: 守门 = (activeTrdDate, trade_id) → 推送 row.trd_date != active 忽略
    *      成交按 trade_id 唯一, trd_date 是额外维度
+   *  v9: 透传 trade_type 字段 (0=normal 1=cancel-fill),日志区分
    */
   function applyTradePush(row) {
     if (!row || !row.trade_id) return
@@ -481,6 +496,7 @@ export const useHoldingsStore = defineStore('holdings', () => {
       //   跟后端 TradeOut schema 对齐 (v6 schema-refinement)
       //   前端做 T 敞口/配平需要 order_no 关联委托
       //   trd_date 用于跨日分组; remark 用于关联 Order.remark = 本地 order_no
+      const tradeType = Number(row.trade_type) || 0
       trades.value.unshift({
         trade_id: row.trade_id,
         order_id: row.order_id || '',
@@ -491,9 +507,14 @@ export const useHoldingsStore = defineStore('holdings', () => {
         volume: Number(row.volume) || 0,
         price: Number(row.price) || 0,
         amount: Number(row.amount) || Number(row.volume || 0) * Number(row.price || 0),
-        trade_time: row.trade_time || _now_hms()
+        trade_time: row.trade_time || _now_hms(),
+        trade_type: tradeType  // v9: 0=normal 1=cancel-fill
       })
-      log('ok', '交易', 'ws', `成交通知: ${row.stock_code} ${row.order_type === '23' ? '买' : '卖'} ${row.volume}@${row.price}`)
+      if (tradeType === 1) {
+        log('ok', '交易', 'ws', `撤单审计: ${row.stock_code} 取消 ${row.volume}@${row.price} (${row.trade_id})`)
+      } else {
+        log('ok', '交易', 'ws', `成交通知: ${row.stock_code} ${row.order_type === '23' ? '买' : '卖'} ${row.volume}@${row.price}`)
+      }
     }
   }
 

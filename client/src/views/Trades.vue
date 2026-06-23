@@ -68,6 +68,12 @@
             </span>
           </template>
         </el-table-column>
+        <el-table-column label="类型" width="90">
+          <template #default="{ row }">
+            <el-tag v-if="Number(row.trade_type) === 1" type="warning" size="small">撤单</el-tag>
+            <span v-else class="text-secondary">成交</span>
+          </template>
+        </el-table-column>
         <el-table-column prop="volume" label="成交数量" align="right" width="120" sortable>
           <template #default="{ row }">
             <span class="text-mono">{{ formatNumber(row.volume) }}</span>
@@ -131,13 +137,15 @@ const filters = reactive({
   order_type: ''
 })
 
-const buyCount = computed(() => trades.value.filter((t) => t.order_type === '23').length)
-const sellCount = computed(() => trades.value.filter((t) => t.order_type === '24').length)
+// v9: cancel-fill(trade_type=1) 不计入买/卖统计(它是撤单审计行, 非真实买卖)
+const _normalTrades = computed(() => trades.value.filter((t) => Number(t.trade_type) !== 1))
+const buyCount = computed(() => _normalTrades.value.filter((t) => t.order_type === '23').length)
+const sellCount = computed(() => _normalTrades.value.filter((t) => t.order_type === '24').length)
 const buyAmount = computed(() =>
-  trades.value.filter((t) => t.order_type === '23').reduce((s, t) => s + t.volume * t.price, 0)
+  _normalTrades.value.filter((t) => t.order_type === '23').reduce((s, t) => s + t.volume * t.price, 0)
 )
 const sellAmount = computed(() =>
-  trades.value.filter((t) => t.order_type === '24').reduce((s, t) => s + t.volume * t.price, 0)
+  _normalTrades.value.filter((t) => t.order_type === '24').reduce((s, t) => s + t.volume * t.price, 0)
 )
 
 const filteredTrades = computed(() =>

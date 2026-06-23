@@ -74,6 +74,12 @@
             <span class="text-mono text-secondary">{{ row.order_no }}</span>
           </template>
         </el-table-column>
+        <el-table-column label="委托类型" width="90">
+          <template #default="{ row }">
+            <el-tag v-if="Number(row.order_flag) === 1" type="warning" size="small">撤单</el-tag>
+            <span v-else class="text-secondary">委托</span>
+          </template>
+        </el-table-column>
         <el-table-column prop="order_type" label="方向" width="80">
           <template #default="{ row }">
             <span class="dir-chip" :class="row.order_type === '23' ? 'buy' : 'sell'">
@@ -177,8 +183,10 @@ const filters = reactive({
 const countByStatus = computed(() => {
   // 本地推断码（v6）：51=已成 50/56=部成 48/49=待报/已报 52/53/54=已撤类 55=废单
   // 详见 client/src/utils/format.js:STATUS_LABEL
+  // v9: cancel-row(order_flag=1) 不计入正常委托统计(volume=0 会污染部成/已成口径)
   const map = { filled: 0, partial: 0, pending: 0, cancelled: 0, rejected: 0 }
   for (const o of orders.value) {
+    if (Number(o.order_flag) === 1) continue
     const s = String(o.status || '')
     if (s === '51') map.filled++
     else if (s === '50' || s === '56') map.partial++
@@ -217,6 +225,8 @@ function resetFilters() {
 }
 
 function getFillRate(row) {
+  // v9: cancel-row(order_flag=1) volume=0 → 0/0 = NaN, 直接显示 100% (撤单审计无成交率概念)
+  if (Number(row.order_flag) === 1) return 100
   if (!row.volume) return 0
   return Math.round(((row.traded_volume || 0) / row.volume) * 100)
 }

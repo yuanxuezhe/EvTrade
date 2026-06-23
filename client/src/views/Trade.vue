@@ -29,6 +29,7 @@
               <el-radio-button value="all">全部</el-radio-button>
               <el-radio-button value="pending">未完成</el-radio-button>
               <el-radio-button value="filled">已成交</el-radio-button>
+              <el-radio-button value="allWithAudit">含撤单审计</el-radio-button>
             </el-radio-group>
             <el-button size="small" :icon="Refresh" @click="refresh" :loading="refreshing" circle title="刷新" />
           </div>
@@ -43,6 +44,12 @@
           <el-table-column prop="order_no" label="单号" width="100" show-overflow-tooltip>
             <template #default="{ row }">
               <span class="text-mono text-secondary">{{ row.order_no }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="类型" width="70">
+            <template #default="{ row }">
+              <el-tag v-if="Number(row.order_flag) === 1" type="warning" size="small">撤单</el-tag>
+              <span v-else class="text-secondary">委托</span>
             </template>
           </el-table-column>
           <el-table-column prop="stock_code" label="股票" width="100">
@@ -85,7 +92,7 @@
           <el-table-column label="操作" width="80" fixed="right">
             <template #default="{ row }">
               <el-button
-                v-if="canCancel(row.status)"
+                v-if="canCancel(row)"
                 type="danger"
                 link
                 size="small"
@@ -139,23 +146,29 @@ const _FILLED_NUMERIC = new Set(['51'])  // 已成
 const _PENDING_NUMERIC = new Set(['48', '49', '50'])  // 仍可能变化
 
 const pendingCount = computed(() =>
-  holdings.orders.filter((o) => !TERMINAL_STATUSES.has(String(o.status || ''))).length
+  holdings.orders.filter((o) => Number(o.order_flag) !== 1 && !TERMINAL_STATUSES.has(String(o.status || ''))).length
 )
 
 const filteredOrders = computed(() => {
   const list = holdings.orders
+  // v9: 默认隐藏 cancel-row(order_flag=1), 仅 allWithAudit 显示
+  const base = filter.value === 'allWithAudit'
+    ? list
+    : list.filter((o) => Number(o.order_flag) !== 1)
   if (filter.value === 'pending') {
-    return list.filter((o) => !TERMINAL_STATUSES.has(String(o.status || '')))
+    return base.filter((o) => !TERMINAL_STATUSES.has(String(o.status || '')))
   }
   if (filter.value === 'filled') {
-    return list.filter((o) => _FILLED_NUMERIC.has(String(o.status || '')))
+    return base.filter((o) => _FILLED_NUMERIC.has(String(o.status || '')))
   }
-  return list
+  return base
 })
 
-function canCancel(status) {
+function canCancel(row) {
+  // v9: cancel-row(order_flag=1) 不可再撤
+  if (Number(row?.order_flag) === 1) return false
   // 非终态即可撤 (待报/已报/部成)
-  return !TERMINAL_STATUSES.has(String(status || ''))
+  return !TERMINAL_STATUSES.has(String(row?.status || ''))
 }
 
 async function handleOrderSubmit(orderData) {
