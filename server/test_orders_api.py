@@ -366,8 +366,8 @@ def test_place_rpc_fail_logs_exception(client, active_day, monkeypatch, caplog):
 
 # ──── 撤单(v6:用 order_no) ────
 
-def test_cancel_calls_rpc_does_not_change_status(client, active_day, monkeypatch):
-    """v6: DELETE /{order_no} 调 RPC,order.order_id 传给 cancel_ord"""
+def test_cancel_calls_rpc_inserts_local_cancel_row(client, active_day, monkeypatch):
+    """v9: DELETE 插 cancel-row (order_flag=1, status=53) + 调 RPC,原单 status 不本地改"""
     monkeypatch.setattr(
         "services.trading_clock.TradingClock.is_in_trading_session",
         classmethod(lambda cls: True)
@@ -384,24 +384,42 @@ def test_cancel_calls_rpc_does_not_change_status(client, active_day, monkeypatch
 
     mock_rpc = AsyncMock(return_value={"code": 0, "msg": "ok", "list": []})
     monkeypatch.setattr("api.orders.rpc_cancel_order", mock_rpc)
+    mock_ws = AsyncMock()
+    monkeypatch.setattr("api.orders.ws_manager.broadcast", mock_ws)
 
     r = client.delete(
-        "/api/orders/10000010?trd_date=20260614",  # v6: 用 order_no
+        "/api/orders/10000010?trd_date=20260614",
         headers=_auth(_trader_token(active_day)),
     )
     assert r.status_code == 200
-    # RPC 用查到的 broker order_id (不是 URL 参数)
+    body = r.json()
+    assert body["code"] == 0
+    # RPC 用查到的 broker order_id
     call_kwargs = mock_rpc.await_args.kwargs
     assert call_kwargs["order_id"] == "OID-X"
-    # 状态没改(等 push)
+    # v9: cancel-row 存在 + 字段
+    assert body["cancel_order"] is not None
+    co = body["cancel_order"]
+    assert co["order_flag"] == 1
+    assert co["status"] == "53"
+    assert co["volume"] == 0
+    assert co["user_def"] == "CANCEL:10000010"
+    assert co["stock_code"] == "600030.SH"
+    assert co["price"] == 12.5
+    # 原单 status 仍 49(等 push 改)
     db = SessionLocal()
     row = db.query(Order).filter_by(order_no="10000010", trd_date="20260614").first()
     assert row.status == "49"
     db.close()
+    # WS broadcast 被调
+    assert mock_ws.await_count == 1
+    payload = mock_ws.await_args.args[1]
+    assert payload["order_flag"] == 1
+    assert payload["status"] == "53"
 
 
 def test_cancel_broker_not_ready_returns_business_error(client, active_day, monkeypatch):
-    """v6: 撤单时 broker order_id 还没回报 → BROKER_NOT_READY,不调 RPC"""
+    """v6: 撤单时 broker order_id 还没回报 → BROKER_NOT_READY,不调 RPC,不插 cancel-row"""
     monkeypatch.setattr(
         "services.trading_clock.TradingClock.is_in_trading_session",
         classmethod(lambda cls: True)
@@ -428,10 +446,17 @@ def test_cancel_broker_not_ready_returns_business_error(client, active_day, monk
     body = r.json()
     assert body["code"] == 1
     assert body["error"] == "BROKER_NOT_READY"
+    assert body["cancel_order"] is None
     assert mock_rpc.await_count == 0  # RPC 不会被调
+    # 没有 cancel-row 落库
+    db = SessionLocal()
+    cancel_rows = db.query(Order).filter(Order.user_def == "CANCEL:10000011").all()
+    assert len(cancel_rows) == 0
+    db.close()
 
 
-def test_cancel_rpc_fail_returns_500(client, active_day, monkeypatch):
+def test_cancel_rpc_fail_sets_status_55_no_trade(client, active_day, monkeypatch):
+    """v9: RPC 抛异常 → 仍 200,cancel-row.status=55,无 cancel-trade"""
     monkeypatch.setattr(
         "services.trading_clock.TradingClock.is_in_trading_session",
         classmethod(lambda cls: True)
@@ -448,12 +473,63 @@ def test_cancel_rpc_fail_returns_500(client, active_day, monkeypatch):
 
     mock_rpc = AsyncMock(side_effect=Exception("rpc 断连"))
     monkeypatch.setattr("api.orders.rpc_cancel_order", mock_rpc)
+    mock_ws = AsyncMock()
+    monkeypatch.setattr("api.orders.ws_manager.broadcast", mock_ws)
 
     r = client.delete(
-        "/api/orders/10000020?trd_date=20260614",  # v6: order_no
+        "/api/orders/10000020?trd_date=20260614",
         headers=_auth(_trader_token(active_day)),
     )
-    assert r.status_code == 500
+    # v9: 不再 500,返 200 + 业务码 1
+    assert r.status_code == 200
+    body = r.json()
+    assert body["code"] == 1
+    assert body["cancel_order"]["status"] == "55"  # 废单保留
+    assert body["error"] is not None
+    # 无 cancel-trade
+    from models.orm import Trade
+    db = SessionLocal()
+    cancel_trades = db.query(Trade).filter(Trade.trade_type == 1).all()
+    assert len(cancel_trades) == 0
+    db.close()
+    # WS 仍 broadcast
+    assert mock_ws.await_count == 1
+    payload = mock_ws.await_args.args[1]
+    assert payload["status"] == "55"
+
+
+def test_cancel_ack_nonzero_sets_status_55_no_trade(client, active_day, monkeypatch):
+    """v9: ack.code != 0 → cancel-row.status=55,无 cancel-trade"""
+    monkeypatch.setattr(
+        "services.trading_clock.TradingClock.is_in_trading_session",
+        classmethod(lambda cls: True)
+    )
+    db = SessionLocal()
+    db.add(Order(
+        trd_date="20260614",
+        order_id="OID-Z", user_def="CID-Z", order_no="10000030",
+        stock_code="600030.SH", order_type="23", price_type=11, price=12.5, volume=100,
+        status="49",
+    ))
+    db.commit()
+    db.close()
+
+    mock_rpc = AsyncMock(return_value={"code": 1, "msg": "柜台拒单", "list": []})
+    monkeypatch.setattr("api.orders.rpc_cancel_order", mock_rpc)
+
+    r = client.delete(
+        "/api/orders/10000030?trd_date=20260614",
+        headers=_auth(_trader_token(active_day)),
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["code"] == 1
+    assert body["cancel_order"]["status"] == "55"
+    assert body["cancel_order"]["status_msg"] == "柜台拒单"
+    from models.orm import Trade
+    db = SessionLocal()
+    assert db.query(Trade).filter(Trade.trade_type == 1).count() == 0
+    db.close()
 
 
 def test_cancel_not_found_returns_404(client, active_day, monkeypatch):
@@ -462,10 +538,128 @@ def test_cancel_not_found_returns_404(client, active_day, monkeypatch):
         classmethod(lambda cls: True)
     )
     r = client.delete(
-        "/api/orders/99999999?trd_date=20260614",  # v6: order_no
+        "/api/orders/99999999?trd_date=20260614",
         headers=_auth(_trader_token(active_day)),
     )
     assert r.status_code == 404
+
+
+def test_cancel_inserts_trade_row_with_type_1(client, active_day, monkeypatch):
+    """v9: RPC 成功时,同步插 trade_type=1 行(剩余可撤量)"""
+    monkeypatch.setattr(
+        "services.trading_clock.TradingClock.is_in_trading_session",
+        classmethod(lambda cls: True)
+    )
+    from models.orm import Trade
+    db = SessionLocal()
+    db.add(Order(
+        trd_date="20260614",
+        order_id="OID-P", user_def="CID-P", order_no="10000040",
+        stock_code="600030.SH", order_type="23", price_type=11, price=12.5, volume=100,
+        status="49", traded_volume=30, traded_amount=375.0, avg_price=12.5,
+    ))
+    db.commit()
+    db.close()
+
+    mock_rpc = AsyncMock(return_value={"code": 0, "msg": "ok", "list": []})
+    monkeypatch.setattr("api.orders.rpc_cancel_order", mock_rpc)
+    mock_ws = AsyncMock()
+    monkeypatch.setattr("api.orders.ws_manager.broadcast", mock_ws)
+
+    r = client.delete(
+        "/api/orders/10000040?trd_date=20260614",
+        headers=_auth(_trader_token(active_day)),
+    )
+    assert r.status_code == 200
+    body = r.json()
+    cancel_order_no = body["cancel_order"]["order_no"]
+    # trade 行
+    db = SessionLocal()
+    trade = db.query(Trade).filter_by(trade_type=1, order_no=cancel_order_no).first()
+    assert trade is not None
+    assert trade.volume == 70  # = orig.volume - orig.traded_volume
+    assert trade.price == 12.5  # avg_price
+    assert trade.amount == 12.5 * 70
+    assert trade.trade_id.startswith("CANCEL-")
+    db.close()
+    # trade_update 也 broadcast
+    assert mock_ws.await_count == 2
+    trade_payload = mock_ws.await_args_list[1].args[1]
+    assert trade_payload["trade_type"] == 1
+    assert trade_payload["volume"] == 70
+
+
+def test_cancel_no_insert_when_status_not_cancellable(client, active_day, monkeypatch):
+    """v9: orig.status=51(已成) → 不插 cancel-row,直接返"""
+    monkeypatch.setattr(
+        "services.trading_clock.TradingClock.is_in_trading_session",
+        classmethod(lambda cls: True)
+    )
+    db = SessionLocal()
+    db.add(Order(
+        trd_date="20260614",
+        order_id="OID-DONE", user_def="", order_no="10000050",
+        stock_code="600030.SH", order_type="23", price_type=11, price=12.5, volume=100,
+        status="51",  # 已成
+    ))
+    db.commit()
+    db.close()
+
+    mock_rpc = AsyncMock(return_value={"code": 0, "msg": "ok", "list": []})
+    monkeypatch.setattr("api.orders.rpc_cancel_order", mock_rpc)
+
+    r = client.delete(
+        "/api/orders/10000050?trd_date=20260614",
+        headers=_auth(_trader_token(active_day)),
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["code"] == 1
+    assert body["cancel_order"] is None
+    assert mock_rpc.await_count == 0
+    # 无 cancel-row 落库
+    db = SessionLocal()
+    assert db.query(Order).filter(Order.user_def.like("CANCEL:10000050%")).count() == 0
+    db.close()
+
+
+def test_cancel_full_trade_no_cancel_trade_inserted(client, active_day, monkeypatch):
+    """v9: orig.traded_volume=orig.volume(完全成交)→ cancelled_qty=0,无 cancel-trade"""
+    monkeypatch.setattr(
+        "services.trading_clock.TradingClock.is_in_trading_session",
+        classmethod(lambda cls: True)
+    )
+    from models.orm import Trade
+    db = SessionLocal()
+    db.add(Order(
+        trd_date="20260614",
+        order_id="OID-FULL", user_def="", order_no="10000060",
+        stock_code="600030.SH", order_type="23", price_type=11, price=12.5, volume=100,
+        status="49", traded_volume=100, traded_amount=1250.0, avg_price=12.5,
+    ))
+    db.commit()
+    db.close()
+
+    mock_rpc = AsyncMock(return_value={"code": 0, "msg": "ok", "list": []})
+    monkeypatch.setattr("api.orders.rpc_cancel_order", mock_rpc)
+
+    r = client.delete(
+        "/api/orders/10000060?trd_date=20260614",
+        headers=_auth(_trader_token(active_day)),
+    )
+    # 完全成交时 status=49(已报)但 traded=volume 仍可撤(pre-check 不会拦)
+    # 实际 broker 会拒(status=51);这里测本地逻辑
+    assert r.status_code == 200
+    body = r.json()
+    if body["code"] == 0:
+        # 走通路径: cancel-row 在,但 trade 不在
+        cancel_order_no = body["cancel_order"]["order_no"]
+        db = SessionLocal()
+        assert db.query(Trade).filter(Trade.trade_type == 1, Trade.order_no == cancel_order_no).count() == 0
+        db.close()
+    else:
+        # pre-check 拦了,正常
+        assert body["cancel_order"] is None
 
 
 # ──── 查询 ────
