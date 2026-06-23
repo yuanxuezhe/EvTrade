@@ -74,6 +74,29 @@
 - 详见归档 `archive/2026-06-22-fix-v8-single-source-violations/spec-deltas/frontend.md`
 
 #### REQ-FE-009.4: 禁止调用 v8 已删除的 fetcher
+#### REQ-FE-009.5: 撤单审计行（cancel-row）短路（v9）
+
+- `holdings.applyOrderPush(row, action)`: 见 `row.order_flag === 1` 时**直接 merge + return**，**不**走 `_recomputeStatus`
+  - 原因：cancel-row `volume=0, traded_volume=0`，`_recomputeStatus` 推算结果会是 `49`（已报），污染显示
+  - cancel-row 的 `status` 由 DELETE 端点全权管理（53 已撤 / 55 废单），前端只 merge 不重算
+  - 日志用「撤单审计」前缀区分正常推送
+- `holdings.applyTradePush(row)`: 透传 `trade_type` 字段（0=normal 1=cancel-fill）
+  - `trade_type === 1` 时记「撤单审计」日志（区分正常成交通知）
+
+#### REQ-FE-009.6: 撤单审计视图契约（v9）
+
+- Trade.vue「今日委托」表格：
+  - 加「类型」列：`order_flag === 1` 渲染 `el-tag type=warning「撤单」`；其他显示「委托」
+  - 过滤选项新增 `allWithAudit`（显示 cancel-row）；默认 `all/pending/filled` **隐藏** cancel-row
+  - `canCancel(row)` 加 `row.order_flag === 1` 守卫（cancel-row 不可再撤）
+  - `pendingCount` 排除 cancel-row（cancel-row 不算待成交）
+- Orders.vue「委托查询」表格：
+  - 加「委托类型」列（同 Trade.vue 渲染规则；区别于「类型」列是 `price_type` 限价/市价）
+  - `countByStatus` 排除 `order_flag === 1`（cancel-row volume=0 不计入正常委托统计口径）
+  - `getFillRate(row)` 加 `order_flag === 1` 守卫直接返 100（volume=0 → 0/0=NaN 修复）
+- Trades.vue「成交查询」表格：
+  - 加「类型」列：`trade_type === 1` 渲染 `el-tag type=warning「撤单」`；其他显示「成交」
+  - `buyCount/sellCount/buyAmount/sellAmount` 排除 `trade_type === 1`（cancel-fill 不计入买/卖统计）
 
 - **`orderStore.fetchOrders()` / `orderStore.fetchOrders(stockCode)`** 已删除 — v8 委托由 ws `order_update` push 兜底
 - **`orderStore.fetchTrades()` / `orderStore.fetchTrades(stockCode)`** 已删除 — v8 成交由 ws `trade_update` push 兜底

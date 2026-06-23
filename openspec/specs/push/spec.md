@@ -80,6 +80,17 @@ QMT 柜台通过 RabbitMQ 主动推送（`EvTrade.Test.Push` 队列）异步通�
 
 详见归档 `archive/2026-06-21-order-push-trd-date-authority/spec-deltas/push.md`
 
+### REQ-PUSH-008: broker ord_cfm 不匹配 cancel-row（v9）
+
+- **背景**：v9 DELETE 端点 INSERT 撤单委托占位行（cancel-row，`order_flag=1`）。broker 协议层面不会主动推送这个 row。
+- **为什么 broker 不会推**：
+  - broker `ord_cfm` 的 `remark` 字段永远等于**原买单/卖单**的 `order_no`，**不会回带**我们新 cancel-row 的 `order_no`
+  - 撤单 RPC `cancel_ord` 只接 `order_id`，broker 不允许本地注入自定义 remark
+  - 因此 `handle_ord_cfm` 用 `remark` 匹配时永远找不到 cancel-row，cancel-row 完全不被 broker push 触及
+- **后果**：cancel-row 的 `status` / `status_msg` 必须由 DELETE 端点**本地**维护（成功 → 53 / 失败 → 55），并通过 `ws_manager.broadcast` 手动推给前端
+- **测试覆盖**：`server/test_push_handlers.py::test_ord_cfm_for_original_does_not_touch_cancel_row` 验证 broker 推原委托 `remark` 时 cancel-row 字段完全不被更新
+- **完整 DELETE 端点契约**：见 `trading/spec.md` REQ-TRADE-003 5 步流程
+
 ### REQ-PUSH-004: 健壮性
 
 - 解析失败的 push 消息打 warning 日志，不影响后续消息

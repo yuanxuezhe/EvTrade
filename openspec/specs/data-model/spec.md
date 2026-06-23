@@ -52,6 +52,7 @@ ORM 注释必须与本 spec 保持一致（diff 检查项之一）。
 | `traded_amount` | Float | NO | 0.0 | 累计成交额 |
 | `avg_price` | Float | NO | 0.0 | 成交均价 = traded_amount / traded_volume |
 | `cancelled_volume` | Integer | NO | 0 | **累计撤单量**（v8 新增：broker ord_cfm 累加；用于推断已撤/部成部撤） |
+| `order_flag` | Integer | NO | 0 | **v9 新增**：`0`=正常委托，`1`=撤单委托（DELETE 端点 INSERT 的本地代理行；broker 不会推送该 row） |
 | `status` | String(2) | NO | "48" | **本地推断的委托状态**（48/49/50/51/52/53/54/55/56） |
 | `status_msg` | String(255) | NO | "" | 状态中文或 broker 错误信息 |
 | `order_time` | String(8) | NO | "" | HH:MM:SS |
@@ -70,6 +71,10 @@ ORM 注释必须与本 spec 保持一致（diff 检查项之一）。
 - `status` 永远不直接抄 broker 推送值；由 `_infer_order_status(order, broker_status=None)` 推断（见 `push/spec.md`）
 - 终态（51/52/53/54/55/56）一旦写入不再被 trd_cfm 覆盖
 - 撤单定位用 `(trd_date, order_no)`，URL `/api/orders/{order_no}?trd_date=YYYYMMDD`
+- **v9 schema 调整**：
+  - 新增 `order_flag` 字段：`0`=正常委托，`1`=撤单委托占位行（DELETE 端点 INSERT，由 DELETE 端点全权管理 status；broker `ord_cfm` 永远不会 match 到 cancel-row——broker 推 `remark` 永远是原委托 order_no，不是新 cancel-row 的 order_no）
+  - cancel-row 字段填充：`stock_code/order_type/price_type/price` 镜像原委托；`volume=0`；`status` 起步 `48`，RPC 成功 → `53`，RPC 失败 → `55`
+  - DB 迁移脚本：`ALTER TABLE orders ADD COLUMN order_flag INTEGER NOT NULL DEFAULT 0`
 - **v8 schema 调整**：
   - 新增 `cancelled_volume` 字段：累计撤单量，broker ord_cfm 推送 `cancelled_volume` / `cancel_volume` / `withdrawn_volume` 任一字段名时累加（兼容多版本）
   - 状态推断规则改：`cancelled_volume >= volume` → 53（已撤）；`cancelled_volume > 0 && traded_volume > 0` → 56（部成部撤）；`cancelled_volume > 0` → 53
@@ -94,6 +99,7 @@ ORM 注释必须与本 spec 保持一致（diff 检查项之一）。
 | `volume` | Integer | NO | 0 | 成交量 |
 | `amount` | Float | NO | 0.0 | 成交额 = price × volume |
 | `trade_time` | String(8) | NO | "" | HH:MM:SS |
+| `trade_type` | Integer | NO | 0 | **v9 新增**：`0`=正常成交，`1`=撤单成交（DELETE 端点撤单成功时同步生成，volume=剩余可撤；不参与 buy/sell 统计） |
 | `created_at` | DateTime | NO | utcnow | DB 写入时间 |
 
 **Index**:
@@ -104,6 +110,10 @@ ORM 注释必须与本 spec 保持一致（diff 检查项之一）。
 - 幂等键 `(trd_date, trade_id)`；重复推送不重复插入
 - trade_id 缺失时 fallback `f"{order_no}-{trade_time}"`
 - trd_date 缺失时用 `_get_active_trd_date(db)`
+- **v9 schema 调整**：
+  - 新增 `trade_type` 字段：`0`=normal，`1`=cancel-fill（DELETE 端点撤单成功时同步生成的撤单成交占位行）
+  - cancel-fill 字段填充：`volume = orig.volume - orig.traded_volume`（剩余可撤股数）；`price = orig.avg_price or orig.price`；`trade_id = "CANCEL-{cancel_order_no}-{unix_ts}"` 合成；`order_no` 关联 cancel-row（不是原委托）
+  - DB 迁移脚本：`ALTER TABLE trades ADD COLUMN trade_type INTEGER NOT NULL DEFAULT 0`
 - **v7 schema 调整动机**：
   - `order_no` 是稳定关联键（下单即生成，写入即永久），`order_id` 在成交回报到达时可能尚未到达
   - 成交回报通常早于 ord_cfm，用本地 order_no 关联比 broker order_id 更稳
