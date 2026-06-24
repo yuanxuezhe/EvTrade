@@ -96,6 +96,33 @@ pkt = await client.call(
 - `server/api/orders.py:place_order` 调用 `next_order_no` 后 **不应** 立即 commit (函数内已 commit)
 - `order_no` 跳号是 acceptable (下单失败 / 序号已 +1 但 Order 未入库, 与生产实际一致)
 
+### REQ-RPC-010: client.py 拆分（phase-2）
+
+677→76 行 facade 兼容垫片 + 4 个单一职责子模块：
+- `server/rpc/transport.py` (403) — RPClient 传输层（connect / call / listeners / push / 全局单例 + 4 utility）
+- `server/rpc/parsers_common.py` (109) — 通用响应解析（_select_rs / _parse_code_msg / _iter_rows / _to_* / _empty）
+- `server/rpc/parsers_business.py` (126) — 业务特定解析（_parse_asset / _parse_orders / _parse_trades / _parse_positions / _parse_order_ack）
+- `server/rpc/handlers.py` (100) — 业务 RPC 入口（qry_asset / qry_orders / qry_trades / qry_positions / ord_stk / cancel_order）
+
+**契约**：
+- 既有 `from rpc.client import ...` 仍可解析（13 import 站点全过）
+  - `test_rpc.py` / `test_rpc_link.py` 用 `from rpc.client`（cwd=server）
+  - `api/orders.py` / `main.py` / `services/reconcile.py` 用 `from server.rpc.client`
+  - 全部符号在 facade re-export（RPClient / get_rpc_client / close_rpc_client / RABBITMQ_URL / EXCHANGE_NAME / QUEUE_* / _PUSH_CHANNEL / 6 业务函数）
+- 子模块间单向依赖：transport ← handlers ← parsers_business ← parsers_common；无环
+- `transport._iter_push_rows` 是 push 链路专用的行提取器（与 parsers_common._iter_rows 思路不同：不做类型转换），留在 transport
+
+### REQ-RPC-011: 推送类型 → WS channel 映射表（v1）
+
+- 位置：`server/rpc/transport.py::_PUSH_CHANNEL`
+- 映射：
+  - `ord_cfm` → `order_update`
+  - `trd_cfm` → `trade_update`
+  - `pos_cfm` → `position_update`
+  - `ast_cfm` → `asset_update`
+- 用途：`RPClient._listen_pushs` 收到 push 后查表决定 WS 频道
+- 未知 func：log warning + skip（不广播）
+
 ## Scenarios
 
 ### S-RPC-001: 正常查询
