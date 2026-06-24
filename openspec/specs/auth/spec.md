@@ -46,6 +46,60 @@ EvTrade 是多用户交易平台，必须区分：
 - `POST /api/auth/change-password` — 改自己密码
 - ❌ `POST /api/auth/logout` 当前**是空实现**（JWT 是无状态的，logout 应仅前端清 localStorage）
 
+### REQ-AUTH-006: GET /me — 当前用户信息
+
+- 端点：`GET /api/auth/me`，依赖 `get_current_user`（任意登录角色可调）
+- 响应：`UserInfoResponse`（`id` / `username` / `email` / `full_name` / `role` / `is_active` / `must_change_password` / `created_at` / `last_login_at`）
+- **不**返回 `password_hash`（任何时候都不可外泄）
+- 用途：前端 store 启动时拉一次 user 信息（auth.js `fetchUserInfo`）
+- 实现位置：`server/api/auth.py::me`（line 78）
+
+### REQ-AUTH-007: PATCH /me — 修改邮箱 / 姓名
+
+- 端点：`PATCH /api/auth/me`，body `{email?: str, full_name?: str}`
+- 行为：
+  - 字段为 `null` → **不改**该字段（区分"未传"和"传 null 清空"）
+  - 空字符串 → 存为 `None`（清空邮箱 / 姓名）
+  - `strip()` 去除前后空格
+  - 邮箱格式校验**当前未实现**（仅 strip），未来应在 schema 层加 `EmailStr`
+- 不允许改 `username` / `role` / `password`（这些走 REQ-AUTH-004 admin 端点或 REQ-AUTH-008 改密）
+- 响应：更新后的 `UserInfoResponse`
+- 实现位置：`server/api/auth.py::update_profile`（line 83）
+
+### REQ-AUTH-008: POST /change-password — 修改自己密码
+
+- 端点：`POST /api/auth/change-password`，body `{old_password, new_password}`
+- 校验：
+  1. `old_password` 必须与 `current_user.password_hash` 匹配（bcrypt verify）→ 400 "原密码错误"
+  2. `len(new_password) >= 6` → 400 "新密码长度需至少 6 位"
+  3. `new_password != old_password` → 400 "新密码不能与原密码相同"
+- 成功行为：
+  - `password_hash = hash_password(new_password)`（bcrypt 重算）
+  - `must_change_password = False`（首次登录强改密提示清除）
+  - 返回 `{success: true, message: "密码修改成功"}`
+- **不**主动失效旧 token（JWT 是无状态的，过期前仍可用 — 这是一个 Known Issue，参见下方）
+- 实现位置：`server/api/auth.py::change_password`（line 98）
+
+### REQ-AUTH-009: must_change_password 强改密流程
+
+- 触发：seed 时 `admin` / `trader` 默认账号 `must_change_password=true`（首登录必须改）
+- 后端：无强校验（不强制下次请求前必须改密，依赖前端拦截）
+- 前端契约（`client/src/views/Login.vue` / `client/src/stores/auth.js`）：
+  - 登录响应 `user.must_change_password === true` → 跳强制改密页（不走正常首页）
+  - 改密成功后 `must_change_password=false` 才允许访问业务路由
+- 已知缺口：后端 API（除 `/change-password` 外）**不**主动校验该标志 — 拿到 token 后仍可调 `/api/orders/place`（属于 Known Issue）
+
+### REQ-AUTH-010: POST /logout — 无状态退出
+
+- 端点：`POST /api/auth/logout`，依赖 `get_current_user`（必须已登录）
+- 行为：返回 `{success: true}`（无副作用）
+- 设计取舍：
+  - JWT 是无状态的，**真正的 logout = 前端清 localStorage + 跳 `/login`**
+  - 端点保留仅为审计（admin 看到调用日志、客户端一致调用）
+  - 不需要 clear server-side session / token blacklist
+- 未来若改有状态（refresh token + 黑名单）需重构本端点
+- 实现位置：`server/api/auth.py::logout`（line 116）
+
 ## Scenarios
 
 ### S-AUTH-001: 新用户首次登录
