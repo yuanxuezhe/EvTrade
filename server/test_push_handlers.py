@@ -517,3 +517,59 @@ def test_unknown_func_logs_warning(caplog):
     assert matched, f"expected warning containing 'bogus_func', got: {[r.getMessage() for r in caplog.records]}"
     # 字段上下文也应被记录（便于排查 broker 推了什么）
     assert any("foo" in r.getMessage() for r in matched)
+
+
+# ──── v9: cancel-row 隔离 ────
+
+def test_ord_cfm_for_original_does_not_touch_cancel_row():
+    """v9: broker ord_cfm 推原委托 remark 时,cancel-row 字段完全不被更新。
+
+    背景：DELETE 端点 INSERT 一条 cancel-row（order_flag=1）。
+    broker ord_cfm 的 remark 永远是**原委托**的 order_no, 不会回带 cancel-row 的 order_no。
+    因此 handle_ord_cfm 用 remark 匹配时永远找不到 cancel-row, cancel-row 字段保持 DELETE 端点写的值。
+    """
+    db = SessionLocal()
+    # 原委托
+    db.add(Order(
+        trd_date="20260614",
+        order_id="OID-ORIG", user_def="CID-ORIG", order_no="10000010",
+        stock_code="600030.SH", order_type="23", price_type=11, price=12.5, volume=100,
+        status="49", order_flag=0,
+    ))
+    # cancel-row (DELETE 端点已写入)
+    db.add(Order(
+        trd_date="20260614",
+        order_id=None, user_def="CANCEL:10000010", order_no="10000011",
+        stock_code="600030.SH", order_type="23", price_type=11, price=12.5, volume=0,
+        status="53", order_flag=1,  # DELETE 端点 RPC 成功已写 53
+        status_msg="已撤",
+    ))
+    db.commit()
+    db.close()
+
+    # broker 推原委托 ord_cfm (remark=10000010 = 原委托 order_no)
+    db = SessionLocal()
+    handle_push(db, "ord_cfm", {
+        "order_id": "OID-ORIG",
+        "remark": "10000010",  # 原委托 order_no, 不是 cancel-row 的 10000011
+        "status": "51",         # broker 推已成的 status
+    }, ts="20260614 09:30:00")
+    db.commit()
+    db.close()
+
+    # 验证：cancel-row 字段完全没被更新
+    db = SessionLocal()
+    cancel_row = db.query(Order).filter_by(order_no="10000011", trd_date="20260614").first()
+    assert cancel_row is not None, "cancel-row should still exist"
+    assert cancel_row.order_flag == 1, f"order_flag should remain 1, got {cancel_row.order_flag}"
+    assert cancel_row.status == "53", f"cancel-row status should remain 53, got {cancel_row.status}"
+    assert cancel_row.status_msg == "已撤", f"status_msg should remain '已撤', got '{cancel_row.status_msg}'"
+    assert cancel_row.user_def == "CANCEL:10000010", f"user_def should remain CANCEL:..., got '{cancel_row.user_def}'"
+    db.close()
+
+    # 验证：原委托被正常更新
+    db = SessionLocal()
+    orig_row = db.query(Order).filter_by(order_no="10000010", trd_date="20260614").first()
+    assert orig_row is not None
+    assert orig_row.status == "51", f"orig order status should be updated to 51, got {orig_row.status}"
+    db.close()
