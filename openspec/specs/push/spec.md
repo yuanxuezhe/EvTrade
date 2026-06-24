@@ -83,6 +83,25 @@ QMT 柜台通过 RabbitMQ 主动推送（`EvTrade.Test.Push` 队列）异步通�
 
 详见归档 `archive/2026-06-21-order-push-trd-date-authority/spec-deltas/push.md`
 
+### REQ-PUSH-010: push_handlers.py 拆分（phase-2）
+
+378→72 行 facade 兼容垫片 + 6 个单一职责子模块：
+- `server/services/order_status.py` (114) — 委托 status 共享（`ORDER_STATUS` / `TERMINAL_STATUSES` / `_status_msg` / `_infer_order_status` / `_get_active_trd_date`）
+- `server/services/push_helpers.py` (34) — 4 handler 共用小工具（`_utcnow` / `_str` / `_float` / `_int`）
+- `server/services/push_handler_ord.py` (81) — ord_cfm
+- `server/services/push_handler_trd.py` (94) — trd_cfm
+- `server/services/push_handler_pos.py` (59) — pos_cfm
+- `server/services/push_handler_ast.py` (38) — ast_cfm
+
+**契约**：
+- 既有 `from services.push_handlers import ...` 仍可解析（3 import 站点全过）
+  - `server/rpc/transport.py` 用 `handle_push`（在 `_run_handle_push` 内部 import）
+  - `server/test_push_async.py` 用 `handle_push`
+  - `server/test_push_handlers.py` 用 `handle_push` + `_infer_order_status` + `TERMINAL_STATUSES` + `_status_msg`
+- 全部 4 个 handle_* 函数 + 4 共享符号 + HANDLERS dict + handle_push 都在 facade re-export
+- `handle_push` 同步签名不变（向后兼容 test_push_handlers.py 11 用例 + test_push_async.py 反射测试）
+- 子模块间单向依赖：push_handler_* → order_status / push_helpers；push_handlers (facade) → 全部子模块
+
 ### REQ-PUSH-008: broker ord_cfm 不匹配 cancel-row（v9）
 
 - **背景**：v9 DELETE 端点 INSERT 撤单委托占位行（cancel-row，`order_flag=1`）。broker 协议层面不会主动推送这个 row。
