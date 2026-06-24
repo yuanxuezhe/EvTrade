@@ -1,10 +1,15 @@
 import { defineStore } from 'pinia'
-import { ref, computed, watch } from 'vue'
+import { ref, watch } from 'vue'
 import { api } from '../api'
 import { useQuoteStore } from './quote'
 import { useAssetStore } from './asset'
 import { useWsStore } from './ws'
-import { inferOrderStatus } from '../utils/format'
+
+// phase-2 拆分: 保持单 Pinia store facade (R3 reactivity 陷阱), 抽出 4 个无状态 helper 模块
+import { createLogger } from './holdings_log'
+import { parseAsset, recomputeStatus } from './holdings_helpers'
+import { createMarketComputeds } from './holdings_market'
+import { createPushHandlers } from './holdings_push'
 
 /**
  * 持仓 + 资金 + 委托 + 成交 + 实时行情  全局缓存中心
@@ -21,10 +26,17 @@ import { inferOrderStatus } from '../utils/format'
  *   6. ws 推送的 pos_cfm / ast_cfm / ord_cfm / trd_cfm 也通过 applyXxx 走相同路径
  *      保证缓存一致性
  *
- * 视图层约定：
+ * 视图层约定（21 view 不变）：
  *   - 仪表盘 / 委托 / 成交 / 持仓 / 资金 全部从 holdings store 读，无需各自 onMounted fetch
  *   - 刷新数据按钮（AppHeader）→ holdingsStore.refreshAll()
  *   - ws 推送到时由 ws.js 调用 applyXxx，写日志
+ *
+ * phase-2 模块边界：
+ *   - holdings_log.js     — log/clearHistory + MAX_HISTORY
+ *   - holdings_helpers.js — parseAsset / recomputeStatus / nowHMS / todayYYYYMMDD（纯函数）
+ *   - holdings_market.js  — liveMarketValue / liveTotalAsset / positionCodes / getXxx（computed 工厂）
+ *   - holdings_push.js    — applyXxx ws 推送 5 入口（factory）
+ *   - holdings.js (本文件) — Pinia store facade 装配 + bootstrap/refreshAll
  */
 export const useHoldingsStore = defineStore('holdings', () => {
   // ---- 基础缓存 --------------------------------------------------------
@@ -55,114 +67,21 @@ export const useHoldingsStore = defineStore('holdings', () => {
   //   tag    - 大类筛选标签: '缓存' | '交易' | '用户' | '系统'
   //   source - 细分类: 'bootstrap' / 'refresh' / 'ws' / 'user' / 'rpc'
   const loadHistory = ref([])
-  const _MAX_HISTORY = 200          // 上限（环形）
-  let _histId = 0
+  const { log, clearHistory } = createLogger(loadHistory)
 
-  function log(level, tag, source, message, detail = null) {
-    _histId++
-    const entry = {
-      id: _histId,
-      ts: Date.now(),
-      level,        // 'info' / 'ok' / 'warn' / 'err'
-      tag,          // '缓存' | '交易' | '用户' | '系统'
-      source,       // 'bootstrap' / 'refresh' / 'ws' / 'user' / 'rpc'
-      message,
-      detail
-    }
-    loadHistory.value.unshift(entry)
-    if (loadHistory.value.length > _MAX_HISTORY) {
-      loadHistory.value.length = _MAX_HISTORY
-    }
-    // 同时写一份到 console 便于调试
-    const tagStr = `[holdings.${source}/${tag}] ${message}`
-    if (level === 'err') console.error(tagStr, detail || '')
-    else if (level === 'warn') console.warn(tagStr, detail || '')
-    else console.log(tagStr, detail || '')
-    return entry
-  }
+  // ---- 计算（实时）+ getters ------------------------------------------
+  const {
+    liveMarketValue, liveTotalAsset, positionCodes,
+    getLivePrice, getMarketValue, getProfit, getReturnRate,
+  } = createMarketComputeds(positions, cachedAsset, () => useQuoteStore())
 
-  function clearHistory() {
-    loadHistory.value = []
-  }
-
-  // ---- 计算（实时） ---------------------------------------------------
-
-  /**
-   * 实时持仓市值 = sum(quote.last_price * volume) for all positions
-   * 行情未到的标的，按 0 计入（不假装有值）
-   */
-  const liveMarketValue = computed(() => {
-    const q = useQuoteStore()
-    let sum = 0
-    let withQuote = 0
-    for (const p of positions.value) {
-      const price = q.getLastPrice(p.stock_code)
-      if (price != null) {
-        sum += price * (Number(p.volume) || 0)
-        withQuote++
-      }
-    }
-    return { sum, withQuote, total: positions.value.length }
+  // ---- ws 推送入口（ws.js 调） ----------------------------------------
+  const {
+    applyPositionPush, applyAssetPush, applyOrderPush, applyTradePush, applyQuote,
+  } = createPushHandlers({
+    positions, orders, trades, cachedAsset, activeTrdDate,
+    log, positionCodes, getQuoteStore: () => useQuoteStore(),
   })
-
-  /**
-   * 实时总资产 = 现金 + 冻结 + 实时市值
-   * 初始值（无 quote 时）= 后端 total_asset
-   */
-  const liveTotalAsset = computed(() => {
-    const a = cachedAsset.value
-    const mv = liveMarketValue.value.sum
-    const allHaveQuote = liveMarketValue.value.withQuote === liveMarketValue.value.total
-      && liveMarketValue.value.total > 0
-    if (allHaveQuote) {
-      return (Number(a.cash) || 0) + (Number(a.frozen_cash) || 0) + mv
-    }
-    return a.total_asset || 0
-  })
-
-  /** 持仓白名单（代码 Set） */
-  const positionCodes = computed(() =>
-    new Set(positions.value.map((p) => p.stock_code).filter(Boolean))
-  )
-
-  function getLivePrice(code) {
-    return useQuoteStore().getLastPrice(code) ?? null
-  }
-  function getMarketValue(p) {
-    const price = getLivePrice(p.stock_code)
-    if (price == null) return null
-    return price * (Number(p.volume) || 0)
-  }
-  function getProfit(p) {
-    const price = getLivePrice(p.stock_code)
-    if (price == null) return null
-    const cost = Number(p.cost_price) || 0
-    const vol = Number(p.vol) || 0
-    if (vol === 0) return 0
-    return (price - cost) * vol
-  }
-  function getReturnRate(p) {
-    const profit = getProfit(p)
-    const cost = Number(p.cost_price) || 0
-    const vol = Number(p.vol) || 0
-    const costTotal = cost * vol
-    if (profit == null || costTotal === 0) return null
-    return profit / costTotal
-  }
-
-  // ---- 内部辅助：解包 asset 响应 ---------------------------------------
-  // 后端返 {code:0, msg:"", list:[{cash, ...}]}，拦截器解 list → resp.data 为数组
-  function _parseAsset(resp) {
-    const list = Array.isArray(resp) ? resp : (Array.isArray(resp?.list) ? resp.list : [resp])
-    const a = list[0]
-    if (!a) return null
-    return {
-      cash: Number(a.cash) || 0,
-      frozen_cash: Number(a.frozen_cash) || 0,
-      market_value: Number(a.market_value) || 0,
-      total_asset: Number(a.total_asset) || 0
-    }
-  }
 
   // ---- 启动 / 刷新 ----------------------------------------------------
 
@@ -209,7 +128,7 @@ export const useHoldingsStore = defineStore('holdings', () => {
 
       // asset
       if (rAsset.status === 'fulfilled') {
-        const a = _parseAsset(rAsset.value)
+        const a = parseAsset(rAsset.value)
         if (a) cachedAsset.value = a
         refCounts.value.asset = 'ok'
         log('ok', '缓存', 'bootstrap', `资金加载成功 (¥${(a?.total_asset || 0).toLocaleString()})`)
@@ -232,7 +151,7 @@ export const useHoldingsStore = defineStore('holdings', () => {
       if (rOrd.status === 'fulfilled') {
         const rawOrders = Array.isArray(rOrd.value) ? rOrd.value
           : (Array.isArray(rOrd.value?.list) ? rOrd.value.list : [])
-        orders.value = rawOrders.map(_recomputeStatus)
+        orders.value = rawOrders.map(recomputeStatus)
         refCounts.value.orders = 'ok'
         log('ok', '缓存', 'bootstrap', `委托加载成功 (${orders.value.length} 条)`)
       } else {
@@ -289,7 +208,7 @@ export const useHoldingsStore = defineStore('holdings', () => {
       const summary = []
 
       if (rAsset.status === 'fulfilled') {
-        const a = _parseAsset(rAsset.value)
+        const a = parseAsset(rAsset.value)
         if (a) cachedAsset.value = a
         refCounts.value.asset = 'ok'
         summary.push(`资金 ¥${(a?.total_asset || 0).toLocaleString()}`)
@@ -308,7 +227,7 @@ export const useHoldingsStore = defineStore('holdings', () => {
       if (rOrd.status === 'fulfilled') {
         // v8: 防御性 status 重算 —— 不信任后端推的 status 字段
         const rawOrders = Array.isArray(rOrd.value) ? rOrd.value : []
-        orders.value = rawOrders.map(_recomputeStatus)
+        orders.value = rawOrders.map(recomputeStatus)
         refCounts.value.orders = 'ok'
         summary.push(`委托 ${orders.value.length} 条`)
       } else {
@@ -351,7 +270,7 @@ export const useHoldingsStore = defineStore('holdings', () => {
   async function refreshAsset() {
     refCounts.value.asset = 'loading'
     try {
-      const a = _parseAsset(await api.getAsset())
+      const a = parseAsset(await api.getAsset())
       if (a) cachedAsset.value = a
       refCounts.value.asset = 'ok'
       lastUpdated.value = Date.now()
@@ -385,169 +304,8 @@ export const useHoldingsStore = defineStore('holdings', () => {
     if (_unwatch) { _unwatch(); _unwatch = null }
   }
 
-  // ---- ws 推送入口（ws.js 调） ----------------------------------------
-
-  /** ws._onPositionCfm 调用：合并持仓推送 + 写日志 */
-  function applyPositionPush(row) {
-    if (!row || !row.stock_code) return
-    const idx = positions.value.findIndex((p) => p.stock_code === row.stock_code)
-    if (idx >= 0) {
-      positions.value[idx] = { ...positions.value[idx], ...row }
-    } else if (row.volume) {
-      positions.value.unshift(row)
-    }
-    log('info', '交易', 'ws', `持仓推送: ${row.stock_code} → ${row.vol}@${row.cost_price}`)
-  }
-
-  /** ws._onAssetCfm 调用 */
-  function applyAssetPush(row) {
-    if (!row) return
-    cachedAsset.value = {
-      cash: Number(row.cash) || 0,
-      frozen_cash: Number(row.frozen_cash) || 0,
-      market_value: Number(row.market_value) || 0,
-      total_asset: Number(row.total_asset) || 0
-    }
-    log('info', '交易', 'ws', `资产推送: 总资产 ¥${cachedAsset.value.total_asset.toLocaleString()}`)
-  }
-
-  /**
-   * v8 增: 委托 status 防御性重算 helper
-   *   - 入参 row (任意对象,只要含 volume/traded_volume/cancelled_volume 可选)
-   *   - 返回新对象(不可变),status = inferOrderStatus({...row}, null)
-   *   - 不传 brokerStatus: 完全按 traded_volume / cancelled_volume / volume 推断
-   *     满足用户需求"按已成/撤单数量计算状态"
-   *   - 缺 volume 或 traded_volume 时原样返回
-   *   - 用于: bootstrap / refresh / applyOrderPush 三处入口
-   */
-  function _recomputeStatus(o) {
-    if (o == null) return o
-    if (o.volume == null || o.traded_volume == null) return o
-    return {
-      ...o,
-      status: inferOrderStatus(
-        {
-          status: o.status,
-          volume: o.volume,
-          traded_volume: o.traded_volume,
-          cancelled_volume: o.cancelled_volume
-        },
-        null
-      )
-    }
-  }
-
-  /** ws._onOrderCfm 调用：合并委托 + 写日志
-   *  v6: 匹配键用 order_no（本地 8 位序号 PK），order_id 可能为 null
-   *      收到推送时调前端 inferOrderStatus 防御性重算 status
-   *  v8: 守门 = (activeTrdDate, order_no)
-   *      - 推送 row.trd_date != activeTrdDate → 忽略（broker 偶尔推老委托的历史变更）
-   *      - activeTrdDate == null（降级）→ 放行（log warn）
-   *      - 已有订单的 trd_date 也要守门（防止 push 覆盖跨日缓存）
-   *  v9: cancel-row (order_flag=1) 短路 _recomputeStatus
-   *      - cancel-row volume=0,traded_volume=0,会被推算成 49(已报)污染显示
-   *      - cancel-row 由 DELETE 端点写好 status,前端只 merge 不重算
-   */
-  function applyOrderPush(row, action /* 'open' | 'update' | 'status' */) {
-    if (!row || !row.order_no) return
-    // v8 激活日守门
-    if (activeTrdDate.value && row.trd_date && row.trd_date !== activeTrdDate.value) {
-      log('warn', '交易', 'ws', `委托推送忽略: trd_date=${row.trd_date} != active=${activeTrdDate.value} (${row.stock_code} ${row.order_no})`)
-      return
-    }
-    // v9 短路: cancel-row 不走 _recomputeStatus (volume=0 会被推算成 49)
-    if (Number(row.order_flag) === 1) {
-      const idx = orders.value.findIndex((o) => o.order_no === row.order_no)
-      if (idx >= 0) {
-        orders.value[idx] = { ...orders.value[idx], ...row }
-      } else {
-        orders.value.unshift(row)
-      }
-      log('info', '交易', 'ws', `撤单审计: ${row.stock_code} ${row.order_no} status=${row.status} (order_flag=1)`)
-      return
-    }
-    // 防御性重算 status（与后端 _infer_order_status 一致;不传 brokerStatus 完全按 cum/vol 算）
-    row.status = _recomputeStatus(row).status
-    const idx = orders.value.findIndex((o) => o.order_no === row.order_no)
-    if (idx >= 0) {
-      orders.value[idx] = { ...orders.value[idx], ...row }
-      log('info', '交易', 'ws', `委托状态: ${row.stock_code} ${action} (${row.status || ''})`)
-    } else {
-      orders.value.unshift(row)
-      log('info', '交易', 'ws', `新委托: ${row.stock_code} ${row.order_type === '23' ? '买' : '卖'} ${row.volume}@${row.price}`)
-    }
-  }
-
-  /** ws._onTradeCfm 调用
-   *  v8: 守门 = (activeTrdDate, trade_id) → 推送 row.trd_date != active 忽略
-   *      成交按 trade_id 唯一, trd_date 是额外维度
-   *  v9: 透传 trade_type 字段 (0=normal 1=cancel-fill),日志区分
-   */
-  function applyTradePush(row) {
-    if (!row || !row.trade_id) return
-    // v8 激活日守门
-    if (activeTrdDate.value && row.trd_date && row.trd_date !== activeTrdDate.value) {
-      log('warn', '交易', 'ws', `成交推送忽略: trd_date=${row.trd_date} != active=${activeTrdDate.value} (${row.stock_code})`)
-      return
-    }
-    const idx = trades.value.findIndex((t) => t.trade_id === row.trade_id)
-    if (idx < 0) {
-      // v7 增: 补全 trd_date / order_no / remark
-      //   跟后端 TradeOut schema 对齐 (v6 schema-refinement)
-      //   前端做 T 敞口/配平需要 order_no 关联委托
-      //   trd_date 用于跨日分组; remark 用于关联 Order.remark = 本地 order_no
-      const tradeType = Number(row.trade_type) || 0
-      trades.value.unshift({
-        trade_id: row.trade_id,
-        order_id: row.order_id || '',
-        order_no: row.order_no || row.remark || '',  // 兼容 broker 透传 remark
-        trd_date: row.trd_date || _today_yyyymmdd(),
-        stock_code: row.stock_code || '',
-        order_type: row.order_type || '',
-        volume: Number(row.volume) || 0,
-        price: Number(row.price) || 0,
-        amount: Number(row.amount) || Number(row.volume || 0) * Number(row.price || 0),
-        trade_time: row.trade_time || _now_hms(),
-        trade_type: tradeType  // v9: 0=normal 1=cancel-fill
-      })
-      if (tradeType === 1) {
-        log('ok', '交易', 'ws', `撤单审计: ${row.stock_code} 取消 ${row.volume}@${row.price} (${row.trade_id})`)
-      } else {
-        log('ok', '交易', 'ws', `成交通知: ${row.stock_code} ${row.order_type === '23' ? '买' : '卖'} ${row.volume}@${row.price}`)
-      }
-    }
-  }
-
-  /** ws._onQuote 调用：白名单过滤 + 写入 quote store */
-  function applyQuote(row) {
-    if (!row || !row.stock_code) return false
-    if (!positionCodes.value.has(row.stock_code)) return false
-    const q = useQuoteStore()
-    q.update({
-      stock_code: row.stock_code,
-      last_price: row.last_price,
-      fields: row.fields,
-      body: row.body,
-      ts: row.ts || Date.now()
-    })
-    return true
-  }
-
-  function _now_hms() {
-    const d = new Date()
-    return [d.getHours(), d.getMinutes(), d.getSeconds()]
-      .map((n) => String(n).padStart(2, '0')).join(':')
-  }
-
-  // v7 增: 跟后端 trd_date 格式对齐 (YYYYMMDD)
-  function _today_yyyymmdd() {
-    const d = new Date()
-    return [d.getFullYear(), d.getMonth() + 1, d.getDate()]
-      .map((n) => String(n).padStart(2, '0')).join('')
-  }
-
   return {
-    // state
+    // state（21 view 直接读, 必须全部暴露）
     positions, orders, trades, cachedAsset,
     loading, bootstrapped, lastUpdated, refCounts,
     loadHistory,

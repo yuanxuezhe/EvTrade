@@ -103,6 +103,24 @@
 - **MUST**: 委托/成交加载走 `holdingsStore.bootstrap()` (App 启动) 或 `holdingsStore.refreshAll()` (手动刷新)
 - 详见归档 `archive/2026-06-22-fix-v8-single-source-violations-r2/spec-deltas/frontend.md`
 
+#### REQ-FE-009.7: holdings store 拆分（phase-2 facade）
+
+- **位置**：
+  - `client/src/stores/holdings.js` — Pinia store facade（单 store,装配 4 helper）
+  - `client/src/stores/holdings_log.js` — `createLogger(loadHistory)` 操作流水（MAX_HISTORY=200）
+  - `client/src/stores/holdings_helpers.js` — `parseAsset` / `recomputeStatus` / `nowHMS` / `todayYYYYMMDD` 纯函数
+  - `client/src/stores/holdings_market.js` — `createMarketComputeds(positions, cachedAsset, getQuoteStore)` 实时市值/盈亏 computed 工厂
+  - `client/src/stores/holdings_push.js` — `createPushHandlers({...deps})` 5 个 ws 推送入口（v8 trd_date 守门 + v9 cancel-row/trade_type 短路）
+- **R3 reactivity 守门**：**必须保持单 Pinia store facade**（21 view 都 `useHoldingsStore()`），不允许拆成 5 个独立 store 后让 view 各自调。helper 全部是**纯工厂函数**，state 仍由 facade 持有
+- **facade 暴露 surface（21 view 引用安全网）**：
+  - state: `positions / orders / trades / cachedAsset / loadHistory / activeTrdDate / activeDayStatus / loading / bootstrapped / lastUpdated / refCounts`
+  - computed: `liveMarketValue / liveTotalAsset / positionCodes`
+  - actions: `bootstrap / refreshAll / refreshPositions / refreshAsset / log / clearHistory / _startWatchers / _stopWatchers`
+  - getters: `getLivePrice / getMarketValue / getProfit / getReturnRate`
+  - ws push: `applyPositionPush / applyAssetPush / applyOrderPush / applyTradePush / applyQuote`
+- **依赖注入模式**：helper 工厂通过参数接收 state ref + store getter（如 `getQuoteStore: () => useQuoteStore()`），避免循环依赖
+- 详见归档 `archive/2026-06-24-phase-2-architecture-split/spec-deltas/frontend.md`
+
 ### REQ-FE-006: 委托 status 本地推断（前端镜像后端）
 
 - **位置**：`client/src/utils/format.js` 导出 `inferOrderStatus(order, brokerStatus?)` 函数
