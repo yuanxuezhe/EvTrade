@@ -210,6 +210,15 @@
   - 基于 Order + Trade 关联，扣失败单（status=55 废单不计入）
   - `net_volume = buy_vol - sell_vol`
 
+#### 实现位置（phase-2 拆分后）
+
+- `server/services/t0_aggregate.py` — facade 兼容垫片（45 行，纯 re-export）
+- `server/services/t0_fees.py` — 费率与精度工具（`_q2` / `_q4` / `calc_commission_and_tax` + 共享常量 `_FAILED_STATUS` / `_BUY_TYPE` / `_SELL_TYPE`）
+- `server/services/t0_pnl.py` — 真实已实现算法（`calc_realized_pnl`）
+- `server/services/t0_aggregators.py` — 分组合并（`calc_net_exposure` / `_order_count_stats` / `_group_by_code` / `aggregate_by_stock` / `aggregate_by_day` / `aggregate_summary` / `apply_user_def_filter`）
+- 既有 `from server.services.t0_aggregate import ...` 仍可解析（facade 兜底）
+- 详见归档 `archive/2026-06-24-phase-2-architecture-split/spec-deltas/trading.md`
+
 #### 前端约定
 
 - T0Trade.vue 新增组件 `<T0ExposureTable>`：
