@@ -1,22 +1,33 @@
+"""
+main.py — FastAPI app 入口（phase-2 拆分后）
+
+职责：
+- CORS 配置
+- 启动 / 关闭 hook（DB seed / RPC client 生命周期）
+- 路由注册（public / protected / admin 三组）
+- /api/health
+- WebSocket 端点注册（实现在 server/ws/endpoint.py）
+
+不在此处的逻辑：
+- DB seed 实现在 server/lifecycle/seed.py
+- WebSocket endpoint 实现在 server/ws/endpoint.py
+- 业务路由在 server/api/* 各自模块
+"""
 import os
-import asyncio
-import json
-import time
-from fastapi import FastAPI, Depends, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
 
-from server.db import init_db, SessionLocal
-from server.models.user import User
-from server.auth.security import hash_password, decode_token
+from server.db import SessionLocal
 from server.auth.deps import get_current_user
 from server.api import positions, holdings, orders, trades, asset, auth as auth_api, users as users_api
 from server.api import clock, fee_config
 from server.api import system as system_api  # v8: 系统级查询（active-day）
 from server.api import t0_stats, t0_aggregate
 from server.api.admin import sys_status as admin_sys_status, reconcile as admin_reconcile, session as admin_session
-from server.ws.manager import ws_manager
 from server.rpc.client import get_rpc_client, close_rpc_client
-from server.config import validate_config
+from server.ws import register_ws_endpoint
+from server.lifecycle import init_and_seed
+
 # 注：行情订阅已解耦到 hq/hqserver.py 的内置 WebSocket 服务 (:8765)，
 # 前端 quote_update 频道直连 hqserver，不再经过本 server 转发。
 
@@ -40,41 +51,15 @@ app.add_middleware(
 )
 
 
+# ---- WebSocket (必须在 startup 之前注册，因为 register 用装饰器) ----
+register_ws_endpoint(app)
+
+
+# ---- Startup / Shutdown hooks ------------------------------------------
 @app.on_event("startup")
 def on_startup():
-    """Create tables and seed default accounts if no users exist."""
-    # 启动时验证配置
-    validate_config()
-    init_db()
-    db = SessionLocal()
-    try:
-        count = db.query(User).count()
-        if count == 0:
-            admin = User(
-                username="admin",
-                password_hash=hash_password("admin123"),
-                role="admin",
-                full_name="系统管理员",
-                is_active=True,
-                must_change_password=True,
-            )
-            trader = User(
-                username="trader",
-                password_hash=hash_password("trader123"),
-                role="trader",
-                full_name="默认交易员",
-                is_active=True,
-                must_change_password=True,
-            )
-            db.add(admin)
-            db.add(trader)
-            db.commit()
-            print("[INIT] Created default accounts (users table was empty):")
-            print("[INIT]   - admin / admin123 (role=admin)")
-            print("[INIT]   - trader / trader123 (role=trader)")
-            print("[INIT] Please change the password after first login.")
-    finally:
-        db.close()
+    """DB 建表 + 默认账号 seed（实现见 server/lifecycle/seed.py）"""
+    init_and_seed()
 
 
 @app.on_event("startup")
@@ -86,18 +71,12 @@ async def on_startup_rpc():
         print(f"[INIT] RPC client failed to start: {e}")
 
 
-# 注：quote subscriber 已迁移到 hq/hqserver.py，前端 quote_update 频道直连 hqserver :8765
-
-
 @app.on_event("shutdown")
 async def on_shutdown_rpc():
     try:
         await close_rpc_client()
     except Exception as e:
         print(f"[SHUTDOWN] RPC client close error: {e}")
-
-
-# 注：quote subscriber 关闭逻辑已迁出本 server（hqserver 自己管）
 
 
 # ---- Public routes ------------------------------------------------------
@@ -130,64 +109,3 @@ app.include_router(admin_session.router, prefix="/api/admin/trading-session", ta
 @app.get("/api/health")
 def health():
     return {"status": "ok"}
-
-
-# ---- WebSocket ----------------------------------------------------------
-@app.websocket("/ws/{channel}")
-async def websocket_endpoint(websocket: WebSocket, channel: str):
-    """前端订阅推送。channel ∈ order_update | trade_update | position_update | asset_update。
-
-    通过 query param ?token=JWT 认证；无 token 则拒绝连接。
-
-    v10 增：ping/pong 双向心跳防 idle close。
-      - 收到 {"type":"ping"} → 回 {"type":"pong"}（立即响应）
-      - 启动 30s 间隔服务端主动 ping（保活 + 探活）
-      - 60s 内没收到任何客户端消息 → close 4408 (timeout)
-    """
-    token = websocket.query_params.get("token")
-    if not token or not decode_token(token):
-        await websocket.close(code=4001, reason="Unauthorized")
-        return
-    await ws_manager.connect(websocket, channel)
-
-    # 服务端心跳：30s 发一次 ping，期望客户端回 pong（or any msg）
-    WS_HEARTBEAT_INTERVAL = 30  # 秒
-    WS_CLIENT_TIMEOUT = 60      # 秒（2 个心跳间隔）
-    last_recv = asyncio.get_event_loop().time()
-
-    async def heartbeat_sender():
-        """服务端主动 ping；只在 channel != quote_update 时启动（quote 走 hqserver）。"""
-        if channel == "quote_update":
-            return  # quote 直连 hqserver :8765，不走后端 ws
-        try:
-            while True:
-                await asyncio.sleep(WS_HEARTBEAT_INTERVAL)
-                await websocket.send_json({"type": "ping", "ts": time.time()})
-                # 超时检查：上次收到消息 > WS_CLIENT_TIMEOUT 秒 → 主动断开
-                now = asyncio.get_event_loop().time()
-                if now - last_recv > WS_CLIENT_TIMEOUT:
-                    await websocket.close(code=4408, reason="heartbeat timeout")
-                    return
-        except (WebSocketDisconnect, Exception):
-            return
-
-    sender_task = asyncio.ensure_future(heartbeat_sender())  # Py3.6.8 compat (asyncio.create_task is 3.7+)
-    try:
-        while True:
-            data = await websocket.receive_text()
-            last_recv = asyncio.get_event_loop().time()
-            # ping/pong：客户端主动 ping → 服务端立即回 pong
-            try:
-                parsed = json.loads(data)
-            except (json.JSONDecodeError, ValueError):
-                continue  # 非 JSON 当心跳续约忽略
-            if isinstance(parsed, dict) and parsed.get("type") == "ping":
-                await websocket.send_json({"type": "pong", "ts": parsed.get("ts")})
-            # pong / 业务消息：当作心跳续约，不再做业务处理（推送是单向 server→client）
-    except WebSocketDisconnect:
-        pass
-    except Exception as e:
-        print(f"[WS] error on {channel}: {e}")
-    finally:
-        sender_task.cancel()
-        ws_manager.disconnect(websocket, channel)

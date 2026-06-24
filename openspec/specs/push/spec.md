@@ -29,6 +29,9 @@ QMT 柜台通过 RabbitMQ 主动推送（`EvTrade.Test.Push` 队列）异步通�
 - `trade_update` → 追加到 trades
 - `position_update` → 重拉（push 当前未路由）
 - `asset_update` → 重拉（push 当前未路由）
+- **端点实现位置**（phase-2 拆分后）：`server/ws/endpoint.py::register_ws_endpoint(app)`，在 `server/main.py` 启动装配时调一次注册 `/ws/{channel}` 端点
+  - 认证 / 接入 / 双向心跳 / 4408 timeout 关闭全部在该模块
+  - ws_manager 单例由 `server/ws/manager.py` 提供（业务推送 `server/services/push_handlers.py` 也共用）
 
 ### REQ-PUSH-005: status 字段语义（v6，本地推断）
 
