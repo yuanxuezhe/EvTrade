@@ -618,6 +618,7 @@
           <el-radio-button value="conservative">保守</el-radio-button>
           <el-radio-button value="balanced">平衡</el-radio-button>
           <el-radio-button value="aggressive">激进</el-radio-button>
+          <el-radio-button value="extreme">极限</el-radio-button>
         </el-radio-group>
 
         <el-row :gutter="12" class="risk-grid">
@@ -757,6 +758,7 @@ import {
 import { api } from '../api'
 import { t0StatsApi } from '../api/t0_stats'
 import { formatNumber, formatPrice, formatAmount } from '../utils/format'
+import { RISK_CONFIGS, DEFAULT_RISK_PROFILE, getRiskConfig, riskProfileOptions } from '../constants/riskProfile'
 
 const holdingsStore = useHoldingsStore()
 const orderStore = useOrderStore()  // v8: 下单后立即 upsert 缓存
@@ -913,13 +915,9 @@ const effectiveBalanceQty = computed(() => {
 })
 
 // ---- 仓位管理（4 档 + 风险建议） -----------------------------------------
-const riskProfile = ref('balanced')  // 'conservative' | 'balanced' | 'aggressive'
-const RISK_CONFIGS = {
-  conservative: { maxSinglePosition: 0.10, reserveCash: 0.50, suggestedCoeff: 0.5, label: '🛡 保守' },
-  balanced:     { maxSinglePosition: 0.25, reserveCash: 0.30, suggestedCoeff: 1.0, label: '⚖ 平衡' },
-  aggressive:   { maxSinglePosition: 0.50, reserveCash: 0.10, suggestedCoeff: 1.5, label: '🔥 激进' },
-}
-const riskConfig = computed(() => RISK_CONFIGS[riskProfile.value])
+// RISK_CONFIGS / DEFAULT_RISK_PROFILE 见 constants/riskProfile.js（4 档: conservative/balanced/aggressive/extreme）
+const riskProfile = ref(DEFAULT_RISK_PROFILE)
+const riskConfig = computed(() => getRiskConfig(riskProfile.value))
 
 // 总资产
 const totalAsset = computed(() => Number(asset.value?.total_asset) || 0)
