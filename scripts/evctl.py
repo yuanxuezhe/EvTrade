@@ -98,9 +98,9 @@ def _vite_cmd():
 SERVICES = {
     'backend': Service(
         'backend', BACKEND_PORT,
-        os.path.join(PROJECT_ROOT, 'server'),
-        [sys.executable, '-u', '-m', 'uvicorn', 'main:app',
-         '--host', '0.0.0.0', '--port', str(BACKEND_PORT), '--reload'],
+        PROJECT_ROOT,
+        [sys.executable, '-u', '-m', 'uvicorn', 'server.main:app',
+         '--host', '0.0.0.0', '--port', str(BACKEND_PORT)],
         preflight=['uvicorn'],
     ),
     'frontend': Service(
