@@ -44,7 +44,7 @@
       </div>
       <div class="filter-right">
         <el-button :icon="Refresh" @click="refresh" :loading="loading">刷新</el-button>
-        <el-button type="primary" :icon="Plus" @click="openCreate">新建用户</el-button>
+        <el-button type="primary" :icon="Plus" @click="actions.openCreate()">新建用户</el-button>
       </div>
     </div>
 
@@ -123,14 +123,14 @@
         <el-table-column label="操作" width="240" fixed="right">
           <template #default="{ row }">
             <div class="row-actions">
-              <el-button size="small" link type="primary" @click="openEdit(row)">
+              <el-button size="small" link type="primary" @click="actions.openEdit(row)">
                 编辑
               </el-button>
               <el-button
                 size="small"
                 link
                 type="warning"
-                @click="openResetPwd(row)"
+                @click="actions.openResetPwd(row)"
               >
                 重置密码
               </el-button>
@@ -138,8 +138,8 @@
                 size="small"
                 link
                 :type="row.is_active ? 'info' : 'success'"
-                :disabled="row.id === authStore.user?.id"
-                @click="toggleActive(row)"
+                :disabled="row.id === (authStore.user && authStore.user.id)"
+                @click="onToggleActive(row)"
               >
                 {{ row.is_active ? '禁用' : '启用' }}
               </el-button>
@@ -147,8 +147,8 @@
                 size="small"
                 link
                 type="danger"
-                :disabled="row.id === authStore.user?.id"
-                @click="confirmDelete(row)"
+                :disabled="row.id === (authStore.user && authStore.user.id)"
+                @click="onConfirmDelete(row)"
               >
                 删除
               </el-button>
@@ -172,137 +172,38 @@
       </div>
     </div>
 
-    <!-- 新建/编辑 用户弹窗 -->
-    <el-dialog
-      v-model="editVisible"
-      :title="editForm.id ? '编辑用户' : '新建用户'"
-      width="480px"
-      :close-on-click-modal="false"
-      align-center
-    >
-      <el-form
-        ref="editFormRef"
-        :model="editForm"
-        :rules="editRules"
-        label-position="top"
-        size="default"
-      >
-        <el-form-item label="用户名" prop="username">
-          <el-input
-            v-model="editForm.username"
-            placeholder="3-32位字母/数字/_/-/."
-            :disabled="!!editForm.id"
-          />
-        </el-form-item>
+    <!-- 弹窗：phase-2 拆分到子组件 -->
+    <UserEditDialog
+      ref="editDialogEl"
+      v-model:visible="actions.editVisible.value"
+      :loading="actions.editLoading.value"
+      :form="actions.editForm"
+      :rules="actions.editRules"
+      @submit="onSubmitEdit"
+    />
 
-        <el-form-item
-          v-if="!editForm.id"
-          label="初始密码"
-          prop="password"
-        >
-          <el-input
-            v-model="editForm.password"
-            type="password"
-            show-password
-            placeholder="至少 6 位"
-          />
-        </el-form-item>
-
-        <el-form-item label="角色" prop="role">
-          <el-radio-group v-model="editForm.role">
-            <el-radio-button value="admin">管理员</el-radio-button>
-            <el-radio-button value="trader">交易员</el-radio-button>
-            <el-radio-button value="viewer">只读用户</el-radio-button>
-          </el-radio-group>
-        </el-form-item>
-
-        <el-form-item label="姓名" prop="full_name">
-          <el-input v-model="editForm.full_name" placeholder="可选" />
-        </el-form-item>
-
-        <el-form-item label="邮箱" prop="email">
-          <el-input v-model="editForm.email" placeholder="可选" />
-        </el-form-item>
-
-        <el-form-item v-if="!editForm.id" label="启用状态" prop="is_active">
-          <el-switch
-            v-model="editForm.is_active"
-            active-text="启用"
-            inactive-text="禁用"
-            inline-prompt
-          />
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="editVisible = false">取消</el-button>
-        <el-button type="primary" :loading="editLoading" @click="submitEdit">
-          {{ editForm.id ? '保存' : '创建' }}
-        </el-button>
-      </template>
-    </el-dialog>
-
-    <!-- 重置密码弹窗 -->
-    <el-dialog
-      v-model="pwdVisible"
-      title="重置密码"
-      width="420px"
-      :close-on-click-modal="false"
-      align-center
-    >
-      <el-form
-        ref="pwdFormRef"
-        :model="pwdForm"
-        :rules="pwdRules"
-        label-position="top"
-        size="default"
-      >
-        <el-form-item label="目标用户">
-          <div class="target-user">
-            <div class="avatar small" :class="`role-${pwdTarget?.role}`">
-              {{ (pwdTarget?.full_name || pwdTarget?.username || '').charAt(0).toUpperCase() }}
-            </div>
-            <div>
-              <div class="user-name">{{ pwdTarget?.username }}</div>
-              <div class="text-secondary" style="font-size: 12px">
-                {{ pwdTarget?.full_name || ROLE_LABEL[pwdTarget?.role] }}
-              </div>
-            </div>
-          </div>
-        </el-form-item>
-        <el-form-item label="新密码" prop="new_password">
-          <el-input
-            v-model="pwdForm.new_password"
-            type="password"
-            show-password
-            placeholder="至少 6 位"
-          />
-        </el-form-item>
-        <el-form-item label="确认新密码" prop="confirm">
-          <el-input
-            v-model="pwdForm.confirm"
-            type="password"
-            show-password
-            placeholder="再次输入新密码"
-          />
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="pwdVisible = false">取消</el-button>
-        <el-button type="primary" :loading="pwdLoading" @click="submitResetPwd">
-          确认重置
-        </el-button>
-      </template>
-    </el-dialog>
+    <UserResetPwdDialog
+      ref="pwdDialogEl"
+      v-model:visible="actions.pwdVisible.value"
+      :loading="actions.pwdLoading.value"
+      :form="actions.pwdForm"
+      :rules="actions.pwdRules"
+      :target="actions.pwdTarget.value"
+      @submit="onSubmitResetPwd"
+    />
   </div>
 </template>
 
 <script setup>
 import { computed, onMounted, reactive, ref } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage } from 'element-plus'
 import { Search, Refresh, Plus } from '@element-plus/icons-vue'
 import { userApi } from '../api'
 import { useAuthStore } from '../stores/auth'
 import { formatDateTime } from '../utils/format'
+import { useUserActions } from '../composables/useUserActions'
+import UserEditDialog from '../components/users/UserEditDialog.vue'
+import UserResetPwdDialog from '../components/users/UserResetPwdDialog.vue'
 
 const authStore = useAuthStore()
 
@@ -352,7 +253,7 @@ async function refresh() {
     })
     page.value = 1
   } catch (e) {
-    ElMessage.error(e.response?.data?.detail || '加载失败')
+    ElMessage.error((e.response && e.response.data && e.response.data.detail) || '加载失败')
   } finally {
     loading.value = false
   }
@@ -364,205 +265,33 @@ function resetFilters() {
   refresh()
 }
 
-// ============================================================
-// 新建 / 编辑
-// ============================================================
-const editVisible = ref(false)
-const editLoading = ref(false)
-const editFormRef = ref(null)
-const editForm = reactive({
-  id: null,
-  username: '',
-  password: '',
-  role: 'trader',
-  email: '',
-  full_name: '',
-  is_active: true
-})
+// ===== Actions (弹窗状态 + 业务方法) =====
+const actions = useUserActions()
 
-const editRules = {
-  username: [
-    { required: true, message: '请输入用户名', trigger: 'blur' },
-    {
-      validator: (_r, v, cb) =>
-        /^[A-Za-z0-9_\-.]{3,32}$/.test(v) ? cb() : cb(new Error('3-32位字母/数字/_/-/.')),
-      trigger: 'blur'
-    }
-  ],
-  password: [
-    { required: true, message: '请输入密码', trigger: 'blur' },
-    { min: 6, message: '密码长度至少 6 位', trigger: 'blur' }
-  ],
-  role: [{ required: true, message: '请选择角色', trigger: 'change' }],
-  email: [
-    {
-      validator: (_r, v, cb) =>
-        !v || /^[\w.+-]+@[\w-]+\.[\w.-]+$/.test(v) ? cb() : cb(new Error('邮箱格式不正确')),
-      trigger: 'blur'
-    }
-  ]
+// 把 dialog 组件 instance 挂到 composable，让 submit 调 validate
+const editDialogEl = ref(null)
+const pwdDialogEl = ref(null)
+actions.editDialogRef = editDialogEl
+actions.pwdDialogRef = pwdDialogEl
+
+async function onSubmitEdit() {
+  const ok = await actions.submitEdit()
+  if (ok) refresh()
 }
 
-function openCreate() {
-  Object.assign(editForm, {
-    id: null,
-    username: '',
-    password: '',
-    role: 'trader',
-    email: '',
-    full_name: '',
-    is_active: true
-  })
-  editVisible.value = true
-  setTimeout(() => editFormRef.value?.clearValidate(), 50)
+async function onSubmitResetPwd() {
+  // 重置密码不刷新列表（用户没变，仅 msg 提示）
+  await actions.submitResetPwd()
 }
 
-function openEdit(row) {
-  Object.assign(editForm, {
-    id: row.id,
-    username: row.username,
-    password: '',
-    role: row.role,
-    email: row.email || '',
-    full_name: row.full_name || '',
-    is_active: row.is_active
-  })
-  editVisible.value = true
-  setTimeout(() => editFormRef.value?.clearValidate(), 50)
+async function onToggleActive(row) {
+  const ok = await actions.toggleActive(row)
+  if (ok) refresh()
 }
 
-async function submitEdit() {
-  if (!editFormRef.value) return
-  const valid = await editFormRef.value.validate().catch(() => false)
-  if (!valid) return
-
-  editLoading.value = true
-  try {
-    if (editForm.id) {
-      await userApi.update(editForm.id, {
-        role: editForm.role,
-        email: editForm.email,
-        full_name: editForm.full_name,
-        is_active: editForm.is_active
-      })
-      ElMessage.success('已保存')
-    } else {
-      await userApi.create({
-        username: editForm.username.trim(),
-        password: editForm.password,
-        role: editForm.role,
-        email: editForm.email,
-        full_name: editForm.full_name,
-        is_active: editForm.is_active
-      })
-      ElMessage.success('用户已创建')
-    }
-    editVisible.value = false
-    refresh()
-  } catch (e) {
-    ElMessage.error(e.response?.data?.detail || '操作失败')
-  } finally {
-    editLoading.value = false
-  }
-}
-
-// ============================================================
-// 重置密码
-// ============================================================
-const pwdVisible = ref(false)
-const pwdLoading = ref(false)
-const pwdFormRef = ref(null)
-const pwdTarget = ref(null)
-const pwdForm = reactive({ new_password: '', confirm: '' })
-
-const pwdRules = {
-  new_password: [
-    { required: true, message: '请输入新密码', trigger: 'blur' },
-    { min: 6, message: '密码长度至少 6 位', trigger: 'blur' }
-  ],
-  confirm: [
-    { required: true, message: '请再次输入新密码', trigger: 'blur' },
-    {
-      validator: (_r, v, cb) =>
-        v === pwdForm.new_password ? cb() : cb(new Error('两次输入不一致')),
-      trigger: 'blur'
-    }
-  ]
-}
-
-function openResetPwd(row) {
-  pwdTarget.value = row
-  pwdForm.new_password = ''
-  pwdForm.confirm = ''
-  pwdVisible.value = true
-  setTimeout(() => pwdFormRef.value?.clearValidate(), 50)
-}
-
-async function submitResetPwd() {
-  if (!pwdFormRef.value) return
-  const valid = await pwdFormRef.value.validate().catch(() => false)
-  if (!valid) return
-  pwdLoading.value = true
-  try {
-    await userApi.resetPassword(pwdTarget.value.id, pwdForm.new_password)
-    ElMessage.success(`已重置 ${pwdTarget.value.username} 的密码`)
-    pwdVisible.value = false
-  } catch (e) {
-    ElMessage.error(e.response?.data?.detail || '重置失败')
-  } finally {
-    pwdLoading.value = false
-  }
-}
-
-// ============================================================
-// 启用 / 禁用
-// ============================================================
-async function toggleActive(row) {
-  const next = !row.is_active
-  const action = next ? '启用' : '禁用'
-  try {
-    await ElMessageBox.confirm(
-      `确定要${action}用户「${row.username}」吗？`,
-      `${action}确认`,
-      { type: 'warning', confirmButtonText: action, cancelButtonText: '取消' }
-    )
-  } catch {
-    return
-  }
-  try {
-    await userApi.update(row.id, { is_active: next })
-    ElMessage.success(`已${action}`)
-    refresh()
-  } catch (e) {
-    ElMessage.error(e.response?.data?.detail || `${action}失败`)
-  }
-}
-
-// ============================================================
-// 删除
-// ============================================================
-async function confirmDelete(row) {
-  try {
-    await ElMessageBox.confirm(
-      `确定要删除用户「${row.username}」吗？该操作不可撤销。`,
-      '删除确认',
-      {
-        type: 'warning',
-        confirmButtonText: '删除',
-        cancelButtonText: '取消',
-        confirmButtonClass: 'el-button--danger'
-      }
-    )
-  } catch {
-    return
-  }
-  try {
-    await userApi.delete(row.id)
-    ElMessage.success('已删除')
-    refresh()
-  } catch (e) {
-    ElMessage.error(e.response?.data?.detail || '删除失败')
-  }
+async function onConfirmDelete(row) {
+  const ok = await actions.confirmDelete(row)
+  if (ok) refresh()
 }
 
 onMounted(refresh)
@@ -694,16 +423,6 @@ onMounted(refresh)
   display: flex;
   gap: var(--space-1);
   flex-wrap: wrap;
-}
-
-.target-user {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  padding: var(--space-2) var(--space-3);
-  background: var(--bg-soft);
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--border-base);
 }
 
 .pagination {

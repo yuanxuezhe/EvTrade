@@ -172,6 +172,21 @@ And Asset/Holdings 等视图若订阅了该股则自动刷新
 - **位置**：`client/src/components/OrderForm.vue`
 - **契约**：
   - 限价单（`price_type === PriceType.LIMIT`）委托价格输入支持 2 位小数（A 股最小变动单位 0.01 元）
+
+### REQ-FE-051: Users.vue 拆分（phase-2）
+
+- **背景**：v1-v8 多轮迭代后 `views/Users.vue` 长 719 行，混合 5 类职责（统计 / 筛选 / 表格 / 弹窗 / 业务方法）
+- **拆分后**：
+  - `client/src/views/Users.vue` (438) — 主壳：概览 stats row + 筛选 + 表格 + 分页
+  - `client/src/composables/useUserActions.js` (219) — 弹窗状态 + 业务方法（openCreate / openEdit / submitEdit / openResetPwd / submitResetPwd / toggleActive / confirmDelete）
+  - `client/src/components/users/UserEditDialog.vue` (109) — 新建/编辑弹窗
+  - `client/src/components/users/UserResetPwdDialog.vue` (123) — 重置密码弹窗
+- **契约**：
+  - dialog 内部自管 formRef + watch(visible) 自动 clearValidate
+  - composable 持有弹窗 state，通过 `actions.editDialogRef = editDialogEl` 挂 dialog instance，submit 时调 `dialog.validate()`
+  - dialog 通过 `defineExpose({ formRef, validate })` 暴露
+  - Users.vue 主壳不再含 dialog 模板，结构清晰：表格 + 2 个 dialog
+- **向后兼容**：21 个 view 已有 `useHoldingsStore` 等不动；Users.vue 路由 `/users` 行为不变
   - `el-input-number` 属性：`precision=2`, `step=0.01`
   - 提交时 `form.price` 已是 float，直接走 `OrderOut.price: float` 后端 schema
 - **非限价单**（市价/最新价/挂单价）：input disabled，precision 无实际作用
