@@ -233,6 +233,55 @@
 - `useT0Balance.js` 新增 `exposureList` / `aggregate` 响应式数据 + `loadExposure()` / `loadAggregate()` 加载函数
 - 提交下单时 `user_def` 始终为 `'T0'`（已在 T0Trade.vue:743 实现；新增：手动模式 / 一键配平也带 T0 标签）
 
+### REQ-TRADE-008: orders API 模块结构（phase-2 拆分）
+
+`server/api/orders.py` 历史上集中了 4 个 Pydantic schema、4 个端点函数（place/cancel/list/history）和 1 个 `_to_order_out` helper，单文件 482 行混合 5 类职责。phase-2 拆分目标：每个文件单一职责 + facade 兼容。
+
+#### 物理拆分
+
+| 文件 | 职责 | 行数 | 关键导出 |
+|---|---|---|---|
+| `server/api/_order_schemas.py` | Pydantic schemas + helper | ~92 | `PlaceOrderRequest`, `OrderOut`, `PlaceOrderResponse`, `ListOrdersResponse`, `CancelResponse`, `_to_order_out` |
+| `server/api/order_place.py` | POST /place 端点 | ~143 | `register_place(router)` |
+| `server/api/order_cancel.py` | DELETE /{order_no} 端点 | ~191 | `register_cancel(router)` |
+| `server/api/order_query.py` | GET '' + GET /history 端点 | ~95 | `register_query(router)` |
+| `server/api/orders.py`（facade） | 装配 + monkeypatch 兼容 | ~58 | `router`, `ord_stk`, `rpc_cancel_order`, `ws_manager`, 5 个 schema, `_to_order_out` |
+
+#### Facade 必须满足
+
+1. **`from server.api.orders import router`** — `main.py: app.include_router(orders.router, ...)` 0 改动
+2. **顶层 import** `ord_stk` / `rpc_cancel_order` / `ws_manager` — `test_orders_api.py` 通过 `monkeypatch.setattr("api.orders.ord_stk", mock)` 等路径打补丁
+3. **顶层 re-export** 全部 5 个 Pydantic + `_to_order_out` — 兼容既有 import 路径
+
+#### Late import 模式（**强制**）
+
+`order_place.py` / `order_cancel.py` 端点函数体内**必须**通过
+
+```python
+from server.api.orders import ord_stk, ws_manager   # 端点函数体首行
+```
+
+拿被 patch 后的符号，**不允许**模块顶部直接 `from server.rpc.client import ord_stk`（否则 monkeypatch 不生效）。
+
+#### Router 装配（facade 模式）
+
+```python
+# orders.py (facade)
+router = APIRouter()
+register_place(router)
+register_cancel(router)
+register_query(router)
+```
+
+3 个子模块共享同一 router 实例，端点装饰器 `@router.post("/place", ...)` 在 `register_*` 函数体内执行。
+
+#### 验证清单
+
+- `python -c "from server.api.orders import router; print(len(router.routes))"` → 4
+- `python -c "from server.main import app"` 0 异常
+- `pytest server/test_orders_api.py` 可被 R6 已知问题阻塞（pre-existing "Table 'orders' already defined"），import 完整性必须通过
+- 21 个端点路径不变：POST /api/orders/place、DELETE /api/orders/{order_no}、GET /api/orders、GET /api/orders/history
+
 ## Scenarios
 
 ### S-TRADE-001: 下一笔限价买单
