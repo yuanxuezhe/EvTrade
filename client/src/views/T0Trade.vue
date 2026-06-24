@@ -759,6 +759,8 @@ import { api } from '../api'
 import { t0StatsApi } from '../api/t0_stats'
 import { formatNumber, formatPrice, formatAmount } from '../utils/format'
 import { RISK_CONFIGS, DEFAULT_RISK_PROFILE, getRiskConfig, riskProfileOptions } from '../constants/riskProfile'
+import { useT0ChartGeometry, useT0DrawerChartGeometry } from '../composables/useT0ChartGeometry'
+import { useT0OrderSubmit } from '../composables/useT0OrderSubmit'
 
 const holdingsStore = useHoldingsStore()
 const orderStore = useOrderStore()  // v8: 下单后立即 upsert 缓存
@@ -810,44 +812,9 @@ const drawerCumHistory = computed(() => {
 const drawerChartW = 460
 const drawerChartH = 140
 const drawerChartPad = 16
-const drawerZeroY = computed(() => {
-  const pts = drawerCumHistory.value
-  if (!pts.length) return drawerChartH / 2
-  const max = Math.max(...pts.map(p => p.cum_pnl), 0)
-  const min = Math.min(...pts.map(p => p.cum_pnl), 0)
-  if (max === min) return drawerChartH / 2
-  // 0 线在 max/min 区间的相对位置
-  return drawerChartH - drawerChartPad - ((-min) / (max - min)) * (drawerChartH - 2 * drawerChartPad)
-})
-const drawerCumPath = computed(() => {
-  const pts = drawerCumHistory.value
-  if (!pts.length) return ''
-  const w = drawerChartW - 2 * drawerChartPad
-  const h = drawerChartH - 2 * drawerChartPad
-  const max = Math.max(...pts.map(p => p.cum_pnl), 0)
-  const min = Math.min(...pts.map(p => p.cum_pnl), 0)
-  const range = max - min || 1
-  return pts.map((p, i) => {
-    const x = drawerChartPad + (i / (pts.length - 1 || 1)) * w
-    const y = drawerChartPad + (1 - (p.cum_pnl - min) / range) * h
-    return `${i === 0 ? 'M' : 'L'} ${x.toFixed(1)} ${y.toFixed(1)}`
-  }).join(' ')
-})
-const drawerCumAreaPath = computed(() => {
-  const line = drawerCumPath.value
-  if (!line) return ''
-  // 0 线 y 位置
-  const pts = drawerCumHistory.value
-  const max = Math.max(...pts.map(p => p.cum_pnl), 0)
-  const min = Math.min(...pts.map(p => p.cum_pnl), 0)
-  const range = max - min || 1
-  const h = drawerChartH - 2 * drawerChartPad
-  const yZero = drawerChartPad + (1 - (0 - min) / range) * h
-  const last = pts.length - 1
-  const w = drawerChartW - 2 * drawerChartPad
-  const xLast = drawerChartPad + (last / (last || 1)) * w
-  return `${line} L ${xLast.toFixed(1)} ${yZero.toFixed(1)} L ${drawerChartPad} ${yZero.toFixed(1)} Z`
-})
+// phase-2 抽到 useT0DrawerChartGeometry composable
+const { cumPath: drawerCumPath, cumAreaPath: drawerCumAreaPath, zeroY: drawerZeroY } =
+  useT0DrawerChartGeometry(drawerCumHistory, { W: drawerChartW, H: drawerChartH, pad: drawerChartPad })
 // 抽屉累计统计 (跨期 aggregate API, 后端已存在 /api/orders/t0-aggregate?stock_code=...)
 const drawerAggregate = ref(null)
 watch(drawerVisible, async (v) => {
@@ -1040,61 +1007,12 @@ const cumHistory = computed(() => {
   return pts.map(p => ({ ...p, cum_pnl: (cum += p.realized_pnl) }))
 })
 
-// SVG 曲线几何
+// SVG 曲线几何 — phase-2 抽到 useT0ChartGeometry composable
 const chartW = 800
 const chartH = 200
 const chartPad = 24
-const cumPath = computed(() => {
-  const arr = cumHistory.value
-  if (arr.length < 2) return ''
-  const minY = Math.min(0, ...arr.map(p => p.cum_pnl))
-  const maxY = Math.max(0, ...arr.map(p => p.cum_pnl))
-  const range = (maxY - minY) || 1
-  return arr.map((p, i) => {
-    const x = (i / (arr.length - 1)) * chartW
-    const y = chartH - chartPad - ((p.cum_pnl - minY) / range) * (chartH - 2 * chartPad)
-    return `${i === 0 ? 'M' : 'L'}${x.toFixed(1)},${y.toFixed(1)}`
-  }).join(' ')
-})
-const cumAreaPath = computed(() => {
-  if (!cumPath.value) return ''
-  const arr = cumHistory.value
-  const minY = Math.min(0, ...arr.map(p => p.cum_pnl))
-  const maxY = Math.max(0, ...arr.map(p => p.cum_pnl))
-  const range = (maxY - minY) || 1
-  const zeroYY = chartH - chartPad - ((0 - minY) / range) * (chartH - 2 * chartPad)
-  return cumPath.value + ` L${chartW},${zeroYY.toFixed(1)} L0,${zeroYY.toFixed(1)} Z`
-})
-const zeroY = computed(() => {
-  const arr = cumHistory.value
-  if (arr.length === 0) return chartH / 2
-  const minY = Math.min(0, ...arr.map(p => p.cum_pnl))
-  const maxY = Math.max(0, ...arr.map(p => p.cum_pnl))
-  const range = (maxY - minY) || 1
-  return chartH - chartPad - ((0 - minY) / range) * (chartH - 2 * chartPad)
-})
-function barX(i) {
-  const arr = cumHistory.value
-  if (arr.length <= 1) return chartW / 2
-  return (i / (arr.length - 1)) * chartW
-}
-function barY(realized, i) {
-  const arr = cumHistory.value
-  if (arr.length === 0) return chartH / 2
-  const minR = Math.min(0, ...arr.map(p => p.realized_pnl))
-  const maxR = Math.max(0, ...arr.map(p => p.realized_pnl))
-  const range = (maxR - minR) || 1
-  return chartH - chartPad - ((realized - minR) / range) * (chartH - 2 * chartPad)
-}
-// X 轴标签（首 / 中 / 末）
-const xLabelIndices = computed(() => {
-  const arr = cumHistory.value
-  if (arr.length === 0) return []
-  if (arr.length === 1) return [arr[0].trd_date]
-  if (arr.length === 2) return [arr[0].trd_date, arr[1].trd_date]
-  const mid = Math.floor(arr.length / 2)
-  return [arr[0].trd_date, arr[mid].trd_date, arr[arr.length - 1].trd_date]
-})
+const { cumPath, cumAreaPath, zeroY, barX, barY, xLabelIndices } =
+  useT0ChartGeometry(cumHistory, { W: chartW, H: chartH, pad: chartPad })
 
 function onStockCodeChange() {
   loadT0Stats()
@@ -1119,45 +1037,12 @@ const canBalanceSubmit = computed(() =>
 )
 
 // 提交下单
-async function submitOrder({ orderType, volume, price }) {
-  submitting.value = true
-  try {
-    const priceTypeCode = priceType.value === 'market' ? 44
-      : priceType.value === 'oppose' ? 14
-      : 11  // 'latest' / 'limit'
-    // v8: 走 orderStore 统一处理（已 _upsertToHoldings 写缓存 + 防御性 status 重算）
-    //     res = api 拦截器解包后的 list 数组(1 个 OrderOut)
-    const res = await orderStore.placeOrder({
-      stock_code: stockCode.value,
-      order_type: orderType,
-      price_type: priceTypeCode,
-      price: price,
-      volume: volume,
-      t0_coefficient: balanceCoeff.value,
-      user_def: 'T0',  // T0 页面下单调标记
-    })
-    if (res) {
-      const dir = orderType === '23' ? '买' : '卖'
-      ElMessage.success(`${dir}单已报：${volume} 股 @ ¥${formatPrice(price)}`)
-      loadT0Stats()
-    } else {
-      ElMessage.error('下单失败')
-    }
-  } catch (e) {
-    const detail = e?.response?.data?.detail
-    const code = detail?.code
-    if (code === 'TRADING_DAY_NOT_INIT') {
-      // 日初未做：仅提示，由用户在左侧菜单进入「系统初始化」处理
-      ElMessage.warning(detail?.msg || '当前未做日初，请到「系统初始化」处理')
-    } else if (code === 'OUTSIDE_TRADING_SESSION') {
-      ElMessage.warning(detail?.msg || '非交易时段，仅可查询')
-    } else {
-      ElMessage.error(detail?.msg || e.message || '下单失败')
-    }
-  } finally {
-    submitting.value = false
-  }
-}
+// phase-2 抽到 useT0OrderSubmit composable (priceType/balanceCoeff/submitting 注入)
+const { submitOrder } = useT0OrderSubmit({
+  stockCode, priceType, balanceCoeff, submitting,
+  orderStore,
+  onAfterSuccess: () => loadT0Stats(),
+})
 
 function onOneClickBuy() {
   if (!canBuy.value) return

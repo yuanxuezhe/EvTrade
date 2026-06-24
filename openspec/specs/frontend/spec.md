@@ -173,6 +173,31 @@ And Asset/Holdings 等视图若订阅了该股则自动刷新
 - **契约**：
   - 限价单（`price_type === PriceType.LIMIT`）委托价格输入支持 2 位小数（A 股最小变动单位 0.01 元）
 
+### REQ-FE-050: T0Trade.vue 拆分（phase-2 初版 — composable 抽取）
+
+- **背景**: v1-v9 多轮迭代后 `views/T0Trade.vue` 长 1819 行，混合 SVG 几何 / 下单 / 风险档位 / 抽屉 / 卡片渲染等职责
+- **拆分（已落地）**:
+  - `client/src/composables/useT0ChartGeometry.js` (~145 行)
+    - `useT0ChartGeometry(cumHistory, {W,H,pad})` — 主表 SVG 几何（含 barX/barY/xLabelIndices）
+    - `useT0DrawerChartGeometry(cumHistory, {W,H,pad})` — 抽屉 chart 几何（紧凑版）
+    - 消除主表 chart + drawer chart 60 行重复
+  - `client/src/composables/useT0OrderSubmit.js` (~66 行)
+    - `useT0OrderSubmit({stockCode, priceType, balanceCoeff, submitting, orderStore, onAfterSuccess})` 工厂
+    - 返回 `{ submitOrder({orderType, volume, price}) }`
+    - 内部:价格类型映射、orderStore.placeOrder、ElMessage 成功/错误码分支
+- **保留在 T0Trade.vue**（未拆出）:
+  - 8 个 el-card section（QuickSettings/PositionTable/DetailDrawer/MetricCards/Exposure/Action/Risk/History）
+  - on*Buy / on*Sell / on*Balance / onRebalanceXxx（短函数,与本地 ref/computed 强耦合）
+- **行数变化**: 1819 → 1704 (-115)
+- **后续拆 component 候选**（留作 phase-3）:
+  - `components/t0/DetailDrawer.vue`（抽屉,94 行 template + 50 行 state）
+  - `components/t0/RiskProfileCard.vue`（仓位建议卡 + 4 档 radio）
+  - `components/t0/HistoryChart.vue`（SVG 曲线展示）
+- **契约**:
+  - composable 通过依赖注入 refs/stores,不持有内部 state
+  - SVG path 字符串格式与原版逐字符等价（测试用 `eq` 而非 visual diff）
+  - submitOrder 错误码分支保留（TRADING_DAY_NOT_INIT / OUTSIDE_TRADING_SESSION / 其他）
+
 ### REQ-FE-051: Users.vue 拆分（phase-2）
 
 - **背景**：v1-v8 多轮迭代后 `views/Users.vue` 长 719 行，混合 5 类职责（统计 / 筛选 / 表格 / 弹窗 / 业务方法）
