@@ -97,7 +97,7 @@ def test_push_listener_injects_trd_date_into_payload(monkeypatch):
     fake_row = {
         "order_id": "OID-LISTENER",
         "stock_code": "600030.SH",
-        "status": "50",
+        "order_status": "50",  # v10: broker 原字段名
         "remark": "10000099",
         "trd_date": "20260613",  # broker 推的老日期
     }
@@ -159,7 +159,7 @@ def test_push_listener_no_trd_date_when_resolve_returns_none(monkeypatch):
         rpc_client, "_resolve_active_trd_date_safe", lambda: None
     )
 
-    fake_row = {"order_id": "OID-NODAY", "stock_code": "600030.SH", "status": "49"}
+    fake_row = {"order_id": "OID-NODAY", "stock_code": "600030.SH", "order_status": "49"}
     monkeypatch.setattr(rpc_client, "_parse_push_rows", lambda pkt: [fake_row])
 
     captured_broadcasts = []
@@ -200,7 +200,7 @@ def test_push_listener_handles_trd_cfm(monkeypatch):
     )
 
     fake_row = {
-        "trd_id": "TID-1", "order_id": "OID-1", "stock_code": "600030.SH",
+        "traded_id": "TID-1", "order_id": "OID-1", "stock_code": "600030.SH",
         "traded_volume": "100", "traded_price": "12.5",
     }
     monkeypatch.setattr(rpc_client, "_parse_push_rows", lambda pkt: [fake_row])
@@ -226,3 +226,4 @@ def test_push_listener_handles_trd_cfm(monkeypatch):
     assert captured[0][0] == "trade_update"
     assert captured[0][1]["data"]["trd_date"] == "20260614"
     assert captured[0][1]["data"]["traded_volume"] == "100"
+    assert captured[0][1]["data"]["traded_id"] == "TID-1"  # v10: 透传 broker 原字段名

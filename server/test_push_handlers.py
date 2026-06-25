@@ -121,7 +121,7 @@ def test_ord_cfm_fills_order_id_via_remark():
     handle_push(db, "ord_cfm", {
         "order_id": "BROKER-OID-1",
         "remark": "10000001",   # ← broker 透传回来的 order_no
-        "status": "49",          # 已报
+        "order_status": "49",    # v10: broker 原字段名
     }, ts="20260614 09:30:01")
     db.commit()
     row = db.query(Order).filter_by(order_no="10000001", trd_date="20260614").first()
@@ -148,10 +148,10 @@ def test_ord_cfm_does_not_update_traded_volume():
     handle_push(db, "ord_cfm", {
         "order_id": "OID-PART",
         "remark": "10000002",
-        "status": "50",  # broker 推部成
+        "order_status": "50",  # v10: broker 原字段名, broker 推部成
         "traded_volume": 30,      # 即使 broker 推了也忽略
         "traded_amount": 375.0,
-        "avg_price": 12.5,
+        "traded_price": 12.5,
     }, ts="20260614 09:31:00")
     db.commit()
     row = db.query(Order).filter_by(order_id="OID-PART", trd_date="20260614").first()
@@ -180,7 +180,7 @@ def test_ord_cfm_infers_status_53_when_broker_pushed_cancel():
     handle_push(db, "ord_cfm", {
         "order_id": "OID-CXL",
         "remark": "10000003",
-        "status": "53",  # broker 推已撤
+        "order_status": "53",  # v10: broker 原字段名
     }, ts="20260614 10:00:00")
     db.commit()
     row = db.query(Order).filter_by(order_id="OID-CXL", trd_date="20260614").first()
@@ -194,7 +194,7 @@ def test_ord_cfm_logs_warn_when_no_local_order():
     handle_push(db, "ord_cfm", {
         "order_id": "GHOST-OID",
         "remark": "99999999",  # 不存在的 order_no
-        "status": "49",
+        "order_status": "49",  # v10: broker 原字段名
     }, ts="20260614 09:30:00")
     db.commit()
     # 不会有新行
@@ -205,7 +205,10 @@ def test_ord_cfm_logs_warn_when_no_local_order():
 # ──── trd_cfm ────
 
 def test_trd_cfm_inserts_trade_and_updates_order_via_remark():
-    """v6: trd_cfm 用 broker.remark (= order_no) 匹配 Order"""
+    """v6: trd_cfm 用 broker.remark (= order_no) 匹配 Order
+
+    v10: 严格用 broker 原字段名 traded_id / traded_price / traded_volume / traded_amount / traded_time
+    """
     db = SessionLocal()
     db.add(Order(
         trd_date="20260614",
@@ -218,15 +221,15 @@ def test_trd_cfm_inserts_trade_and_updates_order_via_remark():
 
     db = SessionLocal()
     handle_push(db, "trd_cfm", {
-        "trade_id": "TID-001",
+        "traded_id": "TID-001",       # v10: 原字段名
         "order_id": "OID-T",
         "remark": "10000010",  # ← v6: 关键,用来匹配本地 Order
         "stock_code": "600030.SH",
         "order_type": "23",
-        "price": 12.5,
-        "volume": 30,
-        "amount": 375.0,
-        "trade_time": "09:31:00",
+        "traded_price": 12.5,         # v10: 原字段名
+        "traded_volume": 30,          # v10: 原字段名
+        "traded_amount": 375.0,       # v10: 原字段名
+        "traded_time": "09:31:00",    # v10: 原字段名
     }, ts="20260614 09:31:00")
     db.commit()
 
@@ -248,7 +251,10 @@ def test_trd_cfm_inserts_trade_and_updates_order_via_remark():
 
 
 def test_trd_cfm_fills_status_to_51_when_full():
-    """trd_cfm 累计到 volume → 51(已成)"""
+    """trd_cfm 累计到 volume → 51(已成)
+
+    v10: 严格用 broker 原字段名 traded_id / traded_price / traded_volume / traded_amount
+    """
     db = SessionLocal()
     db.add(Order(
         trd_date="20260614",
@@ -261,11 +267,11 @@ def test_trd_cfm_fills_status_to_51_when_full():
 
     db = SessionLocal()
     handle_push(db, "trd_cfm", {
-        "trade_id": "TID-002",
+        "traded_id": "TID-002",       # v10: 原字段名
         "order_id": "OID-FULL",
         "remark": "10000011",
         "stock_code": "600030.SH",
-        "price": 12.5, "volume": 50, "amount": 625.0,
+        "traded_price": 12.5, "traded_volume": 50, "traded_amount": 625.0,  # v10: 原字段名
     }, ts="20260614 09:32:00")
     db.commit()
     o = db.query(Order).filter_by(order_no="10000011", trd_date="20260614").first()
@@ -275,7 +281,10 @@ def test_trd_cfm_fills_status_to_51_when_full():
 
 
 def test_trd_cfm_idempotent():
-    """同 trade_id 二次推送 → 不会重复插入 + 不会重复累计"""
+    """同 traded_id 二次推送 → 不会重复插入 + 不会重复累计
+
+    v10: 严格用 broker 原字段名 traded_id / traded_price / traded_volume / traded_amount
+    """
     db = SessionLocal()
     db.add(Order(
         trd_date="20260614",
@@ -287,11 +296,11 @@ def test_trd_cfm_idempotent():
     db.close()
 
     payload = {
-        "trade_id": "TID-DUP",
+        "traded_id": "TID-DUP",       # v10: 原字段名
         "order_id": "OID-IDEM",
         "remark": "10000020",
         "stock_code": "600030.SH",
-        "price": 12.5, "volume": 10, "amount": 125.0,
+        "traded_price": 12.5, "traded_volume": 10, "traded_amount": 125.0,  # v10: 原字段名
     }
 
     db = SessionLocal()
@@ -311,6 +320,8 @@ def test_trd_cfm_idempotent():
 
 def test_trd_cfm_no_remark_skipped_v7():
     """v7: trd_cfm 不带 remark (order_no) → 跳过,不入 Trade 表(避免孤儿 Trade)
+
+    v10: 严格用 broker 原字段名 traded_id / traded_price / traded_volume / traded_amount
     """
     db = SessionLocal()
     db.add(Order(
@@ -324,11 +335,11 @@ def test_trd_cfm_no_remark_skipped_v7():
 
     db = SessionLocal()
     handle_push(db, "trd_cfm", {
-        "trade_id": "TID-FB",
+        "traded_id": "TID-FB",        # v10: 原字段名
         "order_id": "OID-FB",
         # 没有 remark (v7: 必须有 order_no 才能落 Trade)
         "stock_code": "600030.SH",
-        "price": 12.5, "volume": 20, "amount": 250.0,
+        "traded_price": 12.5, "traded_volume": 20, "traded_amount": 250.0,  # v10: 原字段名
     }, ts="20260614 09:30:00")
     db.commit()
     # v7: Trade 表不入记录（避免孤儿）
@@ -338,7 +349,10 @@ def test_trd_cfm_no_remark_skipped_v7():
 
 
 def test_trd_cfm_terminal_status_not_overridden():
-    """终态(56 部成部撤)被 trd_cfm 累计时不被覆盖"""
+    """终态(56 部成部撤)被 trd_cfm 累计时不被覆盖
+
+    v10: 严格用 broker 原字段名 traded_id / traded_price / traded_volume / traded_amount
+    """
     db = SessionLocal()
     db.add(Order(
         trd_date="20260614",
@@ -352,11 +366,11 @@ def test_trd_cfm_terminal_status_not_overridden():
 
     db = SessionLocal()
     handle_push(db, "trd_cfm", {
-        "trade_id": "TID-AFTER-CXL",
+        "traded_id": "TID-AFTER-CXL",  # v10: 原字段名
         "order_id": "OID-TER",
         "remark": "10000040",
         "stock_code": "600030.SH",
-        "price": 12.5, "volume": 20, "amount": 250.0,  # 撤单后又来一笔
+        "traded_price": 12.5, "traded_volume": 20, "traded_amount": 250.0,  # v10: 原字段名
     }, ts="20260614 10:00:00")
     db.commit()
     o = db.query(Order).filter_by(order_no="10000040", trd_date="20260614").first()
@@ -370,13 +384,14 @@ def test_trd_cfm_terminal_status_not_overridden():
 # ──── pos_cfm ────
 
 def test_pos_cfm_upserts_position():
+    """v10: 严格用 broker 原字段名 avl_amt / avg_price"""
     db = SessionLocal()
     # 第一次推送
     handle_push(db, "pos_cfm", {
         "stock_code": "600030.SH",
         "volume": 1000,
-        "available": 1000,
-        "cost_price": 12.5,
+        "avl_amt": 1000,        # v10: 原字段名
+        "avg_price": 12.5,      # v10: 原字段名
         "market_value": 12500.0,
     }, ts="20260614 09:30:00")
     db.commit()
@@ -395,8 +410,8 @@ def test_pos_cfm_upserts_position():
     handle_push(db, "pos_cfm", {
         "stock_code": "600030.SH",
         "volume": 1100,
-        "available": 1100,
-        "cost_price": 12.45,
+        "avl_amt": 1100,        # v10: 原字段名
+        "avg_price": 12.45,     # v10: 原字段名
         "market_value": 13695.0,
     }, ts="20260614 14:00:00")
     db.commit()
@@ -407,13 +422,16 @@ def test_pos_cfm_upserts_position():
 
 
 def test_pos_cfm_vol_fallback_when_volume_missing():
-    """pos_cfm 行不送 volume 字段（broker 实际行为）→ vol 兜底为 avl_vol"""
+    """pos_cfm 行不送 volume 字段（broker 实际行为）→ vol 兜底为 avl_vol
+
+    v10: 严格用 broker 原字段名 avl_amt / avg_price
+    """
     db = SessionLocal()
     handle_push(db, "pos_cfm", {
         "stock_code": "600519.SH",
         # 不送 volume
-        "available": 100,
-        "cost_price": 1500.0,
+        "avl_amt": 100,         # v10: 原字段名
+        "avg_price": 1500.0,    # v10: 原字段名
     }, ts="20260614 09:30:00")
     db.commit()
     p = db.query(Position).filter_by(stock_code="600519.SH").first()
@@ -425,13 +443,16 @@ def test_pos_cfm_vol_fallback_when_volume_missing():
 
 
 def test_pos_cfm_vol_explicit_takes_precedence():
-    """pos_cfm 显式送 volume → 不用 avl_vol 兜底"""
+    """pos_cfm 显式送 volume → 不用 avl_vol 兜底
+
+    v10: 严格用 broker 原字段名 avl_amt / avg_price
+    """
     db = SessionLocal()
     handle_push(db, "pos_cfm", {
         "stock_code": "600519.SH",
         "volume": 200,
-        "available": 150,  # vol 200 != avl 150（冻结 50）
-        "cost_price": 1500.0,
+        "avl_amt": 150,         # v10: 原字段名 (vol 200 != avl 150, 冻结 50)
+        "avg_price": 1500.0,    # v10: 原字段名
     }, ts="20260614 09:30:00")
     db.commit()
     p = db.query(Position).filter_by(stock_code="600519.SH").first()
@@ -441,11 +462,14 @@ def test_pos_cfm_vol_explicit_takes_precedence():
 
 
 def test_pos_cfm_zero_holdings_no_fallback():
-    """pos_cfm 推 available=0 → vol 也应是 0（不兜底错）"""
+    """pos_cfm 推 avl_amt=0 → vol 也应是 0（不兜底错）
+
+    v10: 严格用 broker 原字段名 avl_amt
+    """
     db = SessionLocal()
     handle_push(db, "pos_cfm", {
         "stock_code": "EMPTY.SH",
-        "available": 0,
+        "avl_amt": 0,           # v10: 原字段名
     }, ts="x")
     db.commit()
     p = db.query(Position).filter_by(stock_code="EMPTY.SH").first()
@@ -458,11 +482,12 @@ def test_pos_cfm_zero_holdings_no_fallback():
 # ──── ast_cfm ────
 
 def test_ast_cfm_upserts_asset():
+    """v10: 严格用 broker 原字段名 frozen_cash"""
     db = SessionLocal()
     handle_push(db, "ast_cfm", {
         "total_asset": 100000.0,
         "cash": 50000.0,
-        "frozen": 1000.0,
+        "frozen_cash": 1000.0,  # v10: 原字段名
         "market_value": 50000.0,
     }, ts="20260614 09:30:00")
     db.commit()
@@ -475,13 +500,14 @@ def test_ast_cfm_upserts_asset():
 
 
 def test_ast_cfm_overwrites_on_second_push():
+    """v10: 严格用 broker 原字段名 frozen_cash"""
     db = SessionLocal()
     handle_push(db, "ast_cfm", {
-        "total_asset": 100000.0, "cash": 50000.0, "frozen": 0, "market_value": 50000.0,
+        "total_asset": 100000.0, "cash": 50000.0, "frozen_cash": 0, "market_value": 50000.0,  # v10
     }, ts="x")
     db.commit()
     handle_push(db, "ast_cfm", {
-        "total_asset": 150000.0, "cash": 100000.0, "frozen": 0, "market_value": 50000.0,
+        "total_asset": 150000.0, "cash": 100000.0, "frozen_cash": 0, "market_value": 50000.0,  # v10
     }, ts="y")
     db.commit()
     a = db.query(Asset).first()
@@ -552,7 +578,7 @@ def test_ord_cfm_for_original_does_not_touch_cancel_row():
     handle_push(db, "ord_cfm", {
         "order_id": "OID-ORIG",
         "remark": "10000010",  # 原委托 order_no, 不是 cancel-row 的 10000011
-        "status": "51",         # broker 推已成的 status
+        "order_status": "51",  # v10: broker 原字段名
     }, ts="20260614 09:30:00")
     db.commit()
     db.close()

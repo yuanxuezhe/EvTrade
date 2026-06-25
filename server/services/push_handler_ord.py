@@ -1,11 +1,12 @@
 """
-push_handler_ord.py — ord_cfm 处理（v6: 只填 order_id + 推断 status）
+push_handler_ord.py — ord_cfm 处理（v10: broker 原字段名 + order_time 写库）
 
 行为：
 - 用 broker.remark（= 本地 order_no）匹配本地 Order
 - 写入 broker_order_id
 - 累加 cancelled_volume（兼容 cancelled_volume / cancel_volume / withdrawn_volume 字段名）
 - 用 _infer_order_status 本地推断 status（不直接抄 broker）
+- v10 字段对齐：读 broker 原字段 `order_status`（不再 alias `status`）、`order_time`、`order_volume`
 """
 from typing import Any, Dict
 
@@ -17,22 +18,23 @@ from server.services.push_helpers import _int, _str, _utcnow
 
 
 def handle_ord_cfm(db: Session, row: Dict[str, Any], ts: str) -> None:
-    """处理 ord_cfm 推送（v6: 简化为只填 order_id + 推断 status）
+    """处理 ord_cfm 推送（v10: 简化为只填 order_id + 推断 status + order_time）
 
-    柜台字段（举例）：
-      order_id       柜台委托号
-      remark         委托备注（即我们下传的本地的 order_no）
+    柜台字段（v10 broker 原字段名，权威源: iquant/xtquant_api.py 第 282-295 行）:
+      order_id         柜台委托号
+      remark           委托备注（即我们下传的本地的 order_no）
       stock_code
       order_type
       price_type
       price
-      volume
-      status         48/49/50/51/52/53/55 — 临时喂给 _infer_order_status，不直接写
-      status_msg
+      order_volume     v10 新增：broker 改单后真实 volume
+      order_status     v10 broker 原字段（48/49/50/51/52/53/55），喂给 _infer_order_status
+      order_time       v10 新增：标准格式 (commit 3 解析)
+      strategy_name    v10 新增：透传
     """
     broker_order_id = _str(row.get('order_id', ''))
     broker_remark = _str(row.get('remark', ''))  # ← broker 透传回来的 order_no
-    broker_status = _str(row.get('status', ''))
+    broker_status = _str(row.get('order_status', ''))  # v10: 原字段名
 
     if not broker_order_id and not broker_remark:
         print("[ord_cfm] skip: no order_id and no remark")
@@ -69,10 +71,23 @@ def handle_ord_cfm(db: Session, row: Dict[str, Any], ts: str) -> None:
             new_cancelled = order.volume
         order.cancelled_volume = new_cancelled
 
+    # v10: 覆盖 order_volume（broker 改单后真实委托数）
+    broker_volume = _int(row.get('order_volume', None), 0)
+    if broker_volume > 0 and broker_volume != order.volume:
+        order.volume = broker_volume
+
     # 委托 status 由 _infer_order_status 本地推断
     # (broker_status 临时喂进去:52/53/54 视为撤单类信号)
     order.status = _infer_order_status(order, broker_status=broker_status or None)
     order.status_msg = _str(row.get('status_msg', '')) or _status_msg(order.status)
+
+    # v10: 写入 order_time（commit 3 会做格式解析；这里先 raw 透传）
+    broker_order_time = _str(row.get('order_time', ''))
+    if broker_order_time:
+        # commit 3 起, _str() 后的字符串会被 parse_broker_ts 标准化
+        # 当前 commit 2 只做字段透传, commit 3 加 format_ts 包装
+        order.order_time = broker_order_time
+
     order.pushed_at = _utcnow()
     order.updated_at = _utcnow()
 
