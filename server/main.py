@@ -7,12 +7,14 @@ main.py — FastAPI app 入口（phase-2 拆分后）
 - 路由注册（public / protected / admin 三组）
 - /api/health
 - WebSocket 端点注册（实现在 server/ws/endpoint.py）
+- v10 增：root logger 显式设 INFO（server.interaction / uvicorn.* 都靠它）
 
 不在此处的逻辑：
 - DB seed 实现在 server/lifecycle/seed.py
 - WebSocket endpoint 实现在 server/ws/endpoint.py
 - 业务路由在 server/api/* 各自模块
 """
+import logging
 import os
 from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
@@ -28,6 +30,20 @@ from server.middleware.request_logging import RequestLoggingMiddleware
 from server.rpc.client import get_rpc_client, close_rpc_client
 from server.ws import register_ws_endpoint
 from server.lifecycle import init_and_seed
+
+# v10 增: 显式配 root logger (server-interaction-logging REQ-LOG-005)
+#   uvicorn 启动时只给 uvicorn.* 配了 handler, root 默认 WARNING, INFO 被过滤
+#   清掉 uvicorn 已挂的 root handler, 再 basicConfig 设 root = INFO
+#   让 [front->svc] / [svc->rpc] 等自定义 logger 可见
+#   Python 3.6 兼容: basicConfig 不支持 force, 手动清 handlers
+_root = logging.getLogger()
+for h in list(_root.handlers):
+    _root.removeHandler(h)
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
 
 # 注：行情订阅已解耦到 hq/hqserver.py 的内置 WebSocket 服务 (:8765)，
 # 前端 quote_update 频道直连 hqserver，不再经过本 server 转发。
