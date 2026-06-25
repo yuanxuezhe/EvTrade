@@ -4,7 +4,17 @@ User ORM model.
 from datetime import datetime, timezone
 from sqlalchemy import Column, Integer, String, DateTime, Boolean
 from server.db import Base
-from server.services.push_helpers import format_db_dt
+
+# v10: 统一时间戳格式 "YYYY-MM-DD HH:MM:SS.fff" (rpc-field-alignment-ts-unify)
+#   这里内联 format_db_dt 而非 import server.services.push_helpers,
+#   否则会触发循环导入: services.__init__ → guards → user → services.push_helpers
+_TS_FMT = "%Y-%m-%d %H:%M:%S.%f"
+
+
+def _format_db_dt(dt):
+    if dt is None:
+        return ""
+    return dt.strftime(_TS_FMT)[:-3]
 
 
 class User(Base):
@@ -29,7 +39,6 @@ class User(Base):
     last_login_at = Column(DateTime, nullable=True)
 
     def to_dict(self):
-        # v10: 统一时间戳格式 "YYYY-MM-DD HH:MM:SS.fff" (rpc-field-alignment-ts-unify)
         return {
             "id": self.id,
             "username": self.username,
@@ -38,7 +47,7 @@ class User(Base):
             "role": self.role,
             "is_active": self.is_active,
             "must_change_password": self.must_change_password,
-            "created_at": format_db_dt(self.created_at) if self.created_at else None,
-            "updated_at": format_db_dt(self.updated_at) if self.updated_at else None,
-            "last_login_at": format_db_dt(self.last_login_at) if self.last_login_at else None,
+            "created_at": _format_db_dt(self.created_at) if self.created_at else None,
+            "updated_at": _format_db_dt(self.updated_at) if self.updated_at else None,
+            "last_login_at": _format_db_dt(self.last_login_at) if self.last_login_at else None,
         }
