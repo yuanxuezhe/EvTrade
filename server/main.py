@@ -45,6 +45,11 @@ logging.basicConfig(
     datefmt="%Y-%m-%d %H:%M:%S",
 )
 
+# v10 增: 禁用 uvicorn 原生 access log
+#   重复打印 '127.0.0.1:NNNN - "GET /api/x HTTP/1.1" 200 OK' 格式
+#   已被 RequestLoggingMiddleware 的 [front<-svc] 替代
+logging.getLogger("uvicorn.access").disabled = True
+
 # 注：行情订阅已解耦到 hq/hqserver.py 的内置 WebSocket 服务 (:8765)，
 # 前端 quote_update 频道直连 hqserver，不再经过本 server 转发。
 
