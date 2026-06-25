@@ -34,6 +34,7 @@ from server.models.orm import SysStatus, ReconcileReport
 from server.models.user import User
 from server.services.reconcile import do_reconcile
 from server.services.guards import require_admin
+from server.services.push_helpers import format_db_dt
 
 router = APIRouter()
 
@@ -111,7 +112,7 @@ async def init_trading_day(
         trading_day=SysStatusOut(
             trd_date=req.trd_date,
             status='active',
-            activated_at=new_day.initialized_at.isoformat() if new_day and new_day.initialized_at else None,
+            activated_at=format_db_dt(new_day.initialized_at) if new_day and new_day.initialized_at else None,
             activated_by=str(new_day.initialized_by) if new_day and new_day.initialized_by else "0",
         ),
         error=None,
@@ -151,7 +152,7 @@ async def list_trading_days(days: int = 90, db: Session = Depends(get_db)):
         SysStatusOut(
             trd_date=r.trd_date,
             status=r.status,
-            activated_at=r.initialized_at.isoformat() if r.initialized_at else None,
+            activated_at=format_db_dt(r.initialized_at) if r.initialized_at else None,
             activated_by=str(r.initialized_by) if r.initialized_by else "0",
         ) for r in rows
     ]
@@ -175,6 +176,6 @@ async def get_active_trading_day(db: Session = Depends(get_db)):
     return SysStatusOut(
         trd_date=row.trd_date,
         status=row.status,
-        activated_at=row.initialized_at.isoformat() if row.initialized_at else None,
+        activated_at=format_db_dt(row.initialized_at) if row.initialized_at else None,
         activated_by=str(row.initialized_by) if row.initialized_by else "0",
     )

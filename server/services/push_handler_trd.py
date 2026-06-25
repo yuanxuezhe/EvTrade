@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 
 from server.models.orm import Order, Trade
 from server.services.order_status import _get_active_trd_date, _infer_order_status, _status_msg
-from server.services.push_helpers import _float, _int, _str, _utcnow
+from server.services.push_helpers import _float, _int, _str, _utcnow, parse_broker_ts
 
 
 def handle_trd_cfm(db: Session, row: Dict[str, Any], ts: str) -> None:
@@ -72,7 +72,8 @@ def handle_trd_cfm(db: Session, row: Dict[str, Any], ts: str) -> None:
         price=_float(row.get('traded_price', 0)),       # v10: 原字段名
         volume=_int(row.get('traded_volume', 0)),       # v10: 原字段名
         amount=_float(row.get('traded_amount', 0)),     # v10: 原字段名
-        trade_time=_str(row.get('traded_time', ts)),    # v10: 原字段名
+        # v10: parse_broker_ts 标准化为 "YYYY-MM-DD HH:MM:SS.fff"
+        trade_time=parse_broker_ts(_str(row.get('traded_time', ts)), trd_date, tz='local'),
     )
     db.add(trade)
     db.flush()

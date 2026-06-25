@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 
 from server.models.orm import Order
 from server.services.order_status import _infer_order_status, _status_msg
-from server.services.push_helpers import _int, _str, _utcnow
+from server.services.push_helpers import _int, _str, _utcnow, parse_broker_ts
 
 
 def handle_ord_cfm(db: Session, row: Dict[str, Any], ts: str) -> None:
@@ -81,12 +81,10 @@ def handle_ord_cfm(db: Session, row: Dict[str, Any], ts: str) -> None:
     order.status = _infer_order_status(order, broker_status=broker_status or None)
     order.status_msg = _str(row.get('status_msg', '')) or _status_msg(order.status)
 
-    # v10: 写入 order_time（commit 3 会做格式解析；这里先 raw 透传）
+    # v10: 写入 order_time（v10 起, parse_broker_ts 统一为标准格式 "YYYY-MM-DD HH:MM:SS.fff"）
     broker_order_time = _str(row.get('order_time', ''))
     if broker_order_time:
-        # commit 3 起, _str() 后的字符串会被 parse_broker_ts 标准化
-        # 当前 commit 2 只做字段透传, commit 3 加 format_ts 包装
-        order.order_time = broker_order_time
+        order.order_time = parse_broker_ts(broker_order_time, order.trd_date, tz='local')
 
     order.pushed_at = _utcnow()
     order.updated_at = _utcnow()

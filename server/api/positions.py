@@ -13,6 +13,9 @@ v5 改动：
 - 主键 stock_code
 - 持仓是「当前快照」语义，不分交易日
 
+v10 改动（rpc-field-alignment-ts-unify）：
+- synced_at 序列化为标准格式 "YYYY-MM-DD HH:MM:SS.fff" (format_db_dt)
+
 NOTE: market_value 字段
 - 后端不存 market_value（Position ORM 无此列）
 - 前端用 quote store 实时重算真实市值
@@ -25,6 +28,7 @@ from sqlalchemy.orm import Session
 
 from server.db import get_db
 from server.models.orm import Position
+from server.services.push_helpers import format_db_dt
 
 router = APIRouter()
 
@@ -70,7 +74,7 @@ async def list_positions(
             cost_price=r.cost_price,
             # 成本市值代理：cost_price * vol；前端用 quote store 实时重算真实市值
             market_value=round(r.cost_price * r.vol, 2),
-            synced_at=r.synced_at.isoformat() if r.synced_at else None,
+            synced_at=format_db_dt(r.synced_at) if r.synced_at else None,
             synced_from=r.synced_from,
         ) for r in rows
     ])

@@ -4,6 +4,7 @@ User ORM model.
 from datetime import datetime, timezone
 from sqlalchemy import Column, Integer, String, DateTime, Boolean
 from server.db import Base
+from server.services.push_helpers import format_db_dt
 
 
 class User(Base):
@@ -28,6 +29,7 @@ class User(Base):
     last_login_at = Column(DateTime, nullable=True)
 
     def to_dict(self):
+        # v10: 统一时间戳格式 "YYYY-MM-DD HH:MM:SS.fff" (rpc-field-alignment-ts-unify)
         return {
             "id": self.id,
             "username": self.username,
@@ -36,7 +38,7 @@ class User(Base):
             "role": self.role,
             "is_active": self.is_active,
             "must_change_password": self.must_change_password,
-            "created_at": self.created_at.isoformat() if self.created_at else None,
-            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
-            "last_login_at": self.last_login_at.isoformat() if self.last_login_at else None,
+            "created_at": format_db_dt(self.created_at) if self.created_at else None,
+            "updated_at": format_db_dt(self.updated_at) if self.updated_at else None,
+            "last_login_at": format_db_dt(self.last_login_at) if self.last_login_at else None,
         }

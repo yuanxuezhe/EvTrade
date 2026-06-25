@@ -21,6 +21,7 @@ from aio_pika import ExchangeType, Message
 from msgpacket import MsgPacket, MSG_TYPE_REQUEST, MSG_TYPE_PUSH
 
 from server.config import settings
+from server.services.push_helpers import format_ts
 from server.ws.manager import ws_manager
 
 log = logging.getLogger(__name__)
@@ -247,7 +248,8 @@ class RPClient:
                             payload = {
                                 "type": func,
                                 "channel": channel,
-                                "ts": _clean_id(pkt.timestamp()) or "",
+                                # v10: 标准格式 "YYYY-MM-DD HH:MM:SS.fff" (覆盖 broker 推的紧凑串)
+                                "ts": format_ts(tz='local'),
                                 "data": enriched_row,
                             }
 

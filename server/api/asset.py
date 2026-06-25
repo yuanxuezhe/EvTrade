@@ -7,6 +7,9 @@ GET /api/asset 纯读 DB，不调 RPC。
 v5 改动：
 - 移除 TRD_DATE 字段（assets 只保存当前资金）
 - 移除 id 字段
+
+v10 改动（rpc-field-alignment-ts-unify）：
+- synced_at 序列化为标准格式 "YYYY-MM-DD HH:MM:SS.fff" (format_db_dt)
 """
 from fastapi import APIRouter, Depends
 from typing import Optional, List
@@ -15,6 +18,7 @@ from sqlalchemy.orm import Session
 
 from server.db import get_db
 from server.models.orm import Asset
+from server.services.push_helpers import format_db_dt
 
 router = APIRouter()
 
@@ -44,6 +48,6 @@ async def get_account_asset(db: Session = Depends(get_db)):
         frozen_cash=row.frozen_cash,
         market_value=row.market_value,
         total_asset=row.total_asset,
-        synced_at=row.synced_at.isoformat() if row.synced_at else None,
+        synced_at=format_db_dt(row.synced_at) if row.synced_at else None,
         synced_from=row.synced_from,
     )])

@@ -23,6 +23,7 @@ from server.db import get_db
 from server.models.orm import ReconcileConfig, ReconcileReport
 from server.models.user import User
 from server.services.guards import require_admin
+from server.services.push_helpers import format_db_dt
 
 router = APIRouter()
 
@@ -65,7 +66,7 @@ async def get_config(db: Session = Depends(get_db), _=Depends(require_admin)):
     return ReconcileConfigOut(
         auto_reconcile=bool(cfg.auto_reconcile),
         auto_use_broker_data=int(cfg.auto_use_broker_data),
-        updated_at=cfg.updated_at.isoformat() if cfg.updated_at else None,
+        updated_at=format_db_dt(cfg.updated_at) if cfg.updated_at else None,
         updated_by=str(_ub) if _ub is not None else 'init',
     )
 
@@ -91,7 +92,7 @@ async def update_config(
     return ReconcileConfigOut(
         auto_reconcile=bool(cfg.auto_reconcile),
         auto_use_broker_data=int(cfg.auto_use_broker_data),
-        updated_at=cfg.updated_at.isoformat() if cfg.updated_at else None,
+        updated_at=format_db_dt(cfg.updated_at) if cfg.updated_at else None,
         updated_by=str(cfg.updated_by) if cfg.updated_by is not None else '',
     )
 
@@ -104,7 +105,7 @@ async def list_reports(db: Session = Depends(get_db), _=Depends(require_admin)):
     ).order_by(desc(ReconcileReport.created_at)).limit(200).all()
     return [
         ReconcileReportSummary(
-            created_at=r.created_at.isoformat() if r.created_at else "",
+            created_at=format_db_dt(r.created_at) if r.created_at else "",
             trd_date=r.trd_date, mode=r.mode,
             rpc_status=r.rpc_status,
         ) for r in rows
@@ -135,7 +136,7 @@ async def get_report(
     if not r:
         raise HTTPException(status_code=404, detail={"code": "NOT_FOUND", "msg": f"报告 {trd_date}/{mode}@{created_at} 不存在"})
     return {
-        "created_at": r.created_at.isoformat() if r.created_at else None,
+        "created_at": format_db_dt(r.created_at) if r.created_at else None,
         "trd_date": r.trd_date,
         "mode": r.mode,
         "rpc_status": r.rpc_status,

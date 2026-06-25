@@ -54,6 +54,9 @@ class Order(Base):
     - 加 order_flag 字段（Integer，0=normal 1=cancel-order，NOT NULL DEFAULT 0）
       标识本地代理的「撤单委托」行（user_def="CANCEL:{orig_order_no}"）
       broker ord_cfm 用 remark 匹配原 order_no,不会更新本行
+    v10 schema 改动:
+    - order_time 字段类型 String(8) → String(23)，
+      格式由 "HH:MM:SS" 改为 "YYYY-MM-DD HH:MM:SS.fff" (rpc-field-alignment-ts-unify)
     """
     __tablename__ = "orders"
     __table_args__ = (
@@ -78,7 +81,7 @@ class Order(Base):
     order_flag = Column(Integer, nullable=False, default=0)  # 0=normal 1=cancel-order (v9:本地代理撤单委托行)
     status = Column(String(2), nullable=False, default="48")  # 48=待报 49=已报 50=部成 51=已成 52=部撤 53=已撤 55=废单
     status_msg = Column(String(255), nullable=False, default="")
-    order_time = Column(String(8), nullable=False, default="")  # HH:MM:SS
+    order_time = Column(String(23), nullable=False, default="")  # v10: "YYYY-MM-DD HH:MM:SS.fff"
     created_at = Column(DateTime, nullable=False, default=_utcnow)
     updated_at = Column(
         DateTime, nullable=False, default=_utcnow, onupdate=_utcnow
@@ -98,6 +101,9 @@ class Trade(Base):
     - 加 trade_type 字段（Integer，0=normal 1=cancel-fill，NOT NULL DEFAULT 0）
       标识本地代理的「撤单成交」行（order_no 指向 cancel-order 行的 order_no）
       broker 协议撤单不推 trd_cfm,本地由 DELETE 端点同步插入
+    v10 schema 改动:
+    - trade_time 字段类型 String(8) → String(23)，
+      格式由 "HH:MM:SS" 改为 "YYYY-MM-DD HH:MM:SS.fff" (rpc-field-alignment-ts-unify)
     """
     __tablename__ = "trades"
     __table_args__ = (
@@ -113,7 +119,7 @@ class Trade(Base):
     price = Column(Float, nullable=False, default=0.0)
     volume = Column(Integer, nullable=False, default=0)
     amount = Column(Float, nullable=False, default=0.0)
-    trade_time = Column(String(8), nullable=False, default="")
+    trade_time = Column(String(23), nullable=False, default="")  # v10: "YYYY-MM-DD HH:MM:SS.fff"
     trade_type = Column(Integer, nullable=False, default=0)  # 0=normal 1=cancel-fill (v9:本地代理撤单成交行)
     created_at = Column(DateTime, nullable=False, default=_utcnow)
 

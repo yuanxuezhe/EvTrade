@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 from server.db import get_db
 from server.models.orm import TradingSession
 from server.services.guards import require_admin
+from server.services.push_helpers import format_db_dt
 
 router = APIRouter()
 
@@ -99,5 +100,5 @@ async def update_session(req: SessionUpdate, db: Session = Depends(get_db), _=De
         afternoon_start=row.afternoon_start.isoformat(),
         afternoon_end=row.afternoon_end.isoformat(),
         is_half_day=False,  # ORM 无此字段，固定 False
-        updated_at=row.updated_at.isoformat() if row.updated_at else None,
+        updated_at=format_db_dt(row.updated_at) if row.updated_at else None,
     )

@@ -11,7 +11,6 @@ order_place.py — POST /api/orders/place 下单端点
 - from server.api.orders import ord_stk, ws_manager
 """
 import logging
-from datetime import datetime, timezone
 
 from fastapi import Depends, HTTPException
 from sqlalchemy.orm import Session
@@ -23,6 +22,7 @@ from server.models.orm import Order, SysStatus
 from server.models.user import User
 from server.services.guards import require_trader, require_trading_day, require_trading_session
 from server.services.order_no import next_order_no
+from server.services.push_helpers import format_ts
 from server.services.t0 import calc_net_amount, calc_t0_volume, get_fee_config
 from server.api._order_schemas import (
     PlaceOrderRequest,
@@ -72,7 +72,7 @@ def register_place(router):
             price_type=req.price_type, price=req.price, volume=adjusted,
             traded_volume=0, traded_amount=0.0, avg_price=0.0,
             status="48", status_msg="待报",
-            order_time=datetime.now(timezone.utc).replace(tzinfo=None).isoformat(timespec='seconds'),
+            order_time=format_ts(tz='local'),  # v10: "YYYY-MM-DD HH:MM:SS.fff"
         )
         db.add(order)
         db.commit()
