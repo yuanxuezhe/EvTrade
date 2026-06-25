@@ -91,7 +91,8 @@ def test_atomic_no_callback_commit():
         db.add(Order(order_no=n1, trd_date="20990101", stock_code="000000",
                      order_type="23", price_type=11, price=0.0, volume=0,
                      traded_volume=0, traded_amount=0.0, avg_price=0.0,
-                     status="48", status_msg="", order_time="00:00:00"))
+                     status="48", status_msg="",
+                     order_time="2099-01-01 00:00:00.000"))  # v10: String(23)
         db.commit()  # commit Order (first call)
         # 模拟调用方异常回滚
         n2 = next_order_no(db)  # second call, 函数内 commit

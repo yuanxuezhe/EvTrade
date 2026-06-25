@@ -22,7 +22,7 @@ order_cancel.py — DELETE /api/orders/{order_no} 撤单端点（v9 重写）
 """
 import logging
 import time as _time
-from datetime import datetime, timezone
+from datetime import datetime, timezone  # noqa: F401  # kept for legacy refs
 
 from fastapi import Depends, HTTPException, Query
 from sqlalchemy.orm import Session
@@ -33,6 +33,7 @@ from server.models.orm import Order, Trade
 from server.models.user import User
 from server.services.guards import require_trader, require_trading_day, require_trading_session
 from server.services.order_no import next_order_no
+from server.services.push_helpers import format_ts
 from server.api._order_schemas import (
     CancelResponse,
     _to_order_out,
@@ -87,7 +88,7 @@ def register_cancel(router):
             order_flag=1,                      # ★ 撤单委托标记
             status="48",                       # sentinel 待发
             status_msg="撤单请求中",
-            order_time=datetime.now(timezone.utc).replace(tzinfo=None).isoformat(timespec='seconds'),
+            order_time=format_ts(tz='local'),  # v10: "YYYY-MM-DD HH:MM:SS.fff"
         )
         db.add(cancel_row)
         db.commit()
@@ -126,7 +127,7 @@ def register_cancel(router):
                     price=cancel_trade_price,
                     volume=cancelled_qty,
                     amount=cancel_trade_price * cancelled_qty,
-                    trade_time=datetime.now(timezone.utc).replace(tzinfo=None).isoformat(timespec='seconds'),
+                    trade_time=format_ts(tz='local'),  # v10: "YYYY-MM-DD HH:MM:SS.fff"
                     trade_type=1,                    # ★ 撤单成交标记
                 )
                 db.add(cancel_trade)

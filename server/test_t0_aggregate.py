@@ -55,7 +55,7 @@ def _mk_trade(stock_code, order_no, order_type, price, volume, trd_date="2026061
         price=price,
         volume=volume,
         amount=price * volume,
-        trade_time="10:00:00",
+        trade_time="2026-06-19 10:00:00.000",  # v10: String(23)
         created_at=datetime.now(),
     )
 
@@ -76,7 +76,7 @@ def _mk_order(order_no, stock_code, order_type, price, volume, user_def="T0", st
         avg_price=price,
         status=status,
         status_msg="",
-        order_time="10:00:00",
+        order_time="2026-06-19 10:00:00.000",  # v10: String(23)
         created_at=datetime.now(),
         updated_at=datetime.now(),
     )
