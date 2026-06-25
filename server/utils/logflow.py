@@ -94,8 +94,11 @@ def log_interaction(
     """
     try:
         ts = format_ts(tz='local')  # REQ-LOG-002 本地时间统一格式
+        # 归一化 level 显示（warn -> warning）
+        level_show = "warning" if level == "warn" else level
         elapsed_part = " ({:.1f}ms)".format(elapsed_ms) if elapsed_ms is not None else ""
-        line = "[{}] [{}] {}{}".format(ts, direction, summary, elapsed_part)
+        # 紧凑格式: [ts][level][direction] <summary> [(elapsed)]
+        line = "[{}][{}][{}] {}{}".format(ts, level_show, direction, summary, elapsed_part)
         # 拼 data 详情（缩进 2 字符）
         if data:
             for k, v in sorted(data.items()):

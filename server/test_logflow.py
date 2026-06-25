@@ -72,6 +72,9 @@ def test_log_interaction_info_basic(capture_log):
     assert rec.levelname == "INFO"
     assert "[front->svc]" in rec.getMessage()
     assert "POST /api/test" in rec.getMessage()
+    # 紧凑格式: [ts][level][direction] ...
+    assert re.match(r"^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}\]\[info\]\[front->svc\] POST /api/test$",
+                    rec.getMessage())
 
 
 def test_log_interaction_with_elapsed(capture_log):
@@ -175,7 +178,7 @@ def test_log_interaction_non_string_summary(capture_log):
 
 def test_full_output_format(capture_log):
     """完整输出格式:
-       [YYYY-MM-DD HH:MM:SS.fff] [<direction>] <summary> [(<elapsed>ms)]
+       [YYYY-MM-DD HH:MM:SS.fff][level][direction] <summary> [(<elapsed>ms)]
          key1 = value1
          key2 = value2
     """
@@ -188,8 +191,10 @@ def test_full_output_format(capture_log):
     msg = capture_log[0].getMessage()
     lines = msg.split("\n")
     assert len(lines) == 3
-    # 行 1: 时间戳 + 方向 + summary + elapsed
-    assert re.match(r"^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}\] \[svc<-rpc\] reply func=qry_ast \(124\.0ms\)$", lines[0])
+    # 行 1: 时间戳 + level + 方向 + summary + elapsed（紧凑格式，无空格）
+    assert re.match(
+        r"^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}\]\[info\]\[svc<-rpc\] reply func=qry_ast \(124\.0ms\)$",
+        lines[0])
     # 行 2-3: data 缩进
     assert lines[1].startswith("  code = ")
     assert lines[2].startswith("  row_count = ")
