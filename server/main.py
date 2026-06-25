@@ -36,13 +36,13 @@ from server.lifecycle import init_and_seed
 #   清掉 uvicorn 已挂的 root handler, 再 basicConfig 设 root = INFO
 #   让 [front->svc] / [svc->rpc] 等自定义 logger 可见
 #   Python 3.6 兼容: basicConfig 不支持 force, 手动清 handlers
+#   format='%(message)s': 不带时间戳/level/logger 前缀, 时间戳和 level 由 logflow 自带 ([ts][level])
 _root = logging.getLogger()
 for h in list(_root.handlers):
     _root.removeHandler(h)
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
+    format="%(message)s",
 )
 
 # v10 增: 禁用 uvicorn 原生 access log
