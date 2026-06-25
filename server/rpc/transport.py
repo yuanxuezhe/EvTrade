@@ -21,8 +21,13 @@ from aio_pika import ExchangeType, Message
 from msgpacket import MsgPacket, MSG_TYPE_REQUEST, MSG_TYPE_PUSH
 
 from server.config import settings
-from server.services.push_helpers import format_ts
 from server.ws.manager import ws_manager
+
+# 注: 避免循环导入, format_ts 改在函数内 lazy import
+#   transport -> services.push_helpers -> services.__init__ -> services.reconcile
+#   -> rpc.client -> rpc.transport (回到本模块, format_ts 还没绑上)
+#   所以此处不顶层 from server.services.push_helpers import ...
+#   log_interaction / 方向常量同理, 在函数内 lazy import
 
 log = logging.getLogger(__name__)
 
@@ -229,6 +234,14 @@ class RPClient:
                             "RPClient.push <<< wire_len=%d func=%r type=%r",
                             len(wire), func, mt,
                         )
+                        # v10 增: 记 [svc<-rpc] push 日志 (server-interaction-logging REQ-LOG-003)
+                        from server.utils.logflow import DIR_SVC_FROM_RPC, log_interaction
+                        log_interaction(
+                            DIR_SVC_FROM_RPC,
+                            "push func={} wire_len={}".format(func, len(wire)),
+                            data={"func": func, "wire_len": len(wire), "msg_type": mt},
+                            level="info",
+                        )
 
                         channel = _PUSH_CHANNEL.get(func)
                         if not channel:
@@ -245,6 +258,8 @@ class RPClient:
                             # 注入:trd_date 用激活日(覆盖 broker 推的,保证权威)
                             enriched_row = {**row, "trd_date": active_trd_date} if active_trd_date else row
 
+                            # lazy import: 见模块顶部说明
+                            from server.services.push_helpers import format_ts
                             payload = {
                                 "type": func,
                                 "channel": channel,
@@ -330,6 +345,14 @@ class RPClient:
             log.debug("RPClient.call >>> wire:\n%s", req_dump)
 
         # publisher confirm（REQ-RPC-008）：等 broker ack，超时则清 pending + 抛错
+        # v10 增: 记 [svc->rpc] 调用日志 (server-interaction-logging REQ-LOG-003)
+        from server.utils.logflow import DIR_SVC_TO_RPC, log_interaction
+        log_interaction(
+            DIR_SVC_TO_RPC,
+            "call func={} msg_id={}".format(func, msg_id),
+            data={"values": values or {}},
+            level="info",
+        )
         try:
             await asyncio.wait_for(
                 self.exchange.publish(
@@ -343,13 +366,21 @@ class RPClient:
                 "RPClient.call publish TIMEOUT func=%s msg_id=%s after %.1fs (broker no-ack?)",
                 func, msg_id, self._publish_confirm_timeout,
             )
+            from server.utils.logflow import DIR_SVC_TO_RPC, log_interaction
+            log_interaction(
+                DIR_SVC_TO_RPC,
+                "publish TIMEOUT func={} msg_id={}".format(func, msg_id),
+                data={"timeout_s": self._publish_confirm_timeout},
+                elapsed_ms=self._publish_confirm_timeout * 1000,
+                level="error",
+            )
             raise RuntimeError(
                 f"RPC publish unconfirmed after {self._publish_confirm_timeout}s "
                 f"(broker not ack, check broker status / disk)"
             )
 
         try:
-            return await asyncio.wait_for(future, timeout=timeout)
+            reply_pkt = await asyncio.wait_for(future, timeout=timeout)
         except asyncio.TimeoutError:
             # 超时清理 pending，避免内存泄漏 + 防止后续应答误匹配
             self.pending.pop(msg_id, None)
@@ -357,7 +388,43 @@ class RPClient:
                 "RPClient.call TIMEOUT func=%s msg_id=%s after %.1fs",
                 func, msg_id, timeout,
             )
+            from server.utils.logflow import DIR_SVC_FROM_RPC, log_interaction
+            log_interaction(
+                DIR_SVC_FROM_RPC,
+                "TIMEOUT func={} msg_id={}".format(func, msg_id),
+                data={"timeout_s": timeout},
+                elapsed_ms=timeout * 1000,
+                level="warning",
+            )
             raise
+
+        # v10 增: 记 [svc<-rpc] reply 日志 (含 code / rows)
+        try:
+            from server.rpc.parsers_common import _parse_code_msg
+            code, _msg = _parse_code_msg(reply_pkt)
+            # 估算 row 数（不强制解析, 避免开销）
+            row_count = 0
+            try:
+                # 2 个结果集 (RS1=code/msg, RS2=data)
+                if reply_pkt.result_set_count() >= 2:
+                    reply_pkt.select_result_set(2)
+                    reply_pkt.reset_cursor()
+                    while reply_pkt.fetch_next():
+                        row_count += 1
+            except Exception:
+                pass
+            from server.utils.logflow import DIR_SVC_FROM_RPC, log_interaction
+            log_interaction(
+                DIR_SVC_FROM_RPC,
+                "reply func={} msg_id={} code={} rows={}".format(
+                    func, msg_id, code, row_count),
+                data={"code": code, "row_count": row_count},
+                level="info",
+            )
+        except Exception:
+            pass  # 日志失败不影响业务
+
+        return reply_pkt
 
     async def close(self):
         if self.conn:
