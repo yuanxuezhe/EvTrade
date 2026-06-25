@@ -77,6 +77,30 @@ def test_log_interaction_info_basic(capture_log):
                     rec.getMessage())
 
 
+def test_log_interaction_with_trace_id(capture_log):
+    """trace_id 出现在 [direction] 之后"""
+    log_interaction(DIR_FRONT_TO_SVC, "POST /api/test", trace_id="abc12345")
+    msg = capture_log[0].getMessage()
+    assert "[trace=abc12345]" in msg
+    # 紧凑格式: [ts][level][direction][trace=XXX] summary
+    assert re.match(
+        r"^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}\]\[info\]\[front->svc\]\[trace=abc12345\] POST /api/test$",
+        msg)
+
+
+def test_log_interaction_no_trace_id_when_omitted(capture_log):
+    """trace_id=None 不输出 [trace=...]"""
+    log_interaction(DIR_FRONT_TO_SVC, "POST /api/test")
+    msg = capture_log[0].getMessage()
+    assert "[trace=" not in msg
+
+
+def test_log_interaction_trace_id_8_chars(capture_log):
+    """trace_id 短 ID 格式 (8 字符 hex 推荐)"""
+    log_interaction(DIR_FRONT_TO_SVC, "test", trace_id="a1b2c3d4")
+    assert "[trace=a1b2c3d4]" in capture_log[0].getMessage()
+
+
 def test_log_interaction_with_elapsed(capture_log):
     """elapsed_ms 显示在 summary 末尾"""
     log_interaction(DIR_SVC_TO_RPC, "call func=test", elapsed_ms=3.2)
@@ -177,8 +201,8 @@ def test_log_interaction_non_string_summary(capture_log):
 # ──── 实际输出格式验证 ────
 
 def test_full_output_format(capture_log):
-    """完整输出格式:
-       [YYYY-MM-DD HH:MM:SS.fff][level][direction] <summary> [(<elapsed>ms)]
+    """完整输出格式 (带 trace_id):
+       [YYYY-MM-DD HH:MM:SS.fff][level][direction][trace=XXX] <summary> [(<elapsed>ms)]
          key1 = value1
          key2 = value2
     """
@@ -187,17 +211,30 @@ def test_full_output_format(capture_log):
         "reply func=qry_ast",
         data={"code": "00000", "row_count": 1},
         elapsed_ms=124.0,
+        trace_id="msgid001",
     )
     msg = capture_log[0].getMessage()
     lines = msg.split("\n")
     assert len(lines) == 3
-    # 行 1: 时间戳 + level + 方向 + summary + elapsed（紧凑格式，无空格）
+    # 行 1: 时间戳 + level + 方向 + trace + summary + elapsed
     assert re.match(
-        r"^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}\]\[info\]\[svc<-rpc\] reply func=qry_ast \(124\.0ms\)$",
+        r"^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}\]\[info\]\[svc<-rpc\]\[trace=msgid001\] reply func=qry_ast \(124\.0ms\)$",
         lines[0])
     # 行 2-3: data 缩进
     assert lines[1].startswith("  code = ")
     assert lines[2].startswith("  row_count = ")
+
+
+def test_trace_id_full_chain_pairing(capture_log):
+    """实战: 同一 trace_id 在 req/resp 两条日志都出现"""
+    trace_id = "abc12345"
+    # 请求
+    log_interaction(DIR_FRONT_TO_SVC, "GET /api/test", trace_id=trace_id)
+    # 响应
+    log_interaction(DIR_SVC_TO_FRONT, "200 GET /api/test", trace_id=trace_id, elapsed_ms=3.2)
+    assert len(capture_log) == 2
+    assert "[trace=abc12345]" in capture_log[0].getMessage()
+    assert "[trace=abc12345]" in capture_log[1].getMessage()
 
 
 # ──── 实战场景 ────

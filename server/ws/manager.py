@@ -25,10 +25,11 @@ class WSManager:
         if channel in self.active_connections:
             self.active_connections[channel].discard(websocket)
 
-    async def broadcast(self, channel: str, message: dict):
+    async def broadcast(self, channel: str, message: dict, trace_id: Optional[str] = None):
         if channel not in self.active_connections:
             return
         # v10 增: 记 [front<-svc] ws broadcast 日志
+        #   trace_id: 上游 push / RPC reply 传下来, 让 [svc<-rpc] push + [front<-svc] ws 配对
         from server.utils.logflow import DIR_SVC_TO_FRONT, log_interaction
         clients = len(self.active_connections[channel])
         log_interaction(
@@ -36,6 +37,7 @@ class WSManager:
             "ws broadcast channel={} clients={}".format(channel, clients),
             data={"channel": channel, "clients": clients, "payload": message},
             level="info",
+            trace_id=trace_id,
         )
         dead_connections = set()
         for connection in self.active_connections[channel]:
@@ -48,6 +50,7 @@ class WSManager:
                     "ws broadcast channel={} 1 client disconnected".format(channel),
                     data={"err": "{}: {}".format(type(e).__name__, e)},
                     level="warning",
+                    trace_id=trace_id,
                 )
                 dead_connections.add(connection)
         for conn in dead_connections:

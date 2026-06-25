@@ -79,6 +79,7 @@ def log_interaction(
     data: Optional[Dict[str, Any]] = None,
     elapsed_ms: Optional[float] = None,
     level: str = "info",
+    trace_id: Optional[str] = None,
 ) -> None:
     """统一交互日志入口（REQ-LOG-001/003/004/005/006）
 
@@ -88,6 +89,8 @@ def log_interaction(
         data: 详细信息 dict；每个 key 一行缩进打印
         elapsed_ms: 耗时（毫秒），显示在 summary 末尾
         level: 日志级别（info / warning / error / exception）
+        trace_id: 配对序号（8 字符 hex 短 ID），让同一请求的 req/resp 配对
+                 格式: [ts][level][direction][trace=XXX] summary
 
     Returns:
         None（失败安全：内部异常被吞，不影响业务）
@@ -97,8 +100,9 @@ def log_interaction(
         # 归一化 level 显示（warn -> warning）
         level_show = "warning" if level == "warn" else level
         elapsed_part = " ({:.1f}ms)".format(elapsed_ms) if elapsed_ms is not None else ""
-        # 紧凑格式: [ts][level][direction] <summary> [(elapsed)]
-        line = "[{}][{}][{}] {}{}".format(ts, level_show, direction, summary, elapsed_part)
+        # 紧凑格式: [ts][level][direction][trace=XXX] <summary> [(elapsed)]
+        trace_part = "[trace={}]".format(trace_id) if trace_id else ""
+        line = "[{}][{}][{}]{} {}{}".format(ts, level_show, direction, trace_part, summary, elapsed_part)
         # 拼 data 详情（缩进 2 字符）
         if data:
             for k, v in sorted(data.items()):

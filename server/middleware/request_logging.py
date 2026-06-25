@@ -2,15 +2,19 @@
 request_logging.py — FastAPI HTTP 请求/响应日志中间件（server-interaction-logging REQ-LOG-003/004/005）
 
 行为：
-- 请求进入：记 [front->svc] <METHOD> <path> body=... query=... headers=...
-- 响应返回：记 [front<-svc] <status> <METHOD> <path> body=... (<elapsed>ms)
-- 异常路径：记 ERROR [front<-svc] <METHOD> <path> <exc_type>: <msg>
+- 请求进入：记 [front->svc][trace=XXX] <METHOD> <path> body=... query=... headers=...
+- 响应返回：记 [front<-svc][trace=XXX] <status> <METHOD> <path> body=... (<elapsed>ms)
+- 异常路径：记 ERROR [front<-svc][trace=XXX] <METHOD> <path> <exc_type>: <msg>
 - 跳过 /api/health / /ws/*
 - body 截断 4KB (REQ-LOG-004)
 - 敏感头过滤：Authorization -> 前 8 字符 + '***'
+- trace_id: 8 字符 hex (UUID v4 前缀), req/resp 配对
+  - 优先用客户端传的 X-Trace-Id header
+  - 否则服务端生成
 """
 import json
 import time
+import uuid
 from typing import List
 
 from fastapi import Request, Response
@@ -95,6 +99,10 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
 
         method = request.method
+        # 配对序号: 优先 X-Trace-Id header, 否则生成 8 字符 hex
+        trace_id = request.headers.get("X-Trace-Id") or uuid.uuid4().hex[:8]
+        request.state.trace_id = trace_id
+
         # 进入:记 [front->svc]
         body_str = await _read_body_safe(request)
         query = dict(request.query_params)
@@ -118,6 +126,7 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
                 "headers": _sanitize_headers(request.headers),
             },
             level="info",
+            trace_id=trace_id,
         )
 
         # 业务执行 + 计时
@@ -132,6 +141,7 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
                 data={"exc": "{}: {}".format(type(e).__name__, e)},
                 elapsed_ms=elapsed_ms,
                 level="error",
+                trace_id=trace_id,
             )
             raise
 
@@ -182,5 +192,8 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
             data={"body": resp_obj},
             elapsed_ms=elapsed_ms,
             level=level,
+            trace_id=trace_id,
         )
+        # 响应头加 X-Trace-Id, 客户端可拿这个配对
+        response.headers["X-Trace-Id"] = trace_id
         return response

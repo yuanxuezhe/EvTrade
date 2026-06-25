@@ -235,12 +235,17 @@ class RPClient:
                             len(wire), func, mt,
                         )
                         # v10 增: 记 [svc<-rpc] push 日志 (server-interaction-logging REQ-LOG-003)
+                        #   push 是 fire-and-forget, msg_id 来自 broker 推送(可能为空)
+                        #   没有现成 trace_id, 用 UUID 生成新的
                         from server.utils.logflow import DIR_SVC_FROM_RPC, log_interaction
+                        import uuid as _uuid
+                        push_trace = (pkt.msg_id() or "").strip().strip("\x00").strip()[:8] or _uuid.uuid4().hex[:8]
                         log_interaction(
                             DIR_SVC_FROM_RPC,
                             "push func={} wire_len={}".format(func, len(wire)),
                             data={"func": func, "wire_len": len(wire), "msg_type": mt},
                             level="info",
+                            trace_id=push_trace,
                         )
 
                         channel = _PUSH_CHANNEL.get(func)
@@ -284,7 +289,8 @@ class RPClient:
                                     for k, v in sorted(enriched_row.items())
                                 ) if enriched_row else " (empty row)",
                             )
-                            await ws_manager.broadcast(channel, payload)
+                            # v10: 透传 push trace_id 给 WS broadcast, 链路配对
+                            await ws_manager.broadcast(channel, payload, trace_id=push_trace)
                     except Exception as e:
                         log.exception("RPClient.push decode/handle error: %s", e)
 
@@ -346,12 +352,14 @@ class RPClient:
 
         # publisher confirm（REQ-RPC-008）：等 broker ack，超时则清 pending + 抛错
         # v10 增: 记 [svc->rpc] 调用日志 (server-interaction-logging REQ-LOG-003)
+        #   trace_id 用 msg_id (req 和 reply 配对)
         from server.utils.logflow import DIR_SVC_TO_RPC, log_interaction
         log_interaction(
             DIR_SVC_TO_RPC,
-            "call func={} msg_id={}".format(func, msg_id),
-            data={"values": values or {}},
+            "call func={}".format(func),
+            data={"values": values or {}, "msg_id": msg_id},
             level="info",
+            trace_id=msg_id,
         )
         try:
             await asyncio.wait_for(
@@ -369,10 +377,11 @@ class RPClient:
             from server.utils.logflow import DIR_SVC_TO_RPC, log_interaction
             log_interaction(
                 DIR_SVC_TO_RPC,
-                "publish TIMEOUT func={} msg_id={}".format(func, msg_id),
-                data={"timeout_s": self._publish_confirm_timeout},
+                "publish TIMEOUT func={}".format(func),
+                data={"timeout_s": self._publish_confirm_timeout, "msg_id": msg_id},
                 elapsed_ms=self._publish_confirm_timeout * 1000,
                 level="error",
+                trace_id=msg_id,
             )
             raise RuntimeError(
                 f"RPC publish unconfirmed after {self._publish_confirm_timeout}s "
@@ -391,10 +400,11 @@ class RPClient:
             from server.utils.logflow import DIR_SVC_FROM_RPC, log_interaction
             log_interaction(
                 DIR_SVC_FROM_RPC,
-                "TIMEOUT func={} msg_id={}".format(func, msg_id),
-                data={"timeout_s": timeout},
+                "TIMEOUT func={}".format(func),
+                data={"timeout_s": timeout, "msg_id": msg_id},
                 elapsed_ms=timeout * 1000,
                 level="warning",
+                trace_id=msg_id,
             )
             raise
 
@@ -416,10 +426,10 @@ class RPClient:
             from server.utils.logflow import DIR_SVC_FROM_RPC, log_interaction
             log_interaction(
                 DIR_SVC_FROM_RPC,
-                "reply func={} msg_id={} code={} rows={}".format(
-                    func, msg_id, code, row_count),
-                data={"code": code, "row_count": row_count},
+                "reply func={} code={} rows={}".format(func, code, row_count),
+                data={"code": code, "row_count": row_count, "msg_id": msg_id},
                 level="info",
+                trace_id=msg_id,
             )
         except Exception:
             pass  # 日志失败不影响业务
