@@ -11,6 +11,11 @@ request_logging.py — FastAPI HTTP 请求/响应日志中间件（server-intera
 - trace_id: 8 字符 hex (UUID v4 前缀), req/resp 配对
   - 优先用客户端传的 X-Trace-Id header
   - 否则服务端生成
+
+v10 增修复 (trace=0ad408d4 事故):
+- BaseHTTPMiddleware + await request.body() 会消耗 body 流, 下游 endpoint 拿不到
+- 修复: 读 body 后, 重新构造 Request 对象, 注入 receive() 回放 body
+- 这样 call_next(request) 派发的 endpoint 仍能正常解析 Pydantic 模型
 """
 import json
 import time
@@ -105,6 +110,7 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
 
         # 进入:记 [front->svc]
         body_str = await _read_body_safe(request)
+        body_bytes = body_str.encode("utf-8") if body_str else b""
         query = dict(request.query_params)
         # 解析 body 为 dict（如可能）
         body_obj = None
@@ -128,6 +134,12 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
             level="info",
             trace_id=trace_id,
         )
+
+        # 关键: 重新构造 Request, 注入 receive() 让下游 endpoint 能再读 body
+        # (BaseHTTPMiddleware 读 body 后, 流被消耗, endpoint 的 Pydantic 解析会拿不到)
+        async def receive_replay():
+            return {"type": "http.request", "body": body_bytes, "more_body": False}
+        request = Request(request.scope, receive_replay)
 
         # 业务执行 + 计时
         start = time.time()
