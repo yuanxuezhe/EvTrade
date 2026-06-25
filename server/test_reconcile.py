@@ -85,15 +85,18 @@ def test_init_trading_day_with_auto_reconcile():
     db.close()
 
     # v7 简化: 委托/成交不再调 qry_orders / qry_trades
+    # v10: mock 数据严格使用 broker 原字段名（`volume`/`avl_amt`/`avg_price`/`frozen_cash`）
     mock_pos = AsyncMock(return_value={
         "code": 0, "msg": "ok", "list": [
-            {"stock_code": "600030.SH", "vol": 100, "avl_vol": 100,
-             "cost_price": 12.5, "market_value": 1250.0},
+            {"stock_code": "600030.SH", "volume": 100, "avl_amt": 100,
+             "avg_price": 12.5, "market_value": 1250.0,
+             "last_vol": 0, "today_buy": 0, "today_sell": 0},
         ]
     })
     mock_asset = AsyncMock(return_value={
         "code": 0, "msg": "ok", "list": [
-            {"total_asset": 101250.0, "cash": 100000.0, "frozen_cash": 0,
+            {"account_id": "ACC-001",
+             "total_asset": 101250.0, "cash": 100000.0, "frozen_cash": 0,
              "market_value": 1250.0},
         ]
     })
