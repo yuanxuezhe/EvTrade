@@ -24,6 +24,7 @@ from server.api import clock, fee_config
 from server.api import system as system_api  # v8: 系统级查询（active-day）
 from server.api import t0_stats, t0_aggregate
 from server.api.admin import sys_status as admin_sys_status, reconcile as admin_reconcile, session as admin_session
+from server.middleware.request_logging import RequestLoggingMiddleware
 from server.rpc.client import get_rpc_client, close_rpc_client
 from server.ws import register_ws_endpoint
 from server.lifecycle import init_and_seed
@@ -49,6 +50,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# HTTP 请求/响应日志中间件（server-interaction-logging REQ-LOG-003）
+#   - 记 [front->svc] 请求 + [front<-svc] 响应
+#   - 跳过 /api/health / /ws/*
+app.add_middleware(RequestLoggingMiddleware)
 
 
 # ---- WebSocket (必须在 startup 之前注册，因为 register 用装饰器) ----
