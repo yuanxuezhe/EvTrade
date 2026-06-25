@@ -3,6 +3,9 @@ from typing import Dict, Set, Optional
 import json
 
 from server.auth.security import decode_token
+# v10 增: WS 广播日志 (server-interaction-logging REQ-LOG-003)
+#   顶层 import 走 lazy (在 broadcast 函数内), 避免触发 logflow 的循环链
+#   实际上 ws.manager 不在循环链上, 但保持一致风格
 
 class WSManager:
     def __init__(self):
@@ -25,11 +28,27 @@ class WSManager:
     async def broadcast(self, channel: str, message: dict):
         if channel not in self.active_connections:
             return
+        # v10 增: 记 [front<-svc] ws broadcast 日志
+        from server.utils.logflow import DIR_SVC_TO_FRONT, log_interaction
+        clients = len(self.active_connections[channel])
+        log_interaction(
+            DIR_SVC_TO_FRONT,
+            "ws broadcast channel={} clients={}".format(channel, clients),
+            data={"channel": channel, "clients": clients, "payload": message},
+            level="info",
+        )
         dead_connections = set()
         for connection in self.active_connections[channel]:
             try:
                 await connection.send_json(message)
-            except Exception:
+            except Exception as e:
+                # 客户端断连: 记 WARN
+                log_interaction(
+                    DIR_SVC_TO_FRONT,
+                    "ws broadcast channel={} 1 client disconnected".format(channel),
+                    data={"err": "{}: {}".format(type(e).__name__, e)},
+                    level="warning",
+                )
                 dead_connections.add(connection)
         for conn in dead_connections:
             self.active_connections[channel].discard(conn)
