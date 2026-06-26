@@ -12,7 +12,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'server'))
 import pytest
 from datetime import datetime
 
-from server.services.push_helpers import (
+from server.utils.time import (
     format_ts,
     parse_broker_ts,
     format_db_dt,

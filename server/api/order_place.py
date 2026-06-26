@@ -22,7 +22,7 @@ from server.models.orm import Order, SysStatus
 from server.models.user import User
 from server.services.guards import require_trader, require_trading_day, require_trading_session
 from server.services.order_no import next_order_no
-from server.services.push_helpers import format_ts
+from server.utils.time import format_ts
 from server.services.t0 import calc_net_amount, calc_t0_volume, get_fee_config
 from server.api._order_schemas import (
     PlaceOrderRequest,

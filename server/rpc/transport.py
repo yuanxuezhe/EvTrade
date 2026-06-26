@@ -24,9 +24,9 @@ from server.config import settings
 from server.ws.manager import ws_manager
 
 # 注: 避免循环导入, format_ts 改在函数内 lazy import
-#   transport -> services.push_helpers -> services.__init__ -> services.reconcile
-#   -> rpc.client -> rpc.transport (回到本模块, format_ts 还没绑上)
-#   所以此处不顶层 from server.services.push_helpers import ...
+#   transport -> utils.time -> utils.__init__ -> logflow (ok, no cycle)
+#   但 services.__init__ -> reconcile -> rpc.client -> rpc.transport 仍可能循环
+#   所以此处不顶层 from server.utils.time import format_ts
 #   log_interaction / 方向常量同理, 在函数内 lazy import
 
 log = logging.getLogger(__name__)
@@ -264,7 +264,7 @@ class RPClient:
                             enriched_row = {**row, "trd_date": active_trd_date} if active_trd_date else row
 
                             # lazy import: 见模块顶部说明
-                            from server.services.push_helpers import format_ts
+                            from server.utils.time import format_ts
                             payload = {
                                 "type": func,
                                 "channel": channel,

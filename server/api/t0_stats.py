@@ -32,7 +32,7 @@ from server.auth.deps import get_current_user
 from server.models.user import User
 from server.services.guards import resolve_default_trd_date
 from server.services.t0 import get_fee_config
-from server.services.t0_aggregate import calc_realized_pnl
+from server.services.t0.aggregate_api import calc_realized_pnl
 
 router = APIRouter()
 
