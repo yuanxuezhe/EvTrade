@@ -16,7 +16,7 @@ from server.auth.deps import get_current_user
 from server.db import get_db
 from server.models.orm import Order, SysStatus
 from server.models.user import User
-from server.api._order_schemas import ListOrdersResponse, OrderOut
+from server.api._order_schemas import ListOrdersResponse, _to_order_out
 
 
 def register_query(router):
@@ -47,18 +47,7 @@ def register_query(router):
 
         return ListOrdersResponse(
             code=0, msg="", total=total,
-            list=[
-                OrderOut(
-                    order_id=r.order_id or "", user_def=r.user_def,
-                    order_no=r.order_no, trd_date=r.trd_date, stock_code=r.stock_code,
-                    order_type=r.order_type, price_type=r.price_type,
-                    price=r.price, volume=r.volume,
-                    traded_volume=r.traded_volume, traded_amount=r.traded_amount,
-                    avg_price=r.avg_price, order_flag=r.order_flag or 0,
-                    status=r.status,
-                    status_msg=r.status_msg, order_time=r.order_time,
-                ) for r in rows
-            ],
+            list=[_to_order_out(r) for r in rows],
         )
 
     @router.get("/history", response_model=ListOrdersResponse)
@@ -80,16 +69,5 @@ def register_query(router):
         rows = q.order_by(desc(Order.order_time)).limit(limit).all()
         return ListOrdersResponse(
             code=0, msg="", total=total,
-            list=[
-                OrderOut(
-                    order_id=r.order_id or "", user_def=r.user_def,
-                    order_no=r.order_no, trd_date=r.trd_date, stock_code=r.stock_code,
-                    order_type=r.order_type, price_type=r.price_type,
-                    price=r.price, volume=r.volume,
-                    traded_volume=r.traded_volume, traded_amount=r.traded_amount,
-                    avg_price=r.avg_price, order_flag=r.order_flag or 0,
-                    status=r.status,
-                    status_msg=r.status_msg, order_time=r.order_time,
-                ) for r in rows
-            ],
+            list=[_to_order_out(r) for r in rows],
         )

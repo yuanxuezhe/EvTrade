@@ -2,7 +2,8 @@
 order_status.py — 委托 status 共享模块（v8: cancelled_volume 主轴）
 
 提供：
-- ORDER_STATUS: 状态码 → 本地文字 映射
+- Status 类: 状态码枚举 + label/is_terminal/is_cancellable
+- ORDER_STATUS: 状态码 → 本地文字 映射（兼容老代码）
 - TERMINAL_STATUSES: 终态集合（51/52/53/54/55/56）
 - _status_msg(status): 状态码 → 文字
 - _infer_order_status(order, broker_status=None): v8 改：cancelled_volume 主轴的本地推断
@@ -19,7 +20,50 @@ from sqlalchemy.orm import Session
 from server.models.orm import Order, SysStatus
 
 
-# 状态码映射（与柜台一致,本地文字描述）
+# ================================================================
+# 订单状态枚举（原 constants.OrderStatus 合并至此）
+# ================================================================
+class Status:
+    """订单状态枚举（与原 constants.OrderStatus 等价）"""
+    PENDING_REPORT = "48"    # 待报
+    REPORTED = "49"          # 已报
+    PARTIAL = "50"           # 部分成交
+    PARTIAL_CANCEL = "51"    # 已成
+    FILLED = "52"            # 已撤
+    REJECTED = "53"          # 已拒
+    CANCELLED = "54"         # 撤单中
+    PARTIAL_CANCEL2 = "55"   # 部分撤单/废单
+    PARTIAL_FILL_CANCEL = "56"  # 部成部撤
+
+    _LABEL = {
+        "48": "待报",
+        "49": "已报",
+        "50": "部分成交",
+        "51": "已撤",
+        "52": "已成交",
+        "53": "已拒",
+        "54": "撤单中",
+        "55": "失败",
+        "56": "部成部撤",
+        "99": "未知",
+    }
+
+    @classmethod
+    def label(cls, code: str) -> str:
+        return cls._LABEL.get(code, code)
+
+    @classmethod
+    def is_terminal(cls, code: str) -> bool:
+        """是否终态（不可再变）"""
+        return code in TERMINAL_STATUSES
+
+    @classmethod
+    def is_cancellable(cls, code: str) -> bool:
+        """是否可撤单"""
+        return code in ("48", "49")
+
+
+# 兼容老代码的映射/集合
 ORDER_STATUS = {
     "48": "待报",
     "49": "已报",
@@ -32,7 +76,6 @@ ORDER_STATUS = {
     "56": "部成部撤",
 }
 
-# 终态:trd_cfm 累计推断时不再覆盖（避免 broker 撤单后又推 trd_cfm 把 status 改回 50）
 TERMINAL_STATUSES = ('51', '52', '53', '54', '55', '56')
 
 

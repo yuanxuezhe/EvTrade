@@ -22,7 +22,7 @@ import json
 import logging
 from typing import Any, Dict, Optional
 
-from server.services.push_helpers import format_ts
+from server.utils.time import format_ts
 
 
 # 4 个方向常量（REQ-LOG-001）

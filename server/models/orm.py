@@ -19,16 +19,12 @@ SQLAlchemy ORM models for EvTrade v5 (schema refactor).
   §4 行情：quote_snapshots
   §5 序列：order_no_seq
 """
-from datetime import datetime, timezone
-
-def _utcnow():
-    """UTC now, compatible with Python 3.6+."""
-    return datetime.now(timezone.utc).replace(tzinfo=None)
 from sqlalchemy import (
     Column, Integer, String, Float, Text, DateTime, Boolean,
     CheckConstraint, Index, UniqueConstraint, Time,
 )
 from server.db import Base
+from server.utils.time import _utcnow
 
 
 # ─────────────── 业务表 ───────────────

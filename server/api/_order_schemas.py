@@ -13,7 +13,7 @@ from typing import List, Optional
 
 from pydantic import BaseModel
 
-from server.constants import PriceType
+from server.enums.trading import PriceType
 
 
 class PlaceOrderRequest(BaseModel):
