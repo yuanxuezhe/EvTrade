@@ -5,7 +5,7 @@ transport.py — RPClient 传输层（connect / call / listen replies / listen p
 - RPClient 类：维护 RabbitMQ 长连接、消息发布、in-flight pending futures
 - 全局单例 _rpc_client + get_rpc_client / close_rpc_client 生命周期
 - 传输层 utilities：_clean_id（msgid/func 字符串清洗）、_wire_dump（报文 dump）、
-  _run_handle_push（push 落库 helper 走 asyncio.to_thread）、
+  _run_handle_push（push 落库 helper 走 loop.run_in_executor）、
   _resolve_active_trd_date_safe（push 链路注入 trd_date 短连接 helper）
 - 常量：MAX_PENDING（防积压）、_PUSH_CHANNEL（推送类型 → WS channel）
 - 协议常量 re-export：RABBITMQ_URL / EXCHANGE_NAME / QUEUE_REQ / QUEUE_REPLY / QUEUE_PUSH
@@ -78,13 +78,13 @@ def _run_handle_push(func: str, row: Dict[str, Any], ts: str) -> None:
     """push 落库 helper（REQ-PUSH-006）：新线程内跑 SessionLocal + handle_push + commit。
 
     设计要点：
-    - 在新线程中执行（asyncio.to_thread 包裹），不阻塞 push listener 的 event loop
+    - 在新线程中执行（loop.run_in_executor 包裹），不阻塞 push listener 的 event loop
     - SessionLocal 每次新建，独立 session 安全无共享状态
     - 异常向上抛回 await 处，由 listener 捕获并 log
     - handle_push 同步签名不变（向后兼容 test_push_handlers.py 11 用例）
     """
-    from db import SessionLocal
-    from services.push_handlers import handle_push
+    from server.db import SessionLocal
+    from server.services.push_handlers import handle_push
     db = SessionLocal()
     try:
         handle_push(db, func, row, ts)
@@ -108,8 +108,8 @@ def _resolve_active_trd_date_safe() -> Optional[str]:
     - 不传 row 参数给 ws：返回 None 时不注入 trd_date,前端用 _today_yyyymmdd 兜底
     """
     try:
-        from db import SessionLocal
-        from services.guards import resolve_active_trd_date
+        from server.db import SessionLocal
+        from server.services.guards import resolve_active_trd_date
         db = SessionLocal()
         try:
             return resolve_active_trd_date(db)
@@ -273,10 +273,12 @@ class RPClient:
                                 "data": enriched_row,
                             }
 
-                            # v8 持久化（异步）：to_thread 包裹，不阻塞 event loop（REQ-PUSH-006）
+                            # v8 持久化（异步）：run_in_executor 包裹，不阻塞 event loop（REQ-PUSH-006）
+                            # Python 3.6 无 asyncio.to_thread, 用 run_in_executor(None, ...) 替代
                             # 抽 _run_handle_push 到新线程跑，listener 主线程继续消费后续 push
                             try:
-                                await asyncio.to_thread(_run_handle_push, func, enriched_row, payload["ts"])
+                                loop = asyncio.get_event_loop()
+                                await loop.run_in_executor(None, _run_handle_push, func, enriched_row, payload["ts"])
                             except Exception as e:
                                 log.error("RPClient.push handle_push error: %s", e)
 

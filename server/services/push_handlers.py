@@ -42,7 +42,7 @@ HANDLERS = {
 def handle_push(db: Session, func: str, row: Dict[str, Any], ts: str) -> None:
     """统一入口 — 同步签名（向后兼容 test_push_handlers.py 11 用例）。
 
-    实际调用方在 rpc/transport.py 走 asyncio.to_thread 包装，不阻塞 event loop。
+    实际调用方在 rpc/transport.py 走 loop.run_in_executor 包装，不阻塞 event loop。
     """
     handler = HANDLERS.get(func)
     if not handler:

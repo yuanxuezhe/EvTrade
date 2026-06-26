@@ -39,9 +39,9 @@ def in_memory_db():
 
 def test_resolve_active_trd_date_safe_returns_active_day(monkeypatch):
     """_resolve_active_trd_date_safe 正常:返 SysStatus 中激活日"""
-    from rpc import client as rpc_client
-    import db as db_module
-    import services.guards as guards_module
+    from server.rpc import client as rpc_client
+    import server.db as db_module
+    import server.services.guards as guards_module
 
     captured_db = {}
     fake_session = MagicMock()
@@ -54,9 +54,9 @@ def test_resolve_active_trd_date_safe_returns_active_day(monkeypatch):
     def fake_resolve(db):
         return "20260614"
 
-    # 函数内 `from db import SessionLocal` 动态导入,monkeypatch 目标必须是 db_module
+    # 函数内 `from server.db import SessionLocal` 动态导入,monkeypatch 目标必须是 server.db
     monkeypatch.setattr(db_module, "SessionLocal", fake_session_local)
-    # 同样: from services.guards import resolve_active_trd_date
+    # 同样: from server.services.guards import resolve_active_trd_date
     monkeypatch.setattr(guards_module, "resolve_active_trd_date", fake_resolve)
 
     result = rpc_client._resolve_active_trd_date_safe()
@@ -67,8 +67,8 @@ def test_resolve_active_trd_date_safe_returns_active_day(monkeypatch):
 
 def test_resolve_active_trd_date_safe_returns_none_on_exception(monkeypatch):
     """_resolve_active_trd_date_safe 异常:返 None 而不 raise"""
-    from rpc import client as rpc_client
-    import db as db_module
+    from server.rpc import client as rpc_client
+    import server.db as db_module
 
     def boom():
         raise RuntimeError("DB 锁")
@@ -86,7 +86,7 @@ def test_push_listener_injects_trd_date_into_payload(monkeypatch):
     """v8: push listener broadcast payload.data 必含 trd_date(来自激活日)
        且 trd_date 会覆盖 broker 推的 trd_date
     """
-    from rpc import client as rpc_client
+    from server.rpc import client as rpc_client
 
     # mock 1: _resolve_active_trd_date_safe → 固定返 "20260614"
     monkeypatch.setattr(
@@ -132,7 +132,8 @@ def test_push_listener_injects_trd_date_into_payload(monkeypatch):
             payload = {
                 "type": func, "channel": channel, "ts": ts, "data": enriched_row,
             }
-            await asyncio.to_thread(rpc_client._run_handle_push, func, enriched_row, ts)
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(None, rpc_client._run_handle_push, func, enriched_row, ts)
             await rpc_client.ws_manager.broadcast(channel, payload)
 
     asyncio.run(run_once())
@@ -153,7 +154,7 @@ def test_push_listener_injects_trd_date_into_payload(monkeypatch):
 
 def test_push_listener_no_trd_date_when_resolve_returns_none(monkeypatch):
     """v8: _resolve_active_trd_date_safe 返 None 时,payload 不注入 trd_date(降级而非崩溃)"""
-    from rpc import client as rpc_client
+    from server.rpc import client as rpc_client
 
     monkeypatch.setattr(
         rpc_client, "_resolve_active_trd_date_safe", lambda: None
@@ -193,7 +194,7 @@ def test_push_listener_no_trd_date_when_resolve_returns_none(monkeypatch):
 
 def test_push_listener_handles_trd_cfm(monkeypatch):
     """v8: trd_cfm 推送同样注入 trd_date"""
-    from rpc import client as rpc_client
+    from server.rpc import client as rpc_client
 
     monkeypatch.setattr(
         rpc_client, "_resolve_active_trd_date_safe", lambda: "20260614"
