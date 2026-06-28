@@ -1,3 +1,11 @@
+<!--
+本目录不是 OpenSpec change，是问题追踪表（2026-06-16 三轮分析）。
+原位置: openspec/changes/current-issues/
+迁移原因: 混入 changes/ 违反 .openspec.yaml 的 4 状态机。
+新位置: openspec/changes/tracking/<date>-<name>/
+修复某项时，新建独立 change 提案（draft → applying → archived）。
+-->
+
 # 1. Why
 
 三轮深度分析（2026-06-14 / 2026-06-15 / **2026-06-16**）累计发现 EvTrade 项目 **30 项问题**，分级如下：

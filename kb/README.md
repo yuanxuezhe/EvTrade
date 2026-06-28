@@ -1,5 +1,24 @@
 # EvTrade 知识库（KB）索引
 
+> ⚠️ **DEPRECATED（2026-06-28）** — 本目录已弃用。
+>
+> 内容已逐步并入 OpenSpec 工作流的 [`openspec/specs/`](openspec/specs/) 单一真源（SSOT）。
+> 各 capability 对应：
+>
+> | KB 旧文档 | OpenSpec 现行 spec |
+> |---|---|
+> | `server/01_api.md` / `server/02_auth.md` | [`openspec/specs/trading/spec.md`](openspec/specs/trading/spec.md) + [`openspec/specs/auth/spec.md`](openspec/specs/auth/spec.md) |
+> | `server/03_db_models.md` | [`openspec/specs/data-model/spec.md`](openspec/specs/data-model/spec.md) |
+> | `server/04_services.md` / `server/05_rpc_client.md` / `server/06_xtquant.md` | [`openspec/specs/rpc-protocol/spec.md`](openspec/specs/rpc-protocol/spec.md) |
+> | `server/07_websocket.md` | [`openspec/specs/ws-protocol/spec.md`](openspec/specs/ws-protocol/spec.md) |
+> | `cross/01_data_models.md` | [`openspec/specs/data-model/spec.md`](openspec/specs/data-model/spec.md) |
+> | `cross/02_order_status.md` | [`openspec/specs/trading/spec.md`](openspec/specs/trading/spec.md) 内 REQ-TRADE-* 段 |
+> | `cross/03_role_matrix.md` | [`openspec/specs/auth/spec.md`](openspec/specs/auth/spec.md) 内 REQ-AUTH-* 段 |
+> | `cross/04_iquant.md` | [`openspec/specs/rpc-protocol/spec.md`](openspec/specs/rpc-protocol/spec.md) |
+> | `client/01_router.md` ~ `06_views.md` | [`openspec/specs/frontend/spec.md`](openspec/specs/frontend/spec.md) |
+>
+> 本目录保留仅作历史快照，**改文档请直接改 OpenSpec**。
+
 > 本知识库基于代码逐行梳理，记录 EvTrade 智能交易终端的完整功能、接口、数据结构与实现细节。
 > 可作为后续代码维护、扩展、重构的参考依据；所有结论均来自 `client/`、`server/`、`iquant/` 当前代码。
 
