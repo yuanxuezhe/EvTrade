@@ -1,5 +1,5 @@
 """
-_order_schemas.py — orders API 的 Pydantic schemas + Order→OrderOut helper
+schemas.py — orders API 的 Pydantic schemas + Order→OrderOut helper
 
 包含：
 - PlaceOrderRequest: POST /place 入参

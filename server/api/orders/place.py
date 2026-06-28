@@ -1,5 +1,5 @@
 """
-order_place.py — POST /api/orders/place 下单端点
+place.py — POST /api/orders/place 下单端点
 
 行为（v6 重构）：
 - 先 DB 后 RPC
@@ -24,7 +24,7 @@ from server.services.guards import require_trader, require_trading_day, require_
 from server.services.order_no import next_order_no
 from server.utils.time import format_ts
 from server.services.t0 import calc_net_amount, calc_t0_volume, get_fee_config
-from server.api._order_schemas import (
+from server.api.orders.schemas import (
     PlaceOrderRequest,
     PlaceOrderResponse,
     _to_order_out,

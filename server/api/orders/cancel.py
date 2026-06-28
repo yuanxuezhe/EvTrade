@@ -1,5 +1,5 @@
 """
-order_cancel.py — DELETE /api/orders/{order_no} 撤单端点（v9 重写）
+cancel.py — DELETE /api/orders/{order_no} 撤单端点（v9 重写）
 
 关键架构（broker 协议约束）:
 - cancel_ord RPC 只接 order_id,没 remark 字段
@@ -34,7 +34,7 @@ from server.models.user import User
 from server.services.guards import require_trader, require_trading_day, require_trading_session
 from server.services.order_no import next_order_no
 from server.utils.time import format_ts
-from server.api._order_schemas import (
+from server.api.orders.schemas import (
     CancelResponse,
     _to_order_out,
 )

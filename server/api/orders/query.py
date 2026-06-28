@@ -1,5 +1,5 @@
 """
-order_query.py — GET /api/orders 和 GET /api/orders/history 委托查询端点
+query.py — GET /api/orders 和 GET /api/orders/history 委托查询端点
 
 行为：
 - 纯 DB 读路径，不调 RPC
@@ -16,7 +16,7 @@ from server.auth.deps import get_current_user
 from server.db import get_db
 from server.models.orm import Order, SysStatus
 from server.models.user import User
-from server.api._order_schemas import ListOrdersResponse, _to_order_out
+from server.api.orders.schemas import ListOrdersResponse, _to_order_out
 
 
 def register_query(router):
