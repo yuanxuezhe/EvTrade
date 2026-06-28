@@ -18,7 +18,11 @@ client.py — RPC 客户端 facade 兼容垫片（phase-2 拆分 + simplify-rpc-
 close_rpc_client / ord_stk / cancel_order / qry_* / _PUSH_CHANNEL / EXCHANGE_NAME
 / QUEUE_*）都在此 re-export。
 """
-from server.rpc.transport import (
+import asyncio  # noqa: F401  (facade re-export for tests monkeypatching rpc.client.asyncio)
+
+import aio_pika  # noqa: F401  (facade re-export for tests patch('rpc.client.aio_pika.connect_robust', ...))
+
+from .transport import (
     MAX_PENDING,
     RABBITMQ_URL,
     EXCHANGE_NAME,
@@ -31,7 +35,9 @@ from server.rpc.transport import (
     close_rpc_client,
     get_rpc_client,
 )
-from server.rpc.parsers_push import _iter_push_rows
+from server.ws.manager import ws_manager  # noqa: F401  (facade re-export for tests patch('rpc.client.ws_manager', ...))
+from server.rpc.parsers_push import _iter_push_rows  # 新名
+_parse_push_rows = _iter_push_rows  # alias: 旧名 _parse_push_rows → 新位置 parsers_push._iter_push_rows
 from server.rpc.parsers_common import (
     _empty,
     _iter_rows,
