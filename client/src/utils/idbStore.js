@@ -126,17 +126,21 @@ export async function clearStore(storeName) {
 /**
  * IDB 写入前的脱壳 helper
  *
- * IDB put 走 structured clone 算法, 不能克隆 Vue 3 的 reactive Proxy.
- * Pinia ref([]) 里的 item 是 Proxy, 必须先解包成 plain object 才能写.
+ * 关键: Vue 3 reactive 包装的对象属性是 getter/setter (lazy), 不止 Proxy.
+ *   - structuredClone 走 HTML structured clone algorithm, **不能处理 accessor
+ *     descriptor** (getter/setter), 同样会抛 DataCloneError.
+ *   - JSON.parse(JSON.stringify(x)) 走属性枚举 + 值序列化, getter 会被调用
+ *     取值后再 stringify, 完美脱壳.
  *
- * 用 structuredClone() (Chrome 98+, Firefox 94+, Safari 15.4+) — 比 JSON 循环
- * 保留类型 (Date/Map/Set) 且更快; 业务数据全 plain object 也兼容.
+ * 业务数据全是 plain JSON-safe values (数字/字符串/布尔/null/数组/对象),
+ * 没有 Date/Map/Set/undefined/NaN/Infinity, JSON 循环 100% 安全且够用.
+ *
+ * 性能: 持仓/委托/成交通常 < 1000 条, JSON 序列化 < 10ms, 无需 structuredClone.
  */
 function _toPlain(value) {
   if (value === null || value === undefined) return value
-  // primitives / functions / undefined 直接返回
   if (typeof value !== 'object') return value
-  return structuredClone(value)
+  return JSON.parse(JSON.stringify(value))
 }
 
 /**
@@ -165,7 +169,8 @@ export async function deleteItem(storeName, key) {
  *   - tx.store.bulkPut **不存在** (v8 移除了批量便捷方法,只暴露 IDB 标准 API)
  *   - tx.store.put(value, key) 存在且 async, 可并行 await
  *
- * Vue 3 注意: 数组项是 reactive Proxy, 必须在 put 前 structuredClone 解包.
+ * Vue 3 注意: 数组项是 reactive Proxy + getter/setter, 必须在 put 前
+ *   _toPlain() 解包 (用 JSON 循环剥掉 reactive 包装).
  *
  * 事务写法选: 显式 readwrite 事务, 保证 clear + puts 原子性 (中途失败 → 全回滚)
  */
