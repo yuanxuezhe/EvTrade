@@ -33,9 +33,9 @@
             <span class="text-mono">{{ formatNumber(row.last_vol) }}</span>
           </template>
         </el-table-column>
-        <el-table-column prop="volume" label="持仓量" align="right" width="120">
+        <el-table-column prop="vol" label="持仓量" align="right" width="120">
           <template #default="{ row }">
-            <span class="text-mono">{{ formatNumber(row.volume) }}</span>
+            <span class="text-mono">{{ formatNumber(row.vol) }}</span>
           </template>
         </el-table-column>
         <el-table-column prop="avl_vol" label="可用" align="right" width="120">
