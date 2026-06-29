@@ -70,7 +70,7 @@
           v-for="f in fields"
           :key="f.key"
           :prop="f.key"
-          :label="f.label"
+          :label="displayLabel(f)"
           :width="f.width"
           :formatter="f.formatter"
           show-overflow-tooltip
@@ -95,7 +95,7 @@
         <el-form-item
           v-for="f in editableFields"
           :key="f.key"
-          :label="f.label"
+          :label="displayLabel(f)"
           :required="f.required"
         >
           <!-- enum select -->
@@ -172,6 +172,15 @@ const filteredRows = computed(() => {
     Object.values(r).some((v) => String(v).toLowerCase().includes(k))
   )
 })
+
+/**
+ * 列 label 显示: 中文 (英文 key)
+ * 让 admin 排查 IDB 数据时, 一眼能看出"这一列对应的是 cash 还是 total_asset"
+ * 节省反复对照 server schema 的精力
+ */
+function displayLabel(f) {
+  return `${f.label} (${f.key})`
+}
 
 function _emptyForm() {
   const f = {}

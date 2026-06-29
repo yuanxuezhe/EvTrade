@@ -103,6 +103,11 @@ The shared component is [client/src/components/CacheTableView.vue](../../client/
 - **WHEN** admin performs any CRUD on the cache tables
 - **THEN** changes are written to IDB only; NO server API call is made — this is a debugging/inspection tool, not a real data mutation path
 
+#### Scenario: 列名带英文 key 后缀
+
+- **WHEN** admin views any cache table (header or edit dialog form-item)
+- **THEN** each column label renders as `"中文 (english_key)"` e.g. `现金 (cash)`, `总资产 (total_asset)` — so admin can directly map displayed column to the actual IDB key without consulting the schema separately
+
 
 
 ### REQ-FE-001: 路由
