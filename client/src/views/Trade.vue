@@ -79,6 +79,16 @@
               <span class="text-mono">{{ formatNumber(row.traded_volume || 0) }}</span>
             </template>
           </el-table-column>
+          <el-table-column label="均价" align="right" width="80">
+            <template #default="{ row }">
+              <span class="text-mono">{{ formatMoney(row.avg_price) }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="成交金额" align="right" width="100">
+            <template #default="{ row }">
+              <span class="text-mono">{{ formatAmount(row.traded_amount) }}</span>
+            </template>
+          </el-table-column>
           <el-table-column prop="cancelled_volume" label="已撤" align="right" width="80">
             <template #default="{ row }">
               <span class="text-mono">{{ formatNumber(row.cancelled_volume || 0) }}</span>
@@ -121,7 +131,7 @@ import QuotePanel from '../components/QuotePanel.vue'
 import { useOrderStore } from '../stores/order'
 import { useHoldingsStore } from '../stores/holdings'
 import {
-  formatMoney, formatNumber, TERMINAL_STATUSES
+  formatMoney, formatAmount, formatNumber, TERMINAL_STATUSES
 } from '../utils/format'
 import OrderStatusBadge from '../components/OrderStatusBadge.vue'
 

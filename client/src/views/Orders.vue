@@ -102,9 +102,14 @@
             <span class="text-mono">{{ formatNumber(row.traded_volume) }}</span>
           </template>
         </el-table-column>
-        <el-table-column prop="traded_price" label="成交价" align="right" width="100">
+        <el-table-column label="成交价" align="right" width="100">
           <template #default="{ row }">
-            <span class="text-mono">{{ formatMoney(row.traded_price) }}</span>
+            <span class="text-mono">{{ formatMoney(row.avg_price) }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="成交金额" align="right" width="120">
+          <template #default="{ row }">
+            <span class="text-mono">{{ formatAmount(row.traded_amount) }}</span>
           </template>
         </el-table-column>
         <el-table-column label="成交率" min-width="140">
@@ -159,7 +164,7 @@ import { ElMessage } from 'element-plus'
 import { Search, Refresh, Download } from '@element-plus/icons-vue'
 import { api } from '../api'
 import {
-  formatMoney, formatNumber, STATUS_LABEL, STATUS_TYPE, priceTypeLabel
+  formatMoney, formatAmount, formatNumber, STATUS_LABEL, STATUS_TYPE, priceTypeLabel
 } from '../utils/format'
 import OrderStatusBadge from '../components/OrderStatusBadge.vue'
 import { useHoldingsStore } from '../stores/holdings'
