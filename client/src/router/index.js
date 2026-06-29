@@ -16,6 +16,10 @@ const Profile = () => import('../views/Profile.vue')
 const SystemInit = () => import('../views/SystemInit.vue')
 const SystemConfig = () => import('../views/SystemConfig.vue')
 const T0Trade = () => import('../views/T0Trade.vue')
+const CacheAsset = () => import('../views/CacheAsset.vue')
+const CachePositions = () => import('../views/CachePositions.vue')
+const CacheOrders = () => import('../views/CacheOrders.vue')
+const CacheTrades = () => import('../views/CacheTrades.vue')
 
 const routes = [
   {
@@ -45,6 +49,11 @@ const routes = [
   { path: '/system-init', name: 'SystemInit', component: SystemInit, meta: { title: '系统初始化', requiresAdmin: true } },
   { path: '/system-config', name: 'SystemConfig', component: SystemConfig, meta: { title: '系统配置', requiresAdmin: true } },
   { path: '/t0-trade', name: 'T0Trade', component: T0Trade, meta: { title: '快速做T' } },
+  // admin-only: IDB 4 张业务表的 CRUD 查看器
+  { path: '/admin/cache/asset', name: 'CacheAsset', component: CacheAsset, meta: { title: '缓存: 资金', requiresAdmin: true } },
+  { path: '/admin/cache/positions', name: 'CachePositions', component: CachePositions, meta: { title: '缓存: 持仓', requiresAdmin: true } },
+  { path: '/admin/cache/orders', name: 'CacheOrders', component: CacheOrders, meta: { title: '缓存: 委托', requiresAdmin: true } },
+  { path: '/admin/cache/trades', name: 'CacheTrades', component: CacheTrades, meta: { title: '缓存: 成交', requiresAdmin: true } },
   { path: '/:pathMatch(.*)*', redirect: '/' }
 ]
 
