@@ -1,7 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { api } from '../api'
-import { bulkReplace, touchLastWrite } from '../utils/idbStore'
 
 export const usePositionStore = defineStore('position', () => {
   const positions = ref([])
@@ -14,13 +13,6 @@ export const usePositionStore = defineStore('position', () => {
 
   async function fetchPositions() {
     positions.value = await api.getPositions()
-    // write-through 持仓表 (keyPath=stock_code, 多行)
-    try {
-      await bulkReplace('positions', positions.value)
-      await touchLastWrite()
-    } catch (e) {
-      console.warn('[position] IDB write-through 失败:', e)
-    }
   }
 
   async function initPosition(stockCode) {

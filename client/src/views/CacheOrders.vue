@@ -1,30 +1,27 @@
 <!--
   CacheOrders.vue — 委托表 (全 CRUD)
-  IDB store: orders, keyField: order_no
+  数据源: useHoldingsStore().orders (v8 单一源)
 -->
 <template>
   <CacheTableView
-    store-name="orders"
+    :rows-ref="ordersRef"
+    key-field="order_no"
     :fields="fields"
     title="委托缓存 (orders)"
-    key-field="order_no"
-    @changed="onChanged"
   />
 </template>
 
 <script setup>
+import { computed } from 'vue'
 import CacheTableView from '../components/CacheTableView.vue'
 import { useHoldingsStore } from '../stores/holdings'
 
-// admin 改委托 IDB 后, refreshAll() 拉最新 orders + trades + asset + positions
-// (v8: orders/trades 实际住在 holdings store, 改 IDB 后必须从 server 重新拉)
-async function onChanged() {
-  const holdingsStore = useHoldingsStore()
-  await holdingsStore.refreshAll()
-}
+const holdingsStore = useHoldingsStore()
+const ordersRef = computed({
+  get: () => holdingsStore.orders,
+  set: (v) => { holdingsStore.orders = v },
+})
 
-// 委托表字段 (与 server OrderOut schema 对齐)
-// width = 字段最小宽度, header 文字 "中文 (key)" 单行能放下
 const fields = [
   { key: 'order_no', label: '委托号', width: 140, required: true },
   { key: 'trd_date', label: '交易日', width: 140 },

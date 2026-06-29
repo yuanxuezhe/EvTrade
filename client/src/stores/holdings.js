@@ -4,7 +4,7 @@ import { api } from '../api'
 import { useQuoteStore } from './quote'
 import { useAssetStore } from './asset'
 import { useWsStore } from './ws'
-import { bulkReplace, touchLastWrite } from '../utils/idbStore'
+// 注: 原 IDB write-through 已删除. 当前架构纯 Pinia 内存.
 
 // phase-2 拆分: 保持单 Pinia store facade (R3 reactivity 陷阱), 抽出 4 个无状态 helper 模块
 import { createLogger } from './holdings_log'
@@ -173,15 +173,6 @@ export const useHoldingsStore = defineStore('holdings', () => {
       bootstrapped.value = true
       lastUpdated.value = Date.now()
 
-      // write-through 委托 + 成交 表 (持仓由 position.js fetchPositions 写, 资金由 asset.js fetchAsset 写)
-      try {
-        await bulkReplace('orders', orders.value)
-        await bulkReplace('trades', trades.value)
-        await touchLastWrite()
-      } catch (e) {
-        console.warn('[holdings] IDB write-through 失败:', e)
-      }
-
       // 启动 ws
       const ws = useWsStore()
       ws.connect()
@@ -256,15 +247,6 @@ export const useHoldingsStore = defineStore('holdings', () => {
       lastUpdated.value = Date.now()
       const dt = Date.now() - t0
       log('ok', '用户', 'user', `刷新完成 (${dt}ms): ${summary.join(' / ')}`)
-
-      // write-through 委托 + 成交 表
-      try {
-        await bulkReplace('orders', orders.value)
-        await bulkReplace('trades', trades.value)
-        await touchLastWrite()
-      } catch (e) {
-        console.warn('[holdings.refreshAll] IDB write-through 失败:', e)
-      }
     } catch (e) {
       log('err', '用户', 'user', '刷新异常', String(e?.message || e))
     } finally {

@@ -1,31 +1,28 @@
 <!--
   CacheTrades.vue — 成交表 (全 CRUD, 复合主键)
-  IDB store: trades, keyField: [trd_date, trade_id]
+  数据源: useHoldingsStore().trades (v8 单一源)
+  复合主键: [trd_date, trade_id]
 -->
 <template>
   <CacheTableView
-    store-name="trades"
+    :rows-ref="tradesRef"
+    key-field="trd_date,trade_id"
     :fields="fields"
     title="成交缓存 (trades)"
-    key-field="trd_date,trade_id"
-    @changed="onChanged"
   />
 </template>
 
 <script setup>
+import { computed } from 'vue'
 import CacheTableView from '../components/CacheTableView.vue'
 import { useHoldingsStore } from '../stores/holdings'
 
-// admin 改成交 IDB 后, refreshAll() 拉最新 orders + trades + asset + positions
-// (v8: orders/trades 实际住在 holdings store, 改 IDB 后必须从 server 重新拉)
-async function onChanged() {
-  const holdingsStore = useHoldingsStore()
-  await holdingsStore.refreshAll()
-}
+const holdingsStore = useHoldingsStore()
+const tradesRef = computed({
+  get: () => holdingsStore.trades,
+  set: (v) => { holdingsStore.trades = v },
+})
 
-// 成交表字段 (与 server TradeOut schema 对齐)
-// keyField 是 [trd_date, trade_id] 复合键, 改 / 删时通过 _formKey 内部处理
-// width = 字段最小宽度, header 文字 "中文 (key)" 单行能放下
 const fields = [
   { key: 'trd_date', label: '交易日', width: 140, required: true },
   { key: 'trade_id', label: '成交号', width: 240, required: true },

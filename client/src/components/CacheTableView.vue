@@ -1,25 +1,17 @@
 <!--
-  CacheTableView.vue — 通用 IDB CRUD 表格组件 (admin-only)
+  CacheTableView.vue — 通用 Pinia CRUD 表格组件 (admin-only, 调试用)
 
-  用途: 浏览/编辑/删除 IndexedDB 4 张业务表 (asset / positions / orders / trades)
+  用途: 直接读写业务 Pinia store ref (e.g. holdingsStore.positions)
+        改动通过 Vue 响应式自动传播到业务页面, 无需 IDB 持久化
 
   Props:
-    storeName: 'asset' | 'positions' | 'orders' | 'trades'
-    fields: 字段定义数组 [{key, label, type?, options?, required?, width?, formatter?}]
+    rowsRef: 响应式 ref (array 或 object), 直接改这一份 = 改业务数据
+    keyField: 主键字段名 ('id' / 'stock_code' / 'order_no' / 'trd_date,trade_id' 复合键)
+    fields: 字段定义数组 [{key, label, type?, options?, required?, width?}]
     title: 页面标题
-    keyField: 主键字段名 (默认从 storeName 推, asset=singleton 不支持 add/delete)
     allowAdd: 允许新增行 (默认 true; asset=false)
     allowDelete: 允许删除行 (默认 true; asset=false)
     allowClear: 允许清空整表 (默认 true)
-    rowCount: 当前行数 (Prop from parent, 用于 stat-pill)
-
-  Emits:
-    refreshed: 表格数据更新后 (携带最新行数)
-
-  操作:
-    - 顶部工具栏: 刷新 / 清空 / 新增
-    - 表格行: 改 / 删
-    - 改 / 增共用 dialog (传入 row=null 即新增, 否则为改)
 -->
 <template>
   <div class="cache-view fade-in-up" v-loading="loading">
@@ -27,15 +19,15 @@
     <section class="stats-row">
       <div class="stat-pill">
         <div class="pill-label">行数</div>
-        <div class="pill-value text-mono">{{ rows.length }}</div>
-      </div>
-      <div class="stat-pill">
-        <div class="pill-label">Store</div>
-        <div class="pill-value text-mono">{{ storeName }}</div>
+        <div class="pill-value text-mono">{{ rowsLength }}</div>
       </div>
       <div class="stat-pill">
         <div class="pill-label">Key Field</div>
         <div class="pill-value text-mono">{{ keyField }}</div>
+      </div>
+      <div class="stat-pill">
+        <div class="pill-label">Data Source</div>
+        <div class="pill-value text-mono">Pinia</div>
       </div>
     </section>
 
@@ -51,9 +43,8 @@
         />
       </div>
       <div class="filter-right">
-        <el-button :icon="Refresh" @click="load" :loading="loading">刷新</el-button>
-        <el-button v-if="allowClear" type="warning" :icon="Delete" @click="onClear" plain>清空</el-button>
         <el-button v-if="allowAdd" type="primary" :icon="Plus" @click="openAdd">新增</el-button>
+        <el-button v-if="allowClear" type="warning" :icon="Delete" @click="onClear" plain>清空</el-button>
       </div>
     </div>
 
@@ -64,7 +55,7 @@
         stripe
         border
         height="calc(100vh - 360px)"
-        empty-text="IDB 中无数据"
+        empty-text="数据为空 (Pinia 内存)"
       >
         <el-table-column
           v-for="f in fields"
@@ -92,22 +83,18 @@
       width="540px"
       :close-on-click-modal="false"
     >
-      <el-form :model="form" label-width="120px">
+      <el-form :model="form" label-width="140px">
         <el-form-item
           v-for="f in editableFields"
           :key="f.key"
           :label="displayLabel(f)"
           :required="f.required"
         >
-          <!-- enum select -->
           <el-select v-if="f.type === 'select'" v-model="form[f.key]" :disabled="editing && f.key === keyField" style="width: 100%">
             <el-option v-for="o in f.options" :key="o" :label="o" :value="o" />
           </el-select>
-          <!-- number -->
           <el-input-number v-else-if="f.type === 'number'" v-model="form[f.key]" :controls="false" style="width: 100%" />
-          <!-- readonly key -->
           <el-input v-else-if="editing && f.key === keyField" :model-value="form[f.key]" disabled />
-          <!-- text default -->
           <el-input v-else v-model="form[f.key]" />
         </el-form-item>
       </el-form>
@@ -120,50 +107,51 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Search, Refresh, Plus, Delete } from '@element-plus/icons-vue'
-import { getAll, putItem, deleteItem, clearStore, getItem, countStore } from '../utils/idbStore'
+import { Search, Plus, Delete } from '@element-plus/icons-vue'
 
 const props = defineProps({
-  storeName: { type: String, required: true },
+  // 必填: 业务数据 ref (e.g. useHoldingsStore().positions)
+  //   - 数组类型 (positions / orders / trades): rowsRef.value 是 array
+  //   - 对象类型 (asset): rowsRef.value 是 object, keyField='id'
+  rowsRef: { type: [Array, Object], required: true },
+  keyField: { type: String, required: true },
   fields: { type: Array, required: true },
   title: { type: String, default: '' },
-  keyField: { type: String, default: null },  // null = auto-detect
   allowAdd: { type: Boolean, default: true },
   allowDelete: { type: Boolean, default: true },
   allowClear: { type: Boolean, default: true },
 })
-const emit = defineEmits(['refreshed'])
 
-const KEY_DEFAULTS = {
-  asset: 'id',
-  positions: 'stock_code',
-  orders: 'order_no',
-  trades: 'trd_date,trade_id',  // 复合键用逗号分隔
-}
-const _keyField = computed(() => props.keyField || KEY_DEFAULTS[props.storeName] || 'id')
-
-// trades 的 keyField 是复合键, 需要特殊处理: 改 / 删时同时按 [trd_date, trade_id]
-const _isComposite = computed(() => _keyField.value.includes(','))
-
-// 单一主键 (singleton 或单字段)
-const keyField = computed(() => _isComposite.value ? null : _keyField.value)
-// 可编辑字段: 排除 keyField (改时禁用) + 复合键场景下排除 [trd_date, trade_id]
+// 单一主键 vs 复合键 ('trd_date,trade_id' -> ['trd_date', 'trade_id'])
+const _isComposite = computed(() => props.keyField.includes(','))
+const _keyParts = computed(() =>
+  _isComposite.value ? props.keyField.split(',').map(s => s.trim()) : [props.keyField]
+)
 const editableFields = computed(() => {
   if (_isComposite.value) {
-    const compositeKeys = _keyField.value.split(',').map(s => s.trim())
-    return props.fields.filter(f => !compositeKeys.includes(f.key))
+    return props.fields.filter(f => !_keyParts.value.includes(f.key))
   }
-  return props.fields
+  return props.fields.filter(f => f.key !== props.keyField)
 })
 
-const rows = ref([])
+// 表格显示: 数组模式 / 对象模式
+const isObjectMode = computed(() => !Array.isArray(props.rowsRef))
+const rows = computed(() => {
+  if (isObjectMode.value) {
+    // asset: 单行对象 -> 包成 1 行数组
+    return Object.keys(props.rowsRef).length > 0 ? [props.rowsRef] : []
+  }
+  return props.rowsRef || []
+})
+const rowsLength = computed(() => rows.value.length)
+
 const loading = ref(false)
 const saving = ref(false)
 const filterText = ref('')
 const dialogVisible = ref(false)
-const editing = ref(false)  // false=add, true=edit
+const editing = ref(false)
 const form = ref({})
 
 const filteredRows = computed(() => {
@@ -174,11 +162,6 @@ const filteredRows = computed(() => {
   )
 })
 
-/**
- * 列 label 显示: 中文 (英文 key)
- * 让 admin 排查 IDB 数据时, 一眼能看出"这一列对应的是 cash 还是 total_asset"
- * 节省反复对照 server schema 的精力
- */
 function displayLabel(f) {
   return `${f.label} (${f.key})`
 }
@@ -191,16 +174,11 @@ function _emptyForm() {
   return f
 }
 
-async function load() {
-  loading.value = true
-  try {
-    rows.value = await getAll(props.storeName)
-    emit('refreshed', rows.value.length)
-  } catch (e) {
-    ElMessage.error(`读取 IDB 失败: ${e.message || e}`)
-  } finally {
-    loading.value = false
+function _rowKey(row) {
+  if (_isComposite.value) {
+    return _keyParts.value.map(k => row[k])
   }
+  return row[props.keyField]
 }
 
 function openAdd() {
@@ -215,22 +193,39 @@ function openEdit(row) {
   dialogVisible.value = true
 }
 
-function _formKey(row) {
-  // 返回 IDB put/delete 用的 key: 复合键返回数组, 单键返回标量
-  if (_isComposite.value) {
-    return _keyField.value.split(',').map(s => row[s.trim()])
-  }
-  return row[_keyField.value]
+// 找到主键对应的 index (数组模式) 或返回 null (对象模式)
+function _findIndex(row) {
+  if (isObjectMode.value) return -1
+  const key = _rowKey(row)
+  return props.rowsRef.findIndex((r) => {
+    if (_isComposite.value) {
+      return _keyParts.value.every((k, i) => r[k] === key[i])
+    }
+    return r[props.keyField] === key
+  })
 }
 
-async function onSave() {
+function onSave() {
   saving.value = true
   try {
-    await putItem(props.storeName, _toPlain(form.value))
+    if (isObjectMode.value) {
+      // 资金表 (singleton): 直接替换
+      const { [props.keyField]: _, ...rest } = form.value
+      // 保留 keyField (e.g. 'id'), 用 Object.assign
+      Object.assign(props.rowsRef, form.value)
+    } else {
+      const idx = editing.value ? _findIndex(form.value) : -1
+      const newRow = { ...form.value }
+      if (idx >= 0) {
+        // 改: 替换原行 (触发响应式)
+        props.rowsRef.splice(idx, 1, newRow)
+      } else {
+        // 增: 插到队首
+        props.rowsRef.unshift(newRow)
+      }
+    }
     ElMessage.success(editing.value ? '已保存' : '已新增')
     dialogVisible.value = false
-    await load()
-    emit('changed', props.storeName)  // 通知父组件刷新 Pinia store
   } catch (e) {
     ElMessage.error(`保存失败: ${e.message || e}`)
   } finally {
@@ -238,54 +233,41 @@ async function onSave() {
   }
 }
 
-async function onDelete(row) {
-  try {
-    await ElMessageBox.confirm(
-      `确认删除 ${_keyField.value} = ${_formKey(row)} ?`,
-      '删除确认',
-      { type: 'warning' }
-    )
-  } catch {
-    return  // 用户取消
-  }
-  try {
-    const key = _formKey(row)
-    await deleteItem(props.storeName, key)
+function onDelete(row) {
+  ElMessageBox.confirm(
+    `确认删除 ${props.keyField} = ${JSON.stringify(_rowKey(row))} ?`,
+    '删除确认',
+    { type: 'warning' }
+  ).then(() => {
+    if (isObjectMode.value) {
+      // 资金: 清空值
+      Object.keys(props.rowsRef).forEach((k) => {
+        props.rowsRef[k] = props.fields.find(f => f.key === k)?.type === 'number' ? 0 : ''
+      })
+    } else {
+      const idx = _findIndex(row)
+      if (idx >= 0) props.rowsRef.splice(idx, 1)
+    }
     ElMessage.success('已删除')
-    await load()
-    emit('changed', props.storeName)  // 通知父组件刷新 Pinia store
-  } catch (e) {
-    ElMessage.error(`删除失败: ${e.message || e}`)
-  }
+  }).catch(() => {})  // 取消
 }
 
-async function onClear() {
-  try {
-    await ElMessageBox.confirm(
-      `确认清空 ${props.storeName} 表? 刷新页面后会从 server 重新灌入`,
-      '清空确认',
-      { type: 'warning' }
-    )
-  } catch {
-    return
-  }
-  try {
-    await clearStore(props.storeName)
+function onClear() {
+  ElMessageBox.confirm(
+    `确认清空 ${props.title || '此表'} ? 业务页面也会立即看到空数据`,
+    '清空确认',
+    { type: 'warning' }
+  ).then(() => {
+    if (isObjectMode.value) {
+      Object.keys(props.rowsRef).forEach((k) => {
+        props.rowsRef[k] = props.fields.find(f => f.key === k)?.type === 'number' ? 0 : ''
+      })
+    } else {
+      props.rowsRef.splice(0, props.rowsRef.length)
+    }
     ElMessage.success('已清空')
-    await load()
-    emit('changed', props.storeName)  // 通知父组件刷新 Pinia store
-  } catch (e) {
-    ElMessage.error(`清空失败: ${e.message || e}`)
-  }
+  }).catch(() => {})
 }
-
-function _toPlain(value) {
-  if (value === null || value === undefined) return value
-  if (typeof value !== 'object') return value
-  return JSON.parse(JSON.stringify(value))
-}
-
-onMounted(load)
 </script>
 
 <style scoped>

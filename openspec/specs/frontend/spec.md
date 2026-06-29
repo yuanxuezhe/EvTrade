@@ -10,64 +10,54 @@
 
 ## Requirements
 
-### REQ-FE-100: 业务数据 IndexedDB 持久化
+### REQ-FE-100: 业务数据生命周期 (纯 Pinia 内存)
 
-The system SHALL persist 4 business data tables to IndexedDB to enable instant restore on page refresh:
-- 资金 (asset)
-- 持仓 (positions)
-- 委托 (orders)
-- 成交 (trades)
+The system SHALL hold the 4 business data tables (资金 / 持仓 / 委托 / 成交) in Pinia stores as the in-memory source of truth. There is no client-side persistent storage (IDB / localStorage) for these tables.
 
-#### Scenario: 启动恢复
+- 资金 → `useAssetStore().asset`
+- 持仓 → `useHoldingsStore().positions` (v8 单一源)
+- 委托 → `useHoldingsStore().orders`
+- 成交 → `useHoldingsStore().trades`
 
-- **WHEN** user opens the app and is authenticated
-- **THEN** `main.js` triggers `rehydrateFromIDB()` BEFORE `app.mount()`, which:
-  1) opens `evtrade-cache` IDB
-  2) checks `_meta.schema_version` — if mismatch, deletes and recreates the database
-  3) reads 4 object stores in parallel (`asset` / `positions` / `orders` / `trades`)
-  4) writes data back to corresponding Pinia stores
-  5) rehydrate failures degrade silently (Pinia uses initial empty values)
+#### Scenario: 启动 (无持久化)
 
-#### Scenario: API 写透 (write-through)
+- **WHEN** user opens the app
+- **THEN** Pinia stores start with empty initial values; `main.js` mounts App directly without any persistence rehydration
+- **AND** `holdingsStore.bootstrap()` (called after login) populates stores by calling 4 parallel API endpoints
+- **AND** business pages show empty state until bootstrap completes (then immediately reflect server data)
 
-- **WHEN** `fetchAsset()` / `fetchPositions()` completes successfully
-- **THEN** the fetched data is written to IDB via `bulkReplace(storeName, items)` after Pinia state updates
+#### Scenario: API fetch → Pinia (无 IDB 写透)
 
-#### Scenario: WS 推送增量写
+- **WHEN** `fetchAsset()` / `fetchPositions()` / `holdings.refreshAll()` completes
+- **THEN** only Pinia state is updated; no IDB / localStorage write happens
+- **AND** business pages reactively re-render via Vue's standard reactive propagation
+
+#### Scenario: WS push → Pinia (无 IDB 增量)
 
 - **WHEN** ws push handler (e.g. `applyOrderPush`) merges a row into Pinia state
-- **THEN** the merged row is upserted to IDB by primary key (stock_code / order_no / [trd_date, trade_id]) via `putItem()`
-- `applyQuote` does NOT persist (quote is real-time, not cached)
+- **THEN** only Pinia state is updated; no IDB write happens
+- `applyQuote` does NOT touch any persistent storage (quote is real-time, ephemeral)
 
-#### Scenario: Schema 升级 (全量清空)
+#### Scenario: F5 刷新
 
-- **WHEN** `SCHEMA_VERSION` constant in `idbStore.js` is incremented
-- **THEN** on next DB open, `_meta.schema_version` mismatch triggers `deleteDB('evtrade-cache')` and recreates all 5 object stores fresh; user sees empty tables until next API call refills
+- **WHEN** user refreshes the page (F5)
+- **THEN** all 4 Pinia tables reset to empty; bootstrap re-fetches from server
+- **AND** there is no offline cache to restore — this is the expected trade-off for simpler architecture (调试工具的职责范围内)
 
-#### Scenario: 不持久化的 store
+### REQ-FE-101: Admin 缓存查看器 (直读 Pinia CRUD)
 
-- **WHEN** considering other Pinia stores
-- **THEN** `auth` / `ui` / `ws*` / `quote` are NOT persisted (auth already handled by JWT, others are runtime state)
+The system SHALL provide an admin-only viewer with full CRUD (Create / Read / Update / Delete) **directly on the 4 Pinia business tables** (no IDB layer), available as 4 separate routes:
 
-#### Scenario: DevTools 浏览
-
-- **WHEN** developer wants to inspect cached data
-- **THEN** open Chrome DevTools → Application → IndexedDB → `evtrade-cache` → 5 object stores visible (asset / positions / orders / trades / _meta)
-
-### REQ-FE-101: Admin 缓存查看器 (CRUD)
-
-The system SHALL provide an admin-only viewer with full CRUD (Create / Read / Update / Delete) on the 4 IDB business tables, available as 4 separate routes:
-
-| Route | View | IDB Store | Allowed Ops |
+| Route | View | Pinia ref | Allowed Ops |
 |---|---|---|---|
-| `/admin/cache/asset`     | `CacheAsset.vue`     | `asset`     | **Update only** (singleton 1 行) |
-| `/admin/cache/positions` | `CachePositions.vue` | `positions` | CRUD + Clear |
-| `/admin/cache/orders`    | `CacheOrders.vue`    | `orders`    | CRUD + Clear |
-| `/admin/cache/trades`    | `CacheTrades.vue`    | `trades`    | CRUD + Clear (composite key [trd_date, trade_id]) |
+| `/admin/cache/asset`     | `CacheAsset.vue`     | `useAssetStore().asset`     | **Update only** (singleton 1 行) |
+| `/admin/cache/positions` | `CachePositions.vue` | `useHoldingsStore().positions` | CRUD + Clear |
+| `/admin/cache/orders`    | `CacheOrders.vue`    | `useHoldingsStore().orders`    | CRUD + Clear |
+| `/admin/cache/trades`    | `CacheTrades.vue`    | `useHoldingsStore().trades`    | CRUD + Clear (composite key [trd_date, trade_id]) |
 
 All 4 routes have `meta.requiresAdmin: true` — non-admin users are redirected to `/` by the global router guard at [client/src/router/index.js](../../client/src/router/index.js).
 
-The shared component is [client/src/components/CacheTableView.vue](../../client/src/components/CacheTableView.vue) — receives `storeName` + `fields` + `keyField` + `allowAdd/Delete/Clear` flags.
+The shared component is [client/src/components/CacheTableView.vue](../../client/src/components/CacheTableView.vue) — receives `rowsRef` (响应式 ref) + `keyField` + `fields` + `allowAdd/Delete/Clear` flags. CRUD directly mutates the supplied ref, which is the same object the business pages read — no emit / re-fetch needed.
 
 #### Scenario: 路由守卫
 
@@ -82,38 +72,34 @@ The shared component is [client/src/components/CacheTableView.vue](../../client/
 #### Scenario: 资金表 (asset) 只允许改
 
 - **WHEN** admin opens `/admin/cache/asset`
-- **THEN** "新增" and "删" buttons are NOT shown (only "刷新" + "改" per row)
+- **THEN** "新增" and "删" buttons are NOT shown (only "改" for the singleton row)
 - **WHEN** admin edits the singleton row
-- **THEN** `putItem('asset', {id: 'singleton', ...edited})` overwrites the single row
+- **THEN** `useAssetStore().asset` is mutated in place; the same object is read by `Asset.vue` (and via the watch — by `holdingsStore.cachedAsset`)
 
 #### Scenario: 持仓 / 委托 / 成交表全 CRUD
 
 - **WHEN** admin opens any of `/admin/cache/positions|orders|trades`
-- **THEN** toolbar shows "刷新 / 清空 / 新增"; each row has "改 / 删" buttons
+- **THEN** toolbar shows "清空 / 新增"; each row has "改 / 删" buttons
+- **WHEN** admin edits, adds, or deletes a row
+- **THEN** the array is mutated via `splice` / `unshift` so Vue's reactivity triggers downstream
 - **WHEN** admin clicks "清空"
-- **THEN** `clearStore(storeName)` runs; on next API call (e.g. refresh data) the table repopulates from server
+- **THEN** the array is emptied via `splice(0, length)`; the corresponding business page also shows empty data immediately
 
 #### Scenario: 成交表 (trades) 复合主键
 
 - **WHEN** admin edits or deletes a trade row
-- **THEN** key is the array `[trd_date, trade_id]` (IDB composite key); both fields are disabled in the edit dialog
+- **THEN** key is the array `[trd_date, trade_id]` (composite key); both fields are disabled in the edit dialog
 
-#### Scenario: 改动只影响本地
+#### Scenario: 改动只影响本地 (同源 ref)
 
-- **WHEN** admin performs any CRUD on the cache tables
-- **THEN** changes are written to IDB only; NO server API call is made — this is a debugging/inspection tool, not a real data mutation path
-
-#### Scenario: IDB 改动后通知业务页面刷新
-
-- **WHEN** admin performs put / delete / clear in the cache viewer
-- **THEN** `CacheTableView` emits `changed` event; the 4 page views handle it by calling corresponding store's `fetchAsset` / `fetchPositions` / `refreshAll`, which re-fetches from server and updates Pinia in-memory state
-- **AND** business pages (e.g. `Holdings.vue`, `Orders.vue`) which read from Pinia immediately see the latest data without page refresh
-- **NOTE**: server data overwrites the admin's local IDB edits (server is the source of truth on next refresh); if persistence of admin edits is needed, a separate "override layer" design is required (out of scope)
+- **WHEN** admin performs any CRUD in the cache viewer
+- **THEN** changes mutate the Pinia ref directly; NO server API call is made
+- **AND** business pages (e.g. `Holdings.vue`, `Orders.vue`) which read the **same ref** see the new data immediately via Vue's reactive propagation — no manual refresh, no event emit, no store action
 
 #### Scenario: 列名带英文 key 后缀
 
 - **WHEN** admin views any cache table (header or edit dialog form-item)
-- **THEN** each column label renders as `"中文 (english_key)"` e.g. `现金 (cash)`, `总资产 (total_asset)` — so admin can directly map displayed column to the actual IDB key without consulting the schema separately
+- **THEN** each column label renders as `"中文 (english_key)"` e.g. `现金 (cash)`, `总资产 (total_asset)` — so admin can directly map displayed column to the actual Pinia field key without consulting the schema separately
 
 
 

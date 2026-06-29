@@ -1,32 +1,33 @@
 <!--
   CacheAsset.vue — 资金表 (singleton, 只改)
-  IDB store: asset, keyField: id (固定 'singleton')
+  数据源: useAssetStore().asset (Pinia 内存)
+  v8: 资金实际在 holdings.cachedAsset, asset store 是同步镜像
+       这里直接改 asset.asset, 通过 watch 自动同步
 -->
 <template>
   <CacheTableView
-    store-name="asset"
+    :rows-ref="assetRef"
+    key-field="id"
     :fields="fields"
     title="资金缓存 (asset)"
     :allow-add="false"
     :allow-delete="false"
-    key-field="id"
-    @changed="onChanged"
   />
 </template>
 
 <script setup>
+import { computed } from 'vue'
 import CacheTableView from '../components/CacheTableView.vue'
 import { useAssetStore } from '../stores/asset'
 
-// admin 在 cache-viewer 改资金后, 立即从 server 拉最新资金刷新 Pinia,
-// 让 Asset.vue 等业务页面看到新数据 (而非旧的内存副本)
-async function onChanged() {
-  const assetStore = useAssetStore()
-  await assetStore.fetchAsset()
-}
+const assetStore = useAssetStore()
+// 直接暴露 store.asset 引用 — Vue 响应式自动双向同步
+const assetRef = computed({
+  get: () => assetStore.asset,
+  set: (v) => { assetStore.asset = v },
+})
 
-// 资金表字段 (与 server AssetOut schema 对齐)
-// 字段最小宽度 = header "中文 (english_key)" 字符数 * 14px + padding
+// 资金表字段
 const fields = [
   { key: 'id', label: 'ID', width: 130, required: true },
   { key: 'cash', label: '现金', width: 140 },

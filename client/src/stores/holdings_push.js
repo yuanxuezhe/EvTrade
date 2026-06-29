@@ -14,7 +14,7 @@
  *   applyQuote        — ws._onQuote 调（按 positionCodes 白名单过滤）
  */
 import { nowHMS, todayYYYYMMDD, recomputeStatus } from './holdings_helpers'
-import { putItem } from '../utils/idbStore'
+// 注: 之前的 IDB 持久化已废弃. 当前架构纯 Pinia 内存, ws push 只改内存.
 
 /**
  * 创建 5 个 ws push handler
@@ -25,7 +25,7 @@ import { putItem } from '../utils/idbStore'
 export function createPushHandlers(deps) {
   const { positions, orders, trades, cachedAsset, activeTrdDate, log, positionCodes, getQuoteStore } = deps
 
-  /** ws._onPositionCfm 调用：合并持仓推送 + 写日志 + 写 IDB */
+  /** ws._onPositionCfm 调用：合并持仓推送 + 写日志 */
   function applyPositionPush(row) {
     if (!row || !row.stock_code) return
     const idx = positions.value.findIndex((p) => p.stock_code === row.stock_code)
@@ -34,14 +34,10 @@ export function createPushHandlers(deps) {
     } else if (row.volume) {
       positions.value.unshift(row)
     }
-    // 增量写 IDB 持仓表 (upsert by stock_code)
-    putItem('positions', positions.value[idx] || row).catch((e) => {
-      console.warn('[applyPositionPush] IDB 写失败:', e)
-    })
     log('info', '交易', 'ws', `持仓推送: ${row.stock_code} → ${row.vol}@${row.cost_price}`)
   }
 
-  /** ws._onAssetCfm 调用：写资金 + 写 IDB */
+  /** ws._onAssetCfm 调用：写资金 */
   function applyAssetPush(row) {
     if (!row) return
     cachedAsset.value = {
@@ -50,10 +46,6 @@ export function createPushHandlers(deps) {
       market_value: Number(row.market_value) || 0,
       total_asset: Number(row.total_asset) || 0
     }
-    // 写 IDB 资金表 (singleton 覆盖)
-    putItem('asset', { id: 'singleton', ...cachedAsset.value }).catch((e) => {
-      console.warn('[applyAssetPush] IDB 写失败:', e)
-    })
     log('info', '交易', 'ws', `资产推送: 总资产 ¥${cachedAsset.value.total_asset.toLocaleString()}`)
   }
 
@@ -83,11 +75,6 @@ export function createPushHandlers(deps) {
       } else {
         orders.value.unshift(row)
       }
-      // 增量写 IDB 委托表 (cancel-row)
-      const cancelRow = orders.value[idx] || row
-      putItem('orders', cancelRow).catch((e) => {
-        console.warn('[applyOrderPush cancel-row] IDB 写失败:', e)
-      })
       log('info', '交易', 'ws', `撤单审计: ${row.stock_code} ${row.order_no} status=${row.status} (order_flag=1)`)
       return
     }
@@ -101,11 +88,6 @@ export function createPushHandlers(deps) {
       orders.value.unshift(row)
       log('info', '交易', 'ws', `新委托: ${row.stock_code} ${row.order_type === '23' ? '买' : '卖'} ${row.volume}@${row.price}`)
     }
-    // 增量写 IDB 委托表 (upsert by order_no)
-    const finalOrder = orders.value[idx] || row
-    putItem('orders', finalOrder).catch((e) => {
-      console.warn('[applyOrderPush] IDB 写失败:', e)
-    })
   }
 
   /** ws._onTradeCfm 调用
@@ -144,13 +126,6 @@ export function createPushHandlers(deps) {
         log('ok', '交易', 'ws', `撤单审计: ${row.stock_code} 取消 ${row.volume}@${row.price} (${row.trade_id})`)
       } else {
         log('ok', '交易', 'ws', `成交通知: ${row.stock_code} ${row.order_type === '23' ? '买' : '卖'} ${row.volume}@${row.price}`)
-      }
-      // 增量写 IDB 成交表 (复合键 [trd_date, trade_id], 直接 put)
-      const finalTrade = trades.value[0]
-      if (finalTrade) {
-        putItem('trades', finalTrade).catch((e) => {
-          console.warn('[applyTradePush] IDB 写失败:', e)
-        })
       }
     }
   }
