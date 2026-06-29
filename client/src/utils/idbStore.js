@@ -11,7 +11,7 @@
  *   - _meta: 2-3 行, 存 schema_version / last_rehydrate_ms / last_write_ms
  *
  * Schema 升级策略: 改 SCHEMA_VERSION 即触发 deleteDatabase + 重建
- *   - 升级时: 旧 DB 整库删, 启动后下次 API 调用触发 bulkPut 重新灌入
+ *   - 升级时: 旧 DB 整库删, 启动后下次 API 调用触发 bulkReplace 重新灌入
  *   - 不写迁移函数 (用户选 "全量清空, 简单粗暴")
  *
  * DevTools 浏览: Application > IndexedDB > evtrade-cache > 5 个 object store
@@ -140,14 +140,21 @@ export async function deleteItem(storeName, key) {
 }
 
 /**
- * 批量 upsert (clear + bulkPut)。用于 fetchXxx 完成后的全量同步。
+ * 批量 upsert (clear + 多 put)。用于 fetchXxx 完成后的全量同步。
+ *
+ * idb v8 注意:
+ *   - tx.store.bulkPut **不存在** (v8 移除了批量便捷方法,只暴露 IDB 标准 API)
+ *   - tx.store.put(value, key) 存在且 async, 可并行 await
+ *   - 也可以走非事务 db.clear + 多次 db.put, IDB 会自动合并到 readwrite 事务
+ *
+ * 事务写法选: 显式 readwrite 事务, 保证 clear + puts 原子性 (中途失败 → 全回滚)
  */
 export async function bulkReplace(storeName, items) {
   const db = await openCacheDB()
   const tx = db.transaction(storeName, 'readwrite')
   await tx.store.clear()
   if (items && items.length > 0) {
-    await tx.store.bulkPut(items)
+    await Promise.all(items.map((item) => tx.store.put(item)))
   }
   await tx.done
 }
