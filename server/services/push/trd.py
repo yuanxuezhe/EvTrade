@@ -8,16 +8,16 @@ push_handler_trd.py — trd_cfm 处理（v10: broker 原字段名）
 - 用 _infer_order_status 本地推断 status（不传 broker_status，trd_cfm 永远不写撤单类）
 - v10 字段对齐：读 broker 原字段 `traded_id`/`traded_volume`/`traded_price`/`traded_amount`/`traded_time`
 """
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from sqlalchemy.orm import Session
 
 from server.models.orm import Order, Trade
 from server.services.order_status import _get_active_trd_date, _infer_order_status, _status_msg
-from server.services.push.helpers import _float, _int, _str, _utcnow, parse_broker_ts
+from server.services.push.helpers import _float, _int, _str, _utcnow, parse_broker_ts, _order_to_out_dict, _trade_to_out_dict
 
 
-def handle_trd_cfm(db: Session, row: Dict[str, Any], ts: str) -> None:
+def handle_trd_cfm(db: Session, row: Dict[str, Any], ts: str) -> Optional[Dict[str, Any]]:
     """处理 trd_cfm 推送（v10: broker 原字段名）
 
     柜台字段（v10 broker 原字段名，权威源: iquant/xtquant_api.py 第 297-307 行）:
@@ -44,7 +44,7 @@ def handle_trd_cfm(db: Session, row: Dict[str, Any], ts: str) -> None:
     if not broker_remark:
         print("[trd_cfm] WARN: no order_no (remark 缺失),跳过 traded_id={}".format(
             row.get('traded_id', '')))
-        return
+        return None
 
     trade_id = _str(row.get('traded_id', ''))  # v10: 原字段名
     if not trade_id:
@@ -56,7 +56,7 @@ def handle_trd_cfm(db: Session, row: Dict[str, Any], ts: str) -> None:
         trd_date=trd_date, order_no=broker_remark, trade_id=trade_id
     ).first()
     if existing:
-        return
+        return None
 
     # v7: 优先用 remark (= 本地 order_no) 查 Order,broker order_id 只作兜底
     order = db.query(Order).filter_by(order_no=broker_remark, trd_date=trd_date).first()
@@ -96,3 +96,8 @@ def handle_trd_cfm(db: Session, row: Dict[str, Any], ts: str) -> None:
     print("[trd_cfm] inserted trade_id={} order_no={} vol={} px={} order_status={}".format(
         trade_id, broker_remark, trade.volume, trade.price,
         order.status if order else 'N/A'))
+
+    return {
+        "trade": _trade_to_out_dict(trade),
+        "order": _order_to_out_dict(order),
+    }

@@ -10,7 +10,7 @@ phase-2 之后 push_handlers 仅做兼容垫片，实质内容下沉到此处。
   - server/test_push_async.py  handle_push
 """
 import logging
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from sqlalchemy.orm import Session
 
@@ -38,16 +38,17 @@ HANDLERS = {
 }
 
 
-def handle_push(db: Session, func: str, row: Dict[str, Any], ts: str) -> None:
+def handle_push(db: Session, func: str, row: Dict[str, Any], ts: str) -> Optional[Dict[str, Any]]:
     """统一入口 — 同步签名（向后兼容 test_push_handlers.py 11 用例）。
 
+    返回 handler 的结果（OrderOut/TradeOut 兼容 dict），供 WS 推送重组包。
     实际调用方在 rpc/transport.py 走 loop.run_in_executor 包装，不阻塞 event loop。
     """
     handler = HANDLERS.get(func)
     if not handler:
         log.warning("handle_push: unknown func=%r row=%r ts=%s", func, row, ts)
-        return
-    handler(db, row, ts)
+        return None
+    return handler(db, row, ts)
 
 
 __all__ = [

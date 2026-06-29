@@ -38,3 +38,46 @@ def _int(v: Any, default: int = 0) -> int:
         return int(v)
     except (TypeError, ValueError):
         return default
+
+
+def _order_to_out_dict(order) -> Optional[dict]:
+    """ORM Order → OrderOut 兼容 dict（WS 推送用）"""
+    if order is None:
+        return None
+    return {
+        "order_id": _str(order.order_id or ''),
+        "user_def": _str(order.user_def or ''),
+        "order_no": _str(order.order_no),
+        "trd_date": _str(order.trd_date),
+        "stock_code": _str(order.stock_code),
+        "order_type": _str(order.order_type),
+        "price_type": _int(order.price_type, 0),
+        "price": _float(order.price),
+        "volume": _int(order.volume),
+        "traded_volume": _int(order.traded_volume or 0),
+        "traded_amount": _float(order.traded_amount or 0),
+        "avg_price": _float(order.avg_price or 0),
+        "cancelled_volume": _int(order.cancelled_volume or 0),
+        "order_flag": _int(order.order_flag or 0),
+        "status": _str(order.status),
+        "status_msg": _str(order.status_msg or ''),
+        "order_time": _str(order.order_time or ''),
+    }
+
+
+def _trade_to_out_dict(trade) -> Optional[dict]:
+    """ORM Trade → TradeOut 兼容 dict（WS 推送用）"""
+    if trade is None:
+        return None
+    return {
+        "trade_id": _str(trade.trade_id),
+        "trd_date": _str(trade.trd_date),
+        "order_no": _str(trade.order_no),
+        "stock_code": _str(trade.stock_code),
+        "order_type": _str(trade.order_type),
+        "price": _float(trade.price),
+        "volume": _int(trade.volume),
+        "amount": _float(trade.amount),
+        "trade_time": _str(trade.trade_time or ''),
+        "trade_type": _int(trade.trade_type or 0),
+    }

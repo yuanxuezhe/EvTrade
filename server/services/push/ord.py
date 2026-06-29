@@ -8,16 +8,16 @@ push_handler_ord.py — ord_cfm 处理（v10: broker 原字段名 + order_time �
 - 用 _infer_order_status 本地推断 status（不直接抄 broker）
 - v10 字段对齐：读 broker 原字段 `order_status`（不再 alias `status`）、`order_time`、`order_volume`
 """
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from sqlalchemy.orm import Session
 
 from server.models.orm import Order
 from server.services.order_status import _infer_order_status, _status_msg
-from server.services.push.helpers import _int, _str, _utcnow, parse_broker_ts
+from server.services.push.helpers import _float, _int, _str, _utcnow, parse_broker_ts, _order_to_out_dict
 
 
-def handle_ord_cfm(db: Session, row: Dict[str, Any], ts: str) -> None:
+def handle_ord_cfm(db: Session, row: Dict[str, Any], ts: str) -> Optional[Dict[str, Any]]:
     """处理 ord_cfm 推送（v10: 简化为只填 order_id + 推断 status + order_time）
 
     柜台字段（v10 broker 原字段名，权威源: iquant/xtquant_api.py 第 282-295 行）:
@@ -38,7 +38,7 @@ def handle_ord_cfm(db: Session, row: Dict[str, Any], ts: str) -> None:
 
     if not broker_order_id and not broker_remark:
         print("[ord_cfm] skip: no order_id and no remark")
-        return
+        return None
 
     # 用 broker.remark (= 我们下传的 order_no) 匹配本地 Order
     order = None
@@ -53,7 +53,7 @@ def handle_ord_cfm(db: Session, row: Dict[str, Any], ts: str) -> None:
         # 不创建新单(避免错位),只打日志
         print("[ord_cfm] WARN: no local order for order_id={} remark={}".format(
             broker_order_id, broker_remark))
-        return
+        return None
 
     # v6: 不再有 PENDING- 占位,broker order_id 直接写入(覆盖 NULL)
     if broker_order_id and order.order_id != broker_order_id:
@@ -92,3 +92,5 @@ def handle_ord_cfm(db: Session, row: Dict[str, Any], ts: str) -> None:
     print("[ord_cfm] updated order_no={} order_id={} status={} (broker_status={}, cum={}/{})".format(
         order.order_no, order.order_id, order.status, broker_status,
         order.traded_volume, order.volume))
+
+    return _order_to_out_dict(order)

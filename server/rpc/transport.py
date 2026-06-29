@@ -74,7 +74,7 @@ def _wire_dump(pkt: "MsgPacket") -> str:
     return s or ""
 
 
-def _run_handle_push(func: str, row: Dict[str, Any], ts: str) -> None:
+def _run_handle_push(func: str, row: Dict[str, Any], ts: str) -> Optional[Dict[str, Any]]:
     """push 落库 helper（REQ-PUSH-006）：新线程内跑 SessionLocal + handle_push + commit。
 
     设计要点：
@@ -82,13 +82,15 @@ def _run_handle_push(func: str, row: Dict[str, Any], ts: str) -> None:
     - SessionLocal 每次新建，独立 session 安全无共享状态
     - 异常向上抛回 await 处，由 listener 捕获并 log
     - handle_push 同步签名不变（向后兼容 test_push_handlers.py 11 用例）
+    - 返回 handler 的重组包结果（OrderOut/TradeOut 兼容 dict）
     """
     from server.db import SessionLocal
     from server.services.push_handlers import handle_push
     db = SessionLocal()
     try:
-        handle_push(db, func, row, ts)
+        result = handle_push(db, func, row, ts)
         db.commit()
+        return result
     except Exception:
         db.rollback()
         raise
@@ -263,36 +265,71 @@ class RPClient:
                             # 注入:trd_date 用激活日(覆盖 broker 推的,保证权威)
                             enriched_row = {**row, "trd_date": active_trd_date} if active_trd_date else row
 
-                            # lazy import: 见模块顶部说明
+                            # lazy import
                             from server.utils.time import format_ts
-                            payload = {
-                                "type": func,
-                                "channel": channel,
-                                # v10: 标准格式 "YYYY-MM-DD HH:MM:SS.fff" (覆盖 broker 推的紧凑串)
-                                "ts": format_ts(tz='local'),
-                                "data": enriched_row,
-                            }
+                            push_ts = format_ts(tz='local')
 
                             # v8 持久化（异步）：run_in_executor 包裹，不阻塞 event loop（REQ-PUSH-006）
-                            # Python 3.6 无 asyncio.to_thread, 用 run_in_executor(None, ...) 替代
-                            # 抽 _run_handle_push 到新线程跑，listener 主线程继续消费后续 push
+                            # handler 返回重组包数据（OrderOut/TradeOut 格式）
+                            handler_result = None
                             try:
                                 loop = asyncio.get_event_loop()
-                                await loop.run_in_executor(None, _run_handle_push, func, enriched_row, payload["ts"])
+                                handler_result = await loop.run_in_executor(
+                                    None, _run_handle_push, func, enriched_row, push_ts)
                             except Exception as e:
                                 log.error("RPClient.push handle_push error: %s", e)
 
+                            # trd_cfm: handler 返回 {"trade": TradeOut, "order": OrderOut}
+                            if func == "trd_cfm" and isinstance(handler_result, dict) and handler_result.get("trade"):
+                                trade_data = handler_result["trade"]
+                                order_data = handler_result.get("order")
+
+                                # 广播成交到 trade_update
+                                trade_payload = {
+                                    "type": func,
+                                    "channel": channel,
+                                    "ts": push_ts,
+                                    "data": trade_data,
+                                }
+                                log.info(
+                                    "RPClient.push broadcast → %s (trd_date=%s)%s",
+                                    channel, active_trd_date or "?",
+                                    "\n" + "\n".join(
+                                        "  " + k + " = " + repr(v)
+                                        for k, v in sorted(trade_data.items())
+                                    ),
+                                )
+                                await ws_manager.broadcast(channel, trade_payload, trace_id=push_trace)
+
+                                # 成交后同步委托状态到 order_update
+                                if order_data:
+                                    order_payload = {
+                                        "type": "ord_cfm",
+                                        "channel": "order_update",
+                                        "ts": push_ts,
+                                        "data": order_data,
+                                    }
+                                    await ws_manager.broadcast("order_update", order_payload, trace_id=push_trace)
+                                continue
+
+                            # ord_cfm / pos_cfm / ast_cfm: 用 handler 结果或 fallback
+                            broadcast_data = handler_result if handler_result is not None else enriched_row
+                            broadcast_payload = {
+                                "type": func,
+                                "channel": channel,
+                                "ts": push_ts,
+                                "data": broadcast_data,
+                            }
                             log.info(
                                 "RPClient.push broadcast → %s (trd_date=%s)%s",
                                 channel,
                                 active_trd_date or "?",
                                 "\n" + "\n".join(
                                     "  " + k + " = " + repr(v)
-                                    for k, v in sorted(enriched_row.items())
-                                ) if enriched_row else " (empty row)",
+                                    for k, v in sorted(broadcast_data.items())
+                                ) if broadcast_data else " (empty row)",
                             )
-                            # v10: 透传 push trace_id 给 WS broadcast, 链路配对
-                            await ws_manager.broadcast(channel, payload, trace_id=push_trace)
+                            await ws_manager.broadcast(channel, broadcast_payload, trace_id=push_trace)
                     except Exception as e:
                         log.exception("RPClient.push decode/handle error: %s", e)
 

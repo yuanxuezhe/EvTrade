@@ -109,27 +109,24 @@ export function createPushHandlers(deps) {
       //   前端做 T 敞口/配平需要 order_no 关联委托
       //   trd_date 用于跨日分组; remark 用于关联 Order.remark = 本地 order_no
       const tradeType = Number(row.trade_type) || 0
-      // v10: broker 原字段名 traded_volume/traded_price/traded_amount/traded_time
-      const vol = Number(row.traded_volume) || Number(row.volume) || 0
-      const px = Number(row.traded_price) || Number(row.price) || 0
-      const amt = Number(row.traded_amount) || Number(row.amount) || vol * px
+      // 后端重组包后: row 已是 TradeOut 格式 (volume/price/amount/trade_time)
       trades.value.unshift({
         trade_id: row.trade_id,
         order_id: row.order_id || '',
-        order_no: row.order_no || row.remark || '',
+        order_no: row.order_no || '',
         trd_date: row.trd_date || todayYYYYMMDD(),
         stock_code: row.stock_code || '',
         order_type: row.order_type || '',
-        volume: vol,
-        price: px,
-        amount: amt,
-        trade_time: row.traded_time || row.trade_time || nowHMS(),
+        volume: Number(row.volume) || 0,
+        price: Number(row.price) || 0,
+        amount: Number(row.amount) || 0,
+        trade_time: row.trade_time || nowHMS(),
         trade_type: tradeType
       })
       if (tradeType === 1) {
-        log('ok', '交易', 'ws', `撤单审计: ${row.stock_code} 取消 ${vol}@${px} (${row.trade_id})`)
+        log('ok', '交易', 'ws', `撤单审计: ${row.stock_code} 取消 ${row.volume}@${row.price} (${row.trade_id})`)
       } else {
-        log('ok', '交易', 'ws', `成交通知: ${row.stock_code} ${String(row.order_type) === '23' ? '买' : '卖'} ${vol}@${px}`)
+        log('ok', '交易', 'ws', `成交通知: ${row.stock_code} ${String(row.order_type) === '23' ? '买' : '卖'} ${row.volume}@${row.price}`)
       }
     }
   }

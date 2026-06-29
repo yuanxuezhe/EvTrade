@@ -50,67 +50,40 @@ function _onQuote(row) {
 }
 
 function _onOrderCfm(row) {
-  // v8: 单一缓存源 - 只走 holdings.applyOrderPush
-  //   - 匹配键 = order_no（本地 PK），broker 推的 row.order_no 由后端注入（OrderOut 字段）
-  //   - 兜底: row.remark ≡ order_no（broker 透传）
-  //   - 后端 push 链路已注入 trd_date = activeTrdDate（权威）, 前端守门在 holdings 内部
-  //   - 防御性 status 重算 holdings 内部完成
-  const orderNo = row.order_no || row.remark || ''
-  if (!orderNo) {
-    console.warn('[ws._onOrderCfm] 缺 order_no/remark, 跳过:', row)
+  // 后端重组包后，row 已是 OrderOut 格式（order_no/status/stock_code 等）
+  if (!row || !row.order_no) {
+    console.warn('[ws._onOrderCfm] 缺 order_no, 跳过:', row)
     return
-  }
-  const status = row.status || row.order_status || ''
-  const code = row.stock_code || ''
-  const mapped = _mapOrderStatus(status)
-
-  // 构造完整 row（兜底 remark, status_msg; 调一次 holdings.applyOrderPush 单点入口）
-  const enriched = {
-    ...row,
-    order_no: orderNo,
-    // v8: 兜底 status 字符串（holdings.applyOrderPush 会再用 inferOrderStatus 重算）
-    status: mapped || status || row.status || ''
   }
 
   try {
     const holdings = useHoldingsStore()
-    holdings.applyOrderPush(enriched, 'update')
+    holdings.applyOrderPush(row, 'update')
   } catch (e) {
     console.error('[ws._onOrderCfm] applyOrderPush failed:', e)
   }
 
-  _notifyOrder(code, mapped || status, enriched)
+  _notifyOrder(row.stock_code, row.status, row)
 }
 
 function _onTradeCfm(row) {
-  // v8: 单一缓存源 - 只走 holdings.applyTradePush
-  //   - 匹配键 = trade_id（broker 推 traded_id 兼容 trade_id）
-  //   - trd_date 由后端 push 链路注入 = activeTrdDate
-  //   - order_no: 兜底 row.remark（broker 透传）
-  const tradeId = row.traded_id || row.trade_id || ''
-  if (!tradeId) {
-    console.warn('[ws._onTradeCfm] 缺 trade_id/traded_id, 跳过:', row)
+  // 后端重组包后，row 已是 TradeOut 格式（trade_id/volume/price 等）
+  if (!row || !row.trade_id) {
+    console.warn('[ws._onTradeCfm] 缺 trade_id, 跳过:', row)
     return
-  }
-  const enriched = {
-    ...row,
-    trade_id: tradeId,
-    order_no: row.order_no || row.remark || ''
   }
 
   try {
     const holdings = useHoldingsStore()
-    holdings.applyTradePush(enriched)
+    holdings.applyTradePush(row)
   } catch (e) {
     console.error('[ws._onTradeCfm] applyTradePush failed:', e)
   }
 
-  const tradedVol = row.traded_volume || row.volume || 0
-  const tradedPx = row.traded_price || row.price || 0
   const dir = String(row.order_type) === '24' ? '卖' : '买'
   ElNotification({
     title: '成交通知',
-    message: `${row.stock_code || ''} ${dir} ${tradedVol}@${tradedPx}`,
+    message: `${row.stock_code} ${dir} ${row.volume}@${row.price}`,
     type: 'success',
     duration: 4000
   })
@@ -164,16 +137,8 @@ function _notifyOrder(code, status, row) {
   else if (s === '55' || s === '52') { nType = 'warning'; msg = `${code} 部成 ${filled}/${volume}` }
   else if (s === '57') { nType = 'error'; msg = `${code} 废单${row.status_msg ? '：' + row.status_msg : ''}` }
   else if (s === '54' || s === '53') { nType = 'info'; msg = `${code} 已撤单` }
+  else if (s === '50') { nType = 'warning'; msg = `${code} 部成 ${filled}/${volume}` }
+  else if (s === '49') { nType = 'info'; msg = `${code} 已报` }
 
   ElNotification({ title: '委托更新', message: msg, type: nType, duration: 3500 })
-}
-
-// ---- 工具 --------------------------------------------------------------
-
-function _mapOrderStatus(raw) {
-  if (!raw) return ''
-  const s = String(raw).trim()
-  if (!s) return ''
-  // 已经是柜台数字（48-57 / 255）或已知的英文 key，都原样返回
-  return s
 }

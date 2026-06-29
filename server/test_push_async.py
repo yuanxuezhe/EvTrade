@@ -159,6 +159,6 @@ def test_handle_push_signature_unchanged():
     assert "row" in params
     assert "ts" in params
 
-    # 返回类型
-    assert sig.return_annotation in (None, "None"), \
-        f"return annotation changed: {sig.return_annotation}"
+    # 返回类型: Optional[Dict[str, Any]] (WS 推送重组包)
+    assert sig.return_annotation in (None, "None", "Optional[Dict[str, Any]]"), \
+        f"return annotation unexpected: {sig.return_annotation}"
