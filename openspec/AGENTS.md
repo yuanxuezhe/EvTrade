@@ -87,6 +87,8 @@ mv openspec/changes/<name> openspec/changes/archive/<date>-<name>
 - [ ] 步骤 1 的 `proposal.md` 引用了知识库对应章节（可点击跳转）
 - [ ] 知识库与现状一致后，才进入 `/openspec:proposal`
 
+> **静态知识辅助**：如需参考"被 OpenSpec 接管前的完整 spec 演进"或"阶段性大型设计 + 实施计划"，查阅 [../docs/](../docs/)。`openspec/`（活工作流）与 `docs/`（静态沉淀）是两套独立体系，**禁止合并**——详见 [specs/dev-process-control/spec.md](specs/dev-process-control/spec.md) §"文档目录双体系约定"。
+
 ## 约定
 
 - **业务数据源（v4）**：本地 SQLite（orders/trades/positions/assets）是展示源；RPC 只用于下单/撤单/对账时的事实写入
