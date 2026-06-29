@@ -7,6 +7,7 @@ import 'element-plus/dist/index.css'
 import './assets/styles/main.css'
 import App from './App.vue'
 import router from './router'
+import { rehydrateFromIDB } from './utils/cacheRehydrate'
 
 const app = createApp(App)
 
@@ -18,7 +19,12 @@ for (const [key, component] of Object.entries(ElementPlusIconsVue)) {
 app.use(createPinia())
 app.use(router)
 app.use(ElementPlus, { locale: zhCn })
-app.mount('#app')
+
+// 在 App mount 之前从 IndexedDB 恢复 4 张业务表 (资金/持仓/委托/成交)
+// 失败不阻塞启动, 降级为空缓存
+rehydrateFromIDB().finally(() => {
+  app.mount('#app')
+})
 
 // 初始化主题：从 localStorage 读取
 const savedTheme = localStorage.getItem('evtrade-theme')
