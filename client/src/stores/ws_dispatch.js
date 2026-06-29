@@ -105,9 +105,12 @@ function _onTradeCfm(row) {
     console.error('[ws._onTradeCfm] applyTradePush failed:', e)
   }
 
+  const tradedVol = row.traded_volume || row.volume || 0
+  const tradedPx = row.traded_price || row.price || 0
+  const dir = String(row.order_type) === '24' ? '卖' : '买'
   ElNotification({
     title: '成交通知',
-    message: `${row.stock_code || ''} 成交 ${row.volume || 0}@${row.price || 0}`,
+    message: `${row.stock_code || ''} ${dir} ${tradedVol}@${tradedPx}`,
     type: 'success',
     duration: 4000
   })
