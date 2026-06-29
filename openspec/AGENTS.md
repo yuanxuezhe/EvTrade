@@ -87,7 +87,9 @@ mv openspec/changes/<name> openspec/changes/archive/<date>-<name>
 - [ ] 步骤 1 的 `proposal.md` 引用了知识库对应章节（可点击跳转）
 - [ ] 知识库与现状一致后，才进入 `/openspec:proposal`
 
-> **静态知识辅助**：如需参考"被 OpenSpec 接管前的完整 spec 演进"或"阶段性大型设计 + 实施计划"，查阅 [../docs/](../docs/)。`openspec/`（活工作流）与 `docs/`（静态沉淀）是两套独立体系，**禁止合并**——详见 [specs/dev-process-control/spec.md](specs/dev-process-control/spec.md) §"文档目录双体系约定"。
+> **静态知识辅助**：如需参考"被 OpenSpec 接管前的完整 spec 演进"或"阶段性大型设计 + 实施计划"，查阅 [../docs/index.md](../docs/index.md)。`openspec/`（活工作流）与 `docs/`（静态沉淀）是两套独立体系，**禁止合并**——详见 [specs/dev-process-control/spec.md](specs/dev-process-control/spec.md) §"文档目录双体系约定"。
+>
+> 4 份 API 契约文档（[xtquant-rpc.md](../docs/xtquant-rpc.md) / [server-rest-api.md](../docs/server-rest-api.md) / [ws-push.md](../docs/ws-push.md) / [msgpacket-python-api.md](../docs/msgpacket-python-api.md)）描述**字段级**实现细节，与本目录的**能力级** spec 并行存在。
 
 ## 约定
 
