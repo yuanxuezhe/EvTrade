@@ -339,3 +339,19 @@ And Asset/Holdings 等视图若订阅了该股则自动刷新
 - 🟢 ~~前端 5s 轮询 fetchOrders + 缓存双源（orderStore/holdings）~~ → **v8 已修**（change `2026-06-21-order-push-trd-date-authority`，统一 holdings 单一源 + 删 5s 轮询改手动刷新）
 - 🟢 ~~T0Trade.vue submitOrder 误读 res.code 永远走 else 分支~~ → **v8 已修**（同上 change，submitOrder 改 orderStore.placeOrder）
 - 🟢 ~~ws.test.js / useT0Balance.test.js 10 个预存失败~~ → **未修**（独立 issue，与 v8 改造无关）
+
+### REQ-FE-200: T0Trade 重新设计（中量行内仪表）
+
+- **背景**：原页面 1704 行，主表只占视口 25%，下方 7 个堆叠卡片（敞口/T0 成本/预期收益/exposure-card/一键动作/配平计算/仓位建议），数据大量重复
+- **严重 bug**：一键动作卡硬编码 600519.SH 茅台，与当前操作标的无关
+- **新布局**：
+  - Header + 设置条（标题右侧：仓位% + 价格档 + 刷新按钮）
+  - 主表占视口主体，列：代码/名称/持仓/现价/涨跌/**今盈**/**净敞口**/**浮盈%** / 操作
+  - 副行（expand 展开）：成本/成本额/今笔/胜率/30天 mini-sparkline
+  - 操作列 4 按钮：买X%（绿）/ 卖X%（红）/ 配±N（橙，动态文本"配+200"/"配-200"，0 净敞口灰显）/ 详情→
+  - 底部累计曲线（80px 高，按当前选中标的，7/30/90D 切换）
+  - 右侧抽屉保持（历史曲线 + 累计统计 + 30 日明细）
+- **删除项**：3 metric-card（敞口/T0 成本/预期收益）、exposure-card、一键动作卡（600519 硬编码）、配平计算卡、仓位管理建议卡、底部重复累计曲线
+- **保留**：useT0OrderSubmit / onQuickBuy/Sell/Balance / holdingsStore.refreshPositions / 抽屉
+- **移动端**（≤768px）：副行 sparkline 隐藏，曲线压缩到 60px
+- **行数**：1704 → 823（-52%）
