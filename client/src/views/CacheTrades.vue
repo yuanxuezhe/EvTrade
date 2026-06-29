@@ -8,11 +8,20 @@
     :fields="fields"
     title="成交缓存 (trades)"
     key-field="trd_date,trade_id"
+    @changed="onChanged"
   />
 </template>
 
 <script setup>
 import CacheTableView from '../components/CacheTableView.vue'
+import { useHoldingsStore } from '../stores/holdings'
+
+// admin 改成交 IDB 后, refreshAll() 拉最新 orders + trades + asset + positions
+// (v8: orders/trades 实际住在 holdings store, 改 IDB 后必须从 server 重新拉)
+async function onChanged() {
+  const holdingsStore = useHoldingsStore()
+  await holdingsStore.refreshAll()
+}
 
 // 成交表字段 (与 server TradeOut schema 对齐)
 // keyField 是 [trd_date, trade_id] 复合键, 改 / 删时通过 _formKey 内部处理

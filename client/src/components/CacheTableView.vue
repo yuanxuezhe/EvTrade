@@ -230,6 +230,7 @@ async function onSave() {
     ElMessage.success(editing.value ? '已保存' : '已新增')
     dialogVisible.value = false
     await load()
+    emit('changed', props.storeName)  // 通知父组件刷新 Pinia store
   } catch (e) {
     ElMessage.error(`保存失败: ${e.message || e}`)
   } finally {
@@ -252,6 +253,7 @@ async function onDelete(row) {
     await deleteItem(props.storeName, key)
     ElMessage.success('已删除')
     await load()
+    emit('changed', props.storeName)  // 通知父组件刷新 Pinia store
   } catch (e) {
     ElMessage.error(`删除失败: ${e.message || e}`)
   }
@@ -271,6 +273,7 @@ async function onClear() {
     await clearStore(props.storeName)
     ElMessage.success('已清空')
     await load()
+    emit('changed', props.storeName)  // 通知父组件刷新 Pinia store
   } catch (e) {
     ElMessage.error(`清空失败: ${e.message || e}`)
   }

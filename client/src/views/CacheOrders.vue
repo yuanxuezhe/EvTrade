@@ -8,11 +8,20 @@
     :fields="fields"
     title="委托缓存 (orders)"
     key-field="order_no"
+    @changed="onChanged"
   />
 </template>
 
 <script setup>
 import CacheTableView from '../components/CacheTableView.vue'
+import { useHoldingsStore } from '../stores/holdings'
+
+// admin 改委托 IDB 后, refreshAll() 拉最新 orders + trades + asset + positions
+// (v8: orders/trades 实际住在 holdings store, 改 IDB 后必须从 server 重新拉)
+async function onChanged() {
+  const holdingsStore = useHoldingsStore()
+  await holdingsStore.refreshAll()
+}
 
 // 委托表字段 (与 server OrderOut schema 对齐)
 // width = 字段最小宽度, header 文字 "中文 (key)" 单行能放下

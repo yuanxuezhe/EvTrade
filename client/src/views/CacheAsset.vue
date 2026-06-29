@@ -10,11 +10,20 @@
     :allow-add="false"
     :allow-delete="false"
     key-field="id"
+    @changed="onChanged"
   />
 </template>
 
 <script setup>
 import CacheTableView from '../components/CacheTableView.vue'
+import { useAssetStore } from '../stores/asset'
+
+// admin 在 cache-viewer 改资金后, 立即从 server 拉最新资金刷新 Pinia,
+// 让 Asset.vue 等业务页面看到新数据 (而非旧的内存副本)
+async function onChanged() {
+  const assetStore = useAssetStore()
+  await assetStore.fetchAsset()
+}
 
 // 资金表字段 (与 server AssetOut schema 对齐)
 // 字段最小宽度 = header "中文 (english_key)" 字符数 * 14px + padding
