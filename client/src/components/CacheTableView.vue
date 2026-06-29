@@ -71,8 +71,9 @@
           :key="f.key"
           :prop="f.key"
           :label="displayLabel(f)"
-          :width="f.width"
+          :min-width="f.width"
           :formatter="f.formatter"
+          :header-cell-style="{ whiteSpace: 'nowrap' }"
           show-overflow-tooltip
         />
         <el-table-column label="操作" width="160" fixed="right">
