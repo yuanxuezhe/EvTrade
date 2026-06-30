@@ -794,3 +794,118 @@ def test_place_response_ws_payload_has_trd_date_and_order_no(client, active_day,
     assert payload["remark"] == "10000001"  # broker 透传字段
     assert payload["order_id"] == "OID-WS"  # broker 带回
     assert payload["status"] == "49"
+
+
+# ──── start_date / end_date 区间查询 ────
+
+def _seed_order(db, trd_date, order_no, order_time="10:00:00"):
+    """区间查询测试用种子 helper：最少必填字段即可。"""
+    db.add(Order(
+        trd_date=trd_date,
+        order_id=f"OID-{order_no}",
+        user_def=f"UD-{order_no}",
+        order_no=order_no,
+        stock_code="600030.SH",
+        order_type="23",
+        price_type=11,
+        price=12.5,
+        volume=100,
+        status="49",
+        order_time=order_time,
+    ))
+
+
+def test_orders_with_date_range_returns_only_in_range(client, fresh_db, active_day):
+    """start_date/end_date 同时给 → 仅返回区间内"""
+    db = SessionLocal()
+    try:
+        _seed_order(db, trd_date="20260612", order_no="00000001", order_time="09:30:00")
+        _seed_order(db, trd_date="20260614", order_no="00000002", order_time="10:00:00")
+        _seed_order(db, trd_date="20260616", order_no="00000003", order_time="11:00:00")
+        db.commit()
+    finally:
+        db.close()
+
+    token = _trader_token(active_day)
+    r = client.get(
+        "/api/orders",
+        params={"start_date": "20260613", "end_date": "20260615"},
+        headers=_auth(token),
+    )
+    assert r.status_code == 200
+    data = r.json()
+    assert data["code"] == 0
+    trd_dates = sorted({o["trd_date"] for o in data["list"]})
+    assert trd_dates == ["20260614"]
+
+
+def test_orders_with_only_start_date_returns_open_lower_bound(client, fresh_db, active_day):
+    """仅传 start_date → trd_date >= start_date"""
+    db = SessionLocal()
+    try:
+        _seed_order(db, trd_date="20260612", order_no="00000004", order_time="09:30:00")
+        _seed_order(db, trd_date="20260614", order_no="00000005", order_time="10:00:00")
+        _seed_order(db, trd_date="20260616", order_no="00000006", order_time="11:00:00")
+        db.commit()
+    finally:
+        db.close()
+
+    token = _trader_token(active_day)
+    r = client.get(
+        "/api/orders",
+        params={"start_date": "20260614"},
+        headers=_auth(token),
+    )
+    assert r.status_code == 200
+    data = r.json()
+    assert all(o["trd_date"] >= "20260614" for o in data["list"])
+
+
+def test_orders_with_only_end_date_returns_open_upper_bound(client, fresh_db, active_day):
+    """仅传 end_date → trd_date <= end_date"""
+    db = SessionLocal()
+    try:
+        _seed_order(db, trd_date="20260612", order_no="00000007", order_time="09:30:00")
+        _seed_order(db, trd_date="20260614", order_no="00000008", order_time="10:00:00")
+        _seed_order(db, trd_date="20260616", order_no="00000009", order_time="11:00:00")
+        db.commit()
+    finally:
+        db.close()
+
+    token = _trader_token(active_day)
+    r = client.get(
+        "/api/orders",
+        params={"end_date": "20260614"},
+        headers=_auth(token),
+    )
+    assert r.status_code == 200
+    data = r.json()
+    assert all(o["trd_date"] <= "20260614" for o in data["list"])
+
+
+def test_orders_without_date_params_defaults_to_active_day(client, fresh_db, active_day):
+    """不传日期参数 → 维持现状 (trd_date = 激活日 20260614)"""
+    db = SessionLocal()
+    try:
+        _seed_order(db, trd_date="20260612", order_no="0000000a", order_time="09:30:00")
+        _seed_order(db, trd_date="20260614", order_no="0000000b", order_time="10:00:00")
+        db.commit()
+    finally:
+        db.close()
+
+    token = _trader_token(active_day)
+    r = client.get("/api/orders", headers=_auth(token))
+    assert r.status_code == 200
+    data = r.json()
+    assert all(o["trd_date"] == "20260614" for o in data["list"])
+
+
+def test_orders_invalid_date_format_returns_422(client, fresh_db, active_day):
+    """非 8 位数字 → FastAPI 422"""
+    token = _trader_token(active_day)
+    r = client.get(
+        "/api/orders",
+        params={"start_date": "2026-06-14"},
+        headers=_auth(token),
+    )
+    assert r.status_code == 422
