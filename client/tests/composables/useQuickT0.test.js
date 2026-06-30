@@ -93,36 +93,27 @@ describe('calcBuyQty / calcQuickQty (按当前持仓百分比)', () => {
 })
 
 
-describe('resolvePrice (3 档价格)', () => {
-  const mockQuote = (last, ask1) => ({
-    getLastPrice: (code) => last,
-    getQuote: (code) => ({ ask1 }),
-    getField: (code, field) => field === 'ask1' ? ask1 : null,
-  })
-
-  it('last → 用最新价 + 限价码 11', () => {
-    const r = resolvePrice('last', '600519.SH', mockQuote(1700))
-    expect(r.price).toBe(1700)
+describe('resolvePrice (3 档价格, 不依赖行情)', () => {
+  it('last → price=0 + 限价码 11 (broker 服务端解析)', () => {
+    const r = resolvePrice('last', '600519.SH')
+    expect(r.price).toBe(0)
     expect(r.priceTypeCode).toBe(11)
     expect(r.label).toBe('最新价')
   })
   it('market → price=0 + xtquant 码 44', () => {
-    const r = resolvePrice('market', '600519.SH', mockQuote(1700))
+    const r = resolvePrice('market', '600519.SH')
     expect(r.price).toBe(0)
     expect(r.priceTypeCode).toBe(44)
     expect(r.label).toBe('市价')
   })
-  it('bidask → 用 ask1, 优先于 last', () => {
-    const r = resolvePrice('bidask', '600519.SH', mockQuote(1700, 1701))
-    expect(r.price).toBe(1701)
+  it('bidask → price=0 + 限价码 11 (broker 解析卖1买1)', () => {
+    const r = resolvePrice('bidask', '600519.SH')
+    expect(r.price).toBe(0)
     expect(r.priceTypeCode).toBe(11)
-  })
-  it('bidask → ask1 缺失时退 last', () => {
-    const r = resolvePrice('bidask', '600519.SH', mockQuote(1700, null))
-    expect(r.price).toBe(1700)
+    expect(r.label).toBe('卖1买1')
   })
   it('未知 priceType → 默认限价 11', () => {
-    const r = resolvePrice('xxx', '600519.SH', mockQuote(1700))
+    const r = resolvePrice('xxx', '600519.SH')
     expect(r.priceTypeCode).toBe(11)
   })
 })
@@ -188,56 +179,41 @@ describe('loadQuickDefaults / saveQuickDefaults (localStorage)', () => {
 })
 
 
-describe('buildQuickOrder (端到端, 行内 [买 50%] 一键调用)', () => {
+describe('buildQuickOrder (端到端, 行内 [买 50%] 一键调用, 不依赖行情)', () => {
   const row = { stock_code: '600519.SH', vol: 1000 }
-  const mockQuote = mockQuote_factory(1700, 1701)
 
-  function mockQuote_factory(last, ask1) {
-    return {
-      getLastPrice: () => last,
-      getQuote: () => ({ ask1 }),
-      getField: (code, field) => field === 'ask1' ? ask1 : null,
-    }
-  }
-
-  it('1000 股 × 50% + last → qty=500, price=1700, code=11', () => {
-    const r = buildQuickOrder(row, 'buy', 50, 'last', mockQuote)
+  it('1000 股 × 50% + last → qty=500, price=0, code=11', () => {
+    const r = buildQuickOrder(row, 'buy', 50, 'last')
     expect(r.error).toBe(null)
     expect(r.qty).toBe(500)
-    expect(r.price).toBe(1700)
+    expect(r.price).toBe(0)
     expect(r.priceTypeCode).toBe(11)
   })
 
   it('1000 股 × 25% + last → qty=200 (整百截断 250→200)', () => {
-    const r = buildQuickOrder(row, 'buy', 25, 'last', mockQuote)
+    const r = buildQuickOrder(row, 'buy', 25, 'last')
     expect(r.qty).toBe(200)
   })
 
   it('0 持仓 buy → error (禁用分支)', () => {
-    const r = buildQuickOrder({ stock_code: 'X', vol: 0 }, 'buy', 50, 'last', mockQuote)
+    const r = buildQuickOrder({ stock_code: 'X', vol: 0 }, 'buy', 50, 'last')
     expect(r.error).toMatch(/0 持仓/)
   })
 
   it('0 持仓 sell → error', () => {
-    const r = buildQuickOrder({ stock_code: 'X', vol: 0 }, 'sell', 50, 'last', mockQuote)
+    const r = buildQuickOrder({ stock_code: 'X', vol: 0 }, 'sell', 50, 'last')
     expect(r.error).toMatch(/持仓数量为 0/)
   })
 
-  it('无行情 → error', () => {
-    const noQuote = { getLastPrice: () => 0, getQuote: () => null, getField: () => null }
-    const r = buildQuickOrder(row, 'buy', 50, 'last', noQuote)
-    expect(r.error).toMatch(/无行情/)
-  })
-
   it('market → price=0, code=44', () => {
-    const r = buildQuickOrder(row, 'buy', 50, 'market', mockQuote)
+    const r = buildQuickOrder(row, 'buy', 50, 'market')
     expect(r.price).toBe(0)
     expect(r.priceTypeCode).toBe(44)
   })
 
-  it('bidask → price=ask1=1701', () => {
-    const r = buildQuickOrder(row, 'buy', 50, 'bidask', mockQuote)
-    expect(r.price).toBe(1701)
+  it('bidask → price=0, code=11', () => {
+    const r = buildQuickOrder(row, 'buy', 50, 'bidask')
+    expect(r.price).toBe(0)
     expect(r.priceTypeCode).toBe(11)
   })
 })

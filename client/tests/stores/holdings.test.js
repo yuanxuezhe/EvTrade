@@ -1,10 +1,7 @@
 /**
- * holdings.js applyTradePush 测试（M-003 / f6beffc）
+ * holdings.js applyTradePush 测试
  *
- * 覆盖 v7 改动：applyTradePush 补全 trd_date / order_no / amount 字段
- *   - trd_date 用于跨日分组
- *   - order_no 关联委托（兼容 broker 透传的 remark 字段）
- *   - amount = volume × price（持仓做T敞口/累计收益计算需要）
+ * 覆盖：TradeOut 格式推送数据映射、缺失字段降级、幂等（重复 trade_id 不插入）
  *
  * 测试方法：直接 setActivePinia + useHoldingsStore，构造 trade row 触发 applyTradePush，
  *   断言 trades.value[0] 字段齐全。
@@ -33,7 +30,7 @@ describe('holdings.applyTradePush', () => {
     setActivePinia(createPinia())
   })
 
-  it('补全 trd_date / order_no / amount 字段（M-003）', () => {
+  it('TradeOut 格式直接映射（push 重组包后字段已规范）', () => {
     const store = useHoldingsStore()
     const today = new Date()
     const todayStr = `${today.getFullYear()}${String(today.getMonth() + 1).padStart(2, '0')}${String(today.getDate()).padStart(2, '0')}`
@@ -41,38 +38,42 @@ describe('holdings.applyTradePush', () => {
     store.applyTradePush({
       trade_id: 'T001',
       order_id: 'broker-123',
+      order_no: '10000001',
+      trd_date: todayStr,
       stock_code: '600000.SH',
-      order_type: '23',  // 买
+      order_type: '23',
       volume: 100,
       price: 10.5,
-      // broker 透传 remark 作为本地 order_no 兼容
-      remark: 'LOCAL-001',
+      amount: 1050,
       trade_time: '09:35:00',
+      trade_type: 0,
     })
 
     expect(store.trades).toHaveLength(1)
     const t = store.trades[0]
     expect(t.trade_id).toBe('T001')
     expect(t.order_id).toBe('broker-123')
-    // f6beffc 关键改动：3 个字段都被补全
-    expect(t.order_no).toBe('LOCAL-001')         // 从 remark 兼容
-    expect(t.trd_date).toBe(todayStr)              // 今日日期
-    expect(t.amount).toBe(100 * 10.5)              // 1050
+    expect(t.order_no).toBe('10000001')
+    expect(t.trd_date).toBe(todayStr)
+    expect(t.amount).toBe(1050)
     expect(t.trade_time).toBe('09:35:00')
+    expect(t.trade_type).toBe(0)
   })
 
-  it('amount 字段缺失时按 volume × price 计算', () => {
+  it('amount/trd_date/order_no 缺失时降级默认值', () => {
     const store = useHoldingsStore()
     store.applyTradePush({
       trade_id: 'T002',
       stock_code: '600001.SH',
-      order_type: '24',  // 卖
+      order_type: '24',
       volume: 200,
       price: 5.0,
+      // 无 amount → 0
     })
-    expect(store.trades[0].amount).toBe(1000)
-    // 没 remark → order_no 应为空字符串
+    expect(store.trades[0].amount).toBe(0)
     expect(store.trades[0].order_no).toBe('')
+    // 无 trd_date → 今天
+    expect(store.trades[0].trd_date).toBeDefined()
   })
 
   it('重复 trade_id 不重复插入', () => {

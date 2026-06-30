@@ -1,19 +1,19 @@
 """
-transport.py — RPClient 传输层（connect / call / listen replies / listen pushs）
+transport.py — RPClient 传输骨架（simplify-rpc-transport-thin）
 
-职责：
+职责（传输层本分）：
 - RPClient 类：维护 RabbitMQ 长连接、消息发布、in-flight pending futures
+- reply listener：按 msgid 匹配 pending future
+- push listener：消息循环 + 解码 + 委托给 PushDispatcher
 - 全局单例 _rpc_client + get_rpc_client / close_rpc_client 生命周期
 - 传输层 utilities：_clean_id（msgid/func 字符串清洗）、_wire_dump（报文 dump）
-- push 处理 helpers：_iter_push_rows（行提取）、_run_handle_push（落库）、
-  _resolve_active_trd_date_safe（注入 trd_date）、_dispatch_push（单条 push 编排）、
-  _log_push_interaction（push 交互日志）
-- 常量：MAX_PENDING（防积压）、_PUSH_CHANNEL（推送类型 → WS channel）
 - 协议常量 re-export：RABBITMQ_URL / EXCHANGE_NAME / QUEUE_REQ / QUEUE_REPLY / QUEUE_PUSH
+- push 业务编排已迁到 server/services/push_dispatcher.py（REQ-RPC-012）
+- push 行提取已迁到 server/rpc/parsers_push.py
 """
 import asyncio
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 import aio_pika
 from aio_pika import ExchangeType, Message
@@ -21,13 +21,7 @@ from aio_pika import ExchangeType, Message
 from msgpacket import MsgPacket, MSG_TYPE_REQUEST, MSG_TYPE_PUSH
 
 from server.config import settings
-from server.ws.manager import ws_manager
-
-# 注: 避免循环导入, format_ts / logflow 在函数内 lazy import
-#   transport -> utils.time -> utils.__init__ -> logflow (ok, no cycle)
-#   但 services.__init__ -> reconcile -> rpc.client -> rpc.transport 仍可能循环
-#   所以此处不顶层 from server.utils.time import format_ts
-#   log_interaction / 方向常量同理, 在函数内 lazy import
+from server.services.push_dispatcher import PushDispatcher
 
 log = logging.getLogger(__name__)
 
@@ -43,14 +37,6 @@ QUEUE_PUSH = settings.QUEUE_PUSH
 
 # 在途 RPC 调用的最大并发数（防止柜台慢应答时无限累积）
 MAX_PENDING = 100
-
-# 推送类型 → WS channel
-_PUSH_CHANNEL = {
-    "ord_cfm": "order_update",
-    "trd_cfm": "trade_update",
-    "pos_cfm": "position_update",
-    "ast_cfm": "asset_update",
-}
 
 
 # ──────────────────────── 传输层工具函数 ────────────────────────
@@ -78,127 +64,6 @@ def _wire_dump(pkt: "MsgPacket") -> str:
     return s or ""
 
 
-# ──────────────────────── push 处理 helpers ────────────────────────
-
-def _iter_push_rows(pkt: MsgPacket) -> List[Dict[str, Any]]:
-    """把 push 包里所有结果集的所有行原样取出，header 名 → 字符串值。
-
-    与 parsers_common._iter_rows 思路不同：push 的字段名没有统一约定
-    （ord_cfm / trd_cfm 各异），这里不强行类型转换，直接交由前端展示层处理。
-    """
-    rows: List[Dict[str, Any]] = []
-    headers_str = pkt.get_headers() or ""
-    headers = [h.strip() for h in headers_str.split(",") if h.strip()]
-
-    for rs in range(1, pkt.result_set_count() + 1):
-        if rs > 1:
-            if not pkt.next_result_set():
-                break
-        pkt.reset_cursor()
-        while pkt.fetch_next():
-            row = {h: (pkt.get_value_str(h) or "") for h in headers}
-            rows.append(row)
-    return rows
-
-
-def _run_handle_push(func: str, row: Dict[str, Any], ts: str) -> Optional[Dict[str, Any]]:
-    """push 落库 helper（REQ-PUSH-006）：新线程内跑 SessionLocal + handle_push + commit。
-
-    设计要点：
-    - 在新线程中执行（loop.run_in_executor 包裹），不阻塞 push listener 的 event loop
-    - SessionLocal 每次新建，独立 session 安全无共享状态
-    - 异常向上抛回 await 处，由 listener 捕获并 log
-    - handle_push 同步签名不变（向后兼容 test_push_handlers.py 11 用例）
-    - 返回 handler 的重组包结果（OrderOut/TradeOut 兼容 dict）
-    """
-    from server.db import SessionLocal
-    from server.services.push_handlers import handle_push
-    db = SessionLocal()
-    try:
-        result = handle_push(db, func, row, ts)
-        db.commit()
-        return result
-    except Exception:
-        db.rollback()
-        raise
-    finally:
-        db.close()
-
-
-def _resolve_active_trd_date_safe() -> Optional[str]:
-    """短连接查当前激活交易日（v8 增：push 链路注入 trd_date 用）
-
-    Returns:
-        8 位 YYYYMMDD,或 None（未做日初 / DB 异常时）
-
-    设计要点：
-    - 每次调用都新开 SessionLocal（无状态依赖，安全）
-    - 异常返回 None 而非 raise（不阻塞 push listener 主循环）
-    - 不传 row 参数给 ws：返回 None 时不注入 trd_date,前端用 _today_yyyymmdd 兜底
-    """
-    try:
-        from server.db import SessionLocal
-        from server.services.guards import resolve_active_trd_date
-        db = SessionLocal()
-        try:
-            return resolve_active_trd_date(db)
-        finally:
-            db.close()
-    except Exception as e:
-        # 短连接异常（DB 锁 / disconnect）不应中断 push 链路
-        log.warning("_resolve_active_trd_date_safe failed: %s", e)
-        return None
-
-
-def _log_push_interaction(func: str, wire_len: int, msg_type: str, msg_id: str):
-    """记 [svc<-rpc] push 交互日志 (server-interaction-logging REQ-LOG-003)。
-
-    push 是 fire-and-forget，msg_id 来自 broker 推送（可能为空），
-    没有现成 trace_id 时用 UUID 生成新的。
-    """
-    import uuid as _uuid
-    from server.utils.logflow import DIR_SVC_FROM_RPC, log_interaction
-
-    push_trace = (msg_id or "").strip().strip("\x00").strip()[:8] or _uuid.uuid4().hex[:8]
-    log_interaction(
-        DIR_SVC_FROM_RPC,
-        "push func={} wire_len={}".format(func, wire_len),
-        data={"func": func, "wire_len": wire_len, "msg_type": msg_type},
-        level="info",
-        trace_id=push_trace,
-    )
-    return push_trace
-
-
-def _log_push_broadcast(channel: str, data: Any, ts: str, func: str, active_trd_date: Optional[str], push_trace: str):
-    """记广播日志并调用 ws_manager.broadcast。"""
-    from server.utils.logflow import DIR_SVC_TO_FRONT, log_interaction
-
-    payload = {
-        "type": func,
-        "channel": channel,
-        "ts": ts,
-        "data": data,
-    }
-    log.info(
-        "RPClient.push broadcast → %s (trd_date=%s)%s",
-        channel,
-        active_trd_date or "?",
-        ("\n" + "\n".join(
-            "  " + k + " = " + repr(v)
-            for k, v in sorted(data.items())
-        )) if data else " (empty row)",
-    )
-    log_interaction(
-        DIR_SVC_TO_FRONT,
-        "ws broadcast channel={} (push)".format(channel),
-        data={"channel": channel, "payload": payload},
-        level="info",
-        trace_id=push_trace,
-    )
-    return payload
-
-
 # ──────────────────────────── RPClient ────────────────────────────
 
 class RPClient:
@@ -212,6 +77,8 @@ class RPClient:
         self.pending: dict = {}  # msgid -> asyncio.Future
         # publisher confirm 超时（防 broker 不 ack 时永久挂起）
         self._publish_confirm_timeout: float = 5.0
+        # push 业务编排器（connect 时构造，simplify-rpc-transport-thin 后迁出）
+        self._dispatcher: Optional[PushDispatcher] = None
 
     async def connect(self):
         # 幂等守卫：已连接且未关闭 → 直接返回（避免 FastAPI 重启/双启动时重复 declare）
@@ -232,6 +99,8 @@ class RPClient:
         await self.reply_queue.bind(self.exchange, routing_key=QUEUE_REPLY)
         self.push_queue = await self.channel.declare_queue(QUEUE_PUSH, durable=True)
         await self.push_queue.bind(self.exchange, routing_key=QUEUE_PUSH)
+        # 构造 push 业务编排器（在 listener 启动前完成，避免漏掉首批 push）
+        self._dispatcher = PushDispatcher(self)
         asyncio.ensure_future(self._listen_replies())
         asyncio.ensure_future(self._listen_pushs())
         log.info(
@@ -289,7 +158,11 @@ class RPClient:
     # ── push listener ──────────────────────────────────────
 
     async def _listen_pushs(self):
-        """监听 EvTrade.Test.Push 队列，把柜台主动推送转成 WS 消息。
+        """监听 EvTrade.Test.Push 队列，把柜台主动推送转交给 dispatcher。
+
+        transport 只负责：消息循环 + 解码 + 委托给 self._dispatcher.dispatch。
+        所有 push 业务编排（行提取、落库、广播、trd_date 注入）由
+        server/services/push_dispatcher.py 承担（REQ-RPC-012）。
 
         柜台不会回包给 ord_stk 的请求方（fire-and-forget），
         真正的成交通知通过 push 队列异步推送：
@@ -302,6 +175,9 @@ class RPClient:
         """
         if not self.push_queue:
             log.warning("RPClient push listener skipped: push_queue not declared")
+            return
+        if not self._dispatcher:
+            log.warning("RPClient push listener skipped: dispatcher not initialized")
             return
         log.info("RPClient push listener started, queue=%s", QUEUE_PUSH)
         async with self.push_queue.iterator() as qiter:
@@ -316,106 +192,9 @@ class RPClient:
                             "RPClient.push <<< wire_len=%d func=%r type=%r",
                             len(wire), func, mt,
                         )
-                        await self._dispatch_push(pkt, func, mt, len(wire))
+                        await self._dispatcher.dispatch(pkt, func, mt, len(wire))
                     except Exception as e:
                         log.exception("RPClient.push decode/handle error: %s", e)
-
-    async def _dispatch_push(self, pkt: MsgPacket, func: str, msg_type: str, wire_len: int):
-        """处理单条 push 消息：交互日志 → 路由 → 落库 → WS 广播。
-
-        从 _listen_pushs 中拆分出来，使监听循环保持简洁，
-        并将 push 处理的具体逻辑集中在一个可测试的方法中。
-        """
-        push_trace = _log_push_interaction(func, wire_len, msg_type, pkt.msg_id())
-
-        channel = _PUSH_CHANNEL.get(func)
-        if not channel:
-            log.warning("RPClient.push ignore unknown func=%r", func)
-            return
-
-        # v8 增: 推送 payload 注入 trd_date(权威源 = 当前激活交易日)
-        active_trd_date = _resolve_active_trd_date_safe()
-
-        from server.utils.time import format_ts
-        push_ts = format_ts(tz='local')
-
-        for row in _iter_push_rows(pkt):
-            enriched_row = {**row, "trd_date": active_trd_date} if active_trd_date else row
-
-            # v8 持久化（异步）：run_in_executor 包裹，不阻塞 event loop（REQ-PUSH-006）
-            handler_result = await self._run_push_handler(func, enriched_row, push_ts)
-
-            if func == "trd_cfm":
-                await self._broadcast_trade_cfm(
-                    handler_result, channel, push_ts, func, active_trd_date, push_trace,
-                )
-            else:
-                self._broadcast_generic(
-                    handler_result, enriched_row, channel, push_ts, func, active_trd_date, push_trace,
-                )
-
-    async def _run_push_handler(self, func: str, row: Dict[str, Any], ts: str) -> Optional[Dict[str, Any]]:
-        """在线程池中执行 push 落库，异常捕获不中断广播链路。"""
-        try:
-            loop = asyncio.get_event_loop()
-            return await loop.run_in_executor(
-                None, _run_handle_push, func, row, ts,
-            )
-        except Exception as e:
-            log.error("RPClient.push handle_push error: %s", e)
-            return None
-
-    def _broadcast_trade_cfm(
-        self,
-        handler_result: Optional[Dict[str, Any]],
-        channel: str,
-        ts: str,
-        func: str,
-        active_trd_date: Optional[str],
-        push_trace: str,
-    ):
-        """trd_cfm：广播成交 + 同步委托状态。
-
-        NOTE: 内部调用 ws_manager.broadcast 返回 coroutine，
-        用 asyncio.ensure_future 调度，不阻塞后续行的处理。
-        """
-        if not isinstance(handler_result, dict) or not handler_result.get("trade"):
-            return
-
-        trade_data = handler_result["trade"]
-        order_data = handler_result.get("order")
-
-        trade_payload = _log_push_broadcast(
-            channel, trade_data, ts, func, active_trd_date, push_trace,
-        )
-        asyncio.ensure_future(ws_manager.broadcast(channel, trade_payload, trace_id=push_trace))
-
-        if order_data:
-            order_payload = _log_push_broadcast(
-                "order_update", order_data, ts, "ord_cfm", active_trd_date, push_trace,
-            )
-            asyncio.ensure_future(ws_manager.broadcast("order_update", order_payload, trace_id=push_trace))
-
-    def _broadcast_generic(
-        self,
-        handler_result: Optional[Dict[str, Any]],
-        enriched_row: Dict[str, Any],
-        channel: str,
-        ts: str,
-        func: str,
-        active_trd_date: Optional[str],
-        push_trace: str,
-    ):
-        """ord_cfm / pos_cfm / ast_cfm：用 handler 结果或 fallback 行数据广播。
-
-        NOTE: 内部调用 ws_manager.broadcast 返回 coroutine，
-        用 asyncio.ensure_future 调度，不阻塞后续行的处理。
-        """
-        broadcast_data = handler_result if handler_result is not None else enriched_row
-        payload = _log_push_broadcast(
-            channel, broadcast_data, ts, func, active_trd_date, push_trace,
-        )
-        asyncio.ensure_future(ws_manager.broadcast(channel, payload, trace_id=push_trace))
 
     # ── shared helpers ─────────────────────────────────────
 

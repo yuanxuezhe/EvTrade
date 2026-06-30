@@ -94,7 +94,7 @@
             <span class="text-mono text-secondary">{{ row.trade_id }}</span>
           </template>
         </el-table-column>
-        <el-table-column prop="order_id" label="委托编号" min-width="140" show-overflow-tooltip>
+        <el-table-column prop="order_id" label="合同序号" min-width="140" show-overflow-tooltip>
           <template #default="{ row }">
             <span class="text-mono text-secondary">{{ row.order_id }}</span>
           </template>
@@ -172,7 +172,7 @@ function resetFilters() {
 }
 
 function exportCSV() {
-  const header = ['成交时间', '股票代码', '方向', '成交数量', '成交价格', '成交金额', '成交编号', '委托编号']
+  const header = ['成交时间', '股票代码', '方向', '成交数量', '成交价格', '成交金额', '成交编号', '合同序号']
   const rows = filteredTrades.value.map((t) => [
     t.trade_time,
     t.stock_code,

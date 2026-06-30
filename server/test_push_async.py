@@ -29,6 +29,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 async def test_handle_push_runs_in_executor(monkeypatch):
     """REQ-PUSH-006: push listener 必须用 run_in_executor 包裹 handle_push。"""
     import rpc.client as rpc_client_mod
+    from server.services import push_dispatcher
 
     executor_calls = []
 
@@ -41,7 +42,7 @@ async def test_handle_push_runs_in_executor(monkeypatch):
     # mock _run_handle_push 让它啥也不干（不真连 DB）
     def fake_run_handle_push(func, row, ts):
         pass
-    monkeypatch.setattr(rpc_client_mod, "_run_handle_push", fake_run_handle_push)
+    monkeypatch.setattr(push_dispatcher, "_run_handle_push", fake_run_handle_push)
 
     # mock ws_manager.broadcast
     with patch.object(rpc_client_mod, "ws_manager") as fake_ws:
@@ -50,7 +51,7 @@ async def test_handle_push_runs_in_executor(monkeypatch):
         # 直接模拟 listener 内的 run_in_executor 调用
         loop = asyncio.get_event_loop()
         try:
-            await loop.run_in_executor(None, rpc_client_mod._run_handle_push, "ord_cfm", {}, "")
+            await loop.run_in_executor(None, push_dispatcher._run_handle_push, "ord_cfm", {}, "")
         except Exception:
             pass
 
@@ -70,18 +71,19 @@ async def test_listener_does_not_block_event_loop(monkeypatch):
     """
     import time
     import rpc.client as rpc_client_mod
+    from server.services import push_dispatcher
 
     def slow_handle_push(func, row, ts):
         """100ms 同步 SQL 模拟。"""
         time.sleep(0.1)
 
-    monkeypatch.setattr(rpc_client_mod, "_run_handle_push", slow_handle_push)
+    monkeypatch.setattr(push_dispatcher, "_run_handle_push", slow_handle_push)
 
     loop = asyncio.get_event_loop()
 
     # 直接模拟 listener 内的 await loop.run_in_executor(...)
     start = time.monotonic()
-    await loop.run_in_executor(None, rpc_client_mod._run_handle_push, "ord_cfm", {}, "")
+    await loop.run_in_executor(None, push_dispatcher._run_handle_push, "ord_cfm", {}, "")
     elapsed = time.monotonic() - start
     # run_in_executor 本身确实花了 ~100ms（线程内 sleep）
     assert 0.08 <= elapsed <= 0.3, f"run_in_executor not elapsed correctly: {elapsed}"
@@ -98,7 +100,7 @@ async def test_listener_does_not_block_event_loop(monkeypatch):
     async def run_push_with_replies():
         # 启动 push 落库（run_in_executor 不阻塞主 loop）
         push_task = asyncio.ensure_future(  # Py3.6.8 compat (asyncio.create_task is 3.7+)
-            loop.run_in_executor(None, rpc_client_mod._run_handle_push, "ord_cfm", {}, "")
+            loop.run_in_executor(None, push_dispatcher._run_handle_push, "ord_cfm", {}, "")
         )
         # 同时启动 10 个 reply
         reply_tasks = [asyncio.ensure_future(fake_reply()) for _ in range(10)]
@@ -117,22 +119,23 @@ async def test_listener_does_not_block_event_loop(monkeypatch):
 async def test_executor_exception_propagates(monkeypatch, caplog):
     """_run_handle_push 抛错时, run_in_executor 把异常传给 await 处, listener 捕获 + log。"""
     import rpc.client as rpc_client_mod
+    from server.services import push_dispatcher
 
     def buggy_handle_push(func, row, ts):
         raise RuntimeError("simulated DB error")
 
-    monkeypatch.setattr(rpc_client_mod, "_run_handle_push", buggy_handle_push)
+    monkeypatch.setattr(push_dispatcher, "_run_handle_push", buggy_handle_push)
 
     loop = asyncio.get_event_loop()
 
     with caplog.at_level(logging.ERROR, logger="rpc.client"):
         with pytest.raises(RuntimeError, match="simulated DB error"):
-            await loop.run_in_executor(None, rpc_client_mod._run_handle_push, "ord_cfm", {}, "")
+            await loop.run_in_executor(None, push_dispatcher._run_handle_push, "ord_cfm", {}, "")
 
     # 验证 listener 端的异常处理（模拟 _listen_pushs 的 try/except 块）
     caplog.clear()
     try:
-        await loop.run_in_executor(None, rpc_client_mod._run_handle_push, "ord_cfm", {}, "")
+        await loop.run_in_executor(None, push_dispatcher._run_handle_push, "ord_cfm", {}, "")
     except Exception as e:
         logging.getLogger("rpc.client").error("RPClient.push handle_push error: %s", e)
 

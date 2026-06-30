@@ -83,31 +83,17 @@ export function calcQuickQty(vol, pct) {
 // ================== 价格解析 ==================
 
 /**
- * 3 档价格解析 (调用 quote store)
- *   'last'   → { price: 最新价, priceTypeCode: 11, label }
- *   'market' → { price: 0 (xtquant 内部撮合), priceTypeCode: 44, label }
- *   'bidask' → { price: ask1 (优先于 last), priceTypeCode: 11, label }
+ * 价格类型解析 (不再依赖 quoteStore)
+ *   'last'   → { price: 0, priceTypeCode: 11, label }  (broker 服务器端解析最新价)
+ *   'market' → { price: 0, priceTypeCode: 44, label }  (broker 市价)
+ *   'bidask' → { price: 0, priceTypeCode: 11, label }  (broker 解析卖1/买1)
  *
- * mock 形式 (用于测试):
- *   {
- *     getLastPrice: (code) => number,
- *     getField: (code, field) => number | null,   // 'ask1' 取卖1
- *   }
+ * 前端不传价格值，只传 priceTypeCode 让 broker 服务端解析。
+ * price=0 仅作为占位，broker 会根据 priceTypeCode 自行撮合。
  */
-export function resolvePrice(priceType, code, quoteStore) {
+export function resolvePrice(priceType) {
   const opt = PRICE_TYPE_OPTIONS.find((o) => o.value === priceType) || PRICE_TYPE_OPTIONS[0]
-  const last = quoteStore?.getLastPrice?.(code) ?? 0
-  if (priceType === 'last') {
-    return { price: last, priceTypeCode: opt.priceTypeCode, label: opt.label }
-  }
-  if (priceType === 'market') {
-    return { price: 0, priceTypeCode: opt.priceTypeCode, label: opt.label }  // xtquant 市价不传价
-  }
-  if (priceType === 'bidask') {
-    const ask1 = quoteStore?.getField?.(code, 'ask1') ?? null
-    return { price: ask1 || last, priceTypeCode: opt.priceTypeCode, label: opt.label }
-  }
-  return { price: last, priceTypeCode: 11, label: '最新价' }
+  return { price: 0, priceTypeCode: opt.priceTypeCode, label: opt.label }
 }
 
 
@@ -211,22 +197,16 @@ export function calcBalanceQty(row, todayBuy = 0, todaySell = 0) {
  *   返回: { qty, price, priceTypeCode, label, error }
  *   error 非空 = 不应下单
  */
-export function buildQuickOrder(row, side, pct, priceType, quoteStore) {
+export function buildQuickOrder(row, side, pct, priceType) {
   const code = row?.stock_code
   if (!code) return { qty: 0, error: '无效行, 缺少 stock_code' }
-
-  // 行情检查
-  const last = quoteStore?.getLastPrice?.(code) ?? 0
-  if (!last) {
-    return { qty: 0, error: `无行情 (${code})` }
-  }
 
   // 数量 (配平由调用方传 pct=100 + 自行传 todayBuy/Sell, 或独立 calcBalanceQty)
   const qty = side === 'buy' ? calcBuyQty(row, pct) : calcSellQty(row, pct)
   const err = validateQuick(row, qty, side)
   if (err) return { qty: 0, price: 0, priceTypeCode: 0, label: '', error: err }
 
-  // 价格
-  const p = resolvePrice(priceType, code, quoteStore)
+  // 价格类型 (broker 服务端解析，前端不依赖行情)
+  const p = resolvePrice(priceType)
   return { qty, price: p.price, priceTypeCode: p.priceTypeCode, label: p.label, error: null }
 }

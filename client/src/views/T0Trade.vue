@@ -509,19 +509,19 @@ const { submitOrder } = useT0OrderSubmit({
 // ---- M-008 v3: 行内快捷买卖 ----
 function onQuickBuy(row) {
   if (isBuyDisabled(row)) return ElMessage.warning(`${row.stock_code} 持仓为 0, 无法按比例买`)
-  const r = buildQuickOrder(row, 'buy', quickPct.value, quickPriceType.value, quoteStore)
+  const r = buildQuickOrder(row, 'buy', quickPct.value, quickPriceType.value)
   if (r.error) return ElMessage.warning(r.error)
   ElMessageBox.confirm(
-    `${row.stock_code} 买 ${r.qty} 股 @ ¥${formatPrice(r.price)} (${r.label})`,
+    `${row.stock_code} 买 ${r.qty} 股 (${r.label})`,
     '一键买入', { confirmButtonText: '确认买入', cancelButtonText: '取消', type: 'info' }
   ).then(() => submitOrder({ orderType: '23', volume: r.qty, price: r.price }))
     .catch(() => {})
 }
 function onQuickSell(row) {
-  const r = buildQuickOrder(row, 'sell', quickPct.value, quickPriceType.value, quoteStore)
+  const r = buildQuickOrder(row, 'sell', quickPct.value, quickPriceType.value)
   if (r.error) return ElMessage.warning(r.error)
   ElMessageBox.confirm(
-    `${row.stock_code} 卖 ${r.qty} 股 @ ¥${formatPrice(r.price)} (${r.label})`,
+    `${row.stock_code} 卖 ${r.qty} 股 (${r.label})`,
     '一键卖出', { confirmButtonText: '确认卖出', cancelButtonText: '取消', type: 'warning' }
   ).then(() => submitOrder({ orderType: '24', volume: r.qty, price: r.price }))
     .catch(() => {})
@@ -529,7 +529,7 @@ function onQuickSell(row) {
 function onQuickBalance(row) {
   const bal = calcBalanceQty(row, row.today_buy_volume || 0, row.today_sell_volume || 0)
   if (bal.error) return ElMessage.warning(bal.error)
-  const r = buildQuickOrder(row, bal.side, 100, quickPriceType.value, quoteStore)
+  const r = buildQuickOrder(row, bal.side, 100, quickPriceType.value)
   if (r.error) return ElMessage.warning(r.error)
   r.qty = bal.qty
   ElMessageBox.confirm(

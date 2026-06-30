@@ -39,9 +39,9 @@ def in_memory_db():
 
 def test_resolve_active_trd_date_safe_returns_active_day(monkeypatch):
     """_resolve_active_trd_date_safe 正常:返 SysStatus 中激活日"""
-    from server.rpc import client as rpc_client
     import server.db as db_module
     import server.services.guards as guards_module
+    from server.services import push_dispatcher
 
     captured_db = {}
     fake_session = MagicMock()
@@ -59,7 +59,7 @@ def test_resolve_active_trd_date_safe_returns_active_day(monkeypatch):
     # 同样: from server.services.guards import resolve_active_trd_date
     monkeypatch.setattr(guards_module, "resolve_active_trd_date", fake_resolve)
 
-    result = rpc_client._resolve_active_trd_date_safe()
+    result = push_dispatcher._resolve_active_trd_date_safe()
     assert result == "20260614"
     assert captured_db.get("called") is True
     fake_session.close.assert_called_once()
@@ -67,8 +67,8 @@ def test_resolve_active_trd_date_safe_returns_active_day(monkeypatch):
 
 def test_resolve_active_trd_date_safe_returns_none_on_exception(monkeypatch):
     """_resolve_active_trd_date_safe 异常:返 None 而不 raise"""
-    from server.rpc import client as rpc_client
     import server.db as db_module
+    from server.services import push_dispatcher
 
     def boom():
         raise RuntimeError("DB 锁")
@@ -76,7 +76,7 @@ def test_resolve_active_trd_date_safe_returns_none_on_exception(monkeypatch):
     monkeypatch.setattr(db_module, "SessionLocal", boom)
 
     # 不应 raise
-    result = rpc_client._resolve_active_trd_date_safe()
+    result = push_dispatcher._resolve_active_trd_date_safe()
     assert result is None
 
 
@@ -87,13 +87,15 @@ def test_push_listener_injects_trd_date_into_payload(monkeypatch):
        且 trd_date 会覆盖 broker 推的 trd_date
     """
     from server.rpc import client as rpc_client
+    from server.services import push_dispatcher
+    from server.rpc import parsers_push
 
     # mock 1: _resolve_active_trd_date_safe → 固定返 "20260614"
     monkeypatch.setattr(
-        rpc_client, "_resolve_active_trd_date_safe", lambda: "20260614"
+        push_dispatcher, "_resolve_active_trd_date_safe", lambda: "20260614"
     )
 
-    # mock 2: _parse_push_rows → 返一行 broker 推的(带 broker trd_date "20260613" 模拟老委托)
+    # mock 2: _iter_push_rows → 返一行 broker 推的(带 broker trd_date "20260613" 模拟老委托)
     fake_row = {
         "order_id": "OID-LISTENER",
         "stock_code": "600030.SH",
@@ -101,12 +103,12 @@ def test_push_listener_injects_trd_date_into_payload(monkeypatch):
         "remark": "10000099",
         "trd_date": "20260613",  # broker 推的老日期
     }
-    monkeypatch.setattr(rpc_client, "_parse_push_rows", lambda pkt: [fake_row])
+    monkeypatch.setattr(parsers_push, "_iter_push_rows", lambda pkt: [fake_row])
 
     # mock 3: 持久化 + broadcast
     captured_persisted = []
     monkeypatch.setattr(
-        rpc_client, "_run_handle_push",
+        push_dispatcher, "_run_handle_push",
         lambda func, row, ts: captured_persisted.append((func, row.copy())),
     )
     captured_broadcasts = []
@@ -123,17 +125,17 @@ def test_push_listener_injects_trd_date_into_payload(monkeypatch):
     #   但 _listen_pushs 是 async generator,改用:模拟 listener 内部循环一次
     async def run_once():
         func = "ord_cfm"
-        channel = rpc_client._PUSH_CHANNEL.get(func)
-        rows = rpc_client._parse_push_rows(fake_pkt)
+        channel = push_dispatcher._PUSH_CHANNEL.get(func)
+        rows = parsers_push._iter_push_rows(fake_pkt)
         ts = "20260614130000"
-        active_trd_date = rpc_client._resolve_active_trd_date_safe()
+        active_trd_date = push_dispatcher._resolve_active_trd_date_safe()
         for row in rows:
             enriched_row = {**row, "trd_date": active_trd_date} if active_trd_date else row
             payload = {
                 "type": func, "channel": channel, "ts": ts, "data": enriched_row,
             }
             loop = asyncio.get_event_loop()
-            await loop.run_in_executor(None, rpc_client._run_handle_push, func, enriched_row, ts)
+            await loop.run_in_executor(None, push_dispatcher._run_handle_push, func, enriched_row, ts)
             await rpc_client.ws_manager.broadcast(channel, payload)
 
     asyncio.run(run_once())
@@ -155,13 +157,15 @@ def test_push_listener_injects_trd_date_into_payload(monkeypatch):
 def test_push_listener_no_trd_date_when_resolve_returns_none(monkeypatch):
     """v8: _resolve_active_trd_date_safe 返 None 时,payload 不注入 trd_date(降级而非崩溃)"""
     from server.rpc import client as rpc_client
+    from server.services import push_dispatcher
+    from server.rpc import parsers_push
 
     monkeypatch.setattr(
-        rpc_client, "_resolve_active_trd_date_safe", lambda: None
+        push_dispatcher, "_resolve_active_trd_date_safe", lambda: None
     )
 
     fake_row = {"order_id": "OID-NODAY", "stock_code": "600030.SH", "order_status": "49"}
-    monkeypatch.setattr(rpc_client, "_parse_push_rows", lambda pkt: [fake_row])
+    monkeypatch.setattr(parsers_push, "_iter_push_rows", lambda pkt: [fake_row])
 
     captured_broadcasts = []
     async def fake_broadcast(channel, payload):
@@ -169,14 +173,14 @@ def test_push_listener_no_trd_date_when_resolve_returns_none(monkeypatch):
     monkeypatch.setattr(rpc_client.ws_manager, "broadcast", fake_broadcast)
 
     monkeypatch.setattr(
-        rpc_client, "_run_handle_push", lambda func, row, ts: None
+        push_dispatcher, "_run_handle_push", lambda func, row, ts: None
     )
 
     async def run_once():
         func = "ord_cfm"
-        channel = rpc_client._PUSH_CHANNEL.get(func)
-        rows = rpc_client._parse_push_rows(MagicMock())
-        active_trd_date = rpc_client._resolve_active_trd_date_safe()
+        channel = push_dispatcher._PUSH_CHANNEL.get(func)
+        rows = parsers_push._iter_push_rows(MagicMock())
+        active_trd_date = push_dispatcher._resolve_active_trd_date_safe()
         for row in rows:
             # 跟 _listen_pushs 同逻辑: None 时不注入
             enriched_row = {**row, "trd_date": active_trd_date} if active_trd_date else row
@@ -195,17 +199,19 @@ def test_push_listener_no_trd_date_when_resolve_returns_none(monkeypatch):
 def test_push_listener_handles_trd_cfm(monkeypatch):
     """v8: trd_cfm 推送同样注入 trd_date"""
     from server.rpc import client as rpc_client
+    from server.services import push_dispatcher
+    from server.rpc import parsers_push
 
     monkeypatch.setattr(
-        rpc_client, "_resolve_active_trd_date_safe", lambda: "20260614"
+        push_dispatcher, "_resolve_active_trd_date_safe", lambda: "20260614"
     )
 
     fake_row = {
         "traded_id": "TID-1", "order_id": "OID-1", "stock_code": "600030.SH",
         "traded_volume": "100", "traded_price": "12.5",
     }
-    monkeypatch.setattr(rpc_client, "_parse_push_rows", lambda pkt: [fake_row])
-    monkeypatch.setattr(rpc_client, "_run_handle_push", lambda f, r, t: None)
+    monkeypatch.setattr(parsers_push, "_iter_push_rows", lambda pkt: [fake_row])
+    monkeypatch.setattr(push_dispatcher, "_run_handle_push", lambda f, r, t: None)
 
     captured = []
     async def fake_broadcast(channel, payload):
@@ -214,9 +220,9 @@ def test_push_listener_handles_trd_cfm(monkeypatch):
 
     async def run_once():
         func = "trd_cfm"
-        channel = rpc_client._PUSH_CHANNEL.get(func)
-        rows = rpc_client._parse_push_rows(MagicMock())
-        active_trd_date = rpc_client._resolve_active_trd_date_safe()
+        channel = push_dispatcher._PUSH_CHANNEL.get(func)
+        rows = parsers_push._iter_push_rows(MagicMock())
+        active_trd_date = push_dispatcher._resolve_active_trd_date_safe()
         for row in rows:
             enriched_row = {**row, "trd_date": active_trd_date} if active_trd_date else row
             payload = {"type": func, "channel": channel, "ts": "t", "data": enriched_row}

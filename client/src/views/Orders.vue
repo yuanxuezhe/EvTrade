@@ -69,7 +69,7 @@
             <span class="stock-code">{{ row.stock_code }}</span>
           </template>
         </el-table-column>
-        <el-table-column prop="order_no" label="单号" width="100" show-overflow-tooltip>
+        <el-table-column prop="order_no" label="委托编号" width="100" show-overflow-tooltip>
           <template #default="{ row }">
             <span class="text-mono text-secondary">{{ row.order_no }}</span>
           </template>
@@ -135,7 +135,7 @@
             <span class="text-secondary">{{ priceTypeLabel(row.price_type) }}</span>
           </template>
         </el-table-column>
-        <el-table-column prop="order_id" label="委托编号" min-width="140" show-overflow-tooltip>
+        <el-table-column prop="order_id" label="合同序号" min-width="140" show-overflow-tooltip>
           <template #default="{ row }">
             <span class="text-mono text-secondary">{{ row.order_id }}</span>
           </template>
@@ -246,7 +246,7 @@ function getProgressColor(status) {
 }
 
 function exportCSV() {
-  const header = ['时间', '股票代码', '方向', '委托量', '委托价', '成交量', '成交价', '状态', '类型', '委托编号']
+  const header = ['时间', '股票代码', '方向', '委托量', '委托价', '成交量', '成交价', '状态', '类型', '合同序号']
   const rows = filteredOrders.value.map((o) => [
     o.order_time,
     o.stock_code,

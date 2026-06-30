@@ -23,7 +23,7 @@ const ordersRef = computed({
 })
 
 const fields = [
-  { key: 'order_no', label: '委托号', width: 140, required: true },
+  { key: 'order_no', label: '委托编号', width: 140, required: true },
   { key: 'trd_date', label: '交易日', width: 140 },
   { key: 'stock_code', label: '股票代码', width: 140 },
   { key: 'order_type', label: '买卖', width: 130, type: 'select', options: ['23', '24'] },
@@ -37,7 +37,7 @@ const fields = [
   { key: 'order_flag', label: '标记', type: 'number', width: 110 },
   { key: 'status', label: '状态码', width: 130 },
   { key: 'status_msg', label: '状态描述', width: 160 },
-  { key: 'order_id', label: '柜台号', width: 160 },
+  { key: 'order_id', label: '合同序号', width: 160 },
   { key: 'user_def', label: '自定义', width: 140 },
   { key: 'order_time', label: '委托时间', width: 200 },
 ]

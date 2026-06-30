@@ -26,7 +26,7 @@ const tradesRef = computed({
 const fields = [
   { key: 'trd_date', label: '交易日', width: 140, required: true },
   { key: 'trade_id', label: '成交号', width: 240, required: true },
-  { key: 'order_no', label: '委托号', width: 140 },
+  { key: 'order_no', label: '委托编号', width: 140 },
   { key: 'stock_code', label: '股票代码', width: 140 },
   { key: 'order_type', label: '买卖', width: 130, type: 'select', options: ['23', '24'] },
   { key: 'price', label: '价格', type: 'number', width: 120 },

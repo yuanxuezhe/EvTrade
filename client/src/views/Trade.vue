@@ -41,7 +41,7 @@
               <span class="text-mono text-secondary">{{ row.order_time }}</span>
             </template>
           </el-table-column>
-          <el-table-column prop="order_no" label="单号" width="100" show-overflow-tooltip>
+          <el-table-column prop="order_no" label="委托编号" width="100" show-overflow-tooltip>
             <template #default="{ row }">
               <span class="text-mono text-secondary">{{ row.order_no }}</span>
             </template>
