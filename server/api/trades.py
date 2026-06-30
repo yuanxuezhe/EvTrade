@@ -8,8 +8,14 @@ v5 改动：
 - 移除 id 字段
 - TRD_DATE → trd_date
 - 复合主键 (trd_date, trade_id)
+
+v10 改动（order-trade-query-by-trd-date）：
+- 新增 query 入参 start_date / end_date (区间模式: start_date <= trd_date <= end_date)
+- 缺省模式: trd_date = 激活日 (向后兼容)
+- 排序: created_at DESC → trade_time DESC, trade_id DESC
+  - trade_time 同秒时 trade_id 二级稳定排序
 """
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from typing import Optional, List
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -43,15 +49,41 @@ class TradesListResponse(BaseModel):
 @router.get("", response_model=TradesListResponse)
 async def list_trades(
     stock_code: Optional[str] = None,
-    trd_date: Optional[str] = None,
+    trd_date: Optional[str] = Query(None, description="8 位数字 YYYYMMDD，缺省 = 激活日"),
+    start_date: Optional[str] = Query(
+        None, regex=r"^\d{8}$",
+        description="起始交易日 YYYYMMDD（含）",
+    ),
+    end_date: Optional[str] = Query(
+        None, regex=r"^\d{8}$",
+        description="结束交易日 YYYYMMDD（含）",
+    ),
     db: Session = Depends(get_db),
 ):
-    trd = trd_date or resolve_default_trd_date(db)
-    q = db.query(Trade).filter(Trade.trd_date == trd)
+    """成交列表
+
+    过滤语义:
+    - start_date/end_date 任一存在 → 走区间模式 (start_date <= trd_date <= end_date)
+    - 都不存在 → 走缺省模式 (trd_date = 激活日, 向后兼容)
+    - 区间模式优先级高于 trd_date: start_date/end_date 存在时 trd_date 被忽略
+
+    排序: trade_time DESC, trade_id DESC (v10, trade_time 同秒时 trade_id 二级稳定)
+    """
+    q = db.query(Trade)
+
+    if start_date or end_date:
+        if start_date:
+            q = q.filter(Trade.trd_date >= start_date)
+        if end_date:
+            q = q.filter(Trade.trd_date <= end_date)
+    else:
+        trd = trd_date or resolve_default_trd_date(db)
+        q = q.filter(Trade.trd_date == trd)
+
     if stock_code:
         q = q.filter(Trade.stock_code == stock_code)
-    # 排序：按 created_at 倒序（无 id 主键时不再用 id）
-    rows = q.order_by(Trade.created_at.desc()).limit(500).all()
+
+    rows = q.order_by(Trade.trade_time.desc(), Trade.trade_id.desc()).limit(500).all()
     return TradesListResponse(code=0, msg="", list=[
         TradeOut(
             trade_id=r.trade_id,
