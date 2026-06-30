@@ -26,7 +26,6 @@ target/
 # IDE
 .vs/
 .svn/
-.claude/
 .vscode/
 .idea/
 *.swp
