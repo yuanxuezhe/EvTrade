@@ -30,6 +30,7 @@
 | `server/test_trades_api.py` | 新建 |
 | `client/src/utils/trdDateFilter.js` | 新建 |
 | `client/src/utils/date.js` | 新建 |
+| `client/tests/utils/date.test.js` | 新建（vitest `include: tests/**`） |
 | `client/src/api/index.js` | 改（getOrders/getTrades 支持参数） |
 | `client/src/stores/holdings_bootstrap.js` | 改 |
 | `client/src/views/Orders.vue` | 改 |
@@ -142,8 +143,8 @@ def register_query(router):
         stock_code: Optional[str] = None,
         status: Optional[str] = None,
         trd_date: Optional[str] = Query(None, description="8 位数字 YYYYMMDD，缺省 = 激活日"),
-        start_date: Optional[str] = Query(None, pattern=r"^\d{8}$", description="起始交易日 YYYYMMDD（含）"),
-        end_date: Optional[str] = Query(None, pattern=r"^\d{8}$", description="结束交易日 YYYYMMDD（含）"),
+        start_date: Optional[str] = Query(None, regex=r"^\d{8}$", description="起始交易日 YYYYMMDD（含）"),
+        end_date: Optional[str] = Query(None, regex=r"^\d{8}$", description="结束交易日 YYYYMMDD（含）"),
         limit: int = Query(100, le=500),
         offset: int = 0,
         user: User = Depends(get_current_user),
@@ -481,9 +482,9 @@ Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>"
 
 **Files:**
 - Create: `client/src/utils/date.js`
-- Create: `client/src/utils/date.test.js`（Vitest）
+- Create: `client/tests/utils/date.test.js`（Vitest；项目 `vitest.config.js` 的 `include: ['tests/**']`，不要放 `src/`）
 
-- [ ] **Step 1: 写失败测试 `client/src/utils/date.test.js`**
+- [ ] **Step 1: 写失败测试 `client/tests/utils/date.test.js`**
 
 ```js
 import { describe, it, expect } from 'vitest'
@@ -527,7 +528,7 @@ describe('shiftDateStr', () => {
 - [ ] **Step 2: 跑测试确认失败**
 
 ```bash
-cd D:/workspace/EvTrade/client && npx vitest run src/utils/date.test.js
+cd D:/workspace/EvTrade/client && npx vitest run tests/utils/date.test.js
 ```
 
 Expected: FAIL（找不到 `./date` 模块）
@@ -562,7 +563,7 @@ export function shiftDateStr(yyyymmdd, deltaDays) {
 - [ ] **Step 4: 跑测试确认通过**
 
 ```bash
-cd D:/workspace/EvTrade/client && npx vitest run src/utils/date.test.js
+cd D:/workspace/EvTrade/client && npx vitest run tests/utils/date.test.js
 ```
 
 Expected: 7 tests PASS
@@ -570,7 +571,7 @@ Expected: 7 tests PASS
 - [ ] **Step 5: 提交**
 
 ```bash
-cd D:/workspace/EvTrade && git add client/src/utils/date.js client/src/utils/date.test.js && git commit -m "feat(client): 新增 shiftDateStr 日期字符串工具
+cd D:/workspace/EvTrade && git add client/src/utils/date.js client/tests/utils/date.test.js && git commit -m "feat(client): 新增 shiftDateStr 日期字符串工具
 
 - YYYYMMDD 格式加减天数
 - 跨月/跨年/闰年正确
@@ -585,7 +586,7 @@ Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>"
 
 **Files:**
 - Create: `client/src/utils/trdDateFilter.js`
-- Create: `client/src/utils/trdDateFilter.test.js`
+- Create: `client/tests/utils/trdDateFilter.test.js`
 
 - [ ] **Step 1: 写失败测试**
 
