@@ -49,14 +49,16 @@
 
 文件：`server/api/orders/query.py::list_orders`
 
-新增两个可选 query 参数（带 FastAPI pattern 校验）：
+新增两个可选 query 参数（带 FastAPI 校验）：
 
 ```python
 from fastapi import Query
 
-start_date: Optional[str] = Query(None, pattern=r"^\d{8}$", description="起始交易日 YYYYMMDD（含）")
-end_date:   Optional[str] = Query(None, pattern=r"^\d{8}$", description="结束交易日 YYYYMMDD（含）")
+start_date: Optional[str] = Query(None, regex=r"^\d{8}$", description="起始交易日 YYYYMMDD（含）")
+end_date:   Optional[str] = Query(None, regex=r"^\d{8}$", description="结束交易日 YYYYMMDD（含）")
 ```
+
+> **Pydantic v1 约束**：项目 `requirements.txt` 锁定 `pydantic>=1.9.0,<2.0.0` + `fastapi>=0.83.0,<1.0.0`，Field/Query 校验关键字只能用 `regex=`（Pydantic v2 才改名 `pattern=`）。如未来升级到 Pydantic v2，需把 `regex=` 改为 `pattern=`。
 
 过滤规则（`trd_date` 是已存在的 DB 列，不是新增的）：
 - 两者都缺省 → 维持现状：`trd_date = 激活日`（`SysStatus.status='active'`）
@@ -70,7 +72,7 @@ end_date:   Optional[str] = Query(None, pattern=r"^\d{8}$", description="结束�
 
 文件：`server/api/trades.py::list_trades`
 
-新增同上的 `start_date` / `end_date`（与 orders 完全一致的 Query 签名 + pattern 校验）。
+新增同上的 `start_date` / `end_date`（与 orders 完全一致的 Query 签名 + `regex=` 校验）。
 
 **排序修改**：`ORDER BY created_at DESC` → `ORDER BY trade_time DESC, trade_id DESC`
 
