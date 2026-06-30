@@ -7,8 +7,8 @@ client.py — RPC 客户端 facade 兼容垫片（phase-2 拆分 + simplify-rpc-
 - parsers_business.py (~152) — 业务特定解析器（_parse_asset / _parse_orders / _parse_trades / _parse_positions / _parse_order_ack）
 - parsers_push.py — push 行提取（_iter_push_rows，从 transport 迁出）
 - handlers.py (~100) — 业务 RPC 调用入口（qry_* / ord_stk / cancel_order）
-- server/services/push_dispatcher.py — push 业务编排（_PUSH_CHANNEL 路由表 +
-  _run_handle_push / _resolve_active_trd_date_safe / _log_push_* + PushDispatcher 类）
+- server/services/push/dispatcher.py — push 业务编排器（编排层）
+    routes.py / run_handlers.py / log_helpers.py — 路由表 / 落库 helper / 日志 helper
 
 保留本 facade 是为了不破坏既有 import 路径：
   from rpc.client import ...            ← test_rpc.py / test_rpc_link.py
@@ -47,8 +47,9 @@ from server.rpc.parsers_business import (
     _parse_positions,
     _parse_trades,
 )
-from server.services.push_dispatcher import (
-    _PUSH_CHANNEL,
+from server.services.push.dispatcher import PushDispatcher
+from server.services.push.routes import _PUSH_CHANNEL
+from server.services.push.run_handlers import (
     _resolve_active_trd_date_safe,
     _run_handle_push,
 )
@@ -77,7 +78,7 @@ __all__ = [
     # parsers business
     "_parse_asset", "_parse_orders", "_parse_trades",
     "_parse_positions", "_parse_order_ack",
-    # push dispatcher (re-export from services/push_dispatcher.py)
+    # push dispatcher (re-export from services/push/{routes,run_handlers}.py)
     "_PUSH_CHANNEL", "_run_handle_push", "_resolve_active_trd_date_safe",
     # handlers
     "qry_asset", "qry_orders", "qry_trades", "qry_positions",

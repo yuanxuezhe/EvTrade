@@ -8,7 +8,7 @@ transport.py — RPClient 传输骨架（simplify-rpc-transport-thin）
 - 全局单例 _rpc_client + get_rpc_client / close_rpc_client 生命周期
 - 传输层 utilities：_clean_id（msgid/func 字符串清洗）、_wire_dump（报文 dump）
 - 协议常量 re-export：RABBITMQ_URL / EXCHANGE_NAME / QUEUE_REQ / QUEUE_REPLY / QUEUE_PUSH
-- push 业务编排已迁到 server/services/push_dispatcher.py（REQ-RPC-012）
+- push 业务编排已迁到 server/services/push/dispatcher.py（REQ-RPC-012）
 - push 行提取已迁到 server/rpc/parsers_push.py
 """
 import asyncio
@@ -21,7 +21,7 @@ from aio_pika import ExchangeType, Message
 from msgpacket import MsgPacket, MSG_TYPE_REQUEST, MSG_TYPE_PUSH
 
 from server.config import settings
-from server.services.push_dispatcher import PushDispatcher
+from server.services.push.dispatcher import PushDispatcher
 
 log = logging.getLogger(__name__)
 
@@ -162,7 +162,7 @@ class RPClient:
 
         transport 只负责：消息循环 + 解码 + 委托给 self._dispatcher.dispatch。
         所有 push 业务编排（行提取、落库、广播、trd_date 注入）由
-        server/services/push_dispatcher.py 承担（REQ-RPC-012）。
+        server/services/push/dispatcher.py 承担（REQ-RPC-012）。
 
         柜台不会回包给 ord_stk 的请求方（fire-and-forget），
         真正的成交通知通过 push 队列异步推送：
