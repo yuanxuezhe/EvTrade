@@ -14,7 +14,7 @@ t0.py — T0 一键买卖 + 配平系数 + 费率
 - stamp_tax_rate   默认 0.001（卖出千 1）
 - min_commission   默认 5.0（A 股规则：佣金 < 5 元按 5 元收）
 - slippage         默认 0.001（滑点，备用）
-- 真实已实现盈亏算法见 services.t0_aggregate.calc_realized_pnl
+- 真实已实现盈亏算法见 services.t0.aggregate_api.calc_realized_pnl
 """
 from decimal import Decimal, ROUND_DOWN, ROUND_UP
 from typing import Optional, Tuple
@@ -88,7 +88,7 @@ def calc_commission(amount: float, cfg: FeeConfig, direction: str) -> Tuple[floa
 
     注：v7 schema 后 ORM FeeConfig 完整字段：
         commission_rate / stamp_tax_rate / min_commission / slippage
-    min_commission 兜底逻辑在 services.t0_aggregate.calc_commission_and_tax 中实现，
+    min_commission 兜底逻辑在 services.t0.aggregate_api.calc_commission_and_tax 中实现，
     本函数保留原签名（不带 min 兜底）以兼容既有调用方。
     """
     commission = round(amount * cfg.commission_rate, 2)

@@ -1,11 +1,11 @@
 """
-push_helpers.py — 4 个 push handler 共用的小工具
+push/helpers.py — 4 个 push handler 共用的小工具
 
 提供：
 - _str / _float / _int: 安全类型转换（broker 字段可能为 None / 字符串 / 缺失）
+- 时间工具 re-export: _utcnow / TS_FMT / format_ts / parse_broker_ts / format_db_dt
 
-v10 时间戳工具已从 services/push_helpers.py 移至 server/utils/time.py。
-此处保留兼容垫片，re-export 所有符号。
+时间戳权威位置在 server/utils/time.py。
 """
 from typing import Any, Optional
 

@@ -15,7 +15,7 @@ import logging
 from datetime import datetime
 from db import Base, engine, init_db, SessionLocal
 from models.orm import Order, Trade, Position, Asset, SysStatus
-from services.push_handlers import handle_push, _infer_order_status, TERMINAL_STATUSES, _status_msg
+from services.push.handlers import handle_push, _infer_order_status, TERMINAL_STATUSES, _status_msg
 
 
 @pytest.fixture(autouse=True)
@@ -533,7 +533,7 @@ def test_unknown_func_logs_warning(caplog):
     之后: 记 warning 日志，便于定位缺失 handler。
     """
     db = SessionLocal()
-    with caplog.at_level(logging.WARNING, logger="services.push_handlers"):
+    with caplog.at_level(logging.WARNING, logger="services.push.handlers"):
         handle_push(db, "bogus_func", {"foo": "bar", "baz": 123}, ts="2026-06-20T10:00:00")
     db.commit()
     db.close()

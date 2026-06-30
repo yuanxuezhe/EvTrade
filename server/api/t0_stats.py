@@ -122,7 +122,7 @@ async def t0_stats(
     position_cost_total = cost_basis * position_vol
 
     # 已实现盈亏（真实算法：基于持仓成本基准 + 卖出方向费用）
-    # 算法见 services.t0_aggregate.calc_realized_pnl
+    # 算法见 services.t0.aggregate_api.calc_realized_pnl
     sell_trades_today = [t for t in trades_today if t.order_type == "24"]
     fee_cfg = get_fee_config()
     realized, _commission, _stamp_tax = calc_realized_pnl(

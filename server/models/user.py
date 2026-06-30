@@ -6,8 +6,8 @@ from sqlalchemy import Column, Integer, String, DateTime, Boolean
 from server.db import Base
 
 # v10: 统一时间戳格式 "YYYY-MM-DD HH:MM:SS.fff" (rpc-field-alignment-ts-unify)
-#   这里内联 format_db_dt 而非 import server.services.push_helpers,
-#   否则会触发循环导入: services.__init__ → guards → user → services.push_helpers
+#   这里内联 format_db_dt 而非 import server.services.push.helpers,
+#   否则会触发循环导入: services.__init__ → guards → user → services.push.helpers
 _TS_FMT = "%Y-%m-%d %H:%M:%S.%f"
 
 

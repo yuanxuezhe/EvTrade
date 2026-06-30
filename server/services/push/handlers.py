@@ -1,11 +1,8 @@
 """
 push/handlers.py — 4 类 broker push 路由表 + 统一入口 handle_push
 
-本文件原位于 server/services/push_handlers.py（phase-2 拆分前的 facade）。
-phase-2 之后 push_handlers 仅做兼容垫片，实质内容下沉到此处。
-
 调用方：
-  - server/rpc/transport.py  await loop.run_in_executor(None, handle_push, db, func, row, ts)
+  - server/services/push/dispatcher.py  _run_handle_push
   - server/test_push_handlers.py  handle_push, _infer_order_status, TERMINAL_STATUSES, _status_msg
   - server/test_push_async.py  handle_push
 """

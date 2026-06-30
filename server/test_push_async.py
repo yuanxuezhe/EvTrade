@@ -147,7 +147,7 @@ async def test_executor_exception_propagates(monkeypatch, caplog):
 
 def test_handle_push_signature_unchanged():
     """handle_push 仍是同步函数, test_push_handlers.py 11 用例零改动继续通过。"""
-    from services.push_handlers import handle_push
+    from services.push.handlers import handle_push
 
     # 同步函数（不是 coroutine）
     assert not inspect.iscoroutinefunction(handle_push), \
