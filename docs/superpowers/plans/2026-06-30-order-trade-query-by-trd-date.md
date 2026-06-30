@@ -2,15 +2,21 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 让 `GET /api/orders` 和 `GET /api/trades` 支持 `start_date`/`end_date` 区间查询；前端 bootstrap 拉 30 天窗口全量缓存；提供 `filterByTrdDate` 纯函数工具；Orders.vue 加「仅当日/全部」Tab，三类视图都展示 `trd_date` 列。
+**Goal:** 让 `GET /api/orders` 和 `GET /api/trades` 接受 `start_date` / `end_date` 两个 HTTP query 入参，按 `start_date <= trd_date <= end_date`（含端点）过滤；前端 bootstrap 拉 30 天窗口全量缓存；提供 `filterByTrdDate` 纯函数工具；Orders.vue 加「仅当日/全部」Tab，三类视图都展示 `trd_date` 列。
 
 **Architecture:**
-- 后端两个 endpoint 加可选 `start_date/end_date` query 参数（向后兼容，缺省=激活日）；trades 排序从 `created_at DESC` 改为 `trade_time DESC, trade_id DESC`
+- 后端两个 endpoint **新增两个 query 入参** `start_date` / `end_date`（向后兼容，缺省=激活日）；**不动 DB schema**。trades 排序从 `created_at DESC` 改为 `trade_time DESC, trade_id DESC`
+- 过滤谓词 `start_date <= trd_date <= end_date`，其中 `trd_date` 是已存在的 DB 列（v6 已加）；`start_date` / `end_date` 是 API 入参，不是 DB 列
 - 前端 store bootstrap 拉 `[activeDate-29, activeDate]` 区间；holdings store 仍只持单 ref
 - 前端新增 `utils/trdDateFilter.js` + `utils/date.js` 两个工具模块（职责单一、单函数导出、< 40 行）
 - Orders.vue 加 `el-tabs`，trd_date 列；Trades.vue 加 trd_date 列 + `default-sort: trade_time`
 
 **Tech Stack:** FastAPI + SQLAlchemy + Pydantic | Vue 3 + element-plus + Vitest
+
+**术语约定：**
+- **DB 列**：数据库表中的字段（`Order.trd_date`、`Trade.trade_time` 等）。本 plan 不动任何 DB 列。
+- **API query 入参**：HTTP `?start_date=...&end_date=...` 由 FastAPI `Query()` 接收。本 plan **只新增这两个 query 入参**。
+- **前端表格列**：element-plus `<el-table-column>`。本 plan 在 Orders.vue / Trades.vue 表头**新增 trd_date 列**展示 `OrderOut.trd_date` / `TradeOut.trd_date` 字段值。
 
 **Spec:** `docs/superpowers/specs/2026-06-30-order-trade-query-by-trd-date-design.md`（commit `df493cd`）
 
@@ -31,7 +37,7 @@
 
 ---
 
-## Task 1: 后端 `GET /api/orders` 加 start_date/end_date
+## Task 1: 后端 `GET /api/orders` 新增 query 入参 start_date / end_date
 
 **Files:**
 - Modify: `server/api/orders/query.py:25-51`
@@ -232,7 +238,7 @@ Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>"
 
 ---
 
-## Task 2: 后端 `GET /api/trades` 加 start_date/end_date + 改排序
+## Task 2: 后端 `GET /api/trades` 新增 query 入参 start_date / end_date + 改排序
 
 **Files:**
 - Modify: `server/api/trades.py:43-68`

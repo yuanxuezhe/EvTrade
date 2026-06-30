@@ -2,6 +2,17 @@
 
 > **设计稿**，未经评审前不要直接动代码。
 
+## 术语约定（先看）
+
+为避免混淆，本设计严格区分以下名词：
+
+- **DB 列**：数据库表中的实际字段（如 `Order.trd_date`、`Trade.trade_time`）。本设计**不动任何 DB 列**，`Order` / `Trade` 表 schema 完全不变。
+- **API 入参（query 参数）**：HTTP URL `?start_date=...&end_date=...`，由 FastAPI `Query()` 接收。本设计**只新增两个 query 入参**：`start_date`、`end_date`，不做 POST body 也不做 header。
+- **前端表格列**：element-plus `<el-table-column>` 渲染的列。本设计在 `Orders.vue` / `Trades.vue` 表头**新增 trd_date 列**用于展示 `OrderOut.trd_date` / `TradeOut.trd_date` 字段值。
+- **过滤逻辑**：纯 SQL 谓词 `start_date <= trd_date <= end_date`，其中 `trd_date` 是已存在的 DB 列；`start_date` / `end_date` 是 API 入参，不是 DB 列。
+
+---
+
 ## 1. 背景与目标
 
 ### 1.1 现状问题
@@ -13,11 +24,11 @@
 | 当日委托查询 | `Orders.vue` | 仅展示「激活日」数据（`/api/orders` 默认 trd_date = 激活日） | 明确「只看当天下的单」语义 |
 | 委托查询（不过滤日期） | 无独立入口 | `/api/orders/history` 必须显式传 trd_date | 一个无日期过滤的查询入口 |
 | 成交排序 | `/api/trades` | `ORDER BY created_at DESC`（DB 入库时间，不是成交时间） | 按成交时间倒序 |
-| trd_date 列 | `Orders.vue` / `Trades.vue` 表头 | 无 | 三类视图都需展示交易日期 |
+| 前端表格缺 trd_date 列 | `Orders.vue` / `Trades.vue` 表头 | 无 element-plus `<el-table-column prop="trd_date">` | 三类视图都需展示交易日期 |
 
 ### 1.2 设计目标
 
-1. **后端**：`GET /api/orders` / `GET /api/trades` 支持 `start_date` / `end_date` 区间查询（向后兼容，缺省时维持现状），trades 排序改为 `trade_time DESC`
+1. **后端**：`GET /api/orders` / `GET /api/trades` 新增两个 query 入参 `start_date` / `end_date`（向后兼容，缺省时维持现状）；过滤谓词 `start_date <= trd_date <= end_date`（其中 `trd_date` 是已存在的 DB 列）。trades 排序改为 `trade_time DESC`
 2. **前端缓存**：holdings store bootstrap 拉取一个日期窗口（默认 30 天），缓存该窗口内的全量 orders/trades
 3. **前端筛选**：新增独立的 `client/src/utils/trdDateFilter.js` 工具模块，三个 view 共用一个纯函数做区间筛选
 4. **前端视图**：`Orders.vue` 加 Tab「仅当日 / 全部」；`Trades.vue` 加 trd_date 列并按 trade_time 倒序；两个表都新增 trd_date 列
@@ -28,10 +39,13 @@
 - 不重做 holdings store 整体架构（仍是 orders / trades 两个 ref）
 - 不引入日期范围选择器（用户目前只要求「当日 / 全部」二选一）
 - 不改 server/services/* 中的对账、推送逻辑
+- **不动 `Order` / `Trade` 表的 DB schema**（不新增列、不改类型、不改索引）
 
 ## 2. 后端改动
 
-### 2.1 `GET /api/orders` 新增 query 参数
+> **重申**：本节所有改动**只新增两个 HTTP query 入参**（`start_date` / `end_date`），不动 `Order` / `Trade` 表的 DB schema。过滤谓词 `start_date <= trd_date <= end_date` 里的 `trd_date` 是已存在的 DB 列。
+
+### 2.1 `GET /api/orders` 新增 query 入参
 
 文件：`server/api/orders/query.py::list_orders`
 
@@ -44,15 +58,15 @@ start_date: Optional[str] = Query(None, pattern=r"^\d{8}$", description="起始�
 end_date:   Optional[str] = Query(None, pattern=r"^\d{8}$", description="结束交易日 YYYYMMDD（含）")
 ```
 
-过滤规则：
+过滤规则（`trd_date` 是已存在的 DB 列，不是新增的）：
 - 两者都缺省 → 维持现状：`trd_date = 激活日`（`SysStatus.status='active'`）
-- 仅 `start_date` → `trd_date >= start_date`
-- 仅 `end_date` → `trd_date <= end_date`
-- 两个都给 → `trd_date BETWEEN start_date AND end_date`
+- 仅 `start_date` → `trd_date >= start_date`（即 `start_date <= trd_date`）
+- 仅 `end_date` → `trd_date <= end_date`（即 `trd_date <= end_date`）
+- 两个都给 → 同时满足 `start_date <= trd_date AND trd_date <= end_date`
 
 排序维持：`ORDER BY order_time DESC`（已正确）。
 
-### 2.2 `GET /api/trades` 新增 query 参数 + 改排序
+### 2.2 `GET /api/trades` 新增 query 入参 + 改排序
 
 文件：`server/api/trades.py::list_trades`
 
@@ -245,8 +259,8 @@ App bootstrap
 
 | 文件 | 改动类型 |
 |---|---|
-| `server/api/orders/query.py` | 改：list_orders 加 start_date/end_date query 参数 |
-| `server/api/trades.py` | 改：list_trades 加 start_date/end_date + 改排序 |
+| `server/api/orders/query.py` | 改：list_orders 新增 query 入参 start_date/end_date（不动 DB 列） |
+| `server/api/trades.py` | 改：list_trades 新增 query 入参 start_date/end_date + 改排序（不动 DB 列） |
 | `server/test_orders_api.py` | 改：补区间查询用例 |
 | `server/test_trades_api.py` | 改（如存在）：补排序 + 区间用例；不存在则新建 |
 | `client/src/utils/trdDateFilter.js` | 新增：纯函数筛选工具 |
