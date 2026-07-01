@@ -46,11 +46,13 @@ EvTrade 部署在 Windows（开发/QMT 柜台）+ Linux（前后端服务），�
 | `HQ_WS_HOST` | `0.0.0.0` | WS 监听地址 |
 | `HQ_WS_PORT` | `8765` | WS 监听端口 |
 
-### REQ-CFG-004: 启动校验
+### REQ-CFG-004: 启动校验（`server/config.py::ConfigValidator`）
 
-- 缺 `JWT_SECRET` → 启动失败 + 明确错误信息
-- `EVTRADE_RABBITMQ_URL` 解析失败 → 启动失败
-- 端口被占用 → 启动失败（uvicorn 已有错误信息）
+- 缺 `EVTRADE_SECRET` **且** `server/auth/.secret_key` 文件不存在 → 警告（不阻塞），首次启动时 `security.py::_load_or_create_secret()` 用 `secrets.token_urlsafe(64)` 自动生成并持久化到 `.secret_key`
+- 多实例部署（如生产双活）必须显式设置 `EVTRADE_SECRET` 环境变量以共享 token；单实例可依赖 auto-gen
+- `EVTRADE_RABBITMQ_URL` 为空 → 启动失败（`RuntimeError` from `validate_config()`）
+- `EVTRADE_RPC_TIMEOUT` ≤ 0 或 > 300 → 警告（建议 5-120s）
+- `EVTRADE_API_PORT` 越界（<1 或 >65535）→ 启动失败
 
 ### REQ-CFG-005: 凭证脱敏
 
@@ -58,7 +60,12 @@ EvTrade 部署在 Windows（开发/QMT 柜台）+ Linux（前后端服务），�
 - ✅ `.env.example` 允许 commit，但所有敏感字段值替换为 `<SET_IN_ENV>`
 - ✅ 历史扫描无 `.env` 泄漏（已验证 `git log --all -- server/.env` 为空）
 
-### REQ-CFG-006: 系统状态机（v5 schema refactor）
+### REQ-CFG-006: 必填项校验测试覆盖
+
+- `server/test_config.py` 单测覆盖 `ConfigValidator` 的 4 个分支
+- Settings 是 `frozen=True` dataclass，测试用 `object.__setattr__` 绕过冻结
+
+### REQ-CFG-007: 系统状态机（v5 schema refactor）
 
 - 表名：`trading_day` → **`sys_status`**
 - 主键：`trd_date`（YYYYMMDD），去 `id` 自增
@@ -83,12 +90,29 @@ Then 重启服务即可生效
 
 ### S-CFG-003: RabbitMQ 不可达
 
-Given `.env` 中 URL 拼错  
-When FastAPI 启动  
+Given `.env` 中 URL 拼错
+When FastAPI 启动
 Then RPC 客户端尝试连接 → 超时 → log 错误但**不崩溃**（设计：行情/委托/查询全部降级为失败响应，前端显示错误）
+
+### S-CFG-004: JWT_SECRET auto-gen（新增）
+
+Given `.env` 无 `EVTRADE_SECRET=` 行 且 `server/auth/.secret_key` 不存在
+When FastAPI 首次启动
+Then `security.py::_load_or_create_secret()` 用 `secrets.token_urlsafe(64)` 生成 64 字节随机密钥
+And 写入 `server/auth/.secret_key`（持久化，重启后 token 不失效）
+And `ConfigValidator` 输出 `[WARN] EVTRADE_SECRET 未设置，首次启动将自动生成` 但不阻塞启动
+And 后续 token 签名/校验正常工作
+
+### S-CFG-005: API_PORT 越界（新增）
+
+Given `.env` 设 `EVTRADE_API_PORT=99999`
+When FastAPI 启动
+Then `ConfigValidator.validate()` 检测到端口越界 → 加入 `errors` 列表
+And `validate_config()` 抛 `RuntimeError: Config validation failed: ['INVALID_API_PORT: 99999']`
+And uvicorn 退出码非 0
 
 ## Known Issues (from analysis)
 
-- 🟡 `JWT_SECRET` 当前**没有**启动校验（缺失时用 `dev-secret-please-change` 静默通过）
-- 🟡 配置分散在 `server/config.py` 和 `hq/hqserver.py` 两处，**没共用** Settings 类
+- ✅ **`JWT_SECRET` 启动校验**：REQ-CFG-004 已重写 + REQ-CFG-006 测试覆盖
+- 🟡 配置分散在 `server/config.py` 和 `hq/hqserver.py` 两处，**没共用** Settings 类（保留为下个 change）
 - 🟢 `.env.example` 已包含所有 EVTRADE_* 和 HQ_* key，本轮新增的 HQ_* 已合并
