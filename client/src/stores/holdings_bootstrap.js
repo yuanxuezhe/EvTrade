@@ -14,11 +14,16 @@
  * 调用者：holdings.js 内 `createBootstrap({...})` 拿 4 个流程函数。
  */
 import { api } from '../api'
+import { shiftDateStr } from '../utils/date'
 import { parseAsset } from './holdings_helpers'
 import {
   applyAssetResult, applyPositionsResult, applyOrdersResult, applyTradesResult,
   applyAssetRefresh, applyPositionsRefresh, applyOrdersRefresh, applyTradesRefresh,
 } from './holdings_apply_results'
+
+// v9: bootstrap 拉 30 天窗口全量委托/成交缓存（满足 30 天回看需求）
+// 单次激活日窗口 (bootstrap-window) = [active-29, active]，含当天共 30 天
+const BOOTSTRAP_WINDOW_DAYS = 30
 
 /**
  * 创建 bootstrap/refresh 流程工厂
@@ -46,6 +51,28 @@ export function createBootstrap({
   const refs = { positions, orders, trades, cachedAsset, refCounts, log }
 
   /**
+   * 计算 bootstrap 用的 30 天窗口 { startDate, endDate }
+   *   - 终边 = activeTrdDate.value（v8 推送守门权威源）
+   *   - 起始 = shiftDateStr(endDate, -(BOOTSTRAP_WINDOW_DAYS-1))  ← 含当天共 30 天
+   *   - activeTrdDate 未就绪（仍为 null）时返 { undefined, undefined }，
+   *     让 api.getOrders/getTrades 走无参老路径，避免给后端发畸形日期
+   *   - shiftDateStr 抛错时降级为 { undefined, endDate }（单日窗口）
+   */
+  function _buildWindow() {
+    const endDate = activeTrdDate.value
+    if (!endDate) {
+      return { startDate: undefined, endDate: undefined }
+    }
+    try {
+      const startDate = shiftDateStr(endDate, -(BOOTSTRAP_WINDOW_DAYS - 1))
+      return { startDate, endDate }
+    } catch (e) {
+      log('warn', '缓存', 'bootstrap', 'shiftDateStr 失败, 回退单日窗口', String(e?.message || e))
+      return { startDate: undefined, endDate }
+    }
+  }
+
+  /**
    * App 启动 / 登录后调用：
    *   1) 先拉激活日 (api.getActiveDay) → 写 activeTrdDate (v8: 推送守门用)
    *   2) 并行拉 4 个 RPC（asset / holdings / orders / trades）→ 写缓存 → 写日志
@@ -60,11 +87,12 @@ export function createBootstrap({
 
       refCounts.value = { asset: 'loading', positions: 'loading', orders: 'loading', trades: 'loading' }
 
+      const dateRange = _buildWindow()
       const results = await Promise.allSettled([
         api.getAsset().catch((e) => { throw e }),
         api.getHoldings().catch((e) => { throw e }),
-        api.getOrders().catch((e) => { throw e }),
-        api.getTrades().catch((e) => { throw e })
+        api.getOrders(dateRange).catch((e) => { throw e }),
+        api.getTrades(dateRange).catch((e) => { throw e })
       ])
       const [rAsset, rPos, rOrd, rTrd] = results
 
@@ -100,11 +128,12 @@ export function createBootstrap({
     try {
       refCounts.value = { asset: 'loading', positions: 'loading', orders: 'loading', trades: 'loading' }
 
+      const dateRange = _buildWindow()
       const results = await Promise.allSettled([
         api.getAsset().catch((e) => { throw e }),
         api.getHoldings().catch((e) => { throw e }),
-        api.getOrders().catch((e) => { throw e }),
-        api.getTrades().catch((e) => { throw e })
+        api.getOrders(dateRange).catch((e) => { throw e }),
+        api.getTrades(dateRange).catch((e) => { throw e })
       ])
       const [rAsset, rPos, rOrd, rTrd] = results
 
