@@ -31,9 +31,12 @@ pkt = await client.call(
 
 - RPC 响应统一 2 个结果集：
   - **RS1**: `{code: int, msg: str}` — 状态码 + 错误信息
-  - **RS2**: `list[dict]` — 业务数据
-- `code=0` 表示成功
-- 业务函数 `_parse_*` 把 RS2 转成 TypedDict / Pydantic model
+  - **RS2**: `list[dict]` — 业务数据（broker 原字段名透传，v10 起）
+- `code=0` 表示成功；非 0 时 `list` 可为空
+- 业务函数 `_parse_*`（位于 `server/rpc/parsers_business.py`）把 RS2 转成 `Dict[str, Any]`，
+  统一返回 `{code, msg, list}` 形状（consolidate-rpc-parsers 改动）
+- 字段映射容错：缺失字段用 `_to_int` / `_to_float` 默认 0；类型不匹配降级为默认值（不抛 ValidationError）
+- **未实施**：Pydantic `BaseModel` 化（提案建议但未执行；当前 `Dict[str, Any]` 已足，typed via docstring 字段列表）
 
 ### REQ-RPC-004: 业务函数列表
 
@@ -218,8 +221,25 @@ And `pending` dict 不残留（避免后续应答误匹配）
 - `server/rpc/client.py:530-571` — 业务函数实现
 - `server/rpc/client.py:478+` — `_parse_ord_cfm`（push 专用，与查询解析器不同）
 
+### REQ-RPC-013: API 响应格式统一（v10 M6 折叠）
+
+所有 `/api/*` 查询端点统一返回 `{"code": int, "msg": str, "list": [...]}` 形状：
+
+- `asset.py` 端点从 `{code, msg, data: AssetOut}` 改为 `{code, msg, list: [AssetOut]}`（包单元素数组）
+- `orders / trades / positions / holdings` 端点维持 `{code, msg, list: [...]}`
+- 前端 axios 拦截器统一解包 `list` 字段（删除 `_parseAsset(resp.data.data)` 特殊处理）
+- `code != 0` 时 `list` 可为空数组
+
+#### Scenario S-RPC-006: asset 端点响应格式
+
+Given 用户调 `GET /api/asset`
+When 收到响应
+Then `resp.data` = `{code: 0, msg: "", list: [{account_id: ..., cash: ..., ...}]}`（**list 而非 data**）
+And `list[0]` 是单元素（asset 是单账户查询）
+
 ## Known Issues (from analysis)
 
-- 🟡 8 个 `_parse_*` 解析器**没有统一 schema**（部分返回 dict，部分返回 TypedDict）
-- 🟡 `cancel_order` 之前是**占位实现**（`client.call("cancel_ord")` 无参数）→ **本轮已修**
-- 🟢 `ord_cfm` push 解析器与查询解析器不复用是合理的（字段确实不同）
+- ✅ 8 个 `_parse_*` 解析器统一 shape：所有解析器返 `{code, msg, list}`（`server/rpc/parsers_business.py`）
+- ✅ `cancel_order` 占位实现已修（v9 重构后走真实 RPC + late import）
+- ✅ `ord_cfm` push 解析器与查询解析器不复用是合理的（字段确实不同）
+- 🟡 Pydantic `BaseModel` 化未实施（提案建议但当前 `Dict[str, Any]` 已足，typed via docstring 字段列表）
