@@ -50,7 +50,13 @@
 
     <!-- 表格 -->
     <div class="content-card">
-      <el-table :data="pagedTrades" v-loading="loading" style="width: 100%">
+      <el-table :data="pagedTrades" v-loading="loading" style="width: 100%"
+                :default-sort="{ prop: 'trade_time', order: 'descending' }">
+        <el-table-column prop="trd_date" label="交易日" width="100" sortable>
+          <template #default="{ row }">
+            <span class="text-mono text-secondary">{{ row.trd_date }}</span>
+          </template>
+        </el-table-column>
         <el-table-column prop="trade_time" label="成交时间" width="120">
           <template #default="{ row }">
             <span class="text-mono text-secondary">{{ row.trade_time }}</span>
@@ -172,11 +178,13 @@ function resetFilters() {
 }
 
 function exportCSV() {
-  const header = ['成交时间', '股票代码', '方向', '成交数量', '成交价格', '成交金额', '成交编号', '合同序号']
+  const header = ['交易日', '成交时间', '股票代码', '方向', '类型', '成交数量', '成交价格', '成交金额', '成交编号', '合同序号']
   const rows = filteredTrades.value.map((t) => [
+    t.trd_date,
     t.trade_time,
     t.stock_code,
     t.order_type === '23' ? '买入' : (t.order_type === '24' ? '卖出' : t.order_type),
+    Number(t.trade_type) === 1 ? '撤单' : '成交',
     t.volume,
     t.price,
     (t.volume * t.price).toFixed(2),
