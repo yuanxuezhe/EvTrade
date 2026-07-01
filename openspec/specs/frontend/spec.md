@@ -212,6 +212,34 @@ The shared component is [client/src/components/CacheTableView.vue](../../client/
   - actions: `bootstrap / refreshAll / refreshPositions / refreshAsset / log / clearHistory / _startWatchers / _stopWatchers`
   - getters: `getLivePrice / getMarketValue / getProfit / getReturnRate`
   - ws push: `applyPositionPush / applyAssetPush / applyOrderPush / applyTradePush / applyQuote`
+
+#### REQ-FE-009.8: 委托/成交 trd_date 区间查询与展示（2026-06-30）
+
+- **位置**：
+  - `client/src/utils/trdDateFilter.js` — `filterByTrdDate(items, range)` 三模式纯函数（exact / [start,end] / 无过滤）
+  - `client/src/utils/date.js` — `shiftDateStr(yyyymmdd, deltaDays)` 跨月/跨年/闰年工具
+  - `client/src/stores/holdings_bootstrap.js` — `BOOTSTRAP_WINDOW_DAYS = 30`；bootstrap 拉 `[activeDate-29, activeDate]` 区间全量
+  - `client/src/api/index.js` — `getOrders({ startDate, endDate })` / `getTrades({ startDate, endDate })` opts 对象入参
+  - `client/src/views/Orders.vue` — `<el-tabs>`「仅当日 / 全部」 + trd_date 列 + `filteredOrders` computed
+  - `client/src/views/Trades.vue` — trd_date 列 + `default-sort: { prop: 'trade_time', order: 'descending' }`（v9 已删 `order_id` 列不再显示）
+
+- **filterByTrdDate 契约**：
+  - `range = { exact?: string, start?: string, end?: string }`
+  - `exact` 与 `start/end` 互斥，同时给 `exact` 优先
+  - 缺省 `range = {}` 时返回 `items.slice()`（不污染调用方引用）
+  - YYYYMMDD 字符串比较天然字典序 = 时间序，无需 parse
+
+- **bootstrap 拉取窗口**：
+  - `endDate = activeTrdDate.value`（已由 `_resolveActiveDay()` 解析）
+  - `startDate = shiftDateStr(endDate, -30)`
+  - holdings store 仍只持单 ref，存 30 天窗口全量
+  - WS 推送守门不受影响（用 `trd_date === activeTrdDate` 单值比较，与拉取窗口解耦）
+
+- **向后兼容**：
+  - `getOrders()` / `getTrades()` 无 opts 时行为不变（激活日单日）
+  - `OrderOut.trd_date` / `TradeOut.trd_date` 字段已在（v6/v7 已加）
+
+- 详见归档 `archive/2026-06-30-order-trade-query-by-trd-date/spec-deltas/frontend.md`
 - **依赖注入模式**：helper 工厂通过参数接收 state ref + store getter（如 `getQuoteStore: () => useQuoteStore()`），避免循环依赖
 - 详见归档 `archive/2026-06-24-phase-2-architecture-split/spec-deltas/frontend.md`
 

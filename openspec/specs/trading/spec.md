@@ -11,8 +11,13 @@
 
 ### REQ-TRADE-001: 查询
 
-- `GET /api/orders?stock_code=...` — 委托列表（走 `qry_orders`）
-- `GET /api/trades?stock_code=...` — 成交列表（走 `qry_trades`）
+- `GET /api/orders?stock_code=...&start_date=YYYYMMDD&end_date=YYYYMMDD` — 委托列表（走 `qry_orders`）
+  - `start_date` / `end_date` 8 位数字字符串 `^\d{8}$`（Pydantic v1 `Query(regex=...)`）；缺省=激活日 trd_date
+  - 过滤谓词 `start_date <= trd_date <= end_date`（仅 `start_date` 时 `trd_date >= start_date`；仅 `end_date` 时 `trd_date <= end_date`）
+  - 排序 `ORDER BY order_time DESC`
+- `GET /api/trades?stock_code=...&start_date=YYYYMMDD&end_date=YYYYMMDD` — 成交列表（走 `qry_trades`）
+  - 同上区间参数语义
+  - 排序 `ORDER BY trade_time DESC, trade_id DESC`（同秒二级 trade_id 兜底；2026-06-30 改：原 `created_at DESC` 与 broker 成交时刻有毫秒级漂移）
 - `GET /api/asset` — 账户资金（走 `qry_asset`）
 - 响应统一 `{code: 0, msg: "", list: [...]}`；code≠0 表示 RPC 错误
 
