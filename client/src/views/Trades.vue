@@ -100,11 +100,6 @@
             <span class="text-mono text-secondary">{{ row.trade_id }}</span>
           </template>
         </el-table-column>
-        <el-table-column prop="order_id" label="合同序号" min-width="140" show-overflow-tooltip>
-          <template #default="{ row }">
-            <span class="text-mono text-secondary">{{ row.order_id }}</span>
-          </template>
-        </el-table-column>
         <template #empty>
           <el-empty description="无成交记录" :image-size="100" />
         </template>
@@ -178,7 +173,7 @@ function resetFilters() {
 }
 
 function exportCSV() {
-  const header = ['交易日', '成交时间', '股票代码', '方向', '类型', '成交数量', '成交价格', '成交金额', '成交编号', '合同序号']
+  const header = ['交易日', '成交时间', '股票代码', '方向', '类型', '成交数量', '成交价格', '成交金额', '成交编号']
   const rows = filteredTrades.value.map((t) => [
     t.trd_date,
     t.trade_time,
@@ -188,8 +183,7 @@ function exportCSV() {
     t.volume,
     t.price,
     (t.volume * t.price).toFixed(2),
-    t.trade_id,
-    t.order_id
+    t.trade_id
   ])
   const csv = [header, ...rows].map((r) => r.map((v) => `"${v}"`).join(',')).join('\n')
   const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8' })
