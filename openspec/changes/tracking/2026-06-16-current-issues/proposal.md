@@ -50,7 +50,7 @@ v4 重构后 `api/orders.py` 只有 `POST /place`、`POST /place_t0`、`POST /pl
 
 | # | 问题 | 范围 | 建议 change |
 |---|---|---|---|
-| M1 | `JWT_SECRET` 缺失时静默用 `dev-secret-please-change` | `configuration` | `add-config-validation` |
+| ~~M1~~ | ~~`JWT_SECRET` 缺失时静默用 `dev-secret-please-change`~~ | `configuration` | ✅ add-config-validation 修：`d35ed8e`（重构 REQ-CFG-004 + 新增 test_config.py 6 用例 + auto-gen strong random）；security.py 用 `secrets.token_urlsafe(64)` 替代硬编码默认值 |
 | M2 | 8 个 `_parse_*` 解析器无统一 schema，返回 dict | `rpc-protocol` | `consolidate-rpc-parsers` |
 | M3 | `position_update` / `asset_update` WS 频道无数据源 | `push` | `route-position-asset-push` |
 | M4 | 行情 vs 业务 WS 不同 host（:8765 vs :8000），单 store 管理 | `frontend` | `split-quote-and-bus-ws` |
@@ -129,7 +129,7 @@ v5 schema-refactor 改了 6 张表的 schema（PK / 字段名 / 约束），变�
 - [x] H6 t0_aggregate.py Python 3.6 兼容性（`ba8b364`，`list[T]` → `List[T]`，commit "fix: Python 3.6.8 兼容性 + 默认账号问题"）
 - [x] H7 on_startup 种入 admin+trader（`ba8b364`，同块种子；现场 admin 行已补）
 - [x] H8 `asyncio.create_task` Py3.6.8 不兼容（`ba8b364` 4 处 → `ensure_future`，commit "fix: Python 3.6.8 兼容性 + 默认账号问题" 2.4 节）
-- [ ] M1 启动校验（提案：`add-config-validation`）
+- [x] M1 启动校验（提案：`add-config-validation`，`d35ed8e` 实施）
 - [ ] M2+M6 RPC 解析器 + 响应格式统一（提案：`consolidate-rpc-parsers`）
 - [ ] M3 push 路由 position/asset（提案：`route-position-asset-push`）
 - [ ] M4 WS 拆分（提案：`split-quote-and-bus-ws`）

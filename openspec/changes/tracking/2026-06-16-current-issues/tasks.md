@@ -19,7 +19,7 @@
 
 | 任务 | 状态 | 对应 change |
 |---|---|---|
-| M1 JWT_SECRET 启动校验 | ⏳ Pending | `add-config-validation` |
+| M1 JWT_SECRET 启动校验 | ✅ Done | `add-config-validation` `d35ed8e`：security.py auto-gen + ConfigValidator 4 分支 + test_config.py 6 用例 |
 | M2 RPC 解析器统一 | ⏳ Pending | `consolidate-rpc-parsers` |
 | M3 push 路由 position/asset | ⏳ Pending | `route-position-asset-push` |
 | M4 业务 WS vs 行情 WS 拆分 | ⏳ Pending | `split-quote-and-bus-ws` |
