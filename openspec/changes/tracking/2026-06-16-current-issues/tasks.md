@@ -22,14 +22,13 @@
 | M1 JWT_SECRET 启动校验 | ✅ Done | `add-config-validation` `d35ed8e`：security.py auto-gen + ConfigValidator 4 分支 + test_config.py 6 用例 |
 | M2 RPC 解析器统一 | ✅ Done | `consolidate-rpc-parsers` `e5c3f4b`（client.py 拆）+ `390da31`（REQ-RPC-003/013 spec delta） |
 | M6 API 响应格式不一致（asset data vs 其他 list） | ✅ Done | 折叠到 M2，asset.py 已统一用 `list` |
-| M3 push 路由 position/asset | ⏳ Pending | `route-position-asset-push` |
-| M4 业务 WS vs 行情 WS 拆分 | ⏳ Pending | `split-quote-and-bus-ws` |
-| M5 策略页面占位 | ⏳ Pending | TBD |
-| M6 API 响应格式不一致（asset data vs 其他 list） | ⏳ Pending | 合并到 `consolidate-rpc-parsers` |
-| M7 push handler 写 market_value AttributeError | ⏳ Pending | `fix-push-handler-market-value` |
-| M8 T0 端点空壳 | ⏳ Pending | TBD |
+| M3 push 路由 position/asset | ✅ Done | routes.py pos_cfm/ast_cfm 路由 + pos.py/ast.py handler；ws_manager 跟踪订阅 |
+| M4 业务 WS vs 行情 WS 拆分 | ✅ Done | ws_heartbeat.js:23 quote_update 直连 hqserver :8765；业务 4 通道走 :8000 后端 |
+| M5 策略页面占位 | ⏳ Defer | 占位页面保留（不影响功能）；如要"删壳"需删 `client/src/views/{TStrategy,AlgoStrategy}.vue` + 路由 + Sidebar/AppHeader 引用 |
+| M7 push handler 写 market_value AttributeError | ✅ Done | Position 模型无 market_value（设计正确）；Asset 有 market_value；pos.py handler 不写 market_value |
+| M8 T0 端点空壳 | ✅ Done | "删壳"：place_t0/place_t0_pair 端点已删；T0 下单走 /place + user_def=T0 |
 | M9 服务层绕过 FastAPI DI 自建 Session | ⏳ Pending | `fix-service-session-lifecycle` |
-| M10 审计用户硬编码 "admin" | ⏳ Pending | `fix-system-init-and-users-api` |
+| M10 审计用户硬编码 "admin" | ✅ Done | sys_status.py:88,134 改 `by_user=str(admin_user.id)`；reconcile.py:56 参数化 by_user |
 | M11 前端 store 数据冗余（3 套 store 存同一份数据） | ⏳ Pending | `unify-frontend-stores` |
 
 ## 🟢 低优先级
