@@ -11,6 +11,9 @@
 | H3 死代码 xtquant.py | ✅ Done | `1b8e785` |
 | H4 撤单递归调用（250615 发现） | ✅ Done | v9 重构: api/orders.py → orders/ 包拆分; cancel.py 内部 late import `rpc_cancel_order`(从 `__init__.py` 的 `from rpc.client import cancel_order as rpc_cancel_order` 拿),函数名 `cancel_order` 不再覆盖 RPC 引用 |
 | H5 前端 createOrder 405（250615 发现） | ✅ Done | v8 改: createOrder 走 `POST /api/orders/place` (client/src/api/index.js:147) |
+| H6 t0_aggregate.py `list[T]` PEP 585 | ✅ Done | `ba8b364`（commit msg "fix: Python 3.6.8 兼容性 + 默认账号问题"），`list[T]` → `List[T]` |
+| H7 on_startup 只在 count==0 时种 admin | ✅ Done | `ba8b364`，admin+trader 同块种子；现场 admin 行已补；逻辑现位于 `server/lifecycle/seed.py:26` |
+| H8 `asyncio.create_task` Py3.6.8 不兼容 | ✅ Done | `ba8b364`（commit 2.4 节），4 处 → `ensure_future`；`grep asyncio.create_task server/` 命中 0 |
 
 ## 🟡 中优先级
 

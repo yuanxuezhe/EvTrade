@@ -36,9 +36,9 @@
 |---|---|---|---|---|
 | ~~H4~~ | ~~撤单 API 递归调用自身，非调用 RPC~~ | `api/orders.py:269` | ~~撤单必然 RecursionError 崩溃~~ | ✅ v9 重构修：`api/orders.py` → `api/orders/` 包拆分；`cancel.py` 内 late import `rpc_cancel_order`（从 `__init__.py:24` 的 `from server.rpc.client import ord_stk, cancel_order as rpc_cancel_order`），函数名 `cancel_order` 不再覆盖 RPC 引用 |
 | ~~H5~~ | ~~`api.createOrder()` POST `/api/orders` 无对应路由，405~~ | `client/src/api/index.js:128` | ~~前端创建订单功能完全不可用~~ | ✅ v8 修：createOrder 走 `POST /api/orders/place`（`client/src/api/index.js:147`） |
-| H6 | `api/t0_aggregate.py` 3 处 `list[T]` PEP 585 语法，Python 3.6.8 crash | `server/api/t0_aggregate.py:66,109,110` | `evctl.py restart` 失败：backend 启动后子进程 `import main:app` 撞 `TypeError`，父进程晚死被 evctl 误判为 OK | `fix-t0-aggregate-py36-compat` |
-| H7 | `on_startup` 只在 `count==0` 时种 admin，但已有 `trader1` 时 admin 永远不会被种 | `server/main.py:51-66` | 用户 admin/admin123 无法登录；需补 admin 行 + 改种入逻辑同时建 trader | `seed-default-users-on-empty` |
-| H8 | `asyncio.create_task(...)` 在 server/ 出现 4 处（Py3.6.8 不兼容） | `server/main.py:174`、`server/test_push_async.py:111,115`、`server/test_rpc_link.py:190` | backend 通过 import 链后，WS 连接时崩 `AttributeError: module 'asyncio' has no attribute 'create_task'`；3 处测试在 Py3.6.8 下也跑不动 | `fix-t0-aggregate-py36-compat`（2.4 扩张范围） |
+| ~~H6~~ | ~~`api/t0_aggregate.py` 3 处 `list[T]` PEP 585 语法，Python 3.6.8 crash~~ | `server/api/t0_aggregate.py:66,109,110` | ~~`evctl.py restart` 失败：backend 启动后子进程 `import main:app` 撞 `TypeError`，父进程晚死被 evctl 误判为 OK~~ | ✅ v10 fix-t0-aggregate 修：`ba8b364`，`list[T]` → `List[T]`；当前 `t0_aggregate.py:10/66/109/110` 全为 `List[T]` |
+| ~~H7~~ | ~~`on_startup` 只在 `count==0` 时种 admin，但已有 `trader1` 时 admin 永远不会被种~~ | `server/main.py:51-66`（后被 `d35e2a7` 搬到 `server/lifecycle/seed.py`） | ~~用户 admin/admin123 无法登录；需补 admin 行 + 改种入逻辑同时建 trader~~ | ✅ seed-default-users-on-empty 修：`ba8b364`，同时种 admin + trader；现场 admin 行已补；当前 `seed.py:26` 块 |
+| ~~H8~~ | ~~`asyncio.create_task(...)` 在 server/ 出现 4 处（Py3.6.8 不兼容）~~ | `server/main.py:174`、`server/test_push_async.py:111,115`、`server/test_rpc_link.py:190` | ~~backend 通过 import 链后，WS 连接时崩 `AttributeError: module 'asyncio' has no attribute 'create_task'`~~ | ✅ fix-t0-aggregate-py36-compat（2.4）修：`ba8b364` 全部 4 处 → `ensure_future`；`grep asyncio.create_task server/` 命中 0 |
 
 **H4 详细分析：**
 `api/orders.py:32` 导入 `from rpc.client import cancel_order`，但第 255 行定义同名函数 `async def cancel_order(...)`，覆盖了导入名。第 269 行 `await cancel_order(order_id=order_id)` 实际调用自身，不是 RPC 客户端。用户每次撤单都会递归溢出。
@@ -126,8 +126,9 @@ v5 schema-refactor 改了 6 张表的 schema（PK / 字段名 / 约束），变�
 - [x] L4 test_rpc.py 排除（commit `pytest.ini`）
 - [x] H4 撤单递归修复（v9 重构：api/orders/ 包拆分 + `rpc_cancel_order` 改名 + late import）
 - [x] H5 前端 createOrder 修复（v8 改：createOrder 走 `/api/orders/place`，`client/src/api/index.js:147`）
-- [ ] H6 t0_aggregate.py Python 3.6 兼容性（提案：`fix-t0-aggregate-py36-compat`）
-- [ ] H7 on_startup 种入 admin+trader（提案：`seed-default-users-on-empty`）
+- [x] H6 t0_aggregate.py Python 3.6 兼容性（`ba8b364`，`list[T]` → `List[T]`，commit "fix: Python 3.6.8 兼容性 + 默认账号问题"）
+- [x] H7 on_startup 种入 admin+trader（`ba8b364`，同块种子；现场 admin 行已补）
+- [x] H8 `asyncio.create_task` Py3.6.8 不兼容（`ba8b364` 4 处 → `ensure_future`，commit "fix: Python 3.6.8 兼容性 + 默认账号问题" 2.4 节）
 - [ ] M1 启动校验（提案：`add-config-validation`）
 - [ ] M2+M6 RPC 解析器 + 响应格式统一（提案：`consolidate-rpc-parsers`）
 - [ ] M3 push 路由 position/asset（提案：`route-position-asset-push`）
