@@ -126,8 +126,17 @@ export const api = {
   },
 
   // 委托
-  async getOrders(stockCode) {
-    const params = stockCode ? { stock_code: stockCode } : {}
+  // opts: undefined | string (stockCode) | { stockCode?, startDate?, endDate? }
+  // 向后兼容: 无参 (bootstrap 当前用法) / 旧 string 调用 仍工作
+  async getOrders(opts) {
+    const params = {}
+    if (typeof opts === 'string') {
+      params.stock_code = opts
+    } else if (opts && typeof opts === 'object') {
+      if (opts.stockCode) params.stock_code = opts.stockCode
+      if (opts.startDate) params.start_date = opts.startDate
+      if (opts.endDate) params.end_date = opts.endDate
+    }
     const res = await http.get('/orders', { params })
     return res.data
   },
@@ -151,8 +160,17 @@ export const api = {
   },
 
   // 成交
-  async getTrades(stockCode) {
-    const params = stockCode ? { stock_code: stockCode } : {}
+  // opts: undefined | string (stockCode) | { stockCode?, startDate?, endDate? }
+  // 向后兼容: 无参 (bootstrap 当前用法) / 旧 string 调用 仍工作
+  async getTrades(opts) {
+    const params = {}
+    if (typeof opts === 'string') {
+      params.stock_code = opts
+    } else if (opts && typeof opts === 'object') {
+      if (opts.stockCode) params.stock_code = opts.stockCode
+      if (opts.startDate) params.start_date = opts.startDate
+      if (opts.endDate) params.end_date = opts.endDate
+    }
     const res = await http.get('/trades', { params })
     return res.data
   },
