@@ -9,8 +9,8 @@
 | H1 撤单假动作 | ✅ Done | `1b8e785` |
 | H2 内存委托仓 | ✅ Done | `1b8e785` |
 | H3 死代码 xtquant.py | ✅ Done | `1b8e785` |
-| H4 撤单递归调用（250615 发现） | ⏳ Pending | `fix-cancel-order-recursion` |
-| H5 前端 createOrder 405（250615 发现） | ⏳ Pending | `fix-frontend-create-order` |
+| H4 撤单递归调用（250615 发现） | ✅ Done | v9 重构: api/orders.py → orders/ 包拆分; cancel.py 内部 late import `rpc_cancel_order`(从 `__init__.py` 的 `from rpc.client import cancel_order as rpc_cancel_order` 拿),函数名 `cancel_order` 不再覆盖 RPC 引用 |
+| H5 前端 createOrder 405（250615 发现） | ✅ Done | v8 改: createOrder 走 `POST /api/orders/place` (client/src/api/index.js:147) |
 
 ## 🟡 中优先级
 
