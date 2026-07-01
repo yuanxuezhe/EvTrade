@@ -1,5 +1,11 @@
 <template>
   <div class="orders-view fade-in-up">
+    <!-- 交易日 Tab -->
+    <el-tabs v-model="activeTab" class="orders-tabs">
+      <el-tab-pane label="仅当日" name="today" />
+      <el-tab-pane label="全部" name="all" />
+    </el-tabs>
+
     <!-- 统计概览 -->
     <section class="stats-row">
       <div class="stat-pill">
@@ -59,6 +65,11 @@
         style="width: 100%"
         :default-sort="{ prop: 'order_time', order: 'descending' }"
       >
+        <el-table-column prop="trd_date" label="交易日" width="100" sortable>
+          <template #default="{ row }">
+            <span class="text-mono text-secondary">{{ row.trd_date }}</span>
+          </template>
+        </el-table-column>
         <el-table-column prop="order_time" label="时间" width="100" sortable>
           <template #default="{ row }">
             <span class="text-mono text-secondary">{{ row.order_time }}</span>
@@ -168,6 +179,7 @@ import {
 } from '../utils/format'
 import OrderStatusBadge from '../components/OrderStatusBadge.vue'
 import { useHoldingsStore } from '../stores/holdings'
+import { filterByTrdDate } from '../utils/trdDateFilter'
 
 /**
  * 委托数据来源：holdings store 缓存（App 启动时已 bootstrap）
@@ -175,6 +187,8 @@ import { useHoldingsStore } from '../stores/holdings'
  */
 const holdingsStore = useHoldingsStore()
 const orders = computed(() => holdingsStore.orders)
+const activeTrdDate = computed(() => holdingsStore.activeTrdDate)
+const activeTab = ref('today')
 const loading = ref(false)
 const page = ref(1)
 const pageSize = ref(20)
@@ -203,7 +217,13 @@ const countByStatus = computed(() => {
 })
 
 const filteredOrders = computed(() => {
-  return orders.value.filter((o) => {
+  // 1) trd_date 区间筛选 (按当前 Tab: 'today' 严格匹配 activeTrdDate, 'all' 不过滤)
+  const trdRange = activeTab.value === 'today' && activeTrdDate.value
+    ? { exact: activeTrdDate.value }
+    : {}
+  const byTrd = filterByTrdDate(orders.value, trdRange)
+  // 2) keyword / order_type / status 现有过滤
+  return byTrd.filter((o) => {
     if (filters.keyword && !o.stock_code.toLowerCase().includes(filters.keyword.toLowerCase())) {
       return false
     }
@@ -246,15 +266,19 @@ function getProgressColor(status) {
 }
 
 function exportCSV() {
-  const header = ['时间', '股票代码', '方向', '委托量', '委托价', '成交量', '成交价', '状态', '类型', '合同序号']
+  const header = ['交易日', '时间', '股票代码', '委托编号', '方向', '委托量', '委托价', '成交量', '成交价', '成交金额', '成交率', '状态', '类型', '合同序号']
   const rows = filteredOrders.value.map((o) => [
+    o.trd_date,
     o.order_time,
     o.stock_code,
+    o.order_no,
     o.order_type === '23' ? '买入' : (o.order_type === '24' ? '卖出' : o.order_type),
     o.volume,
     o.price,
     o.traded_volume,
-    o.traded_price,
+    o.avg_price,
+    o.traded_amount,
+    getFillRate(o) + '%',
     STATUS_LABEL[o.status] || o.status,
     priceTypeLabel(o.price_type),
     o.order_id
@@ -264,7 +288,8 @@ function exportCSV() {
   const url = URL.createObjectURL(blob)
   const link = document.createElement('a')
   link.href = url
-  link.download = `委托查询_${new Date().toISOString().slice(0, 10)}.csv`
+  const suffix = activeTab.value === 'today' ? '当日' : '全部'
+  link.download = `委托查询_${suffix}_${new Date().toISOString().slice(0, 10)}.csv`
   link.click()
   URL.revokeObjectURL(url)
   ElMessage.success('已导出')
@@ -374,5 +399,13 @@ function exportCSV() {
 
 @media (max-width: 1100px) {
   .stats-row { grid-template-columns: repeat(2, 1fr); }
+}
+
+.orders-tabs {
+  padding: 0 var(--space-4);
+}
+
+.orders-tabs :deep(.el-tabs__nav-wrap::after) {
+  height: 1px;
 }
 </style>
