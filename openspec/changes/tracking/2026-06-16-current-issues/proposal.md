@@ -51,11 +51,11 @@ v4 重构后 `api/orders.py` 只有 `POST /place`、`POST /place_t0`、`POST /pl
 | # | 问题 | 范围 | 建议 change |
 |---|---|---|---|
 | ~~M1~~ | ~~`JWT_SECRET` 缺失时静默用 `dev-secret-please-change`~~ | `configuration` | ✅ add-config-validation 修：`d35ed8e`（重构 REQ-CFG-004 + 新增 test_config.py 6 用例 + auto-gen strong random）；security.py 用 `secrets.token_urlsafe(64)` 替代硬编码默认值 |
-| M2 | 8 个 `_parse_*` 解析器无统一 schema，返回 dict | `rpc-protocol` | `consolidate-rpc-parsers` |
+| ~~M2~~ | ~~8 个 `_parse_*` 解析器无统一 schema，返回 dict~~ | `rpc-protocol` | ✅ consolidate-rpc-parsers 修：`e5c3f4b` client.py 拆 transport+parsers+handlers；5 个 _parse_* 现在统一返 `{code, msg, list}`（位于 `server/rpc/parsers_business.py`）。Pydantic 化未做（当前 `Dict[str, Any]` 已足）。 |
 | M3 | `position_update` / `asset_update` WS 频道无数据源 | `push` | `route-position-asset-push` |
 | M4 | 行情 vs 业务 WS 不同 host（:8765 vs :8000），单 store 管理 | `frontend` | `split-quote-and-bus-ws` |
 | M5 | `TStrategy.vue` / `AlgoStrategy.vue` 未实现 | `frontend` | `implement-strategies` 或**删** |
-| M6 | API 响应格式不一致：asset 用 `{code,msg,data}`，其余用 `{code,msg,list}` | `api` | 合并到 `consolidate-rpc-parsers` |
+| ~~M6~~ | ~~API 响应格式不一致：asset 用 `{code,msg,data}`，其余用 `{code,msg,list}`~~ | `api` | ✅ 已折叠到 M2（REQ-RPC-013 + S-RPC-006）：asset.py 改为 `list` 包装；前端统一解包 `list`。 |
 | M7 | push handler 写 `pos.market_value` 但 ORM 无此列 → 运行时 AttributeError | `push` | `fix-push-handler-market-value` |
 | M8 | T0 `place_t0` / `place_t0_pair` 只是空壳，直接 delegate 到 `place_order` | `api/orders` | `implement-t0` 或**删壳** |
 | M9 | 服务层绕过 FastAPI DI 自建 Session（`t0.py`, `trading_clock.py`, `guards.py`） | `services` | `fix-service-session-lifecycle` |
@@ -129,6 +129,8 @@ v5 schema-refactor 改了 6 张表的 schema（PK / 字段名 / 约束），变�
 - [x] H6 t0_aggregate.py Python 3.6 兼容性（`ba8b364`，`list[T]` → `List[T]`，commit "fix: Python 3.6.8 兼容性 + 默认账号问题"）
 - [x] H7 on_startup 种入 admin+trader（`ba8b364`，同块种子；现场 admin 行已补）
 - [x] H8 `asyncio.create_task` Py3.6.8 不兼容（`ba8b364` 4 处 → `ensure_future`，commit "fix: Python 3.6.8 兼容性 + 默认账号问题" 2.4 节）
+- [x] M2 RPC 解析器统一（`e5c3f4b` 实施 client.py 拆包 + `390da31` spec REQ-RPC-003/013）
+- [x] M6 API 响应格式统一（折叠到 M2）
 - [x] M1 启动校验（提案：`add-config-validation`，`d35ed8e` 实施）
 - [ ] M2+M6 RPC 解析器 + 响应格式统一（提案：`consolidate-rpc-parsers`）
 - [ ] M3 push 路由 position/asset（提案：`route-position-asset-push`）

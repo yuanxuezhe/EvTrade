@@ -20,7 +20,8 @@
 | 任务 | 状态 | 对应 change |
 |---|---|---|
 | M1 JWT_SECRET 启动校验 | ✅ Done | `add-config-validation` `d35ed8e`：security.py auto-gen + ConfigValidator 4 分支 + test_config.py 6 用例 |
-| M2 RPC 解析器统一 | ⏳ Pending | `consolidate-rpc-parsers` |
+| M2 RPC 解析器统一 | ✅ Done | `consolidate-rpc-parsers` `e5c3f4b`（client.py 拆）+ `390da31`（REQ-RPC-003/013 spec delta） |
+| M6 API 响应格式不一致（asset data vs 其他 list） | ✅ Done | 折叠到 M2，asset.py 已统一用 `list` |
 | M3 push 路由 position/asset | ⏳ Pending | `route-position-asset-push` |
 | M4 业务 WS vs 行情 WS 拆分 | ⏳ Pending | `split-quote-and-bus-ws` |
 | M5 策略页面占位 | ⏳ Pending | TBD |
