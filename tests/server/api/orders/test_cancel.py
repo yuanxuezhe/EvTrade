@@ -1,19 +1,19 @@
 """
-test_cancel.py — v7 DELETE /api/orders/{order_no} 验证
+test_cancel.py — v7 DELETE /api/orders/{order_no} 验证（v11 broker 码对齐）
 
 覆盖：
-- 撤单成功 → 不本地改 status
-- 撤单失败 → 500
+- 撤单成功 → 不本地改 status (cancel-row.status=54 broker 已撤)
+- 撤单失败 → 200 业务码 1 (cancel-row.status=57 broker 废单)
 - 撤单时 broker order_id 还没回报 → BROKER_NOT_READY
-- 撤单 RPC 失败 → status=55 无 trade 落库
-- 撤单 ACK 非 0 → status=55 无 trade 落库
+- 撤单 RPC 失败 → cancel-row.status=57 broker 废单
+- 撤单 ACK 非 0 → cancel-row.status=57 broker 废单
 - 撤单插入 trade row with type=1
 - status 不可撤时跳过 trade 插入
 - 全成撤单 → 不插 cancel trade
 """
 import pytest
 from datetime import datetime, time, timedelta
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch, MagicMock, AsyncMock
 
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
@@ -78,7 +78,7 @@ def no_active_day(fresh_db):
     db.close()
     return trader.id
 def test_cancel_calls_rpc_inserts_local_cancel_row(client, active_day, monkeypatch):
-    """v9: DELETE 插 cancel-row (order_flag=1, status=53) + 调 RPC,原单 status 不本地改"""
+    """v9: DELETE 插 cancel-row (order_flag=1, status=54 broker 已撤) + 调 RPC,原单 status 不本地改"""
     monkeypatch.setattr(
         "services.trading_clock.TradingClock.is_in_trading_session",
         classmethod(lambda cls: True)
@@ -112,21 +112,21 @@ def test_cancel_calls_rpc_inserts_local_cancel_row(client, active_day, monkeypat
     assert body["cancel_order"] is not None
     co = body["cancel_order"]
     assert co["order_flag"] == 1
-    assert co["status"] == "53"
+    assert co["status"] == "54"  # broker 已撤 (v11: '53' 本地已撤 → '54' broker CANCELED)
     assert co["volume"] == 0
     assert co["user_def"] == "CANCEL:10000010"
     assert co["stock_code"] == "600030.SH"
     assert co["price"] == 12.5
-    # 原单 status 仍 49(等 push 改)
+    # 原单 status 仍 broker 已报(等 push 改)
     db = SessionLocal()
     row = db.query(Order).filter_by(order_no="10000010", trd_date="20260614").first()
-    assert row.status == "49"
+    assert row.status == "49"  # v11: setup 用本地 sentinel, push 推断会改为 broker 50
     db.close()
-    # WS broadcast 被调
-    assert mock_ws.await_count == 1
-    payload = mock_ws.await_args.args[1]
+    # WS broadcast: order_update + (trade_update if cancel-trade inserted)
+    assert mock_ws.await_count == 2
+    payload = mock_ws.await_args_list[0].args[1]  # order_update (first call)
     assert payload["order_flag"] == 1
-    assert payload["status"] == "53"
+    assert payload["status"] == "54"  # broker 已撤 (v11)
 
 def test_cancel_broker_not_ready_returns_business_error(client, active_day, monkeypatch):
     """v6: 撤单时 broker order_id 还没回报 → BROKER_NOT_READY,不调 RPC,不插 cancel-row"""
@@ -164,8 +164,8 @@ def test_cancel_broker_not_ready_returns_business_error(client, active_day, monk
     assert len(cancel_rows) == 0
     db.close()
 
-def test_cancel_rpc_fail_sets_status_55_no_trade(client, active_day, monkeypatch):
-    """v9: RPC 抛异常 → 仍 200,cancel-row.status=55,无 cancel-trade"""
+def test_cancel_rpc_fail_sets_status_57_no_trade(client, active_day, monkeypatch):
+    """v9: RPC 抛异常 → 仍 200,cancel-row.status=57 broker 废单,无 cancel-trade"""
     monkeypatch.setattr(
         "services.trading_clock.TradingClock.is_in_trading_session",
         classmethod(lambda cls: True)
@@ -193,7 +193,7 @@ def test_cancel_rpc_fail_sets_status_55_no_trade(client, active_day, monkeypatch
     assert r.status_code == 200
     body = r.json()
     assert body["code"] == 1
-    assert body["cancel_order"]["status"] == "55"  # 废单保留
+    assert body["cancel_order"]["status"] == "57"  # broker 废单保留 (v11: '55' 本地废单 → '57' broker JUNK)
     assert body["error"] is not None
     # 无 cancel-trade
     from server.models.orm import Trade
@@ -204,10 +204,10 @@ def test_cancel_rpc_fail_sets_status_55_no_trade(client, active_day, monkeypatch
     # WS 仍 broadcast
     assert mock_ws.await_count == 1
     payload = mock_ws.await_args.args[1]
-    assert payload["status"] == "55"
+    assert payload["status"] == "57"  # broker 废单 (v11)
 
-def test_cancel_ack_nonzero_sets_status_55_no_trade(client, active_day, monkeypatch):
-    """v9: ack.code != 0 → cancel-row.status=55,无 cancel-trade"""
+def test_cancel_ack_nonzero_sets_status_57_no_trade(client, active_day, monkeypatch):
+    """v9: ack.code != 0 → cancel-row.status=57 broker 废单,无 cancel-trade"""
     monkeypatch.setattr(
         "services.trading_clock.TradingClock.is_in_trading_session",
         classmethod(lambda cls: True)
@@ -232,7 +232,7 @@ def test_cancel_ack_nonzero_sets_status_55_no_trade(client, active_day, monkeypa
     assert r.status_code == 200
     body = r.json()
     assert body["code"] == 1
-    assert body["cancel_order"]["status"] == "55"
+    assert body["cancel_order"]["status"] == "57"  # broker 废单 (v11)
     assert body["cancel_order"]["status_msg"] == "柜台拒单"
     from server.models.orm import Trade
     db = SessionLocal()
@@ -369,7 +369,7 @@ def test_cancel_rpc_success_flattens_orig_cancelled_volume(client, active_day, m
 
 def test_cancel_rpc_fail_keeps_orig_cancelled_volume(client, active_day, monkeypatch):
     """change system-delegation-price-fill-calc: R4
-    DELETE 端点 broker ack.code != 0 → 原委托 cancelled_volume 不动，仅 cancel-row 自身写 status=55
+    DELETE 端点 broker ack.code != 0 → 原委托 cancelled_volume 不动，仅 cancel-row 自身写 status=57 broker 废单
     """
     monkeypatch.setattr(
         "services.trading_clock.TradingClock.is_in_trading_session",
@@ -401,14 +401,14 @@ def test_cancel_rpc_fail_keeps_orig_cancelled_volume(client, active_day, monkeyp
     orig = db.query(Order).filter_by(order_no="10000021", trd_date="20260614").first()
     db.close()
     assert orig.cancelled_volume == 20  # R4 不动
-    # cancel-row 自身写 55
+    # cancel-row 自身写 57 (broker 废单, v11)
     co = db.query(Order).filter_by(order_no=orig.order_no, trd_date="20260614").filter(Order.order_flag == 1).first()
     # co 已经在前面 refresh 关闭后再开 (上面已经 db.close)，重新查
     db = SessionLocal()
     co = db.query(Order).filter(Order.user_def == "CANCEL:10000021").first()
     db.close()
     assert co is not None
-    assert co.status == "55"  # cancel-row 自身废单
+    assert co.status == "57"  # cancel-row 自身 broker 废单 (v11)
 
 
 def test_cancel_full_trade_no_cancel_trade_inserted(client, active_day, monkeypatch):

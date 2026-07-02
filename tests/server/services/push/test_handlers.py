@@ -27,57 +27,57 @@ def fresh_db():
 # ──── _infer_order_status 状态推断矩阵 ────
 
 def test_infer_status_48_with_zero_volume():
-    """broker 推 48(待报) + 累计=0 + 非终态 → 推断 49(已报)"""
+    """broker 推 48(待报) + 累计=0 + 非终态 → 推断 50(broker 已报, v11)"""
     o = Order(volume=1000, traded_volume=0, status="48")
-    assert _infer_order_status(o, broker_status="48") == "49"
+    assert _infer_order_status(o, broker_status="48") == "50"
 
 def test_infer_status_49_with_zero_volume():
-    """broker 推 49(已报) + 累计=0 + 非终态 → 49"""
+    """broker 推 49(已报) + 累计=0 + 非终态 → 50(broker 已报, v11)"""
     o = Order(volume=1000, traded_volume=0, status="48")
-    assert _infer_order_status(o, broker_status="49") == "49"
+    assert _infer_order_status(o, broker_status="49") == "50"
 
 def test_infer_status_52_with_zero_volume():
-    """broker 推 52(部撤) + 累计=0 + 非终态 → 53(已撤)"""
+    """broker 推 52(部撤) + 累计=0 + 非终态 → 54(broker 已撤, v11)"""
     o = Order(volume=1000, traded_volume=0, status="48")
-    assert _infer_order_status(o, broker_status="52") == "53"
+    assert _infer_order_status(o, broker_status="52") == "54"
 
 def test_infer_status_53_with_zero_volume():
-    """broker 推 53(已撤) + 累计=0 → 53"""
+    """broker 推 53(部成部撤) + 累计=0 → 54(broker 已撤, v11)"""
     o = Order(volume=1000, traded_volume=0, status="48")
-    assert _infer_order_status(o, broker_status="53") == "53"
+    assert _infer_order_status(o, broker_status="53") == "54"
 
 def test_infer_status_52_with_partial_volume():
-    """broker 推 52(部撤) + 累计<volume → 56(部成部撤)"""
+    """broker 推 52(部成待撤) + 累计<volume → 53(broker 部成部撤, v11)"""
     o = Order(volume=1000, traded_volume=500, status="50")
-    assert _infer_order_status(o, broker_status="52") == "56"
+    assert _infer_order_status(o, broker_status="52") == "53"
 
 def test_infer_status_53_with_full_volume():
-    """broker 推 53(已撤) + 累计=volume → 51(已成,broker 撤单无意义)"""
+    """broker 推 53(部成部撤) + 累计=volume → 56(broker 已成, v11)"""
     o = Order(volume=1000, traded_volume=1000, status="50")
-    assert _infer_order_status(o, broker_status="53") == "51"
+    assert _infer_order_status(o, broker_status="53") == "56"
 
 def test_infer_status_trd_cfm_partial():
-    """trd_cfm 累计后(不传 broker_status) → 50(部成)"""
+    """trd_cfm 累计后(不传 broker_status) → 55(broker 部成, v11)"""
     o = Order(volume=1000, traded_volume=300, status="49")
-    assert _infer_order_status(o, broker_status=None) == "50"
+    assert _infer_order_status(o, broker_status=None) == "55"
 
 def test_infer_status_trd_cfm_full():
-    """trd_cfm 累计到 volume → 51(已成)"""
+    """trd_cfm 累计到 volume → 56(broker 已成, v11: 替代旧 51=local 已成)"""
     o = Order(volume=1000, traded_volume=1000, status="50")
-    assert _infer_order_status(o, broker_status=None) == "51"
+    assert _infer_order_status(o, broker_status=None) == "56"
 
-def test_infer_status_terminal_51_not_overridden():
-    """终态 51(已成)被 trd_cfm 累计时保持"""
-    o = Order(volume=1000, traded_volume=500, status="51")  # 已成终态
-    assert _infer_order_status(o, broker_status=None) == "51"
+def test_infer_status_terminal_54_not_overridden():
+    """v11: 终态 54(broker 已撤)被 trd_cfm 累计时保持(v11 替代旧 51=local 已成 测试, broker 51=已报待撤 非终态)"""
+    o = Order(volume=1000, traded_volume=0, status="54")  # broker 已撤 终态
+    assert _infer_order_status(o, broker_status=None) == "54"
 
 def test_infer_status_terminal_56_not_overridden():
-    """终态 56(部成部撤)被 trd_cfm 累计时保持"""
+    """终态 56(broker 已成)被 trd_cfm 累计时保持"""
     o = Order(volume=1000, traded_volume=200, status="56")
     assert _infer_order_status(o, broker_status=None) == "56"
 
 def test_infer_status_terminal_53_not_overridden():
-    """终态 53(已撤)被 ord_cfm 再推时也保持"""
+    """终态 53(broker 部成部撤)被 ord_cfm 再推时也保持"""
     o = Order(volume=1000, traded_volume=0, status="53")
     # broker 又推 49 也不覆盖
     assert _infer_order_status(o, broker_status="49") == "53"
@@ -110,8 +110,8 @@ def test_ord_cfm_fills_order_id_via_remark():
     db.commit()
     row = db.query(Order).filter_by(order_no="10000001", trd_date="20260614").first()
     assert row.order_id == "BROKER-OID-1"
-    # status 由 _infer_order_status 推断:broker_status=49 + 累计=0 + 非终态 → 49
-    assert row.status == "49"
+    # status 由 _infer_order_status 推断:broker_status=49 + 累计=0 + 非终态 → 50(broker 已报)
+    assert row.status == "50"
     db.close()
 
 def test_ord_cfm_does_not_update_traded_volume():
@@ -142,12 +142,12 @@ def test_ord_cfm_does_not_update_traded_volume():
     assert row.traded_volume == 0
     assert row.traded_amount == 0.0
     assert row.avg_price == 0.0
-    # status 由 _infer_order_status 推断:broker_status=50 + 累计=0 + 非终态 → 49(已报,还没真成交)
-    assert row.status == "49"
+    # status 由 _infer_order_status 推断:broker_status=50 + 累计=0 + 非终态 → 50(broker 已报, v11)
+    assert row.status == "50"
     db.close()
 
 def test_ord_cfm_infers_status_53_when_broker_pushed_cancel():
-    """broker ord_cfm 推 53(已撤) + 累计=0 → 推断 53"""
+    """broker ord_cfm 推 53(部成部撤) + 累计=0 → 推断 54(broker 已撤, v11)"""
     db = SessionLocal()
     db.add(Order(
         trd_date="20260614",
@@ -166,7 +166,7 @@ def test_ord_cfm_infers_status_53_when_broker_pushed_cancel():
     }, ts="20260614 10:00:00")
     db.commit()
     row = db.query(Order).filter_by(order_id="OID-CXL", trd_date="20260614").first()
-    assert row.status == "53"  # 已撤
+    assert row.status == "54"  # broker 已撤 (v11)
     db.close()
 
 def test_ord_cfm_logs_warn_when_no_local_order():
@@ -225,8 +225,8 @@ def test_trd_cfm_inserts_trade_and_updates_order_via_remark():
     assert o.traded_volume == 30
     assert o.traded_amount == 375.0
     assert o.avg_price == 12.5
-    # status 由 _infer_order_status 推断:累计=30 < volume=100 + 非终态 → 50(部成)
-    assert o.status == "50"
+    # status 由 _infer_order_status 推断:累计=30 < volume=100 + 非终态 → 55(broker 部成, v11)
+    assert o.status == "55"
     db.close()
 
 def test_ord_cfm_flattens_cancelled_on_broker_reject_without_volume_field():
@@ -390,7 +390,7 @@ def test_trd_cfm_fills_status_to_51_when_full():
     db.commit()
     o = db.query(Order).filter_by(order_no="10000011", trd_date="20260614").first()
     assert o.traded_volume == 100
-    assert o.status == "51"  # 已成
+    assert o.status == "56"  # broker 已成 (v11: 替代旧 '51' local 已成)
     db.close()
 
 def test_trd_cfm_idempotent():
@@ -664,12 +664,12 @@ def test_ord_cfm_for_original_does_not_touch_cancel_row():
         stock_code="600030.SH", order_type="23", price_type=11, price=12.5, volume=100,
         status="49", order_flag=0,
     ))
-    # cancel-row (DELETE 端点已写入)
+    # cancel-row (DELETE 端点已写入, v11 broker 54=已撤)
     db.add(Order(
         trd_date="20260614",
         order_id=None, user_def="CANCEL:10000010", order_no="10000011",
         stock_code="600030.SH", order_type="23", price_type=11, price=12.5, volume=0,
-        status="53", order_flag=1,  # DELETE 端点 RPC 成功已写 53
+        status="54", order_flag=1,  # DELETE 端点 RPC 成功已写 54 (v11 broker)
         status_msg="已撤",
     ))
     db.commit()
@@ -680,7 +680,7 @@ def test_ord_cfm_for_original_does_not_touch_cancel_row():
     handle_push(db, "ord_cfm", {
         "order_id": "OID-ORIG",
         "remark": "10000010",  # 原委托 order_no, 不是 cancel-row 的 10000011
-        "order_status": "51",  # v10: broker 原字段名
+        "order_status": "51",  # v10: broker 原字段名, broker 51=已报待撤 (非终态)
     }, ts="20260614 09:30:00")
     db.commit()
     db.close()
@@ -690,7 +690,7 @@ def test_ord_cfm_for_original_does_not_touch_cancel_row():
     cancel_row = db.query(Order).filter_by(order_no="10000011", trd_date="20260614").first()
     assert cancel_row is not None, "cancel-row should still exist"
     assert cancel_row.order_flag == 1, f"order_flag should remain 1, got {cancel_row.order_flag}"
-    assert cancel_row.status == "53", f"cancel-row status should remain 53, got {cancel_row.status}"
+    assert cancel_row.status == "54", f"cancel-row status should remain 54 (v11 broker 已撤), got {cancel_row.status}"
     assert cancel_row.status_msg == "已撤", f"status_msg should remain '已撤', got '{cancel_row.status_msg}'"
     assert cancel_row.user_def == "CANCEL:10000010", f"user_def should remain CANCEL:..., got '{cancel_row.user_def}'"
     db.close()
@@ -699,5 +699,5 @@ def test_ord_cfm_for_original_does_not_touch_cancel_row():
     db = SessionLocal()
     orig_row = db.query(Order).filter_by(order_no="10000010", trd_date="20260614").first()
     assert orig_row is not None
-    assert orig_row.status == "51", f"orig order status should be updated to 51, got {orig_row.status}"
+    assert orig_row.status == "51", f"orig order status remains 51 (v11: 非终态, broker 已报待撤), got {orig_row.status}"
     db.close()

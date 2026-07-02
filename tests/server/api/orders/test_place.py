@@ -1,17 +1,17 @@
 """
-test_place.py — v7/v8 POST /api/orders/place 验证
+test_place.py — v7/v8 POST /api/orders/place 验证（v11 broker 码对齐）
 
 覆盖：
 - 屏障：未激活交易日 / 非交易时段 → 拒绝
-- 下单成功 → status=49,broker 带回 order_id 时写入
+- 下单成功 → status=50 broker 已报,broker 带回 order_id 时写入
 - 下单成功 → broker 不带回 order_id 时 order_id 为空
-- 下单失败 → status=55 废单
+- 下单失败 → status=57 broker JUNK 废单
 - v8: POST /place 响应有 list 字段（统一 RPC 格式）
 - v8: POST /place 推 WS 时 payload 必带 trd_date + order_no
 """
 import pytest
 from datetime import datetime, time, timedelta
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch, MagicMock, AsyncMock
 
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
@@ -195,7 +195,7 @@ def test_place_success_with_broker_order_id_writes(client, active_day, monkeypat
     )
     assert r.status_code == 200
     body = r.json()["order"]
-    assert body["status"] == "49"
+    assert body["status"] == "50"  # broker 已报 (v11: 替代旧 '49' local 已报)
     assert body["order_id"] == "BROKER-OID-1"
     assert body["order_no"] == "10000001"
     assert body["trd_date"] == "20260614"
@@ -210,7 +210,7 @@ def test_place_success_with_broker_order_id_writes(client, active_day, monkeypat
     db = SessionLocal()
     row = db.query(Order).filter_by(order_no="10000001").first()
     assert row.order_id == "BROKER-OID-1"
-    assert row.status == "49"
+    assert row.status == "50"  # broker 已报 (v11)
     db.close()
 
 # ──── 下单成功 broker 不带回 order_id → 留空 ────
@@ -235,7 +235,7 @@ def test_place_success_no_broker_order_id_leaves_empty(client, active_day, monke
     body = r.json()["order"]
     # v6: 响应 order_id = "" (broker 没回报),不再有 PENDING- 占位
     assert body["order_id"] == ""
-    assert body["status"] == "49"  # 仍写 49
+    assert body["status"] == "50"  # broker 已报 (v11 替代旧 49=local 已报)
     assert body["order_no"] == "10000001"
     assert "PENDING" not in body["order_id"]  # 显式断言:不再出现 PENDING-
 
@@ -245,7 +245,7 @@ def test_place_success_no_broker_order_id_leaves_empty(client, active_day, monke
     assert row.order_id is None or row.order_id == ""
     db.close()
 
-# ──── 下单失败 → status=55 废单 ────
+# ──── 下单失败 → status=57 broker 废单 (v11) ────
 
 def test_place_rpc_fail_marks_rejected(client, active_day, monkeypatch):
     monkeypatch.setattr(
@@ -263,7 +263,7 @@ def test_place_rpc_fail_marks_rejected(client, active_day, monkeypatch):
     )
     assert r.status_code == 200
     body = r.json()["order"]
-    assert body["status"] == "55"
+    assert body["status"] == "57"  # broker JUNK 废单 (v11: 替代旧 '55' local 废单)
     assert "RPC 失败" in body["status_msg"]
 
 def test_place_rpc_fail_logs_exception(client, active_day, monkeypatch, caplog):
@@ -299,7 +299,7 @@ def test_place_rpc_fail_logs_exception(client, active_day, monkeypatch, caplog):
 
 def test_place_rpc_ack_fail_marks_rejected_and_flattens_cancelled(client, active_day, monkeypatch):
     """change system-delegation-price-fill-calc: R2a 本地拒单
-    broker ack.code != 0 时 order.status = "55" 且 cancelled_volume = volume
+    broker ack.code != 0 时 order.status = "57" broker JUNK 且 cancelled_volume = volume (v11)
     """
     monkeypatch.setattr(
         "services.trading_clock.TradingClock.is_in_trading_session",
@@ -316,7 +316,7 @@ def test_place_rpc_ack_fail_marks_rejected_and_flattens_cancelled(client, active
     )
     assert r.status_code == 200
     body = r.json()["order"]
-    assert body["status"] == "55"
+    assert body["status"] == "57"  # broker JUNK (v11: 替代旧 '55')
     assert body["cancelled_volume"] == 100  # R2a 抹平 == volume
 
     # DB 验证
@@ -358,12 +358,12 @@ def test_place_response_has_list_field_with_one_order(client, active_day, monkey
     o = body["list"][0]
     assert o["order_no"] == "10000001"
     assert o["stock_code"] == "600030.SH"
-    assert o["status"] == "49"
+    assert o["status"] == "50"  # broker 已报 (v11)
     assert o["order_id"] == "BROKER-OID-LIST"
     assert o["trd_date"] == "20260614"
 
 def test_place_response_list_field_on_rpc_fail(client, active_day, monkeypatch):
-    """v8: 柜台 RPC 失败时,list 字段也要返(里面是 55 废单)"""
+    """v8: 柜台 RPC 失败时,list 字段也要返(里面是 57 broker 废单, v11)"""
     monkeypatch.setattr(
         "services.trading_clock.TradingClock.is_in_trading_session",
         classmethod(lambda cls: True)
@@ -381,9 +381,9 @@ def test_place_response_list_field_on_rpc_fail(client, active_day, monkeypatch):
     body = r.json()
     assert body["code"] == 1
     assert len(body["list"]) == 1
-    assert body["list"][0]["status"] == "55"
+    assert body["list"][0]["status"] == "57"  # broker 废单 (v11: 替代旧 '55')
     # 旧字段仍可用
-    assert body["order"]["status"] == "55"
+    assert body["order"]["status"] == "57"
 
 def test_place_response_ws_payload_has_trd_date_and_order_no(client, active_day, monkeypatch):
     """v8: POST /place 推 WS 时,payload 必带 trd_date + order_no(前端推送守门)"""
@@ -410,4 +410,4 @@ def test_place_response_ws_payload_has_trd_date_and_order_no(client, active_day,
     assert payload["order_no"] == "10000001"
     assert payload["remark"] == "10000001"  # broker 透传字段
     assert payload["order_id"] == "OID-WS"  # broker 带回
-    assert payload["status"] == "49"
+    assert payload["status"] == "50"  # broker 已报 (v11)
