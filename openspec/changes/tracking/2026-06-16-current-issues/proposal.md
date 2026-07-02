@@ -137,17 +137,17 @@ v5 schema-refactor 改了 6 张表的 schema（PK / 字段名 / 约束），变�
 - [x] M7 push handler 写 market_value 修复（设计确认：Position 无 market_value 列，前端按行情实时计算）
 - [x] M8 T0 端点实现或删壳（"删壳"完成：T0 下单走 /place + user_def='T0'）
 - [x] M10 审计用户硬编码（`sys_status.py:88,134` 改 by_user=str(admin_user.id)；`reconcile.py:56` 参数化）
-- [ ] M5 策略页面（提案：`implement-strategies` 或 `remove-placeholder-strategies`，当前 Defer）
-- [ ] M9 服务层 Session 生命周期（提案：`fix-service-session-lifecycle`）
-- [ ] M11 前端 store 统一（提案：`unify-frontend-stores`）
+- [x] M9 服务层 Session 生命周期（`ade2198`：`server/db.py:db_session()` context manager + 5 个 service 替换 + `test_db_session.py` 4 用例）
+- [x] M11 前端 store 统一（`8e70a4e`：`asset.js`/`position.js` 瘦身为 facade，ws_dispatch 单一写到 holdings，消除数据漂移）
+- [⏸] M5 策略页面（提案：`implement-strategies` 或 `remove-placeholder-strategies`，当前 Defer：占位不影响功能）
 - [ ] N1 前端 status 推断镜像（提案：`2026-06-16-frontend-infer-order-status`）
 - [ ] N2 持仓 vol 兜底（提案：`2026-06-16-fix-position-vol-display`）
 - [ ] N3 今日委托显示 order_no + 撤单改 order_no（提案：`2026-06-16-trade-page-show-order-no-and-cancel`）
 - [ ] N4 11 张表结构 knowledge base（提案：`2026-06-16-data-model-knowledge-base`）
-- [ ] L1 lifespan 替代 on_event
-- [ ] L2 logout 空 stub
-- [ ] L3 kb 文档对账
-- [ ] L5 admin 路由鉴权重审
+- [⏸] L1 lifespan 替代 on_event（Defer：当前 FastAPI 0.83 不支持 `lifespan` 参数（0.93+），`@app.on_event` 仍可用）
+- [⏸] L2 logout 空 stub（Defer：JWT 无状态撤销需 token blacklist（Redis/DB），本期不动）
+- [⏸] L3 kb 文档对账（Defer：文档维护工作，本期不重写）
+- [⏸] L5 admin 路由鉴权重审（Defer：经审计当前模式已正确 — `main.py:130` 路由级 `Depends(get_current_user)` + handler 级 `Depends(require_admin)` 两层防护）
 
 ## 6. 归档条件
 
