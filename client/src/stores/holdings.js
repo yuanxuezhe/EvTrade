@@ -16,7 +16,6 @@
  */
 import { defineStore } from 'pinia'
 import { ref, watch } from 'vue'
-import { useAssetStore } from './asset'
 import { useQuoteStore } from './quote'
 import { useWsStore } from './ws'
 
@@ -87,17 +86,17 @@ export const useHoldingsStore = defineStore('holdings', () => {
     return _bootstrap(_startWs)
   }
 
-  // ---- watcher：quote 变 → 写回 asset store + 实时市值 ----------
+  // ---- watcher：quote 变 → 写回 cachedAsset（实时市值）-------------
+  // v8+: asset store 是 facade, a.asset 通过 computed 桥接到 cachedAsset,
+  //      单一写 cachedAsset 即可, 无需再双写 a.asset
   let _unwatch = null
   function _startWatchers() {
     if (_unwatch) return
-    const a = useAssetStore()
     _unwatch = watch(
       () => liveMarketValue.value.sum,
       (mv) => {
-        cachedAsset.value = { ...cachedAsset.value, market_value: mv }
-        a.asset = {
-          ...a.asset,
+        cachedAsset.value = {
+          ...cachedAsset.value,
           market_value: mv,
           total_asset: liveTotalAsset.value
         }

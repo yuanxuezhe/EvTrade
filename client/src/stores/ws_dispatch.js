@@ -8,10 +8,11 @@
  *
  * 不持有 WebSocket 连接，纯函数式（依赖注入 store getter）
  * 这样 ws_heartbeat.js 持有连接，dispatch 拿 payload 就行
+ *
+ * v8: 唯一权威源是 holdings store。ws 推送**单一写**到 holdings，
+ *     position.js / asset.js 通过 computed 桥接 holdings（不再双写）
  */
 import { ElNotification } from 'element-plus'
-import { usePositionStore } from './position'
-import { useAssetStore } from './asset'
 import { useQuoteStore } from './quote'
 import { useHoldingsStore } from './holdings'
 import { STATUS_LABEL } from '../utils/format'
@@ -90,18 +91,7 @@ function _onTradeCfm(row) {
 }
 
 function _onPositionCfm(row) {
-  const positionStore = usePositionStore()
-  const code = row.stock_code || ''
-  const idx = positionStore.positions.findIndex((p) => p.stock_code === code)
-  if (idx >= 0) {
-    positionStore.positions[idx] = {
-      ...positionStore.positions[idx],
-      ...row
-    }
-  } else if (code) {
-    positionStore.positions.unshift(row)
-  }
-  // 同步到 holdings store（让实时市值计算基于最新持仓量）
+  // v8: 单一写到 holdings, position store 通过 computed 桥接（无数据漂移）
   try {
     const holdings = useHoldingsStore()
     holdings.applyPositionPush(row)
@@ -109,15 +99,7 @@ function _onPositionCfm(row) {
 }
 
 function _onAssetCfm(row) {
-  // 柜台 push 过来的资产同步到 asset store
-  const assetStore = useAssetStore()
-  assetStore.asset = {
-    cash: Number(row.cash) || 0,
-    frozen_cash: Number(row.frozen_cash) || 0,
-    market_value: Number(row.market_value) || 0,
-    total_asset: Number(row.total_asset) || 0
-  }
-  // 同步到 holdings store（cachedAsset）
+  // v8: 单一写到 holdings.cachedAsset, asset store 通过 computed 桥接
   try {
     const holdings = useHoldingsStore()
     holdings.applyAssetPush(row)
