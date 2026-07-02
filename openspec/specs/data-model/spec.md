@@ -51,11 +51,11 @@ ORM 注释必须与本 spec 保持一致（diff 检查项之一）。
 | `traded_volume` | Integer | NO | 0 | 累计成交量 |
 | `traded_amount` | Float | NO | 0.0 | 累计成交额 |
 | `avg_price` | Float | NO | 0.0 | 成交均价 = traded_amount / traded_volume |
-| `cancelled_volume` | Integer | NO | 0 | **累计撤单量**（v8 新增：broker ord_cfm 累加；用于推断已撤/部成部撤） |
+| `cancelled_volume` | Integer | NO | 0 | **累计撤单量**（v8 新增：broker ord_cfm 累加；用于推断已撤/部成部撤；change `system-delegation-price-fill-calc` 起 5 类写入路径统一抹平语义，详见业务规则） |
 | `order_flag` | Integer | NO | 0 | **v9 新增**：`0`=正常委托，`1`=撤单委托（DELETE 端点 INSERT 的本地代理行；broker 不会推送该 row） |
-| `status` | String(2) | NO | "48" | **本地推断的委托状态**（48/49/50/51/52/53/54/55/56） |
+| `status` | String(2) | NO | "48" | **v11 broker 字典对齐**：broker xtconstant 委托状态（11 条: 48-57 + 255; 与 xtconstant 字典一一对应, 无本地扩展） |
 | `status_msg` | String(255) | NO | "" | 状态中文或 broker 错误信息 |
-| `order_time` | String(8) | NO | "" | HH:MM:SS |
+| `order_time` | String(23) | NO | "" | **v10 改**：`"YYYY-MM-DD HH:MM:SS.fff"` 完整日期时间（含毫秒，便于跨日委托归属 / 排序） |
 | `created_at` | DateTime | NO | utcnow | DB 写入时间 |
 | `updated_at` | DateTime | NO | utcnow | onupdate=utcnow |
 | `pushed_at` | DateTime | YES | NULL | 最近一次 broker push 写入时间 |
@@ -71,9 +71,22 @@ ORM 注释必须与本 spec 保持一致（diff 检查项之一）。
 - `status` 永远不直接抄 broker 推送值；由 `_infer_order_status(order, broker_status=None)` 推断（见 `push/spec.md`）
 - 终态（51/52/53/54/55/56）一旦写入不再被 trd_cfm 覆盖
 - 撤单定位用 `(trd_date, order_no)`，URL `/api/orders/{order_no}?trd_date=YYYYMMDD`
+- **v11 broker 字典对齐**（change `align-status-codes-to-xtconstant`）：
+  - `status` 字段 MUST 等于 broker xtconstant 字典（11 条: 48-57 + 255; 无本地扩展）
+  - 终态集合（`server/services/order_status.py:TERMINAL_STATUSES`）MUST 等于 `('52','53','54','55','56','57')`（broker xtconstant 终态口径, 含 broker 52=部成待撤）
+  - 旧本地 `('51','52','53','54','55','56')` 集合作废；51（broker 已报待撤）不再算终态
+  - `Status.is_cancellable` 触发码 `('48','49','50')`（含 broker 50=已报也可撤）
+  - handle_ord_cfm 直接采用 broker 推回的 `order_status`，不调用任何翻译函数
+  - handle_trd_cfm 累计后调 `_infer_order_status` 推断输出码全集 {50, 53, 54, 55, 56}（全是 broker 码）
+  - DELETE 端点 cancel-row 起手 sentinel: `status='48'`；DELETE 成功 → `status='54'`（broker CANCELED）；DELETE 失败 → `status='57'`（broker JUNK）
+- **v10 schema 调整**（`rpc-field-alignment-ts-unify` 实施）：
+  - `order_time` 字段类型 `String(8)` → `String(23)`，格式 `"YYYY-MM-DD HH:MM:SS.fff"`
+  - 写入时由 `parse_broker_ts(broker_order_time, order.trd_date, tz='local')` 统一转换（兼容 broker 多种输入格式：`"HH:MM:SS"` / `"HHMMSS"` / `"YYYYMMDDHHMMSS"` / `"YYYYMMDDHHMMSSfff"` 等）
+  - 创建 Order 时（`api/orders/place.py`）使用 `format_ts(tz='local')` 生成当前时间字符串
+  - DB 迁移脚本：`UPDATE orders SET order_time = trd_date || ' ' || order_time || '.000' WHERE length(order_time) = 8`（把已有 8 字符补齐为 23 字符）
 - **v9 schema 调整**：
   - 新增 `order_flag` 字段：`0`=正常委托，`1`=撤单委托占位行（DELETE 端点 INSERT，由 DELETE 端点全权管理 status；broker `ord_cfm` 永远不会 match 到 cancel-row——broker 推 `remark` 永远是原委托 order_no，不是新 cancel-row 的 order_no）
-  - cancel-row 字段填充：`stock_code/order_type/price_type/price` 镜像原委托；`volume=0`；`status` 起步 `48`，RPC 成功 → `53`，RPC 失败 → `55`
+  - cancel-row 字段填充：`stock_code/order_type/price_type/price` 镜像原委托；`volume=0`；`status` 起步 `48`（broker UNREPORTED 本地 sentinel），RPC 成功 → `54`（broker CANCELED 已撤），RPC 失败 → `57`（broker JUNK 废单）
   - DB 迁移脚本：`ALTER TABLE orders ADD COLUMN order_flag INTEGER NOT NULL DEFAULT 0`
 - **v8 schema 调整**：
   - 新增 `cancelled_volume` 字段：累计撤单量，broker ord_cfm 推送 `cancelled_volume` / `cancel_volume` / `withdrawn_volume` 任一字段名时累加（兼容多版本）
@@ -83,6 +96,75 @@ ORM 注释必须与本 spec 保持一致（diff 检查项之一）。
   - `client_order_id` UNIQUE 约束无法用 — order_id 下单时为空，对应 broker 约束才能稳定
   - `user_def` 是纯透传字段（前端可写可读），不参与任何 DB 约束
   - `order_no` 本身就是 8 位唯一序号，下单流程幂等靠 RPC 客户端 `client_order_id` 透传 + 后端落表前查重（应用层去重）
+
+### v11 Requirements: orders.status 字典与历史 backfill
+
+#### Requirement: orders.status 字段语义（v11 broker 字典对齐）
+
+委托表 `status` 字段 MUST 采用 broker xtconstant 字典（11 条: 48-57 + 255），无本地扩展。
+
+#### Scenario: orders.status 列定义采用 broker 字典
+
+- **WHEN** 创建 Order ORM 模型
+- **THEN** `status` 字段类型 `String(2)`, 默认 `"48"`, 注释为"broker xtconstant 委托状态（11 条: 48-57 + 255; 与 xtconstant 字典一一对应, 无本地扩展）"
+
+#### Scenario: handle_trd_cfm 累计推断输出 broker 码
+
+- **WHEN** Order.volume=100, traded_volume=50, handle_trd_cfm 累计后调 _infer_order_status
+- **THEN** 输出 status='55'（broker 部成），不是本地推断码 50
+
+#### Scenario: handle_ord_cfm 直接采用 broker 推回
+
+- **WHEN** broker ord_cfm 推回 order_status='54'（broker 已撤）
+- **THEN** handle_ord_cfm 直接采用 Order.status='54'，不再翻译
+
+#### Scenario: 终态保持（含 broker 52）
+
+- **WHEN** Order.status 已是 `'52'` / `'53'` / `'54'` / `'55'` / `'56'` / `'57'` 任一
+- **THEN** handle_trd_cfm 累计后调 _infer_order_status 不再覆盖该 status
+
+#### Scenario: cancel-row 起手 sentinel
+
+- **WHEN** DELETE 端点 INSERT cancel-row (order_flag=1)
+- **THEN** cancel-row.status = `'48'`（本地私有 sentinel，broker 不关心 cancel-row）
+- **AND** DELETE 成功 → cancel-row.status = `'54'`（broker 已撤）；DELETE 失败 → cancel-row.status = `'57'`（broker 废单）
+
+#### Requirement: orders.status TERMINAL_STATUSES 集合（v11 broker 终态口径）
+
+`server/services/order_status.py:TERMINAL_STATUSES` MUST 等于 `('52','53','54','55','56','57')`（broker xtconstant 终态口径）。
+
+#### Scenario: TERMINAL_STATUSES 含 broker 52
+
+- **WHEN** _infer_order_status 检查 current 是否为终态
+- **THEN** broker 52（部成待撤）也算终态, 不会被 trd_cfm 累计覆盖
+- **AND** 旧本地 `('51','52','53','54','55','56')` 集合作废, 51（broker 已报待撤）不再算终态
+
+#### Scenario: Status.is_cancellable 含 broker 50
+
+- **WHEN** 业务检查订单是否可撤
+- **THEN** Status.is_cancellable 触发码 `('48','49','50')`（含 broker 50=已报也可撤）
+
+#### Requirement: orders.status 历史 DB backfill（v11 一次性）
+
+历史 DB 数据 MUST 一次性 backfill 到 broker xtconstant 字典。6 条 SQL 在维护窗口内执行（与 `tracking/2026-07-02-trades-amount-backfill` 一起）。
+
+#### Scenario: backfill SQL 覆盖 6 个本地码映射
+
+- **WHEN** 维护窗口内执行 6 条 SQL：
+  - `UPDATE orders SET status = '54' WHERE status = '53' AND order_flag = 1`（cancel-row 已撤）
+  - `UPDATE orders SET status = '57' WHERE status = '55'`（废单）
+  - `UPDATE orders SET status = '56' WHERE status = '51'`（已成）
+  - `UPDATE orders SET status = '55' WHERE status = '50'`（部成）
+  - `UPDATE orders SET status = '50' WHERE status = '49'`（已报）
+  - `UPDATE orders SET status = '53' WHERE status = '56'`（本地 部成部撤 → broker 部成部撤）
+- **THEN** backfill 后 `SELECT status, COUNT(*) FROM orders GROUP BY status` 分布与 broker 字典一致
+- **AND** 48（sentinel）不动
+- **AND** dev DB 仅 1 行需改（已通过 `scripts/dry_run_status_distribution.py` 验证）
+
+#### Scenario: backfill 时机
+
+- **WHEN** 部署 commit 1-4 + DB backfill
+- **THEN** 必须同次部署 + 同维护窗口, 否则前端字典 broker 码 vs DB 本地码不一致 → 视图层显示错位
 
 ### 2. `trades` — 成交表
 
@@ -97,8 +179,8 @@ ORM 注释必须与本 spec 保持一致（diff 检查项之一）。
 | `order_type` | String(2) | NO | — | 23/24 |
 | `price` | Float | NO | 0.0 | 成交价 |
 | `volume` | Integer | NO | 0 | 成交量 |
-| `amount` | Float | NO | 0.0 | 成交额 = price × volume |
-| `trade_time` | String(8) | NO | "" | HH:MM:SS |
+| `amount` | Float | NO | 0.0 | **成交额 = price × volume（change `system-delegation-price-fill-calc` 起本地算，不采用 broker 推送的 `traded_amount`）** |
+| `trade_time` | String(23) | NO | "" | **v10 改**：`"YYYY-MM-DD HH:MM:SS.fff"` 完整日期时间（含毫秒） |
 | `trade_type` | Integer | NO | 0 | **v9 新增**：`0`=正常成交，`1`=撤单成交（DELETE 端点撤单成功时同步生成，volume=剩余可撤；不参与 buy/sell 统计） |
 | `created_at` | DateTime | NO | utcnow | DB 写入时间 |
 
@@ -110,6 +192,10 @@ ORM 注释必须与本 spec 保持一致（diff 检查项之一）。
 - 幂等键 `(trd_date, trade_id)`；重复推送不重复插入
 - trade_id 缺失时 fallback `f"{order_no}-{trade_time}"`
 - trd_date 缺失时用 `_get_active_trd_date(db)`
+- **v10 schema 调整**（`rpc-field-alignment-ts-unify` 实施）：
+  - `trade_time` 字段类型 `String(8)` → `String(23)`，格式 `"YYYY-MM-DD HH:MM:SS.fff"`
+  - 写入时由 `parse_broker_ts(broker_traded_time, trade.trd_date, tz='local')` 统一转换
+  - DB 迁移脚本：`UPDATE trades SET trade_time = trd_date || ' ' || trade_time || '.000' WHERE length(trade_time) = 8`
 - **v9 schema 调整**：
   - 新增 `trade_type` 字段：`0`=normal，`1`=cancel-fill（DELETE 端点撤单成功时同步生成的撤单成交占位行）
   - cancel-fill 字段填充：`volume = orig.volume - orig.traded_volume`（剩余可撤股数）；`price = orig.avg_price or orig.price`；`trade_id = "CANCEL-{cancel_order_no}-{unix_ts}"` 合成；`order_no` 关联 cancel-row（不是原委托）

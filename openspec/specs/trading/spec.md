@@ -33,19 +33,38 @@
   - `order_no` 服务端本地生成 8 位序号（保证当日 + 全局唯一）
   - 下单时把 `order_no` 透传到柜台 RPC 的 `remark` 字段（柜台透传，pushed-back 时带回）
   - 委托表复合主键 `(trd_date, order_no)`；`order_id` 改为可空列，由 ord_cfm 推送时单条 UPDATE 写入（v6）
-- **`OrderOut.status` 语义（v6，本地推断；v8 改 `cancelled_volume` 主轴）**：
-  - 委托表 `status` 字段 = **后端本地推断的委托状态**（48/49/50/51/52/53/54/55/56）
-  - 推断函数：`_infer_order_status(order, broker_status=None)`（`server/services/push_handlers.py`）
-  - **v8 规则改**：以 `cancelled_volume` 主轴
-    - `cancelled_volume >= volume` → 53（已撤）
-    - `cancelled_volume > 0 && traded_volume > 0` → 56（部成部撤）
-    - `cancelled_volume > 0`（无成交）→ 53
-    - `broker_status in (52,53,54)` 兼容老 broker 协议（无 `cancelled_volume` 字段）
-    - 累计推断：`traded_volume` 决定 49/50/51
-  - 终态 (51/52/53/54/55/56) 一旦写入不再被 trd_cfm 覆盖
+- **`OrderOut.status` 语义（v11 broker 字典对齐）**：
+  - 委托表 `status` 字段 = **broker xtconstant 字典**（11 条: 48-57 + 255; 与 xtconstant 字典一一对应, 无本地扩展）
+  - 推断函数：`_infer_order_status(order, broker_status=None)`（`server/services/order_status.py`，v11 起输出 broker 码）
+  - **v11 broker 码业务写入点**（`POST /api/orders/place`）：
+    - `place.py:90` 拒单 status: `'55'` (本地废单) → `'57'` (broker JUNK 废单)
+    - `place.py:110` RPC 成功 status: `'49'` (本地已报) → `'50'` (broker REPORTED 已报)
+    - `place.py:113` RPC 拒单 status: `'55'` (本地废单) → `'57'` (broker JUNK 废单)
+  - **v11 终态**：`TERMINAL_STATUSES = ('52','53','54','55','56','57')`（含 broker 52=部成待撤, 与 broker 终态口径一致）
+  - **v8 规则改**（历史保留）：以 `cancelled_volume` 主轴
+    - `cancelled_volume >= volume` → 54（broker 已撤）
+    - `cancelled_volume > 0 && traded_volume > 0` → 53（broker 部成部撤）
+    - `cancelled_volume > 0`（无成交）→ 54
+    - `broker_status in (51,52,53,54)` 兼容老 broker 协议（broker 码）
+    - 累计推断：`traded_volume` 决定 50/51
+  - 终态 (broker 52/53/54/55/56/57) 一旦写入不再被 trd_cfm 覆盖
   - **前端必须镜像同一函数**：`client/src/utils/format.js` 提供 `inferOrderStatus(order, brokerStatus?)`，见 `frontend/spec.md` REQ-FE-006
-  - **前端不再信任 broker 推的 status 字段**（broker 状态码 vs 本地推断码不完全相同：例如 broker 55=部成 → 本地 50=部成）
   - `OrderOut` v8 增 `cancelled_volume` 字段（默认 0），由 `handle_ord_cfm` 累加 broker 推送的撤单量
+
+#### Scenario: place.py RPC 成功写入 broker 50（v11 修订）
+
+- **WHEN** POST /api/orders/place 收到 `stock_code, order_type, volume, price, price_type` 且 RPC 返回 `code=0`
+- **THEN** Order.status = `'50'`（broker REPORTED 已报），不是本地推断码 '49'
+
+#### Scenario: place.py RPC 拒单写入 broker 57（v11 修订）
+
+- **WHEN** POST /api/orders/place 收到 RPC 返回 `code != 0`（拒单）
+- **THEN** Order.status = `'57'`（broker JUNK 废单），不是本地推断码 '55'
+
+#### Scenario: place.py 同步写 cancelled_volume=volume（v8 不变）
+
+- **WHEN** POST /api/orders/place 收到 RPC 返回 `code != 0`（拒单）
+- **THEN** Order.cancelled_volume = Order.volume（一次性抹平, change `system-delegation-price-fill-calc` 起 5 类写入路径之一 R2a）
 - **v7 schema 调整**：
   - `Order` 表删除 `client_order_id` 字段（不下发，幂等不再靠 DB UNIQUE 约束）
   - `Order` 表删除 `uq_orders_client_trd` / `uq_orders_broker_id` 约束（order_id 下单时为空，broker 约束不可靠）
@@ -55,26 +74,75 @@
   - 下单 API `POST /api/orders/place` 接受可选 `user_def` 字段透传（无业务约束，仅落库）
   - 下单幂等改由 `order_no` 单调递增保证（同 ord_stk RPC 第二次调用方会被 broker 拒绝）
 
-### REQ-TRADE-003: 撤单（v9 重写：本地代理撤单留痕）
+### REQ-TRADE-003: 撤单（v11 broker 码业务写入点）
+
+DELETE 端点业务写入点固定码 MUST 改 broker 码：
+- `cancel.py:74` cancel-row 起手 status: `'48'` (本地 sentinel, 保留)
+- `cancel.py:115` DELETE 成功 status: `'53'` (本地已撤) → `'54'` (broker CANCELED 已撤)
+- `cancel.py:144` DELETE 失败 status: `'55'` (本地废单) → `'57'` (broker JUNK 废单)
+- `cancel.py:61` pre-check `if order.status not in ("48","49")` → `("48","49","50")`（含 broker 50=已报）
 
 - `DELETE /api/orders/{order_no}?trd_date=YYYYMMDD`
 - **v6 BREAKING**：URL 参数从 `order_id` 改为 `order_no`（本地 8 位序号）；后端按 `(trd_date, order_no)` 定位 Order
 - **v9 BREAKING**：DELETE 端点**立即 INSERT 一条 cancel-row**（`order_flag=1`），用于本地撤单审计；broker 不会推这个 row（broker `ord_cfm` 的 `remark` 永远是**原委托**的 `order_no`，不会回带 cancel-row 的 `order_no`）
 - **5 步流程**：
-  1. **Pre-checks**：原委托 `status` 不在 `{48,49,50}` → 返 `{code: NO_CANCELABLE}`，**不插行**；`order_id` 缺失 → 返 `{code: NO_ORDER_ID, http=409}`，**不插行**
-  2. **INSERT cancel-row**（commit 立即落库，避免 RPC 异常时孤儿）：`order_no = next_order_no(db)`；`user_def = "CANCEL:{orig_order_no}"`；`stock_code/order_type/price_type/price` 镜像；`volume=0`；`order_flag=1`；`status=48`
+  1. **Pre-checks**（v11 broker 码）：原委托 `status` 不在 `{48,49,50}` → 返 `{code: NO_CANCELABLE}`，**不插行**；`order_id` 缺失 → 返 `{code: NO_ORDER_ID, http=409}`，**不插行**
+  2. **INSERT cancel-row**（commit 立即落库，避免 RPC 异常时孤儿）：`order_no = next_order_no(db)`；`user_def = "CANCEL:{orig_order_no}"`；`stock_code/order_type/price_type/price` 镜像；`volume=0`；`order_flag=1`；`status=48`（broker UNREPORTED 本地 sentinel）
   3. **Call RPC**：`await rpc_cancel_order(order_id=orig.order_id)`，try/except 捕获网络异常
-  4. **分支处理**：
-     - `ack.code == 0` → cancel-row `status=53` `status_msg=已撤`；**同步** INSERT cancel-trade（`volume=orig.volume-orig.traded_volume`、`price=orig.avg_price or orig.price`、`trade_type=1`、`trade_id=CANCEL-{cancel_order_no}-{unix_ts}`、关联 cancel-row 的 order_no）
-     - `ack.code != 0` → cancel-row `status=55` `status_msg=ack.msg or 撤单失败`，**不**插 cancel-trade（保留 audit）
-     - RPC 抛 Exception → cancel-row `status=55` `status_msg=str(e)`，**不**插 cancel-trade
-  5. **WS broadcast**（broker 不推 cancel-row，必须手动 broadcast）：始终推 `order_update`（payload 含 `order_flag=1, user_def, status, status_msg, ...`）；仅成功时推 `trade_update`（payload 含 `trade_type=1, ...`）
+  4. **分支处理**（v11 broker 码）：
+     - `ack.code == 0` → cancel-row `status=54`（broker CANCELED 已撤） `status_msg=已撤`；**同步** INSERT cancel-trade（`volume=orig.volume-orig.traded_volume`、`price=orig.avg_price or orig.price`、`trade_type=1`、`trade_id=CANCEL-{cancel_order_no}-{unix_ts}`、关联 cancel-row 的 order_no）
+     - `ack.code != 0` → cancel-row `status=57`（broker JUNK 废单） `status_msg=ack.msg or 撤单失败`，**不**插 cancel-trade（保留 audit）
+     - RPC 抛 Exception → cancel-row `status=57`（broker JUNK 废单） `status_msg=str(e)`，**不**插 cancel-trade
+  5. **WS broadcast**（broker 不推 cancel-row，必须手动 broadcast）：始终推 `order_update`（payload 含 `order_flag=1, user_def, status, status_msg, ...`，status 是 broker 码 54 或 57）；仅成功时推 `trade_update`（payload 含 `trade_type=1, ...`）
+
+#### Scenario: cancel.py DELETE 成功写入 broker 54（v11 修订）
+
+- **WHEN** DELETE /api/orders/{order_no}?trd_date=YYYYMMDD 调用 RPC 返回 `ack.code == 0`
+- **THEN** cancel-row.status = `'54'`（broker CANCELED 已撤），不是本地推断码 '53'
+
+#### Scenario: cancel.py DELETE 失败写入 broker 57（v11 修订）
+
+- **WHEN** DELETE /api/orders/{order_no}?trd_date=YYYYMMDD 调用 RPC 返回 `ack.code != 0` 或抛 Exception
+- **THEN** cancel-row.status = `'57'`（broker JUNK 废单），不是本地推断码 '55'
+
+#### Scenario: cancel.py pre-check 含 broker 50（v11 修订）
+
+- **WHEN** DELETE /api/orders/{order_no}?trd_date=YYYYMMDD 调用, 原委托 status='50'（broker 已报）
+- **THEN** pre-check 通过（status 在 {48, 49, 50} 内）, 进入 INSERT cancel-row + RPC 流程
+
+#### Scenario: cancel.py pre-check 拒绝 broker 终态（v11 修订）
+
+- **WHEN** DELETE /api/orders/{order_no}?trd_date=YYYYMMDD 调用, 原委托 status='54'（broker 已撤）
+- **THEN** pre-check 拒绝（status 不在 {48, 49, 50} 内）, 返 `{code: NO_CANCELABLE}`, 不插行
+
+#### Scenario: cancel.py 同步写原 cancelled_volume=volume（v11 修订 + R1 兜底）
+
+- **WHEN** DELETE /api/orders/{order_no}?trd_date=YYYYMMDD 调用, RPC 返回 `ack.code == 0`
+- **THEN** orig.cancelled_volume = orig.volume（一次性抹平, R1, change `system-delegation-price-fill-calc` 起 5 类写入路径之一）
+
 - **响应模型**：`CancelResponse { code, msg, cancel_order: Optional[OrderOut] }`（`cancel_order` 是 INSERT 的 cancel-row 的最终状态）
 - **OrderOut v9 增** `order_flag: int = 0`；**TradeOut v9 增** `trade_type: int = 0`；Pydantic + inline builder 全链路透传
 - **前端约定**：Trade.vue 撤单按钮 → `orderStore.cancelOrder(orderNo, trdDate)` → `api.cancelOrder(orderNo, trdDate)` → `DELETE /api/orders/${orderNo}?trd_date=${trdDate}`
-- **前端 holdings 短路**：`applyOrderPush` 见 `order_flag === 1` 时直接 merge + return，**不**走 `_recomputeStatus`（volume=0 会被推算成 49 污染显示）
+- **前端 holdings 短路**：`applyOrderPush` 见 `order_flag === 1` 时直接 merge + return，**不**走 `_recomputeStatus`（volume=0 会被推算成 50 污染显示）
 - **前端视图**：Trade.vue / Orders.vue 加「类型」列（cancel-row 渲染 `el-tag「撤单」`）；Trade.vue 默认过滤隐藏 cancel-row，提供「含撤单审计」选项；`canCancel(row)` 加 `order_flag === 1` 守卫；Trades.vue 买/卖统计排除 `trade_type === 1`
 - **实现约定**：`api/orders.py` 中 import 使用别名 `from rpc.client import cancel_order as rpc_cancel_order`，避免与路由函数同名递归
+
+### REQ-TRADE-002.1: ord.py R2b 触发条件 broker 终态（v11 修订）
+
+`server/services/push/ord.py` R2b 触发条件 MUST 用 broker xtconstant 终态口径:
+- R2b 触发条件 `broker_status in ('53','55')` (本地已撤/本地废单) → `('52','53','54','55','56','57')` (broker 全部终态)
+- rule 3 触发 `broker_status in ('52','53','54')` (本地撤单类) → `('51','52','53','54')` (broker 撤单类: 51=已报待撤, 52=部成待撤, 53=部成部撤, 54=已撤)
+
+#### Scenario: ord.py R2b broker 终态触发（v11 修订）
+
+- **WHEN** broker 推 `ord_cfm` row 含 `order_status='54'`（broker 已撤）
+- **AND** Order.cancelled_volume < Order.volume
+- **THEN** order.cancelled_volume = order.volume（R2b 抹平, change `system-delegation-price-fill-calc` 起 5 类写入路径之一）
+
+#### Scenario: ord.py rule 3 broker 撤单类触发（v11 修订）
+
+- **WHEN** broker 推 `ord_cfm` row 含 `order_status='52'`（broker 部成待撤）
+- **THEN** _infer_order_status 触发 rule 3, 输出 status='54'（broker 已撤）或 '53'（broker 部成部撤）或 '56'（broker 已成），按 cum_traded 决定
 
 ### REQ-TRADE-004: 鉴权
 

@@ -168,12 +168,19 @@ The shared component is [client/src/components/CacheTableView.vue](../../client/
 - 详见归档 `archive/2026-06-22-fix-v8-single-source-violations/spec-deltas/frontend.md`
 
 #### REQ-FE-009.4: 禁止调用 v8 已删除的 fetcher
-#### REQ-FE-009.5: 撤单审计行（cancel-row）短路（v9）
+#### REQ-FE-009.5: 撤单审计行（cancel-row）短路（v9，v11 broker 码）
 
 - `holdings.applyOrderPush(row, action)`: 见 `row.order_flag === 1` 时**直接 merge + return**，**不**走 `_recomputeStatus`
-  - 原因：cancel-row `volume=0, traded_volume=0`，`_recomputeStatus` 推算结果会是 `49`（已报），污染显示
-  - cancel-row 的 `status` 由 DELETE 端点全权管理（53 已撤 / 55 废单），前端只 merge 不重算
+  - 原因：cancel-row `volume=0, traded_volume=0`，`_recomputeStatus` 推算结果会是 `50`（broker 已报），污染显示
+  - cancel-row 的 `status` MUST 由 DELETE 端点全权管理（v11 broker 码：54 已撤 / 57 废单），前端只 merge 不重算
   - 日志用「撤单审计」前缀区分正常推送
+
+#### Scenario: cancel-row status 短路（v11 修订）
+
+- **WHEN** applyOrderPush 收到 order_flag=1 的 cancel-row，row.status='54'（broker 已撤）
+- **THEN** 直接 merge 到 orders.value，不调 inferOrderStatus
+- **AND** 视图层 Trade.vue / Orders.vue 显示「类型=撤单」标签（cancel-row 守卫）
+
 - `holdings.applyTradePush(row)`: 透传 `trade_type` 字段（0=normal 1=cancel-fill）
   - `trade_type === 1` 时记「撤单审计」日志（区分正常成交通知）
 
@@ -243,18 +250,91 @@ The shared component is [client/src/components/CacheTableView.vue](../../client/
 - **依赖注入模式**：helper 工厂通过参数接收 state ref + store getter（如 `getQuoteStore: () => useQuoteStore()`），避免循环依赖
 - 详见归档 `archive/2026-06-24-phase-2-architecture-split/spec-deltas/frontend.md`
 
-### REQ-FE-006: 委托 status 本地推断（前端镜像后端）
+### REQ-FE-009.9: 前端独立计算委托 / 成交缓存（v11 broker 码）
+
+ws 推送的 trd_cfm payload 仅含当前笔 trade 字段；前端 holdings store 缓存层 MUST 独立维护以下计算字段——**不读 ws 推送 payload 的累积 / cancelled_volume / status 字段**：
+
+#### Scenario: 增量累计 status 输出 broker 码
+
+- **WHEN** order.volume=100, traded_volume=30, cancelled_volume=0, status='50'（broker 已报）
+- **AND** applyTradePush 收到 volume=30 的新成交
+- **THEN** recomputeOrderFromTrade 累计后 order.status='55'（broker 部成）
+
+#### Scenario: cancel-row 反向抹平后 status 输出 broker 码
+
+- **WHEN** order.volume=100, traded_volume=30, cancelled_volume=0, status='55'（broker 部成）
+- **AND** applyOrderPush 收到 cancel-row (order_flag=1) 反向抹平 cancelled_volume=100
+- **THEN** 反向抹平后 order.status='53'（broker 部成部撤），不是本地推断码 56
+
+- **`trades.amount`**：本地 `price × volume` 计算，不引用 ws payload 的 amount 字段
+- **`orders.traded_volume`**：各 trd_cfm 单笔 `volume` 在对应 `order_no` 上增量累加
+- **`orders.traded_amount`**：各 trd_cfm 单笔 `price × volume` 在对应 `order_no` 上增量累加
+- **`orders.avg_price`**：`traded_amount / traded_volume`（仅防 `traded_volume == 0` 除零）
+- **`orders.status`**：调 `inferOrderStatus(order, null)` 本地推断（不传 brokerStatus），与后端 `_infer_order_status` 镜像
+- **`orders.cancelled_volume`**：
+  - bootstrap / refresh 拉取时：接受 row 字段作为初始值
+  - 运行时：cancel-row ws 推送（`order_flag === 1`）按 `user_def = 'CANCEL:{orig_order_no}'` 反向定位原委托，把 `orig.cancelled_volume = orig.volume` 一次性抹平
+
+ws 推送的 `order_update` payload SHALL 仅用于 PK + 元数据覆盖（`order_id / user_def / order_time / stock_code / order_type / price_type / price / volume / status_msg`），MUST NOT 覆盖 `traded_volume / traded_amount / avg_price / cancelled_volume / status` 等本地维护字段。
+
+bootstrap 与 refresh 路径（`/api/orders` 与 `/api/trades` 拉取响应）SHALL 接受 row 累计字段作为初始值，再重算 `avg_price / status / cancelled_volume`。
+
+Vue ref 响应式 SHALL 支持实时 UI 渲染：所有改动通过 `value[idx] = newObj` 触发，holdings store 的 ref 数组自动触发 `<el-table>` 等 watcher。
+
+### REQ-FE-009.9.1: 前端 helper 工具函数（v11 输出码全集 broker 码）
+
+The system SHALL 在 `client/src/utils/orderCalc.js` MUST 提供的 helper 函数输出 broker 码:
+
+- `normalizeTrade(trade)`：返回 `{...trade, amount: price × volume}`
+- `recomputeOrderFromTrade(order, trade)`：返回基于单笔 trade 增量累计的新 order 对象（含 status 推断, 输出 broker 码）
+- `metaMerge(row, ref)`：返回仅覆盖 PK + 元数据、保留 ref 计算字段的合并结果
+- `flattenCancelledByRow(row, orders)`：cancel-row 触发的反向抹平逻辑
+
+#### Scenario: recomputeOrderFromTrade 输出 broker 码
+
+- **WHEN** order.volume=100, traded_volume=0, trade.volume=30
+- **THEN** 返回新 order 的 status='55'（broker 部成），不是本地推断码 50
+
+#### Scenario: flattenCancelledByRow 触发 broker 53
+
+- **WHEN** order.volume=100, traded_volume=30, cancelled_volume=0, status='55'（broker 部成）
+- **AND** cancel-row 反向抹平 cancelled_volume=100
+- **THEN** 返回新 order 的 status='53'（broker 部成部撤），不是本地推断码 56
+
+helper 函数 MUST 与后端 `handle_trd_cfm / api/orders/place.py / api/orders/cancel.py / handle_ord_cfm` 等写入路径字段语义逐字对齐，避免前后端算法漂移。
+
+### REQ-FE-006: 委托 status 本地推断（v11 broker 字典对齐）
+
+`client/src/utils/format.js` 导出 `inferOrderStatus(order, brokerStatus?)` 函数 MUST 与 `server/services/order_status.py:_infer_order_status` **逐行一致**，输出码全集 {50, 53, 54, 55, 56}（全是 broker xtconstant 码，无本地扩展）。
+
+#### Scenario: 推断输出码全集是 broker 码
+
+- **WHEN** order.volume=100, traded_volume=50, cancelled_volume=0, status='50'
+- **THEN** inferOrderStatus 输出 '55'（broker 部成），不是本地推断码 50
+
+#### Scenario: 终态保持（含 broker 52）
+
+- **WHEN** order.status='52'（broker 部成待撤）
+- **THEN** inferOrderStatus 保持 '52'
+
+#### Scenario: 视图层按 broker 字典分组
+
+- **WHEN** Trade.vue 显示今日委托表
+- **THEN** `_PENDING_NUMERIC` 包含 {48, 49, 50}（broker 未报/待报/已报）
+- **AND** `_FILLED_NUMERIC` 包含 {55, 56, 54}（broker 部成/已成/已撤）
+- **AND** `_PARTIAL_CANCEL_NUMERIC` 包含 {53}（broker 部成部撤）
 
 - **位置**：`client/src/utils/format.js` 导出 `inferOrderStatus(order, brokerStatus?)` 函数
 - **契约**：与 `server/services/push_handlers.py:_infer_order_status` **逐行一致**（同规则、同终态集合、同输入输出）
-- **v8 修订**：入参 `order` 增加 `cancelled_volume` 字段；推断规则以 `cancelled_volume` 主轴（详见 `push/spec.md` REQ-PUSH-005 v8 修订部分）
+- **v11 broker 字典对齐**：输出码全集 {50, 53, 54, 55, 56} 改 broker 码
+- **v8 修订**（历史保留）：入参 `order` 增加 `cancelled_volume` 字段；推断规则以 `cancelled_volume` 主轴（详见 `push/spec.md` REQ-PUSH-005 v8 修订部分）
 - **调用点**（v8 修订）：
   - `holdings.js:bootstrap` 拉取 `/api/orders` 后批量重算
   - `holdings.js:refresh` 拉取 `/api/orders` 后批量重算
   - `holdings.js:applyOrderPush` 收到 `order_update` 时重算
   - 统一通过 `holdings.js:_recomputeStatus(row)` helper 实现（不传 brokerStatus，按 cancelled_volume + traded_volume / volume 推断）
 - **视图层契约**：
-  - 状态码分组集合（`_PENDING_NUMERIC` / `_FILLED_NUMERIC` / `countByStatus`）必须用**本地推断码** 49/50/51/52/53/54/55/56
+  - 状态码分组集合（`_PENDING_NUMERIC` / `_FILLED_NUMERIC` / `countByStatus`）必须用 **broker xtconstant 字典**：48/49/50/51/52/53/54/55/56/255（v11 起）
   - 不要再用 broker 原始码（55=部成/56=已成）的旧逻辑
   - **不信任后端 / broker 推的 status 字段**：所有显示路径必须经 `inferOrderStatus` 重算（防御性）
 - **Trade.vue 列展示**：
@@ -312,6 +392,49 @@ And Asset/Holdings 等视图若订阅了该股则自动刷新
 - **位置**：`client/src/components/OrderForm.vue`
 - **契约**：
   - 限价单（`price_type === PriceType.LIMIT`）委托价格输入支持 2 位小数（A 股最小变动单位 0.01 元）
+
+### REQ-FE-011: 前端 5 张字典按 broker 义重映射（v11）
+
+`STATUS_LABEL` / `STATUS_TYPE` / `STATUS_TONE` / `STATUS_ICON_NAME` / `STATUS_PULSE` / `STATUS_OPTIONS` MUST 按 broker xtconstant 字典义重映射。
+
+#### Scenario: STATUS_LABEL 按 broker 义（v11 新增）
+
+- **WHEN** 视图层渲染订单状态
+- **THEN** `STATUS_LABEL['54']` = '已撤'（broker CANCELED）
+- **AND** `STATUS_LABEL['57']` = '废单'（broker JUNK）
+- **AND** `STATUS_LABEL['53']` = '部成部撤'（broker PART_CANCEL）
+- **AND** `STATUS_LABEL['55']` = '部成'（broker PART_SUCC）
+- **AND** `STATUS_LABEL['56']` = '已成'（broker SUCCEEDED）
+
+#### Scenario: STATUS_OPTIONS 按 broker 字典顺序（v11 新增）
+
+- **WHEN** Trade.vue / Orders.vue 渲染状态过滤下拉
+- **THEN** STATUS_OPTIONS 按 broker 字典顺序：48→待报 / 49→待报 / 50→已报 / 51→已报待撤 / 52→部成待撤 / 53→部成部撤 / 54→已撤 / 55→部成 / 56→已成 / 57→废单 / 255→未知
+
+#### Scenario: STATUS_PULSE 中间态脉冲（v11 新增）
+
+- **WHEN** 视图层渲染订单状态
+- **THEN** 48/49/50/51/52/55 等中间态 MUST 有脉冲动画（true）
+- **AND** 53/54/56/57/255 等终态 MUST 无脉冲动画（false）
+
+### REQ-FE-012: 移除前端 fall-back 兼容 key（v11）
+
+**Removed**（v11 起不再需要）：
+- 14 个英文 fall-back key（`unreported` / `pending_report` / `reported` / `reported_cancel` / `partial_pending_cancel` / `partial_cancelled` / `cancelled` / `partial` / `filled` / `rejected` / `unknown` / `pending` 等）是历史 in-memory 状态遗留
+- `grep -rE "STATUS_LABEL\['(unreported|pending_report|reported|...)\]'\]" client/src/` 0 处外部引用
+- 与 broker xtconstant 字典对齐后无业务价值（broker 字典只有数字字符串 key）
+- 1-2 年前遗留，无第三方引用，删 0 风险
+
+**Migration**:
+- 删除 `client/src/utils/format.js` 的 `STATUS_LABEL` / `STATUS_TYPE` / `STATUS_TONE` / `STATUS_ICON_NAME` / `STATUS_PULSE` 5 张字典中所有英文 fall-back key 段
+- 仅保留 broker xtconstant 字典 11 条（48-57 + 255）
+- 视图层（Trade.vue / Orders.vue / TradeStatusBadge.vue）只读 5 张字典的 broker 码 key，不读英文 fall-back key
+
+#### Scenario: 删除 fall-back 兼容 key
+
+- **WHEN** 静态扫 `client/src/utils/format.js`
+- **THEN** `STATUS_LABEL` / `STATUS_TYPE` / `STATUS_TONE` / `STATUS_ICON_NAME` / `STATUS_PULSE` 5 张字典只含 11 条 broker xtconstant 码 (48-57 + 255)
+- **AND** 14 个英文 fall-back key (unreported / pending_report / reported / ...) 全部删除
 
 ### REQ-FE-050: T0Trade.vue 拆分（phase-2 初版 — composable 抽取）
 

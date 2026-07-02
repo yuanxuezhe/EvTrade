@@ -33,24 +33,54 @@ QMT 柜台通过 RabbitMQ 主动推送（`EvTrade.Test.Push` 队列）异步通�
   - 认证 / 接入 / 双向心跳 / 4408 timeout 关闭全部在该模块
   - ws_manager 单例由 `server/ws/manager.py` 提供（业务推送 `server/services/push_handlers.py` 也共用）
 
-### REQ-PUSH-005: status 字段语义（v6，本地推断）
+### REQ-PUSH-005: status 字段语义（v11 broker 字典对齐）
 
-- 后端 `handle_ord_cfm` / `handle_trd_cfm` 写入 Order.status 时，**统一调用 `_infer_order_status` 本地推断**，不直接抄 broker 推送的 status
-- WS `order_update` 推送的 status 字段 = DB 中的 status 字段 = 本地推断结果
+后端写入 Order.status 时 MUST 采用 broker xtconstant 字典（11 条: 48-57 + 255），无本地扩展。`handle_ord_cfm` 直接采用 broker 推回；`handle_trd_cfm` 累计后调 `_infer_order_status` 推断输出码全集 {50, 53, 54, 55, 56}（全是 broker 码）。
+
+#### Scenario: handle_trd_cfm 推断终态采用 broker 码
+
+- **WHEN** Order.volume=100, traded_volume=50（部成）, handle_trd_cfm 累计后调 _infer_order_status
+- **THEN** 输出 status='55'（broker 部成），不是本地推断码 50
+
+#### Scenario: handle_ord_cfm broker 推回直接采用
+
+- **WHEN** broker ord_cfm 推回 order_status='54'（broker 已撤）
+- **THEN** handle_ord_cfm 直接采用 Order.status='54'，不再翻译
+
+#### Scenario: 终态保持（含 broker 52）
+
+- **WHEN** Order.status='52'（broker 部成待撤）或 '53'/'54'/'55'/'56'/'57'
+- **THEN** handle_trd_cfm 累计后调 _infer_order_status 不覆盖该 status
+
+#### Scenario: 业务写入点 broker 码（v9 cancel-row 短路）
+
+- **WHEN** DELETE 端点 INSERT cancel-row (order_flag=1)
+- **THEN** cancel-row.status 起手 '48'（本地 sentinel）
+- **AND** DELETE 成功 → '54'（broker 已撤）
+- **AND** DELETE 失败 → '57'（broker 废单）
+
+#### Scenario: _infer_order_status 输出 broker 码
+
+- **WHEN** _infer_order_status 推断终态
+- **THEN** 输出码全集 {50, 53, 54, 55, 56}（全是 broker 码）
+- **AND** broker_status 撤单类判定 `('52','53','54')` 不变（broker 码与本地巧合对齐）
+
+- WS `order_update` 推送的 status 字段 = DB 中的 status 字段 = broker 码（v11 起）
 - **前端契约**：
-  - 前端 `inferOrderStatus(order, brokerStatus?)` 必须与后端 `_infer_order_status` **逐行一致**（同函数同输入同输出）
+  - 前端 `inferOrderStatus(order, brokerStatus?)` 必须与后端 `_infer_order_status` **逐行一致**，输出 broker 码
   - 前端 store 收到 `order_update` 时，对每条 order 调一次前端 `inferOrderStatus` 重算（防御性，避免与后端实现分叉）
-  - 视图层（Trade.vue / Orders.vue）的 status 分组集合（`_PENDING_NUMERIC` / `_FILLED_NUMERIC` / `countByStatus`）必须用**后端本地推断码**：49/50/51/52/53/54/55/56（不是 broker 原始码 55/56 等）
+  - 视图层（Trade.vue / Orders.vue）的 status 分组集合（`_PENDING_NUMERIC` / `_FILLED_NUMERIC` / `countByStatus`）必须用**broker xtconstant 字典**：48/49/50/51/52/53/54/55/56/255（v11 起）
 - **后端函数位置**：`server/services/push_handlers.py:_infer_order_status`
 - **前端函数位置**：`client/src/utils/format.js:inferOrderStatus`
-- **v8 修订**：推断规则以 `cancelled_volume` 为主轴：
-  1. 当前 status 已是终态（51/52/53/54/55/56）→ 保持
-  2. `cancelled_volume >= volume` → 53（已撤）
-  3. `cancelled_volume > 0 && traded_volume > 0` → 56（部成部撤）
-  4. `cancelled_volume > 0`（无成交）→ 53
-  5. broker_status in (52,53,54) → 撤单类信号（兼容老 broker 无 cancelled_volume 字段）
-  6. 累计推断：`traded_volume` 决定 49/50/51
-- **重要：WS payload status 字段可能不可信**（broker 原始 status 与本地推断码语义不一致时）。前端展示态由 `client/src/stores/holdings.js:_recomputeStatus` 统一按 `cancelled_volume + traded_volume / volume` 推断（不传 brokerStatus），详见 REQ-FE-006
+- **v11 broker 字典对齐**：订单/成交状态码全部采用 broker xtconstant 字典（48-57 + 255），无本地扩展
+- **v8 修订**（历史保留）：推断规则以 `cancelled_volume` 为主轴
+  1. 当前 status 已是终态（broker 52/53/54/55/56/57）→ 保持
+  2. `cancelled_volume >= volume` → 54（broker 已撤）
+  3. `cancelled_volume > 0 && traded_volume > 0` → 53（broker 部成部撤）
+  4. `cancelled_volume > 0`（无成交）→ 54
+  5. broker_status in (51,52,53,54) → 撤单类信号（broker 码）
+  6. 累计推断：`traded_volume` 决定 50/51
+- **v11 历史**：旧本地推断码（49/50/51/52/53/54/55/56）已废弃；前端展示态由 `client/src/stores/holdings.js:_recomputeStatus` 统一按 `cancelled_volume + traded_volume / volume` 推断，输出 broker 码，详见 REQ-FE-006
 
 ### REQ-PUSH-006: 异步落库（v8）
 
@@ -102,14 +132,24 @@ QMT 柜台通过 RabbitMQ 主动推送（`EvTrade.Test.Push` 队列）异步通�
 - `handle_push` 同步签名不变（向后兼容 test_push_handlers.py 11 用例 + test_push_async.py 反射测试）
 - 子模块间单向依赖：push_handler_* → order_status / push_helpers；push_handlers (facade) → 全部子模块
 
-### REQ-PUSH-008: broker ord_cfm 不匹配 cancel-row（v9）
+### REQ-PUSH-008: broker ord_cfm 不匹配 cancel-row（v9，v11 broker 码）
 
 - **背景**：v9 DELETE 端点 INSERT 撤单委托占位行（cancel-row，`order_flag=1`）。broker 协议层面不会主动推送这个 row。
 - **为什么 broker 不会推**：
   - broker `ord_cfm` 的 `remark` 字段永远等于**原买单/卖单**的 `order_no`，**不会回带**我们新 cancel-row 的 `order_no`
   - 撤单 RPC `cancel_ord` 只接 `order_id`，broker 不允许本地注入自定义 remark
   - 因此 `handle_ord_cfm` 用 `remark` 匹配时永远找不到 cancel-row，cancel-row 完全不被 broker push 触及
-- **后果**：cancel-row 的 `status` / `status_msg` 必须由 DELETE 端点**本地**维护（成功 → 53 / 失败 → 55），并通过 `ws_manager.broadcast` 手动推给前端
+- **后果**：cancel-row 的 `status` / `status_msg` 必须由 DELETE 端点**本地**维护（v11 broker 码：成功 → 54 / 失败 → 57），并通过 `ws_manager.broadcast` 手动推给前端
+- **v11 broker 字段映射补遗**：`broker ord_cfm` 不匹配 cancel-row 的判断条件中 `status` 字段值 MUST 是 broker 码；cancel-row 自身 status 由 DELETE 端点维护
+
+#### Scenario: cancel-row status 由 DELETE 端点维护（v11 修订）
+
+- **WHEN** DELETE 端点 INSERT cancel-row (order_flag=1)
+- **THEN** cancel-row.status 起手 '48'（broker UNREPORTED 本地 sentinel）
+- **AND** DELETE 成功 → '54'（broker CANCELED 已撤）
+- **AND** DELETE 失败 → '57'（broker JUNK 废单）
+- **AND** WS broadcast payload 含 status='54' 或 '57', 前端 view 按 broker 字典解读
+
 - **测试覆盖**：`server/test_push_handlers.py::test_ord_cfm_for_original_does_not_touch_cancel_row` 验证 broker 推原委托 `remark` 时 cancel-row 字段完全不被更新
 - **完整 DELETE 端点契约**：见 `trading/spec.md` REQ-TRADE-003 5 步流程
 
@@ -173,6 +213,94 @@ PushDispatcher
 - **WHEN** 静态扫 `server/rpc/transport.py`
 - **THEN** 不出现 `_iter_push_rows` / `_run_handle_push` / `_resolve_active_trd_date_safe` / `_dispatch_push` / `_broadcast_trade_cfm` / `_broadcast_generic` / `_log_push_interaction` / `_log_push_broadcast` / `_PUSH_CHANNEL`
 - **AND** 仅出现 `self._dispatcher.dispatch(...)` 一处调用
+
+### REQ-PUSH-030: push handler 字段映射表（v10 broker 原字段名，rpc-field-alignment-ts-unify 实施）
+
+push handler MUST 严格读 broker 原字段名（snake_case），与 parsers 层对齐；DB 字段映射由 push handler 内部显式完成，禁止在 handler 内部做字段名 alias / 兼容映射（避免与 parsers 双源不一致）。
+
+#### ord_cfm 字段映射
+
+| broker 字段（xtquant 协议） | server 字段 | 备注 |
+|---|---|---|
+| `order_id` | `Order.order_id` | 柜台真实委托号 |
+| `stock_code` | 透传 | 不写库（Order 已有） |
+| `order_status` | 喂给 `_infer_order_status` | broker 原字段名，**不 alias `status`** |
+| `order_volume` | `Order.volume` 覆盖 | broker 改单后真实 volume |
+| `traded_volume` | **不写**（trd_cfm 累计） | v6 决策 |
+| `price` / `traded_price` | **不写** | trd_cfm 累计算 avg |
+| `strategy_name` | 透传 | 暂不入库 |
+| `remark` | 匹配本地 Order | broker 透传回来的 order_no |
+| `order_time` | `Order.order_time` | v10 起写库（标准格式 23 字符） |
+| `cancelled_volume` / `cancel_volume` / `withdrawn_volume` | `Order.cancelled_volume` 累加 | v8 决策，多字段名兼容 |
+
+#### trd_cfm 字段映射
+
+| broker 字段（xtquant 协议） | server 字段 | 备注 |
+|---|---|---|
+| `traded_id` | `Trade.trade_id` | broker 原字段名（**不 alias `trade_id`**） |
+| `order_id` | 兜底定位 Order | broker 真实委托号 |
+| `remark` | 匹配本地 Order | broker 透传回来的 order_no |
+| `stock_code` | `Trade.stock_code` | |
+| `order_type` | `Trade.order_type` | 23/24 |
+| `traded_price` | `Trade.price` | broker 原字段名（**不 alias `price`**） |
+| `traded_volume` | `Trade.volume` | broker 原字段名（**不 alias `volume`**） |
+| `traded_amount` | `Trade.amount` | broker 原字段名（**不 alias `amount`**） |
+| `traded_time` | `Trade.trade_time` | broker 原字段名（**不 alias `trade_time`**） |
+| `account_id` | 透传 | 暂不入库 |
+| `strategy_name` | 透传 | 暂不入库 |
+
+#### pos_cfm 字段映射
+
+| broker 字段（xtquant 协议） | server 字段 | 备注 |
+|---|---|---|
+| `stock_code` | `Position.stock_code` (PK) | |
+| `volume` | `Position.vol` | 总持仓 |
+| `avl_amt` | `Position.avl_vol` | broker 原字段名（**不 alias `available`**） |
+| `avg_price` | `Position.cost_price` | broker 原字段名（**不 alias `cost_price`**） |
+| `market_value` | 透传 / 推 WS | v5 决策：DB 不存 market_value（前端用行情实时算） |
+| `last_vol` | 透传 | 对账时设 |
+
+#### ast_cfm 字段映射
+
+| broker 字段（xtquant 协议） | server 字段 | 备注 |
+|---|---|---|
+| `total_asset` | `Asset.total_asset` | |
+| `cash` | `Asset.cash` | |
+| `frozen_cash` | `Asset.frozen_cash` | broker 原字段名（**不 alias `frozen`**） |
+| `market_value` | `Asset.market_value` | |
+| `account_id` | 透传 | 暂不入库 |
+
+#### Scenario: push handler 字段名严格匹配 broker
+
+- **WHEN** broker 推送 `trd_cfm` row 含 `traded_id` / `traded_volume` / `traded_price` / `traded_amount` / `traded_time`
+- **THEN** `push_handler_trd.py` MUST 直接读 broker 原字段名（`row.get('traded_id')` 等），不允许 alias 兼容（`row.get('traded_id') or row.get('trade_id')`）
+- **AND** 与 `parsers_business.py::_parse_trades` 字段名一致
+
+#### Scenario: 旧 alias 字段已废弃
+
+- **WHEN** developer 在 push handler 中写 `row.get('trade_id')`（老 alias）
+- **THEN** code review MUST 拒收；正确写法为 `row.get('traded_id')`
+
+#### Scenario: pos_cfm 字段名一致
+
+- **WHEN** broker 推送 `pos_cfm` row 含 `avl_amt` / `avg_price`
+- **THEN** `push_handler_pos.py` MUST 用 `row.get('avl_amt')` / `row.get('avg_price')`，不再 alias `available` / `cost_price`
+
+#### Scenario: ast_cfm 字段名一致
+
+- **WHEN** broker 推送 `ast_cfm` row 含 `frozen_cash`
+- **THEN** `push_handler_ast.py` MUST 用 `row.get('frozen_cash')`，不再 alias `frozen`
+
+### REQ-PUSH-030: broker status 字段重映射表（v11 新增段）
+
+push handler MUST 严格读 broker 原字段名（snake_case），与 parsers 层对齐；WS payload `status` 字段 MUST 是 broker xtconstant 数字字符串 (`'48'`...`'255'`)，含义与 xtconstant 字典一一对应。
+
+#### Scenario: WS payload status 字段是 broker 码（v11 新增）
+
+- **WHEN** WS `order_update` payload 含 status 字段
+- **THEN** status 字段值必须是 broker xtconstant 字典之一 (48/49/50/51/52/53/54/55/56/57/255)
+- **AND** 前端 view (Trade.vue / Orders.vue) 的 status 分组集合按 broker 字典定义
+- **AND** 不再有"本地推断码"语义层 (旧本地码 49/50/51/53/56 全部对齐到 broker 码)
 
 ## Scenarios
 

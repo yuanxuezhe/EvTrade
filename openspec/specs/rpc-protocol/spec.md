@@ -49,6 +49,51 @@ pkt = await client.call(
 | `ord_stk` | `ord_stk` | `_parse_order_ack` | `{code, msg, list: [OrderAck]}` |
 | `cancel_order` | `cancel_ord` | `_parse_order_ack` | `{code, msg, list: [OrderAck]}` |
 
+### REQ-RPC-004.1: 业务字段映射表（v10 broker 原字段名，rpc-field-alignment-ts-unify 实施）
+
+| RPC func | broker 字段（xtquant 协议） | server 内部命名（DB/API） |
+|---|---|---|
+| `qry_pos` | `stock_code, last_vol, volume, avl_amt, avg_price, market_value` | `stock_code, last_vol, vol, avl_vol, cost_price, market_value`（API 层映射） |
+| `qry_ord` | `order_id, stock_code, order_type, price_type, price, order_volume, traded_volume, traded_price, order_status, status_msg, strategy_name, order_remark, order_time` | `order_id, stock_code, order_type, price_type, price, volume, traded_volume, traded_price, status, status_msg, strategy_name, order_remark, order_time` |
+| `qry_ast` | `account_id, cash, frozen_cash, market_value, total_asset` | `cash, frozen_cash, market_value, total_asset`（`account_id` 透传不存储） |
+| `qry_mch` | `order_id, traded_id, stock_code, order_type, traded_volume, traded_price, traded_amount, strategy_name, order_remark, traded_time` | `order_id, trade_id, stock_code, order_type, volume, price, amount, strategy_name, order_remark, trade_time`（API 层映射） |
+| `cancel_ord` / `ord_stk` | `seq, order_id, result` | 透传 |
+
+字段名权威源：`iquant/xtquant_api.py` 第 130-200 行（query handler）和 280-340 行（push callback）。
+
+**单一职责**：
+- parsers 层：broker 原字段名透传，不做内部命名映射
+- API 层：通过 Pydantic / ORM 完成 `traded_id` → `trade_id`、`avl_amt` → `avl_vol`、`avg_price` → `cost_price` 等映射
+- 之前的 parsers 内部重命名（`traded_id` → `trade_id`、`avl_amt` → `available` 等）已废弃，导致 push handler / API / 对账路径出现 `row.get('available')` 之类的散落兼容代码
+
+#### REQ-RPC-004.1: broker status 字段重映射（v11 新增段）
+
+`qry_ord` 响应 `order_status` 字段值 MUST 直接写入 `Order.status`，无翻译层（v10 之前是"本地推断码语义", 现在是 broker 字典直接对齐）。`push_handler_ord` 收到 broker 推 `order_status` 字段 MUST 直接采用, 不调用任何翻译函数。字段名唯一权威: broker 原字段名 (`order_status`), 不再 alias `status`。
+
+#### Scenario: qry_ord 响应 status 直接采用 broker 码（v11 新增）
+
+- **WHEN** `qry_ord` 响应 RS2 含 `order_status='54'`（broker CANCELED）
+- **THEN** API 层 Pydantic 序列化时映射为 `status='54'`
+- **AND** 前端 view 按 broker 字典解读: `STATUS_LABEL['54']` = '已撤'
+- **AND** 跨系统对账时无需翻译
+
+#### Scenario: push handler 直接采用 broker order_status（v11 新增）
+
+- **WHEN** broker 推 `ord_cfm` row 含 `order_status='57'`（broker JUNK 废单）
+- **THEN** `push_handler_ord` 直接写 `Order.status='57'`, 不调用 `_status_msg` 翻译
+- **AND** 前端 view 按 broker 字典解读: `STATUS_LABEL['57']` = '废单'
+
+#### Scenario: 跨系统对账无需翻译（v11 新增）
+
+- **WHEN** 对账脚本读取 broker `qry_ord` 响应 vs 本地 DB `orders.status`
+- **THEN** broker `order_status='54'` 与本地 `status='54'` 是同一字典同一码, 无需翻译表
+
+#### Scenario: qry_ord 字段映射（v11 修订）
+
+- **WHEN** `qry_ord` 响应 RS2 包含 `order_status` 字段
+- **THEN** 业务字段映射表 MUST 标记 `order_status` → `status` 直接采用 broker 码, 无翻译
+- **AND** 之前的"本地推断码语义"层（`Status._LABEL` / `ORDER_STATUS` legacy / 前端 `STATUS_LABEL` 错位）全部废弃
+
 ### REQ-RPC-005: 超时与重试
 
 - 默认超时 30s
@@ -178,6 +223,37 @@ push listener 在收到消息后 SHALL 立即调 `dispatcher.dispatch(pkt, func,
 - **WHEN** push listener 收到一条 `ord_cfm` 消息
 - **THEN** transport 只做三件事：解码 MsgPacket、提取 func / msg_type、调 `self._dispatcher.dispatch(...)`
 - **AND** 不出现 `_iter_push_rows` / `_run_handle_push` / `_PUSH_CHANNEL` / `_log_push_*` 等 push 业务符号
+
+### REQ-RPC-013: 时间戳统一格式（v10 新增，rpc-field-alignment-ts-unify 实施）
+
+所有 API 响应 / WS broadcast 中的时间戳字段 MUST 统一为字符串格式 `"YYYY-MM-DD HH:MM:SS.fff"`（23 字符，毫秒精度）：
+
+- **业务时间戳**（`order_time` / `trade_time` / Order 创建时间）MUST 使用**本地时间**（与 QMT 柜台一致）
+- **系统时间戳**（`created_at` / `updated_at` / `pushed_at` / `synced_at`）MUST 使用 **UTC**（DB 内部 `DateTime`，序列化时 `format_db_dt()` 转字符串）
+- DB 列 `Order.order_time` / `Trade.trade_time` 类型 MUST 为 `String(23)`（从 `String(8)` 升级，原 `"HH:MM:SS"` 改为完整日期时间）
+- 统一入口 MUST 是 `server/utils/time.py`：`format_ts()` / `parse_broker_ts()` / `format_db_dt()`
+- **兼容**：broker 推送的 `order_time` / `traded_time` 可能是 `"HH:MM:SS"` / `"HHMMSS"` / `"YYYYMMDDHHMMSS"` / `"YYYYMMDDHHMMSSfff"` 中任一格式，MUST 由 `parse_broker_ts()` 统一解析为标准格式
+- 禁止使用 `isoformat()` / `time.time()` / 紧凑 14 位串 等其他格式（业务时间戳列）
+
+#### Scenario: 业务时间戳格式校验
+
+- **WHEN** 任何 API 响应（如 `/api/orders` / `/api/trades`）序列化 Order.order_time 或 Trade.trade_time
+- **THEN** 字符串 MUST 匹配正则 `^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}$`，长度为 23 字符
+
+#### Scenario: 系统时间戳序列化
+
+- **WHEN** API 响应序列化 `created_at` / `updated_at` / `synced_at` 等 DateTime 列
+- **THEN** MUST 调 `format_db_dt(dt, tz='utc')` 输出标准格式字符串
+
+#### Scenario: broker 时间格式兼容
+
+- **WHEN** push handler 收到 broker 推的 `order_time="09:30:00"`（仅 HH:MM:SS）
+- **THEN** `parse_broker_ts("09:30:00", order.trd_date, tz='local')` MUST 输出 `"2026-06-14 09:30:00.000"`（trd_date 补全日期部分）
+
+#### Scenario: 禁止 isoformat 替代
+
+- **WHEN** developer 写 `order.created_at.isoformat()` 序列化 DateTime 列
+- **THEN** code review MUST 拒收；正确写法为 `format_db_dt(order.created_at)`
 
 ## Scenarios
 
