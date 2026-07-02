@@ -87,7 +87,7 @@ def register_place(router):
             )
         except Exception as e:
             log.exception("place_order RPC failed: stock=%s order_no=%s", req.stock_code, order_no)
-            order.status = "55"
+            order.status = "57"  # broker JUNK 废单 (v11: 替代本地推断码 55)
             order.status_msg = "RPC 失败: {}".format(e)
             db.commit()
             db.refresh(order)
@@ -98,7 +98,7 @@ def register_place(router):
                 error=str(e), t0_adjusted_volume=adjusted,
             )
 
-        # 6. 解析 ack（成功 → 49；失败 → 55）
+        # 6. 解析 ack（成功 → broker 50 已报；失败 → broker 57 废单）
         ack_code = int(ack.get("code", -1))
         ack_list = ack.get("list", [])
         broker_order_id = ""
@@ -106,12 +106,14 @@ def register_place(router):
             broker_order_id = str(ack_list[0].get("order_id", ""))
             if broker_order_id:
                 order.order_id = broker_order_id
-            # status 由 _infer_order_status 推断更准;但 ack 成功就先写 49,ord_cfm 来了会重算
-            order.status = "49"
+            # status 由 _infer_order_status 推断更准;但 ack 成功就先写 broker 50,ord_cfm 来了会重算
+            order.status = "50"  # broker REPORTED 已报 (v11: 替代本地推断码 49)
             order.status_msg = "已报"
         else:
-            order.status = "55"
+            order.status = "57"  # broker JUNK 废单 (v11: 替代本地推断码 55)
             order.status_msg = ack.get("msg", "柜台拒单")
+            # change system-delegation-price-fill-calc: R2a 本地拒单时把 cancelled_volume 抹平到 volume
+            order.cancelled_volume = order.volume
         db.commit()
         db.refresh(order)
 
@@ -133,7 +135,7 @@ def register_place(router):
             log.warning("WS push failed: %s", e)
 
         return PlaceOrderResponse(
-            code=0 if order.status == "49" else 1,
+            code=0 if order.status == "50" else 1,  # broker REPORTED 已报 (v11)
             msg=order.status_msg,
             order=_to_order_out(order),
             list=[_to_order_out(order)],

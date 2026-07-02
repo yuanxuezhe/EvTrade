@@ -58,7 +58,7 @@ def register_cancel(router):
         if not order:
             raise HTTPException(status_code=404, detail={"code": "NOT_FOUND", "msg": "委托 {} 不存在".format(order_no)})
 
-        if order.status not in ("48", "49"):
+        if order.status not in ("48", "49", "50"):  # v11: 含 broker 50=已报也可撤
             return CancelResponse(
                 code=1, msg="当前 status={} 不可撤".format(order.status),
                 order_id=order.order_id or "", cancel_order=None,
@@ -111,10 +111,13 @@ def register_cancel(router):
 
         cancel_trade = None
         if ack_code == 0:
-            # 成功 → 53 已撤
-            cancel_row.status = "53"
+            # 成功 → broker 54 已撤 (v11: 替代本地推断码 53)
+            cancel_row.status = "54"
             cancel_row.status_msg = "已撤"
             cancel_row.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+
+            # change system-delegation-price-fill-calc: R1 撤单成功 → orig.cancelled_volume 一次性抹平到 volume
+            order.cancelled_volume = order.volume
 
             if cancelled_qty > 0:
                 cancel_trade_id = "CANCEL-{}-{}".format(cancel_order_no, int(_time.time()))
@@ -133,11 +136,12 @@ def register_cancel(router):
                 db.add(cancel_trade)
             db.commit()
             db.refresh(cancel_row)
+            db.refresh(order)
             if cancel_trade:
                 db.refresh(cancel_trade)
         else:
-            # 失败 (ack.code != 0 或 RPC 异常) → 55 废单(审计保留,不插 trade)
-            cancel_row.status = "55"
+            # 失败 (ack.code != 0 或 RPC 异常) → broker 57 废单(审计保留,不插 trade, v11 替代本地码 55)
+            cancel_row.status = "57"
             cancel_row.status_msg = (
                 (ack.get("msg") if ack else None) or rpc_error or "撤单失败"
             )
