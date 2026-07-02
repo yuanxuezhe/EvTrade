@@ -20,18 +20,12 @@ def _run_handle_push(func: str, row: Dict[str, Any], ts: str) -> Optional[Dict[s
     - handle_push 同步签名不变（向后兼容 test_push_handlers.py 11 用例）
     - 返回 handler 的重组包结果（OrderOut/TradeOut 兼容 dict）
     """
-    from server.db import SessionLocal
+    from server.db import db_session
     from server.services.push.handlers import handle_push
-    db = SessionLocal()
-    try:
+    with db_session() as db:
         result = handle_push(db, func, row, ts)
         db.commit()
         return result
-    except Exception:
-        db.rollback()
-        raise
-    finally:
-        db.close()
 
 
 def _resolve_active_trd_date_safe() -> Optional[str]:
@@ -46,13 +40,10 @@ def _resolve_active_trd_date_safe() -> Optional[str]:
     - 不传 row 参数给 ws：返回 None 时不注入 trd_date，前端用 _today_yyyymmdd 兜底
     """
     try:
-        from server.db import SessionLocal
+        from server.db import db_session
         from server.services.guards import resolve_active_trd_date
-        db = SessionLocal()
-        try:
+        with db_session() as db:
             return resolve_active_trd_date(db)
-        finally:
-            db.close()
     except Exception as e:
         # 短连接异常（DB 锁 / disconnect）不应中断 push 链路
         log.warning("_resolve_active_trd_date_safe failed: %s", e)

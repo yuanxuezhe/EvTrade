@@ -19,7 +19,7 @@ t0.py — T0 一键买卖 + 配平系数 + 费率
 from decimal import Decimal, ROUND_DOWN, ROUND_UP
 from typing import Optional, Tuple
 
-from server.db import SessionLocal
+from server.db import db_session
 from server.models.orm import FeeConfig
 import logging
 
@@ -31,8 +31,7 @@ LOT_SIZE = 100
 
 def get_fee_config() -> FeeConfig:
     """获取费率配置（单行）"""
-    db = SessionLocal()
-    try:
+    with db_session() as db:
         cfg = db.query(FeeConfig).first()
         if not cfg:
             cfg = FeeConfig(
@@ -45,8 +44,6 @@ def get_fee_config() -> FeeConfig:
             db.commit()
             db.refresh(cfg)
         return cfg
-    finally:
-        db.close()
 
 
 def round_to_lot(volume: int, direction: str) -> int:

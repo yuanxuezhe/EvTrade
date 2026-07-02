@@ -2,8 +2,12 @@
 SQLite database setup (SQLAlchemy 1.4)
 """
 import os
+import logging
+from contextlib import contextmanager
 from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker, declarative_base
+from sqlalchemy.orm import sessionmaker, declarative_base, Session
+
+log = logging.getLogger(__name__)
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(BASE_DIR, "evtrade.db")
@@ -25,6 +29,32 @@ def get_db():
     db = SessionLocal()
     try:
         yield db
+    finally:
+        db.close()
+
+
+@contextmanager
+def db_session():
+    """服务层短连接 Session context manager.
+
+    用于 DI 不可用的场景（event-loop coroutine / 背景 task / class method）。
+    自动关闭 + 异常时 rollback（caller 自行决定是否 commit），
+    替代散落各处的 `db = SessionLocal(); try/finally: db.close()` 样板。
+
+    用法:
+        with db_session() as db:
+            row = db.query(Foo).first()
+            db.add(bar); db.commit()
+    """
+    db: Session = SessionLocal()
+    try:
+        yield db
+    except Exception:
+        try:
+            db.rollback()
+        except Exception as e:
+            log.warning("db_session rollback failed: %s", e)
+        raise
     finally:
         db.close()
 

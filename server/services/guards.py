@@ -11,7 +11,7 @@ from fastapi import HTTPException, Depends
 from typing import Optional
 from sqlalchemy.orm import Session
 
-from server.db import SessionLocal
+from server.db import db_session
 from server.models.orm import SysStatus
 from server.models.user import User
 from server.services.trading_clock import TradingClock
@@ -45,8 +45,7 @@ async def require_trading_day() -> str:
 
     返回的 trd_date 通过 Depends 注入到 handler 的 trd_date 参数。
     """
-    db = SessionLocal()
-    try:
+    with db_session() as db:
         trd = resolve_active_trd_date(db)
         if not trd:
             raise HTTPException(
@@ -58,8 +57,6 @@ async def require_trading_day() -> str:
                 }
             )
         return trd
-    finally:
-        db.close()
 
 
 async def require_trading_session() -> None:

@@ -7,7 +7,7 @@ trading_clock.py — 交易时段判断
 """
 from datetime import datetime, time as dtime
 from typing import Optional
-from server.db import SessionLocal
+from server.db import db_session
 from server.models.orm import TradingSession, SysStatus
 
 
@@ -22,8 +22,7 @@ class TradingClock:
         if (cls._session and cls._loaded_at
                 and (datetime.now() - cls._loaded_at).total_seconds() < cls.CACHE_TTL_SEC):
             return cls._session
-        db = SessionLocal()
-        try:
+        with db_session() as db:
             row = db.query(TradingSession).first()
             if not row:
                 from datetime import time
@@ -39,8 +38,6 @@ class TradingClock:
             cls._is_half_day = bool(active and active.is_half_day)
             cls._loaded_at = datetime.now()
             return row
-        finally:
-            db.close()
 
     @classmethod
     def is_in_trading_session(cls, now: Optional[datetime] = None) -> bool:
