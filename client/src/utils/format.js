@@ -85,203 +85,143 @@ export function priceTypeLabel(p) {
 }
 
 /**
- * 委托状态 —— 后端本地推断码（v6 order-pk-by-orderno 起，Order.status 字段语义）
- *  48 unreported           未报
- *  49 pending_report       待报
- *  50 reported             已报
- *  51 reported_cancel      已报待撤
- *  52 partial_pending_cancel 部成待撤
- *  53 partial_cancelled    部撤
- *  54 cancelled            已撤
- *  55 partial              部成
- *  56 filled               已成
- *  57 rejected             废单
- * 255 unknown              未知
+ * 委托 status —— broker xtconstant 字典（v11 align-status-codes-to-xtconstant）
+ *  48 ORDER_UNREPORTED        未报
+ *  49 ORDER_WAIT_REPORTING    待报
+ *  50 ORDER_REPORTED          已报
+ *  51 ORDER_REPORTED_CANCEL   已报待撤
+ *  52 ORDER_PARTSUCC_CANCEL   部成待撤
+ *  53 ORDER_PART_CANCEL       部成部撤
+ *  54 ORDER_CANCELED          已撤
+ *  55 ORDER_PART_SUCC         部成
+ *  56 ORDER_SUCCEEDED         已成
+ *  57 ORDER_JUNK              废单
+ * 255 ORDER_UNKNOWN           未知
  *
- * 与后端 `server/services/push_handlers.py:_infer_order_status` 推断规则一致。
- * 视图层（Trade.vue / Orders.vue）按这些本地推断码分组，不要再用 broker 原始码。
- * 表中保留英文 key 作为兼容入口（旧的 in-memory 状态或前端 fallback）。
+ * 与后端 `server/services/order_status.py:_infer_order_status` 推断规则一致（v11 全部 broker 码）。
+ * 视图层（Trade.vue / Orders.vue）按 broker xtconstant 字典分组，不再用本地推断码。
+ * v11 删除旧 14 个英文 fall-back 兼容 key（grep 0 处外部引用）。
  */
 export const STATUS_LABEL = {
-  // 本地推断码（v6，与后端 push_handlers.py:_status_msg 对齐）
-  '48':  '待报',
-  '49':  '已报',
-  '50':  '部成',
-  '51':  '已成',
-  '52':  '部撤',
-  '53':  '已撤',
-  '54':  '已撤单',
-  '55':  '废单',
-  '56':  '部成部撤',
-  '255': '未知',
-  // 兼容旧 key（fallback）
-  unreported: '待报',
-  pending_report: '已报',
-  reported: '已报',
-  reported_cancel: '已成',
-  partial_pending_cancel: '部成',
-  partial_cancelled: '部撤',
-  cancelled: '已撤',
-  partial: '部成',
-  filled: '已成',
-  rejected: '废单',
-  unknown: '未知',
-  pending: '已报'
+  '48':  '未报',
+  '49':  '待报',
+  '50':  '已报',
+  '51':  '已报待撤',
+  '52':  '部成待撤',
+  '53':  '部成部撤',
+  '54':  '已撤',
+  '55':  '部成',
+  '56':  '已成',
+  '57':  '废单',
+  '255': '未知'
 }
 
+/** Element Plus tag type (颜色) */
 export const STATUS_TYPE = {
-  // 本地推断码
-  '48':  'info',
-  '49':  'primary',
-  '50':  'warning',
-  '51':  'success',
-  '52':  'info',
-  '53':  'info',
-  '54':  'info',
-  '55':  'danger',
-  '56':  'success',
-  '255': 'info',
-  // 兼容旧 key
-  unreported: 'info',
-  pending_report: 'primary',
-  reported: 'primary',
-  reported_cancel: 'success',
-  partial_pending_cancel: 'warning',
-  partial_cancelled: 'info',
-  cancelled: 'info',
-  partial: 'warning',
-  filled: 'success',
-  rejected: 'danger',
-  unknown: 'info',
-  pending: 'primary'
+  '48':  'info',      // 未报
+  '49':  'info',      // 待报
+  '50':  'primary',   // 已报
+  '51':  'warning',   // 已报待撤
+  '52':  'warning',   // 部成待撤
+  '53':  'info',      // 部成部撤
+  '54':  'info',      // 已撤
+  '55':  'warning',   // 部成
+  '56':  'success',   // 已成
+  '57':  'danger',    // 废单
+  '255': 'info'       // 未知
 }
 
 /** 状态色调分组：pending=等待中, working=进行中, done=终态成功, terminal=终态撤销/废单 */
 export const STATUS_TONE = {
-  // 本地推断码（v6）
-  '48':  'pending',
-  '49':  'working',
-  '50':  'working',
-  '51':  'done',
-  '52':  'terminal',
-  '53':  'terminal',
-  '54':  'terminal',
-  '55':  'terminal',
-  '56':  'terminal',
-  '255': 'pending',
-  // 兼容旧 key
-  unreported: 'pending',
-  pending_report: 'working',
-  reported: 'working',
-  reported_cancel: 'done',
-  partial_pending_cancel: 'working',
-  partial_cancelled: 'terminal',
-  cancelled: 'terminal',
-  partial: 'working',
-  filled: 'done',
-  rejected: 'terminal',
-  unknown: 'pending',
-  pending: 'working'
+  '48':  'pending',  // 未报
+  '49':  'pending',  // 待报
+  '50':  'working',  // 已报
+  '51':  'working',  // 已报待撤 (撤单过渡)
+  '52':  'working',  // 部成待撤 (撤单过渡)
+  '53':  'done',     // 部成部撤 (算完成态)
+  '54':  'terminal', // 已撤
+  '55':  'done',     // 部成
+  '56':  'done',     // 已成
+  '57':  'terminal', // 废单
+  '255': 'pending'   // 未知
 }
 
-/** 状态对应的 Element Plus 图标组件名（运行时由 OrderStatusBadge 解析） */
+/** 状态对应的 Element Plus 图标组件名 */
 export const STATUS_ICON_NAME = {
-  // 本地推断码
-  '48':  'Clock',
-  '49':  'Promotion',
-  '50':  'Loading',
-  '51':  'CircleCheckFilled',
-  '52':  'WarningFilled',
-  '53':  'RemoveFilled',
-  '54':  'CircleClose',
-  '55':  'WarningFilled',
-  '56':  'WarningFilled',
-  '255': 'QuestionFilled',
-  // 兼容旧 key
-  unreported: 'Clock',
-  pending_report: 'Promotion',
-  reported: 'Promotion',
-  reported_cancel: 'CircleCheckFilled',
-  partial_pending_cancel: 'Loading',
-  partial_cancelled: 'WarningFilled',
-  cancelled: 'CircleClose',
-  partial: 'Loading',
-  filled: 'CircleCheckFilled',
-  rejected: 'WarningFilled',
-  unknown: 'QuestionFilled',
-  pending: 'Promotion'
+  '48':  'Clock',             // 未报
+  '49':  'Clock',             // 待报
+  '50':  'Promotion',          // 已报
+  '51':  'Loading',           // 已报待撤
+  '52':  'Loading',           // 部成待撤
+  '53':  'WarningFilled',     // 部成部撤
+  '54':  'CircleClose',       // 已撤
+  '55':  'Loading',           // 部成
+  '56':  'CircleCheckFilled', // 已成
+  '57':  'WarningFilled',     // 废单
+  '255': 'QuestionFilled'     // 未知
 }
 
-/** 是否需要脉冲动画（48/49/50 等仍可能在变化的中间态） */
+/** 是否需要脉冲动画（48/49/50/51/52/55 等仍可能在变化的中间态） */
 export const STATUS_PULSE = {
-  // 本地推断码
-  '48':  true,
-  '49':  true,
-  '50':  true,
-  '51':  false,
-  '52':  false,
-  '53':  false,
-  '54':  false,
-  '55':  false,
-  '56':  false,
-  '255': false,
-  // 兼容旧 key
-  unreported: true,
-  pending_report: true,
-  reported: true,
-  reported_cancel: false,
-  partial_pending_cancel: true,
-  partial_cancelled: false,
-  cancelled: false,
-  partial: true,
-  filled: false,
-  rejected: false,
-  unknown: false,
-  pending: true
+  '48':  true,    // 未报
+  '49':  true,    // 待报
+  '50':  true,    // 已报
+  '51':  true,    // 已报待撤
+  '52':  true,    // 部成待撤
+  '53':  false,   // 部成部撤 (终态)
+  '54':  false,   // 已撤 (终态)
+  '55':  true,    // 部成 (中间态)
+  '56':  false,   // 已成 (终态)
+  '57':  false,   // 废单 (终态)
+  '255': false    // 未知 (终态)
 }
 
-/** 状态分类有序列表（用于过滤下拉）—— 用本地推断码作为 value */
+/** 状态分类有序列表（用于过滤下拉）—— 用 broker xtconstant 字典作为 value */
 export const STATUS_OPTIONS = [
-  { value: '48',  label: '待报' },
-  { value: '49',  label: '已报' },
-  { value: '50',  label: '部成' },
-  { value: '51',  label: '已成' },
-  { value: '52',  label: '部撤' },
-  { value: '53',  label: '已撤' },
-  { value: '54',  label: '已撤单' },
-  { value: '55',  label: '废单' },
-  { value: '56',  label: '部成部撤' },
+  { value: '48',  label: '未报' },
+  { value: '49',  label: '待报' },
+  { value: '50',  label: '已报' },
+  { value: '51',  label: '已报待撤' },
+  { value: '52',  label: '部成待撤' },
+  { value: '53',  label: '部成部撤' },
+  { value: '54',  label: '已撤' },
+  { value: '55',  label: '部成' },
+  { value: '56',  label: '已成' },
+  { value: '57',  label: '废单' },
   { value: '255', label: '未知' }
 ]
 
 /**
- * 委托 status 终态集合（v6，本地推断码）—— 一旦写入不再被 trd_cfm 覆盖
- * 与后端 `server/services/push_handlers.py:TERMINAL_STATUSES` 一致
+ * 委托 status 终态集合（v11 broker xtconstant 字典）
+ * 与后端 `server/services/order_status.py:TERMINAL_STATUSES` 一致
+ *
+ * 包含: broker 52 (部成待撤, 撤单过渡) + broker 53/54/56/57 (部成部撤/已撤/已成/废单)
+ * 不含: broker 55 (部成 / PART_SUCC, 非终态, 仍可继续累计到 broker 56 已成)
  */
-export const TERMINAL_STATUSES = new Set(['51', '52', '53', '54', '55', '56'])
+export const TERMINAL_STATUSES = new Set(['52', '53', '54', '56', '57'])
 
 /**
- * 委托 status 本地推断（前端镜像后端 _infer_order_status）
- * 与 `server/services/push_handlers.py:_infer_order_status` 逐行一致
+ * 委托 status 本地推断（前端镜像后端 _infer_order_status, v11 broker 码输出）
+ * 与 `server/services/order_status.py:_infer_order_status` 逐行一致
  *
- * 规则 (v8: cancelled_volume 主轴):
- *   1. 当前 status 已是终态 (51/52/53/54/55/56) → 保持
+ * 规则 (v8 cancelled_volume 主轴 + v11 broker 码输出):
+ *   1. 当前 status 已是终态 (52/53/54/55/56/57) → 保持
  *   2. 撤单主轴 (cum_cancelled):
- *      - cum_cancelled >= vol                 → 53 (已撤)
- *      - cum_cancelled > 0 && cum_traded > 0  → 56 (部成部撤)
- *      - cum_cancelled > 0                    → 53 (部分撤单无成交,视作已撤)
- *   3. broker_status 给出且在 (52, 53, 54) → 撤单类（兼容老 broker）
- *      - cumulative = 0          → 53 (已撤)
- *      - 0 < cumulative < volume → 56 (部成部撤)
- *      - cumulative = volume     → 51 (已成)
- *   4. 累计推断
- *      - cumulative = 0          → 49 (已报)
- *      - 0 < cumulative < volume → 50 (部成)
- *      - cumulative = volume     → 51 (已成)
+ *      - cum_cancelled >= vol                 → 54 (broker 已撤)
+ *      - cum_cancelled > 0 && cum_traded > 0  → 53 (broker 部成部撤)
+ *      - cum_cancelled > 0                    → 54 (部分撤单无成交, 视作 broker 已撤)
+ *   3. broker_status 给出且在 (51, 52, 53, 54) → 撤单类（兼容老 broker）
+ *      - cumulative = 0          → 54 (broker 已撤)
+ *      - 0 < cumulative < volume → 53 (broker 部成部撤)
+ *      - cumulative = volume     → 56 (broker 已成)
+ *   4. 累计推断 (v11 broker 码)
+ *      - cumulative = 0          → 50 (broker 已报)
+ *      - 0 < cumulative < volume → 55 (broker 部成)
+ *      - cumulative = volume     → 56 (broker 已成)
  *
  * @param {Object} order - { status, traded_volume, cancelled_volume, volume }
- * @param {string|null} brokerStatus - 可选,broker ord_cfm 推的 status 字段
- * @returns {string} 推断后的 status
+ * @param {string|null} brokerStatus - 可选, broker ord_cfm 推的 status 字段
+ * @returns {string} 推断后的 status (broker xtconstant 码)
  */
 export function inferOrderStatus(order, brokerStatus = null) {
   const current = String(order?.status || '48')
@@ -293,20 +233,20 @@ export function inferOrderStatus(order, brokerStatus = null) {
   const cumCancelled = Number(order?.cancelled_volume) || 0
   const vol = Number(order?.volume) || 0
 
-  // 2. 撤单主轴（v8 新增,优先于 broker_status 判定）
-  if (cumCancelled >= vol && vol > 0) return '53'  // 已撤
-  if (cumCancelled > 0 && cum > 0) return '56'  // 部成部撤
-  if (cumCancelled > 0 && cum === 0) return '53'  // 部分撤单无成交 → 已撤
+  // 2. 撤单主轴（v8 新增, 优先于 broker_status 判定）
+  if (cumCancelled >= vol && vol > 0) return '54'  // broker 已撤
+  if (cumCancelled > 0 && cum > 0) return '53'      // broker 部成部撤
+  if (cumCancelled > 0 && cum === 0) return '54'    // broker 已撤 (部分撤单无成交)
 
-  // 3. broker 推了撤单类 status
-  if (brokerStatus && ['52', '53', '54'].includes(String(brokerStatus))) {
-    if (cum === 0) return '53'
-    if (cum < vol) return '56'
-    return '51'
+  // 3. broker 推了撤单类 status (v11: 含 broker 51 已报待撤)
+  if (brokerStatus && ['51', '52', '53', '54'].includes(String(brokerStatus))) {
+    if (cum === 0) return '54'      // broker 已撤
+    if (cum < vol) return '53'      // broker 部成部撤
+    return '56'                      // broker 已成
   }
 
-  // 4. 累计推断
-  if (cum === 0) return '49'
-  if (cum < vol) return '50'
-  return '51'
+  // 4. 累计推断 (v11 broker 码)
+  if (cum === 0) return '50'        // broker 已报
+  if (cum < vol) return '55'        // broker 部成
+  return '56'                        // broker 已成
 }

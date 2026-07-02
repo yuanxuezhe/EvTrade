@@ -9,8 +9,19 @@
  *   recomputeStatus — v8 委托 status 防御性重算 helper
  *   _now_hms — HH:MM:SS 字符串
  *   _today_yyyymmdd — 今日 YYYYMMDD 字符串
+ *
+ * change system-delegation-price-fill-calc re-export:
+ *   normalizeTrade / recomputeOrderFromTrade / metaMerge / flattenCancelledByRow
+ *   （实际定义在 utils/orderCalc.js, 此处 re-export 保持现有调用方不动）
  */
 import { inferOrderStatus } from '../utils/format'
+import {
+  normalizeTrade,
+  normalizeOrder,
+  recomputeOrderFromTrade,
+  metaMerge,
+  flattenCancelledByRow
+} from '../utils/orderCalc'
 
 /**
  * 解包 api.getAsset() 响应 → 标准化 asset 对象
@@ -66,4 +77,14 @@ export function todayYYYYMMDD() {
   const d = new Date()
   return [d.getFullYear(), d.getMonth() + 1, d.getDate()]
     .map((n) => String(n).padStart(2, '0')).join('')
+}
+
+// change system-delegation-price-fill-calc: re-export 5 个独立计算工具
+// （定义在 utils/orderCalc.js, 此处 re-export 保持现有调用方不动）
+export {
+  normalizeTrade,
+  normalizeOrder,
+  recomputeOrderFromTrade,
+  metaMerge,
+  flattenCancelledByRow
 }

@@ -10,8 +10,12 @@
  *   - _applyXxxRefreshResult(r)         — refreshAll 用，返回 summary 字符串
  *
  * 调用者：holdings_bootstrap.js 内的 createBootstrap 工厂
+ *
+ * change system-delegation-price-fill-calc:
+ *   applyOrdersRefresh/applyOrdersResult   — 调 normalizeOrder 重算 avg_price + status
+ *   applyTradesRefresh/applyTradesResult   — map 调 normalizeTrade 重算 amount
  */
-import { parseAsset, recomputeStatus } from './holdings_helpers'
+import { parseAsset, normalizeOrder, normalizeTrade } from './holdings_helpers'
 
 // ---- refreshAll 用：返回 summary 字符串 --------------------------------
 
@@ -40,9 +44,9 @@ export function applyPositionsRefresh(r, refs) {
 
 export function applyOrdersRefresh(r, refs) {
   if (r.status === 'fulfilled') {
-    // v8: 防御性 status 重算 —— 不信任后端推的 status 字段
+    // change system-delegation-price-fill-calc: 保留 row 累计字段, 重算 avg_price + status
     const rawOrders = Array.isArray(r.value) ? r.value : []
-    refs.orders.value = rawOrders.map(recomputeStatus)
+    refs.orders.value = rawOrders.map(normalizeOrder)
     refs.refCounts.value.orders = 'ok'
     return `委托 ${refs.orders.value.length} 条`
   }
@@ -53,7 +57,9 @@ export function applyOrdersRefresh(r, refs) {
 
 export function applyTradesRefresh(r, refs) {
   if (r.status === 'fulfilled') {
-    refs.trades.value = Array.isArray(r.value) ? r.value : []
+    // change system-delegation-price-fill-calc: amount 本地算 (price × volume)
+    const rawTrades = Array.isArray(r.value) ? r.value : []
+    refs.trades.value = rawTrades.map(normalizeTrade)
     refs.refCounts.value.trades = 'ok'
     return `成交 ${refs.trades.value.length} 条`
   }
@@ -93,8 +99,8 @@ export function applyOrdersResult(r, refs, source) {
   if (r.status === 'fulfilled') {
     const rawOrders = Array.isArray(r.value) ? r.value
       : (Array.isArray(r.value?.list) ? r.value.list : [])
-    // v8: 防御性 status 重算 —— 不信任后端推的 status 字段
-    refs.orders.value = rawOrders.map(recomputeStatus)
+    // change system-delegation-price-fill-calc: 保留 row 累计字段, 重算 avg_price + status
+    refs.orders.value = rawOrders.map(normalizeOrder)
     refs.refCounts.value.orders = 'ok'
     refs.log('ok', '缓存', source, `委托加载成功 (${refs.orders.value.length} 条)`)
   } else {
@@ -105,8 +111,10 @@ export function applyOrdersResult(r, refs, source) {
 
 export function applyTradesResult(r, refs, source) {
   if (r.status === 'fulfilled') {
-    refs.trades.value = Array.isArray(r.value) ? r.value
+    // change system-delegation-price-fill-calc: amount 本地算 (price × volume)
+    const rawTrades = Array.isArray(r.value) ? r.value
       : (Array.isArray(r.value?.list) ? r.value.list : [])
+    refs.trades.value = rawTrades.map(normalizeTrade)
     refs.refCounts.value.trades = 'ok'
     refs.log('ok', '缓存', source, `成交加载成功 (${refs.trades.value.length} 条)`)
   } else {
