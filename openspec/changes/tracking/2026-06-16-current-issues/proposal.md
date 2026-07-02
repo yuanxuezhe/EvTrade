@@ -140,10 +140,10 @@ v5 schema-refactor 改了 6 张表的 schema（PK / 字段名 / 约束），变�
 - [x] M9 服务层 Session 生命周期（`ade2198`：`server/db.py:db_session()` context manager + 5 个 service 替换 + `test_db_session.py` 4 用例）
 - [x] M11 前端 store 统一（`8e70a4e`：`asset.js`/`position.js` 瘦身为 facade，ws_dispatch 单一写到 holdings，消除数据漂移）
 - [⏸] M5 策略页面（提案：`implement-strategies` 或 `remove-placeholder-strategies`，当前 Defer：占位不影响功能）
-- [ ] N1 前端 status 推断镜像（提案：`2026-06-16-frontend-infer-order-status`）
-- [ ] N2 持仓 vol 兜底（提案：`2026-06-16-fix-position-vol-display`）
-- [ ] N3 今日委托显示 order_no + 撤单改 order_no（提案：`2026-06-16-trade-page-show-order-no-and-cancel`）
-- [ ] N4 11 张表结构 knowledge base（提案：`2026-06-16-data-model-knowledge-base`）
+- [x] N1 前端 status 推断镜像（已实施：`client/src/stores/holdings_push.js:81` 防御性 status 重算，与后端 `_infer_order_status` 镜像）
+- [x] N2 持仓 vol 兜底（已实施：`server/services/push/pos.py:49-50` 缺字段或为 0 时用 `avl_vol` 兜底）
+- [x] N3 今日委托显示 order_no + 撤单改 order_no（已实施：`Trade.vue:44,109` order_no 列 + `handleCancel(row.order_no, row.trd_date)`；`Orders.vue:83` order_no 列）
+- [x] N4 11 张表结构 knowledge base（已实施：`openspec/specs/data-model/spec.md` + `openspec/changes/archive/2026-06-16-data-model-knowledge-base/`）
 - [⏸] L1 lifespan 替代 on_event（Defer：当前 FastAPI 0.83 不支持 `lifespan` 参数（0.93+），`@app.on_event` 仍可用）
 - [⏸] L2 logout 空 stub（Defer：JWT 无状态撤销需 token blacklist（Redis/DB），本期不动）
 - [⏸] L3 kb 文档对账（Defer：文档维护工作，本期不重写）

@@ -45,3 +45,12 @@
 | L8 前端轮询 + WS 重复更新 | ⏸️ Defer | UX/实时性 trade-off，需要逐 view 评估 |
 | L9 Asset 单行约束无法保留历史 | ⏸️ Defer | 设计取舍 — 当前 5min 级别历史通过 `_infer_asset` 推算而非落库 |
 | L10 t0_coefficient/is_t0_pair 字段未用 | ⏸️ Done via M8 | M8 "删壳"已完成，place_t0_pair 端点已删，字段不再被引用 |
+
+## 🟡 中（2026-06-16 用户报 4 项新）
+
+| 任务 | 状态 | 对应 change |
+|---|---|---|
+| N1 前端 status 推断镜像 | ✅ Done | `holdings_push.js:81` 防御性 status 重算 |
+| N2 持仓 vol 兜底 | ✅ Done | `pos.py:49-50` 缺字段或为 0 时用 `avl_vol` 兜底 |
+| N3 今日委托 order_no + 撤单改 order_no | ✅ Done | `Trade.vue:44,109` + `Orders.vue:83` |
+| N4 11 张表结构 knowledge base | ✅ Done | `openspec/specs/data-model/spec.md` + `archive/2026-06-16-data-model-knowledge-base/` |
