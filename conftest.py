@@ -25,6 +25,54 @@ SQLAlchemy 声明基类只注册一次。
 """
 import sys
 from pathlib import Path
+from unittest.mock import MagicMock
+
+# AsyncMock shim for Python 3.6 (stdlib AsyncMock only exists in 3.8+)
+try:
+    from unittest.mock import AsyncMock as _stdlib_AsyncMock  # noqa: F401
+    AsyncMock = _stdlib_AsyncMock
+except ImportError:
+    import unittest.mock as _um
+
+    class AsyncMock(MagicMock):
+        """Minimal AsyncMock backport: awaitable + tracks await_args / await_count / await_args_list.
+
+        Usage: AsyncMock(return_value={...}) — same API as 3.8+ stdlib.
+        """
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self._await_calls = []  # list of (args, kwargs) tuples
+
+        async def __call__(self, *args, **kwargs):
+            self._await_calls.append((args, kwargs))
+            return super().__call__(*args, **kwargs)
+
+        @property
+        def await_count(self):
+            return len(self._await_calls)
+
+        @property
+        def await_args(self):
+            if not self._await_calls:
+                return None
+            args, kwargs = self._await_calls[-1]
+            return self._make_await_args(args, kwargs)
+
+        @property
+        def await_args_list(self):
+            return [self._make_await_args(a, kw) for a, kw in self._await_calls]
+
+        @staticmethod
+        def _make_await_args(args, kwargs):
+            class _AwaitArgs:
+                def __init__(self, args, kwargs):
+                    self.args = args
+                    self.kwargs = kwargs
+            return _AwaitArgs(args, kwargs)
+
+    # Inject into unittest.mock so test files can do
+    # `from unittest.mock import AsyncMock` (3.8+ idiom).
+    _um.AsyncMock = AsyncMock
 
 # 1. 项目根入 sys.path，让 `server.*` 可 import
 _ROOT = Path(__file__).resolve().parent
@@ -54,6 +102,19 @@ import server.utils.time as _server_utils_time
 import server.rpc.client as _server_rpc_client
 import server.ws.manager as _server_ws_manager
 import server.main as _server_main
+
+# Pre-load api.* modules so monkeypatch.setattr('api.X', ...) can resolve them
+import server.api as _server_api
+import server.api.orders as _server_api_orders
+import server.api.orders.place as _server_api_orders_place
+import server.api.orders.cancel as _server_api_orders_cancel
+import server.api.orders.query as _server_api_orders_query
+import server.api.holdings as _server_api_holdings
+import server.api.system as _server_api_system
+import server.api.trades as _server_api_trades
+import server.api.t0_aggregate as _server_api_t0_aggregate
+import server.api.users as _server_api_users
+import server.api.auth as _server_api_auth
 
 # 3. 裸名别名：test 文件 sys.path.insert(0, 'server/') 后
 #    `from db import X` 走裸名，强制命中同一模块对象
@@ -88,6 +149,17 @@ _BARE_ALIASES = {
     "ws": sys.modules.get("server.ws"),
     "ws.manager": _server_ws_manager,
     "main": _server_main,
+    "api": sys.modules.get("server.api"),
+    "api.orders": _server_api_orders,
+    "api.orders.place": _server_api_orders_place,
+    "api.orders.cancel": _server_api_orders_cancel,
+    "api.orders.query": _server_api_orders_query,
+    "api.holdings": _server_api_holdings,
+    "api.system": _server_api_system,
+    "api.trades": _server_api_trades,
+    "api.t0_aggregate": _server_api_t0_aggregate,
+    "api.users": _server_api_users,
+    "api.auth": _server_api_auth,
 }
 for _name, _mod in _BARE_ALIASES.items():
     if _mod is not None:
