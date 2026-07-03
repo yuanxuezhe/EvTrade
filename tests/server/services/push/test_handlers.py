@@ -567,10 +567,13 @@ def test_ord_cfm_for_original_does_not_touch_cancel_row():
     db.close()
 
     # 验证：原委托被正常更新
+    # broker_status=51 (broker 已报待撤, 在撤单类触发码 51/52/53/54 集合内)
+    # + cum_traded=0 → _infer_order_status 规则 3 推断为 54 (broker 已撤)
+    # (与 infer_mirror test case 6 一致; 见 server/services/order_status.py)
     db = SessionLocal()
     orig_row = db.query(Order).filter_by(order_no="10000010", trd_date="20260614").first()
     assert orig_row is not None
-    assert orig_row.status == "51", f"orig order status remains 51 (v11: 非终态, broker 已报待撤), got {orig_row.status}"
+    assert orig_row.status == "54", f"orig order status inferred to 54 (broker 51 撤单信号 + cum=0), got {orig_row.status}"
     db.close()
 
 
