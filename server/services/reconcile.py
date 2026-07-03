@@ -203,7 +203,8 @@ def _apply_broker_data(
     (ord_cfm / trd_cfm 事件) 自动 upsert 到本地表。
     """
     # Positions: 按 stock_code PK 全表覆盖
-    # v10: 严格使用 broker 原字段名（`avl_amt`/`avg_price`），不再兼容旧别名 `available`/`cost`/`avl_vol`/`vol`
+    # change consolidate-position-data-flow: parser 输出 dict 键名已与 Position ORM 列名对齐
+    # (broker wire 字段 volume/avl_amt/avg_price/market_value 在 _parse_positions 边界已完成重命名/丢弃)
     db.query(Position).delete()
     for p in positions_data:
         stock_code = str(p.get('stock_code', ''))
@@ -215,15 +216,16 @@ def _apply_broker_data(
             last_vol=int(p.get('last_vol', 0) or 0),
             today_buy=int(p.get('today_buy', 0) or 0),
             today_sell=int(p.get('today_sell', 0) or 0),
-            avl_vol=int(p.get('avl_amt', 0) or 0),
-            vol=int(p.get('volume', 0) or 0),
-            cost_price=float(p.get('avg_price', 0) or 0),
+            avl_vol=int(p.get('avl_vol', 0) or 0),
+            vol=int(p.get('vol', 0) or 0),
+            cost_price=float(p.get('cost_price', 0) or 0),
             synced_at=datetime.now(timezone.utc).replace(tzinfo=None),
             synced_from='rpc_reconcile',
         ))
 
     # Assets: 单行；Asset ORM 无主键，先清空再写入
-    # v10: 严格使用 broker 原字段名（`frozen_cash`），不再兼容旧别名 `frozen`
+    # Asset broker 字段名已与 DB 列名一致 (cash/frozen_cash/market_value/total_asset),
+    # 无需 remap。
     db.query(Asset).delete()
     if assets_data:
         a = assets_data[0]

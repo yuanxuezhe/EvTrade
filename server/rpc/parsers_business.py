@@ -119,10 +119,18 @@ def _parse_trades(pkt: MsgPacket) -> Dict[str, Any]:
 def _parse_positions(pkt: MsgPacket) -> Dict[str, Any]:
     """解析持仓查询结果 → {code, msg, list:[pos_dict, ...]}
 
-    v10 字段名（broker 原字段）：
-      stock_code / last_vol / volume / avl_amt / avg_price / market_value
+    change consolidate-position-data-flow: 输出 dict 键名与 Position ORM 列名一致
+    (单一 broker→server 重命名边界)。
 
-    之前别名 `available`/`cost` 已废弃，调用方读 `avl_amt`/`avg_price`。
+    broker wire 字段 (xtquant 协议, 读取侧) → parser 输出 dict 键 (下游使用)：
+      stock_code      →  stock_code         (PK, 不变)
+      last_vol        →  last_vol           (不变)
+      volume          →  vol                (rename)
+      avl_amt         →  avl_vol            (rename)
+      avg_price       →  cost_price         (rename)
+      market_value    →  (丢弃, 不入库, 前端用 last_vol × last_price 现算)
+
+    唯一权威源：iquant/xtquant_api.py 第 130-145 行 (query handler)。
     """
     code, msg = _parse_code_msg(pkt)
     if code != 0:
@@ -132,10 +140,9 @@ def _parse_positions(pkt: MsgPacket) -> Dict[str, Any]:
         items.append({
             "stock_code": row.get("stock_code", ""),
             "last_vol": _to_int(row.get("last_vol", "")),
-            "volume": _to_int(row.get("volume", "")),
-            "avl_amt": _to_int(row.get("avl_amt", "")),
-            "avg_price": _to_float(row.get("avg_price", "")),
-            "market_value": _to_float(row.get("market_value", "")),
+            "vol": _to_int(row.get("volume", "")),
+            "avl_vol": _to_int(row.get("avl_amt", "")),
+            "cost_price": _to_float(row.get("avg_price", "")),
         })
     return {"code": code, "msg": msg, "list": items}
 
