@@ -108,12 +108,20 @@ const totalAvailable = computed(() =>
   positionStore.positions.reduce((sum, p) => sum + (p.avl_vol || 0), 0)
 )
 
-const netChange = computed(() =>
-  positionStore.positions.reduce(
-    (sum, p) => sum + (p.today_buy || 0) - (p.today_sell || 0),
-    0
-  )
-)
+// v12: today_buy/today_sell 已从 Position 删除
+// netChange (今日净变动) 改为基于 trades 当前激活日聚合
+const netChange = computed(() => {
+  const trades = holdingsStore.trades || []
+  const activeDay = (holdingsStore.activeTrdDate || '').toString()
+  let buyVol = 0
+  let sellVol = 0
+  for (const t of trades) {
+    if (t.trd_date && t.trd_date !== activeDay) continue
+    if (t.order_type === '23') buyVol += Number(t.volume) || 0
+    else if (t.order_type === '24') sellVol += Number(t.volume) || 0
+  }
+  return buyVol - sellVol
+})
 
 const netChangeClass = computed(() => {
   if (netChange.value > 0) return 'text-up'

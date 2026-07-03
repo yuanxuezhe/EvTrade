@@ -22,20 +22,6 @@
         <span class="text-mono">{{ formatNumber(row.last_vol) }}</span>
       </template>
     </el-table-column>
-    <el-table-column prop="today_buy" label="今日买入" width="110" align="right">
-      <template #default="{ row }">
-        <span :class="row.today_buy > 0 ? 'text-up text-mono' : 'text-mono text-secondary'">
-          {{ row.today_buy > 0 ? '+' : '' }}{{ formatNumber(row.today_buy) }}
-        </span>
-      </template>
-    </el-table-column>
-    <el-table-column prop="today_sell" label="今日卖出" width="110" align="right">
-      <template #default="{ row }">
-        <span :class="row.today_sell > 0 ? 'text-down text-mono' : 'text-mono text-secondary'">
-          {{ row.today_sell > 0 ? '-' : '' }}{{ formatNumber(row.today_sell) }}
-        </span>
-      </template>
-    </el-table-column>
     <el-table-column prop="avl_vol" label="可用" width="110" align="right">
       <template #default="{ row }">
         <span class="text-mono">{{ formatNumber(row.avl_vol) }}</span>

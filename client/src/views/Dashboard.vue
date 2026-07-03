@@ -112,15 +112,7 @@
               <span class="text-mono">{{ formatNumber(row.avl_vol) }}</span>
             </template>
           </el-table-column>
-          <el-table-column label="今日变动" align="right">
-            <template #default="{ row }">
-              <div class="change-cell">
-                <span v-if="row.today_buy > 0" class="text-up text-mono">+{{ row.today_buy }}</span>
-                <span v-if="row.today_sell > 0" class="text-down text-mono">-{{ row.today_sell }}</span>
-                <span v-if="!row.today_buy && !row.today_sell" class="text-secondary">--</span>
-              </div>
-            </template>
-          </el-table-column>
+          <!-- v12: today_buy/today_sell 列已删除 (add-manual-adjust-and-history-pages) -->
         </el-table>
         <el-empty v-if="topPositions.length === 0" description="暂无持仓" :image-size="80" />
       </div>

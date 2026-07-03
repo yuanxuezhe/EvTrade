@@ -27,14 +27,6 @@
         <span class="dp-value text-mono">{{ position.last_vol }}</span>
       </div>
       <div class="dp-row">
-        <span class="dp-label">今日买入</span>
-        <span class="dp-value text-mono text-up">+{{ position.today_buy }}</span>
-      </div>
-      <div class="dp-row">
-        <span class="dp-label">今日卖出</span>
-        <span class="dp-value text-mono text-down">-{{ position.today_sell }}</span>
-      </div>
-      <div class="dp-row">
         <span class="dp-label">可用</span>
         <span class="dp-value text-mono">{{ position.avl_vol }}</span>
       </div>
@@ -157,20 +149,20 @@ const orderTradeList = computed(() => {
 })
 
 const profit = computed(() => {
+  // v12: today_buy/today_sell 已从 Position 移除 (add-manual-adjust-and-history-pages)
+  // T+0 做T收益: 直接由 trades 自身聚合 (买/卖均价差 × 配对量)
   if (!props.position) return 0
-  const { today_buy, today_sell } = props.position
-  const buyVolume = Math.min(today_buy, today_sell)
 
-  const totalBuy = props.trades
-    .filter((t) => t.order_type === '23')
-    .reduce((sum, t) => sum + t.volume * t.price, 0)
-  const totalSell = props.trades
-    .filter((t) => t.order_type === '24')
-    .reduce((sum, t) => sum + t.volume * t.price, 0)
-
-  const avgBuy = today_buy > 0 ? totalBuy / today_buy : 0
-  const avgSell = today_sell > 0 ? totalSell / today_sell : 0
-  return (avgSell - avgBuy) * buyVolume
+  const buys = props.trades.filter((t) => t.order_type === '23')
+  const sells = props.trades.filter((t) => t.order_type === '24')
+  const totalBuy = buys.reduce((sum, t) => sum + t.volume * t.price, 0)
+  const totalSell = sells.reduce((sum, t) => sum + t.volume * t.price, 0)
+  const buyVolume = buys.reduce((sum, t) => sum + t.volume, 0)
+  const sellVolume = sells.reduce((sum, t) => sum + t.volume, 0)
+  const paired = Math.min(buyVolume, sellVolume)
+  const avgBuy = buyVolume > 0 ? totalBuy / buyVolume : 0
+  const avgSell = sellVolume > 0 ? totalSell / sellVolume : 0
+  return (avgSell - avgBuy) * paired
 })
 
 const needBuyBack = computed(() => {
