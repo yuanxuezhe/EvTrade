@@ -194,6 +194,27 @@ export const api = {
   async getActiveDay() {
     const res = await http.get('/system/active-day')
     return res.data
+  },
+
+  // v12: admin-only 调平 API（PUT, admin 鉴权在端点层 require_admin）
+  //   输入 camelCase (deltaVol / deltaAvlVol / deltaCash / deltaTotalAsset)
+  //   输出 snake_case (delta_vol / delta_avl_vol / delta_cash / delta_total_asset)
+  //   reason 仅入 log, 不入库
+  async adjustPosition(stockCode, { deltaVol, deltaAvlVol, reason } = {}) {
+    const body = {}
+    if (deltaVol !== undefined) body.delta_vol = deltaVol
+    if (deltaAvlVol !== undefined) body.delta_avl_vol = deltaAvlVol
+    if (reason !== undefined) body.reason = reason
+    const res = await http.put(`/positions/${stockCode}/adjust`, body)
+    return res.data
+  },
+  async adjustAsset({ deltaCash, deltaTotalAsset, reason } = {}) {
+    const body = {}
+    if (deltaCash !== undefined) body.delta_cash = deltaCash
+    if (deltaTotalAsset !== undefined) body.delta_total_asset = deltaTotalAsset
+    if (reason !== undefined) body.reason = reason
+    const res = await http.put('/asset/adjust', body)
+    return res.data
   }
 }
 
