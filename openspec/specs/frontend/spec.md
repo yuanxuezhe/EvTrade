@@ -10,39 +10,41 @@
 
 ## Requirements
 
-### REQ-FE-100: 业务数据生命周期 (纯 Pinia 内存)
+### REQ-FE-100: 业务数据生命周期 (纯 Pinia 内存) — v12 豁免 orders / trades 当日走 IDB
 
-The system SHALL hold the 4 business data tables (资金 / 持仓 / 委托 / 成交) in Pinia stores as the in-memory source of truth. There is no client-side persistent storage (IDB / localStorage) for these tables.
+The system SHALL hold the 4 business data tables (资金 / 持仓 / 委托 / 成交) in Pinia stores as the in-memory source of truth. **v12 豁免**：委托 / 成交 当日数据**走 IDB write-through**（详见 `intraday-orders-trades-cache/spec.md`），其他 2 类数据仍纯内存。
 
-- 资金 → `useAssetStore().asset`
-- 持仓 → `useHoldingsStore().positions` (v8 单一源)
-- 委托 → `useHoldingsStore().orders`
-- 成交 → `useHoldingsStore().trades`
+- 资金 → `useAssetStore().asset` （纯内存）
+- 持仓 → `useHoldingsStore().positions` （纯内存，v8 单一源）
+- 委托 → `useHoldingsStore().orders` （**v12 当日数据走 IDB**，详情见 REQ-FE-300 + `intraday-orders-trades-cache/spec.md`）
+- 成交 → `useHoldingsStore().trades` （**v12 当日数据走 IDB**）
 
-#### Scenario: 启动 (无持久化)
+#### Scenario: 启动 (无持久化（除 v12 IDB 豁免）)
 
 - **WHEN** user opens the app
-- **THEN** Pinia stores start with empty initial values; `main.js` mounts App directly without any persistence rehydration
-- **AND** `holdingsStore.bootstrap()` (called after login) populates stores by calling 4 parallel API endpoints
-- **AND** business pages show empty state until bootstrap completes (then immediately reflect server data)
+- **THEN** Pinia stores start with empty initial values
+- **AND** `holdingsStore.bootstrap()` (called after login) 立即尝试 IDB 命中 orders / trades 当日数据；命中即写 Pinia，跳过对应 RPC 拉取
+- **AND** 未命中走 fallback：调 4 个 parallel API endpoints 拉 RPC
 
-#### Scenario: API fetch → Pinia (无 IDB 写透)
+#### Scenario: API fetch → Pinia + IDB 异步双写（v12 委托/成交）
 
-- **WHEN** `fetchAsset()` / `fetchPositions()` / `holdings.refreshAll()` completes
-- **THEN** only Pinia state is updated; no IDB / localStorage write happens
-- **AND** business pages reactively re-render via Vue's standard reactive propagation
+- **WHEN** `fetchAsset()` / `fetchPositions()` / `holdings.refreshAll()` 完成（asset / positions 仍纯内存，无 IDB）
+- **OR** 当 `holdings.refreshAll()` 拉到 orders / trades 时，fire-and-forget `saveOrdersForDate(activeDay, ...)` + `saveTradesForDate(activeDay, ...)`
+- **THEN** orders / trades 进入 Pinia 时也异步进入 IDB（不阻塞 caller）
 
-#### Scenario: WS push → Pinia (无 IDB 增量)
+#### Scenario: WS push → Pinia + IDB 增量（v12 委托/成交）
 
-- **WHEN** ws push handler (e.g. `applyOrderPush`) merges a row into Pinia state
-- **THEN** only Pinia state is updated; no IDB write happens
-- `applyQuote` does NOT touch any persistent storage (quote is real-time, ephemeral)
+- **WHEN** ws push handler (`applyOrderPush` / `applyTradePush`) merges row into Pinia
+- **THEN** IDB 同步增量（fire-and-forget）。仅 orders / trades；`applyQuote` 不动 IDB（quote 是实时短期态）
+- **AND** IDB 写失败不抛异常（try/catch + console.warn；Pinia ref 不动）
 
-#### Scenario: F5 刷新
+#### Scenario: F5 刷新（v12 IDB 命中）
 
-- **WHEN** user refreshes the page (F5)
-- **THEN** all 4 Pinia tables reset to empty; bootstrap re-fetches from server
-- **AND** there is no offline cache to restore — this is the expected trade-off for simpler architecture (调试工具的职责范围内)
+- **WHEN** user refreshes (F5) 且 IDB.orders["<activeDay>"] 存在
+- **THEN** `holdings.orders` 200ms 内从 IDB 同步读回（不是空白）
+- **AND** 后续 ws push 增量 merge 到 Pinia + IDB 双写
+- **WHEN** IDB miss / 跨日
+- **THEN** 清 IDB 旧 key + 走正常 RPC fallback
 
 ### REQ-FE-101: Admin 缓存查看器 (直读 Pinia CRUD)
 
@@ -51,7 +53,7 @@ The system SHALL provide an admin-only viewer with full CRUD (Create / Read / Up
 | Route | View | Pinia ref | Allowed Ops |
 |---|---|---|---|
 | `/admin/cache/asset`     | `CacheAsset.vue`     | `useAssetStore().asset`     | **Update only** (singleton 1 行) |
-| `/admin/cache/positions` | `CachePositions.vue` | `useHoldingsStore().positions` | CRUD + Clear |
+| `/admin/cache/positions` | `CachePositions.vue` | `useHoldingsStore().positions` | CRUD + Clear + **调平** (v12 新增 per-row API 调用) |
 | `/admin/cache/orders`    | `CacheOrders.vue`    | `useHoldingsStore().orders`    | CRUD + Clear |
 | `/admin/cache/trades`    | `CacheTrades.vue`    | `useHoldingsStore().trades`    | CRUD + Clear (composite key [trd_date, trade_id]) |
 
@@ -101,25 +103,39 @@ The shared component is [client/src/components/CacheTableView.vue](../../client/
 - **WHEN** admin views any cache table (header or edit dialog form-item)
 - **THEN** each column label renders as `"中文 (english_key)"` e.g. `现金 (cash)`, `总资产 (total_asset)` — so admin can directly map displayed column to the actual Pinia field key without consulting the schema separately
 
+#### Scenario: 持仓表调平按钮（v12 新增）
+
+- **WHEN** admin 打开 `/admin/cache/positions` 并点某行的「调平」按钮
+- **THEN** 弹 dialog，输入 `delta_vol` / `delta_avl_vol` / `reason`（至少一个 delta 字段）
+- **AND** 提交后调 `api.adjustPosition(stock_code, {deltaVol, deltaAvlVol, reason})` → `PUT /api/positions/{stock_code}/adjust`
+- **AND** 成功响应后用 `resp.position` 替换该行 Pinia 数据（直接 splice）
+- **AND** 行 `synced_from` 变为 `manual` 标签，下次 `do_reconcile` 会重置为 `rpc_full`
 
 
-### REQ-FE-001: 路由
 
-| 路径 | 视图 | 鉴权 |
-|---|---|---|
-| `/login` | Login.vue | public |
-| `/` | Dashboard.vue | login |
-| `/trade` | Trade.vue | trader |
-| `/orders` | Orders.vue | login |
-| `/trades` | Trades.vue | login |
-| `/positions` | → redirect `/to-management` | login |
-| `/to-management` | Position.vue（快速做T） | login |
-| `/t-strategy` | TStrategy.vue（策略做T） | login |
-| `/algo-strategy` | AlgoStrategy.vue | login |
-| `/holdings` | Holdings.vue | login |
-| `/asset` | Asset.vue | login |
-| `/users` | Users.vue | admin |
-| `/profile` | Profile.vue | login |
+### REQ-FE-001: 路由（v12 拆分 today / history）
+
+| 路径 | 视图 | 鉴权 | 说明 |
+|---|---|---|---|
+| `/login` | Login.vue | public | |
+| `/` | Dashboard.vue | login | |
+| `/trade` | Trade.vue | trader | 顶部加"今日委托 →" / "今日成交 →" 链接（v12 不再内嵌委托表） |
+| `/today/orders` | `TodayOrders.vue` | login | **v12 新增**：读 Pinia.orders（IDB write-through）；无 HTTP |
+| `/today/trades` | `TodayTrades.vue` | login | **v12 新增**：读 Pinia.trades（IDB write-through）；无 HTTP |
+| `/history/orders` | `HistoryOrders.vue` | login | **v12 新增**：el-date-picker 区间 + `api.getOrders({startDate,endDate,stockCode})` |
+| `/history/trades` | `HistoryTrades.vue` | login | **v12 新增**：同上 + `api.getTrades(...)` |
+| `/orders` | → redirect `/today/orders` | login | **v12 修订**：旧路由兼容 |
+| `/trades` | → redirect `/today/trades` | login | **v12 修订**：旧路由兼容 |
+| `/positions` | → redirect `/t0-trade` | login | 旧 `/to-management` 路径合并 |
+| `/t0-trade` | T0Trade.vue（快速做T） | login | |
+| `/t-strategy` | TStrategy.vue（策略做T） | login | |
+| `/algo-strategy` | AlgoStrategy.vue | login | |
+| `/holdings` | Holdings.vue | login | |
+| `/asset` | Asset.vue | login | |
+| `/users` | Users.vue | admin | |
+| `/profile` | Profile.vue | login | |
+| `/admin/cache/{asset,positions,orders,trades}` | `Cache*.vue` | admin | CachePositions.vue v12 加"调平"按钮（API: `PUT /api/positions/{stock_code}/adjust`） |
+| `/system-init` / `/system-config` | SystemInit.vue / SystemConfig.vue | admin | |
 
 ### REQ-FE-002: API 客户端
 
@@ -490,6 +506,58 @@ And Asset/Holdings 等视图若订阅了该股则自动刷新
 - 🟢 ~~前端 5s 轮询 fetchOrders + 缓存双源（orderStore/holdings）~~ → **v8 已修**（change `2026-06-21-order-push-trd-date-authority`，统一 holdings 单一源 + 删 5s 轮询改手动刷新）
 - 🟢 ~~T0Trade.vue submitOrder 误读 res.code 永远走 else 分支~~ → **v8 已修**（同上 change，submitOrder 改 orderStore.placeOrder）
 - 🟢 ~~ws.test.js / useT0Balance.test.js 10 个预存失败~~ → **未修**（独立 issue，与 v8 改造无关）
+
+### REQ-FE-300: IDB 持久化模块契约（v12 add-manual-adjust-and-history-pages）
+
+`client/src/stores/holdings_idb.js` 提供委托 / 成交 当日数据 IDB 持久化，**仅 orders / trades**，**不影响** positions / asset。
+
+#### Scenario: 模块公开 API
+
+- `initIDB()` —— 打开 `EvTrade-holdings-cache` (version=1)，含 `orders` / `trades` 两个 object store
+  - 单例：同进程内多次调用复用同一 IDBDatabase
+  - reject 时不抛（向上 throw 给调用方，由 caller 决定降级策略）
+- `saveOrdersForDate(trdDate, orders)` —— **fire-and-forget** PUT `orders[trdDate] = JSON.parse(JSON.stringify(orders || []))`
+  - 内部 try/catch + `console.warn`，**不抛异常**
+  - `trdDate` 空字符串/null → noop
+- `loadOrdersForDate(trdDate)` —— `Promise<Array | null>`，IDB miss 返 null
+  - `trdDate` 空字符串/null → 立即 `null`
+- `saveTradesForDate(trdDate, trades)` —— 同上 orders
+- `loadTradesForDate(trdDate)` —— 同上 orders
+- `clearDate(trdDate)` —— `Promise<void>`，删除 `orders[trdDate]` + `trades[trdDate]`（跨日切换调用）
+- `_resetForTests()` —— 仅测试用，重置 module-level 单例
+
+#### Scenario: IDB 写异常不外抛（critical path 不被 IDB 卡住）
+
+- **WHEN** `saveOrdersForDate` 内部 IDB put 抛错（quota exceeded / 浏览器隐私模式 / navigator.storage undefined）
+- **THEN** 函数 catch + `console.warn('[IDB] saveOrdersForDate failed:', ...)`
+- **AND** 调用方（bootstrap / push handler）不需要 try/catch
+
+#### Scenario: 与 ws push 双写契约
+
+- **WHEN** ws `order_update` / `trade_update` 触发 `applyOrderPush` / `applyTradePush`
+- **THEN** Pinia ref 更新 + `saveOrdersForDate(activeDay, orders.value)` / `saveTradesForDate(activeDay, trades.value)` 异步调用
+- **AND** `activeDay` 未就绪（null）→ save 自动 noop（getter 内 short-circuit）
+
+#### Scenario: bootstrap IDB 优先
+
+- **WHEN** `_resolveActiveDay()` 完成 → `activeTrdDate = "20260704"`
+- **THEN** 立刻并行 `loadOrdersForDate("20260704")` + `loadTradesForDate("20260704")`
+- **AND** 双命中 → 立刻写 Pinia `orders.value = cached` + `trades.value = cached`
+- **AND** `refCounts.orders/trades = 'ok'` 立即标记
+- **AND** 不再发 `/api/orders?trd_date=20260704`（spec 设计意图：today 页面用 IDB 即可，不再二次拉）
+
+#### Scenario: IDB miss / 跨日降级
+
+- **WHEN** IDB miss（首次启动 / 新交易日）或 `activeTrdDate` 未就绪
+- **THEN** bootstrap 走原路径：拉 `/api/orders` + `/api/trades` 30 天窗口
+- **WHEN** 跨日（IDB.trd_date !== active_day）
+- **THEN** `clearDate(yesterday)` + 走 RPC fallback
+
+#### Scenario: bootstrap 完成后 fire-and-forget 写 IDB
+
+- **WHEN** `bootstrap()` 或 `refreshAll()` 完成 orders / trades 写入
+- **THEN** 立刻 `saveOrdersForDate(activeDay, ...)` + `saveTradesForDate(activeDay, ...)`
+- **AND** 即使 IDB 不可用也不影响加载流程（warn 后继续）
 
 ### REQ-FE-200: T0Trade 重新设计（中量行内仪表）
 
