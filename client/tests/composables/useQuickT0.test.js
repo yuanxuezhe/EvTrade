@@ -9,6 +9,9 @@
  *   - localStorage 持久化
  *   - buildQuickOrder 端到端
  */
+// @vitest-environment happy-dom
+// 显式声明 happy-dom 环境, 避免 vitest 从 project root 跑 (找不到 client/vitest.config.js)
+// 时 localStorage 引用失败。vitest 配置默认环境也是 happy-dom, 此处双保险。
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import {
   PCT_OPTIONS,
