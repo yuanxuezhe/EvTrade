@@ -49,22 +49,22 @@ pkt = await client.call(
 | `ord_stk` | `ord_stk` | `_parse_order_ack` | `{code, msg, list: [OrderAck]}` |
 | `cancel_order` | `cancel_ord` | `_parse_order_ack` | `{code, msg, list: [OrderAck]}` |
 
-### REQ-RPC-004.1: 业务字段映射表（v10 broker 原字段名，rpc-field-alignment-ts-unify 实施）
+### REQ-RPC-004.1: 业务字段映射表（v10 broker 原字段名，rpc-field-alignment-ts-unify 实施，consolidate-position-data-flow 修订）
 
-| RPC func | broker 字段（xtquant 协议） | server 内部命名（DB/API） |
+| RPC func | broker 字段（xtquant 协议） | server 内部命名（parser 输出 = DB 列名） |
 |---|---|---|
-| `qry_pos` | `stock_code, last_vol, volume, avl_amt, avg_price, market_value` | `stock_code, last_vol, vol, avl_vol, cost_price, market_value`（API 层映射） |
+| `qry_pos` | `stock_code, last_vol, volume, avl_amt, avg_price, market_value` | `stock_code, last_vol, vol, avl_vol, cost_price`（market_value 在 parser 丢弃） |
 | `qry_ord` | `order_id, stock_code, order_type, price_type, price, order_volume, traded_volume, traded_price, order_status, status_msg, strategy_name, order_remark, order_time` | `order_id, stock_code, order_type, price_type, price, volume, traded_volume, traded_price, status, status_msg, strategy_name, order_remark, order_time` |
 | `qry_ast` | `account_id, cash, frozen_cash, market_value, total_asset` | `cash, frozen_cash, market_value, total_asset`（`account_id` 透传不存储） |
-| `qry_mch` | `order_id, traded_id, stock_code, order_type, traded_volume, traded_price, traded_amount, strategy_name, order_remark, traded_time` | `order_id, trade_id, stock_code, order_type, volume, price, amount, strategy_name, order_remark, trade_time`（API 层映射） |
+| `qry_mch` | `order_id, traded_id, stock_code, order_type, traded_volume, traded_price, traded_amount, strategy_name, order_remark, traded_time` | `order_id, trade_id, stock_code, order_type, volume, price, amount, strategy_name, order_remark, trade_time` |
 | `cancel_ord` / `ord_stk` | `seq, order_id, result` | 透传 |
 
 字段名权威源：`iquant/xtquant_api.py` 第 130-200 行（query handler）和 280-340 行（push callback）。
 
-**单一职责**：
-- parsers 层：broker 原字段名透传，不做内部命名映射
-- API 层：通过 Pydantic / ORM 完成 `traded_id` → `trade_id`、`avl_amt` → `avl_vol`、`avg_price` → `cost_price` 等映射
-- 之前的 parsers 内部重命名（`traded_id` → `trade_id`、`avl_amt` → `available` 等）已废弃，导致 push handler / API / 对账路径出现 `row.get('available')` 之类的散落兼容代码
+**单一职责**（consolidate-position-data-flow 修订）：
+- parsers 层：在 parser 输出 dict 这一个边界完成 broker wire → server 内部命名的重命名；输出 dict 键名 = server 全栈（reconcile / API / ORM / 前端 store）使用的字段名
+- API 层 / ORM 层 / 前端 store：直接读 parser 输出字段名，**不再做任何 broker→server 字段重命名**
+- 之前的"parser 透传 + API 层映射"模式已废弃，导致 push handler / API / 对账路径出现 `row.get('available')` 之类的散落兼容代码（consolidate-position-data-flow 集中到 parser 一处重命名）
 
 #### REQ-RPC-004.1: broker status 字段重映射（v11 新增段）
 

@@ -2,18 +2,21 @@
  * holdings_push.js — holdings store ws 推送处理 factory
  *
  * phase-2 抽取：保持 holdings.js 单 store facade (R3),
- * 把 5 个 ws 推送入口（applyXxx）集中
+ * 把 3 个 ws 推送入口（applyXxx）集中
  *
  * 调用者：holdings.js 内部 createPushHandlers({...refs, log, getQuoteStore, recomputeStatus, positionCodes}) → { applyXxx }
  *
- * 5 个入口（与 ws_dispatch.js 协议对齐）:
- *   applyPositionPush — ws._onPositionCfm 调
- *   applyAssetPush    — ws._onAssetCfm 调
+ * 3 个入口（与 ws_dispatch.js 协议对齐）:
  *   applyOrderPush    — ws._onOrderCfm 调（含 v8 trd_date 守门、v9 cancel-row 短路、
  *                                          change system-delegation-price-fill-calc: metaMerge/cancel-row 反抹平）
  *   applyTradePush    — ws._onTradeCfm 调（含 v8 trd_date 守门、v9 trade_type 区分、
- *                                          change system-delegation-price-fill-calc: 独立累计 + 反向更新 order）
+ *                                          change system-delegation-price-fill-calc: 独立累计 + 反向更新 order；
+ *                                          change consolidate-position-data-flow: trade_type=1 cancel-trade 跳过日志标 ok）
  *   applyQuote        — ws._onQuote 调（按 positionCodes 白名单过滤）
+ *
+ * change consolidate-position-data-flow:
+ *   applyPositionPush / applyAssetPush 已删除 (xtquant broker 不发 pos_cfm / ast_cfm)
+ *   Position/Asset 状态由 day-init reconcile 覆盖 + holdings.positions/cachedAsset 内存缓存
  *
  * change system-delegation-price-fill-calc: 推送仅含单笔成交/委托元数据,
  * 前后端独立累计: ws push 改 orders.value 时通过 metaMerge 保留 ref 累计;
@@ -31,37 +34,15 @@ import {
 // 注: 之前的 IDB 持久化已废弃. 当前架构纯 Pinia 内存, ws push 只改内存.
 
 /**
- * 创建 5 个 ws push handler
+ * 创建 3 个 ws push handler
  *
  * @param deps  { positions, orders, trades, cachedAsset, activeTrdDate, log, positionCodes, getQuoteStore }
- * @returns     { applyPositionPush, applyAssetPush, applyOrderPush, applyTradePush, applyQuote }
+ * @returns     { applyOrderPush, applyTradePush, applyQuote }
  */
 export function createPushHandlers(deps) {
   const { positions, orders, trades, cachedAsset, activeTrdDate, log, positionCodes, getQuoteStore } = deps
-
-  /** ws._onPositionCfm 调用：合并持仓推送 + 写日志 */
-  function applyPositionPush(row) {
-    if (!row || !row.stock_code) return
-    const idx = positions.value.findIndex((p) => p.stock_code === row.stock_code)
-    if (idx >= 0) {
-      positions.value[idx] = { ...positions.value[idx], ...row }
-    } else if (row.volume) {
-      positions.value.unshift(row)
-    }
-    log('info', '交易', 'ws', `持仓推送: ${row.stock_code} → ${row.vol}@${row.cost_price}`)
-  }
-
-  /** ws._onAssetCfm 调用：写资金 */
-  function applyAssetPush(row) {
-    if (!row) return
-    cachedAsset.value = {
-      cash: Number(row.cash) || 0,
-      frozen_cash: Number(row.frozen_cash) || 0,
-      market_value: Number(row.market_value) || 0,
-      total_asset: Number(row.total_asset) || 0
-    }
-    log('info', '交易', 'ws', `资产推送: 总资产 ¥${cachedAsset.value.total_asset.toLocaleString()}`)
-  }
+  // 注: consolidate-position-data-flow 后, ws 不再触发 positions / cachedAsset 写。
+  //      positions 仍保留引用作为 createPushHandlers 入参 (兼容未来扩展), 但本工厂不读它。
 
   /** ws._onOrderCfm 调用：合并委托 + 写日志
    *  v6: 匹配键用 order_no（本地 8 位序号 PK），order_id 可能为 null
@@ -183,5 +164,5 @@ export function createPushHandlers(deps) {
     return true
   }
 
-  return { applyPositionPush, applyAssetPush, applyOrderPush, applyTradePush, applyQuote }
+  return { applyOrderPush, applyTradePush, applyQuote }
 }

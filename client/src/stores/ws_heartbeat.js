@@ -3,7 +3,10 @@
  *
  * 职责:
  * - WS URL 构造 (含 hqserver 直连 quote_update 特例)
- * - 4 个 channel 的 _openChannel / _scheduleReconnect
+ * - 3 个 channel 的 _openChannel / _scheduleReconnect（order_update / trade_update + quote_update）
+ *   change consolidate-position-data-flow:
+ *     position_update / asset_update channel 已删除
+ *     (xtquant broker 不发 pos_cfm / ast_cfm, 改由 day-init reconcile + holdings 内存缓存)
  * - 客户端主动 30s ping, 累计 3 次 (90s) 未回 pong 触发重连
  * - 指数退避: delay = min(1000 * 2^retryCount, 30000)
  *
@@ -12,7 +15,7 @@
  */
 import { ref } from 'vue'
 
-export const CHANNELS = ['order_update', 'trade_update', 'position_update', 'asset_update', 'quote_update']
+export const CHANNELS = ['order_update', 'trade_update', 'quote_update']
 
 // v7 改: WS 重连从固定 3s 改为指数退避
 //   delay = min(1000 * 2^retryCount, 30000)

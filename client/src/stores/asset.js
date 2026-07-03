@@ -9,7 +9,9 @@ import { useHoldingsStore } from './holdings'
  * view 层继续用 useAssetStore().asset 不变。
  *
  * 设计要点：
- *   - 唯一权威源：holdings.cachedAsset（v8 bootstrap 一次性拉取，ws ast_cfm 实时更新）
+ *   - 唯一权威源：holdings.cachedAsset（v8 bootstrap 一次性拉取，day-init reconcile 兜底）
+ * change consolidate-position-data-flow: ws 不再推 ast_cfm,
+ *   仅 bootstrap / refreshAll / reconcile 期间刷新 cachedAsset
  *   - 本 store 零独立状态，零数据漂移风险（以前 ws_dispatch 双写到 asset + holdings 会漂移）
  *   - 写操作 (asset = v) 转发到 holdings.cachedAsset（CacheAsset.vue 编辑器需要）
  *   - fetchAsset delegate 到 holdings.refreshAsset（保持原 API）

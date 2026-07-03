@@ -3,7 +3,7 @@
  *
  * 职责:
  * - dispatchPayload(payload) — type → store
- * - _onOrderCfm / _onTradeCfm / _onPositionCfm / _onAssetCfm / _onQuote
+ * - _onOrderCfm / _onTradeCfm / _onQuote
  * - _notifyOrder — 委托状态变更通知
  *
  * 不持有 WebSocket 连接，纯函数式（依赖注入 store getter）
@@ -11,6 +11,10 @@
  *
  * v8: 唯一权威源是 holdings store。ws 推送**单一写**到 holdings，
  *     position.js / asset.js 通过 computed 桥接 holdings（不再双写）
+ *
+ * change consolidate-position-data-flow:
+ *   _onPositionCfm / _onAssetCfm 已删除 (xtquant broker 不发 pos_cfm / ast_cfm)
+ *   position.js / asset.js 通过 computed 桥接 holdings.positions / cachedAsset
  */
 import { ElNotification } from 'element-plus'
 import { useQuoteStore } from './quote'
@@ -25,8 +29,6 @@ export function dispatchPayload(payload) {
   const t = payload?.type
   if (t === 'ord_cfm') _onOrderCfm(payload.data)
   else if (t === 'trd_cfm') _onTradeCfm(payload.data)
-  else if (t === 'pos_cfm') _onPositionCfm(payload.data)
-  else if (t === 'ast_cfm') _onAssetCfm(payload.data)
   else if (t === 'quote') _onQuote(payload.data)
 }
 
@@ -88,22 +90,6 @@ function _onTradeCfm(row) {
     type: 'success',
     duration: 4000
   })
-}
-
-function _onPositionCfm(row) {
-  // v8: 单一写到 holdings, position store 通过 computed 桥接（无数据漂移）
-  try {
-    const holdings = useHoldingsStore()
-    holdings.applyPositionPush(row)
-  } catch (_) { /* holdings 可能在登出态被销毁 */ }
-}
-
-function _onAssetCfm(row) {
-  // v8: 单一写到 holdings.cachedAsset, asset store 通过 computed 桥接
-  try {
-    const holdings = useHoldingsStore()
-    holdings.applyAssetPush(row)
-  } catch (_) { /* 同上 */ }
 }
 
 function _notifyOrder(code, status, row) {

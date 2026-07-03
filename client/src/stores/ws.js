@@ -8,15 +8,19 @@
  *
  * 协议:
  *   服务端把柜台 push 包（func + rows）原样转成 JSON:
- *   { type: "ord_cfm" | "trd_cfm" | "pos_cfm" | "ast_cfm",
- *     channel: "order_update" | "trade_update" | ...,
+ *   { type: "ord_cfm" | "trd_cfm",
+ *     channel: "order_update" | "trade_update",
  *     ts: "...", data: { ...row fields... } }
  *
  * 行为:
- *   - 启动时连接所有 5 个 channel (含 quote_update 直连 hqserver)
- *   - 收到消息按 type 分发到 order / position / asset / holdings store
+ *   - 启动时连接 4 个 channel（order_update / trade_update + quote_update 直连 hqserver）
+ *   - 收到消息按 type 分发到 order / holdings store
  *   - Element Plus 通知（成功/警告/危险，对应已成/部成/废单）
  *   - 断线自动重连（指数退避）
+ *
+ * change consolidate-position-data-flow: pos_cfm / ast_cfm 类型推送已删除
+ *   (xtquant broker 不发)。position_update / asset_update WS channel 也已删除,
+ *   Position/Asset 数据走 day-init reconcile + holdings.positions / cachedAsset 内存缓存。
  *
  * 外部 API（兼容 21 view 不变）:
  *   wsStore.connect()    — 启动所有 channel

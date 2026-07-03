@@ -13,7 +13,9 @@ import { useHoldingsStore } from './holdings'
  *   - selectedStockCode / selectedPosition — UI 局部状态（详情抽屉选中项）
  *
  * 设计要点：
- *   - 唯一权威源：holdings.positions（ws pos_cfm 实时更新）
+ *   - 唯一权威源：holdings.positions（bootstrap 一次性拉取，day-init reconcile + trd_cfm 增量刷新）
+ * change consolidate-position-data-flow: ws 不再推 pos_cfm,
+ *   holdings.positions 由 bootstrap / refreshAll / trd_cfm 触发的 applyTradePush 间接刷新
  *   - 本 store 不持有 positions 列表，零数据漂移风险
  *   - fetchPositions delegate 到 holdings.refreshPositions
  */

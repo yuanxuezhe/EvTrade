@@ -22,13 +22,15 @@ QMT 柜台通过 RabbitMQ 主动推送（`EvTrade.Test.Push` 队列）异步通�
 | `ord_cfm` | 委托状态变更/成交 | `order_update` | 替换 store 中同 order_no 的项；**status 字段是后端本地推断结果**（见 REQ-PUSH-005） |
 | `trd_cfm` | 成交回报 | `trade_update` | 追加到 trades 列表 |
 | `qry_pos` 等查询响应 | ❌ **不应在 push 出现** | — | 忽略，**应被 reply 队列消费** |
+| ~~`pos_cfm`~~ | ❌ broker 不发 | — | consolidate-position-data-flow: 已删除 |
+| ~~`ast_cfm`~~ | ❌ broker 不发 | — | consolidate-position-data-flow: 已删除 |
 
 ### REQ-PUSH-003: WS 频道 → 前端 store
 
 - `order_update` → `client/src/stores/holdings.js:applyOrderPush` 替换 orders 中同 order_no 的项
 - `trade_update` → 追加到 trades
-- `position_update` → 重拉（push 当前未路由）
-- `asset_update` → 重拉（push 当前未路由）
+- ~~`position_update`~~ → consolidate-position-data-flow: 频道已删除（broker 不发 pos_cfm）
+- ~~`asset_update`~~ → consolidate-position-data-flow: 频道已删除（broker 不发 ast_cfm）
 - **端点实现位置**（phase-2 拆分后）：`server/ws/endpoint.py::register_ws_endpoint(app)`，在 `server/main.py` 启动装配时调一次注册 `/ws/{channel}` 端点
   - 认证 / 接入 / 双向心跳 / 4408 timeout 关闭全部在该模块
   - ws_manager 单例由 `server/ws/manager.py` 提供（业务推送 `server/services/push_handlers.py` 也共用）
@@ -113,23 +115,21 @@ QMT 柜台通过 RabbitMQ 主动推送（`EvTrade.Test.Push` 队列）异步通�
 
 详见归档 `archive/2026-06-21-order-push-trd-date-authority/spec-deltas/push.md`
 
-### REQ-PUSH-010: push_handlers.py 拆分（phase-2）
+### REQ-PUSH-010: push_handlers.py 拆分（phase-2，consolidate-position-data-flow 修订）
 
-378→72 行 facade 兼容垫片 + 6 个单一职责子模块：
+378→72 行 facade 兼容垫片 + 4 个单一职责子模块（consolidate-position-data-flow 删 pos/ast）：
 - `server/services/order_status.py` (114) — 委托 status 共享（`ORDER_STATUS` / `TERMINAL_STATUSES` / `_status_msg` / `_infer_order_status` / `_get_active_trd_date`）
-- `server/services/push_helpers.py` (34) — 4 handler 共用小工具（`_utcnow` / `_str` / `_float` / `_int`）
+- `server/services/push_helpers.py` (34) — 2 handler 共用小工具（`_utcnow` / `_str` / `_float` / `_int`）
 - `server/services/push_handler_ord.py` (81) — ord_cfm
-- `server/services/push_handler_trd.py` (94) — trd_cfm
-- `server/services/push_handler_pos.py` (59) — pos_cfm
-- `server/services/push_handler_ast.py` (38) — ast_cfm
+- `server/services/push_handler_trd.py` (94) — trd_cfm（含 consolidate-position-data-flow Position.vol 增量更新）
 
 **契约**：
 - 既有 `from services.push_handlers import ...` 仍可解析（3 import 站点全过）
   - `server/rpc/transport.py` 用 `handle_push`（在 `_run_handle_push` 内部 import）
   - `server/test_push_async.py` 用 `handle_push`
   - `server/test_push_handlers.py` 用 `handle_push` + `_infer_order_status` + `TERMINAL_STATUSES` + `_status_msg`
-- 全部 4 个 handle_* 函数 + 4 共享符号 + HANDLERS dict + handle_push 都在 facade re-export
-- `handle_push` 同步签名不变（向后兼容 test_push_handlers.py 11 用例 + test_push_async.py 反射测试）
+- 全部 2 个 handle_* 函数 + 4 共享符号 + HANDLERS dict + handle_push 都在 facade re-export
+- `handle_push` 同步签名不变（向后兼容 test_push_handlers.py 用例 + test_push_async.py 反射测试）
 - 子模块间单向依赖：push_handler_* → order_status / push_helpers；push_handlers (facade) → 全部子模块
 
 ### REQ-PUSH-008: broker ord_cfm 不匹配 cancel-row（v9，v11 broker 码）
@@ -164,11 +164,11 @@ QMT 柜台通过 RabbitMQ 主动推送（`EvTrade.Test.Push` 队列）异步通�
 `server/services/push_dispatcher.py` 承载以下 push 业务编排职责，`server/rpc/transport.py` 不再直接承担：
 
 - **消息解码后编排**：`PushDispatcher.dispatch(pkt, func, msg_type, wire_len)` 是 push listener 调用的单一入口；内部顺序：交互日志 → 路由查表 → 激活交易日注入 → 行迭代（调 `server.rpc.parsers_push._iter_push_rows`） → 落库（异步） → 广播（按 func 类型分派）
-- **WS channel 路由表**：`_PUSH_CHANNEL = {"ord_cfm": "order_update", "trd_cfm": "trade_update", "pos_cfm": "position_update", "ast_cfm": "asset_update"}`
+- **WS channel 路由表**：`_PUSH_CHANNEL = {"ord_cfm": "order_update", "trd_cfm": "trade_update"}`（consolidate-position-data-flow: pos_cfm / ast_cfm 已删除）
 - **落库 helper**：`_run_handle_push(func, row, ts)` 在新线程中新建 SessionLocal + `services.push_handlers.handle_push` + commit；返回 handler 重组包结果（`Optional[Dict[str, Any]]`）
 - **激活交易日注入**：`_resolve_active_trd_date_safe()` 短连接查 SysStatus 激活日；异常降级为 None 而不 raise
 - **trd_cfm 双播**：`_broadcast_trade_cfm` 同时广播到 `trade_update`（成交）和 `order_update`（委托状态同步）
-- **通用广播**：`_broadcast_generic` 用于 `ord_cfm` / `pos_cfm` / `ast_cfm`，用 handler 重组包结果或 fallback 行数据
+- **通用广播**：`_broadcast_generic` 用于 `ord_cfm`，用 handler 重组包结果或 fallback 行数据（consolidate-position-data-flow: pos_cfm / ast_cfm 已删除）
 - **push 交互日志**：`_log_push_interaction` 记 `[svc<-rpc] push` + `_log_push_broadcast` 记 `[svc->front] ws broadcast (push)`
 
 `RPClient` 在 `connect()` 时构造 `self._dispatcher = PushDispatcher(self)`（self 注入用于 dispatcher 拿 RPClient 引用，如需扩展）。
@@ -246,29 +246,9 @@ push handler MUST 严格读 broker 原字段名（snake_case），与 parsers �
 | `traded_volume` | `Trade.volume` | broker 原字段名（**不 alias `volume`**） |
 | `traded_amount` | `Trade.amount` | broker 原字段名（**不 alias `amount`**） |
 | `traded_time` | `Trade.trade_time` | broker 原字段名（**不 alias `trade_time`**） |
+| `trade_type` | `Trade.trade_type` | consolidate-position-data-flow: 0=normal 1=cancel-fill |
 | `account_id` | 透传 | 暂不入库 |
 | `strategy_name` | 透传 | 暂不入库 |
-
-#### pos_cfm 字段映射
-
-| broker 字段（xtquant 协议） | server 字段 | 备注 |
-|---|---|---|
-| `stock_code` | `Position.stock_code` (PK) | |
-| `volume` | `Position.vol` | 总持仓 |
-| `avl_amt` | `Position.avl_vol` | broker 原字段名（**不 alias `available`**） |
-| `avg_price` | `Position.cost_price` | broker 原字段名（**不 alias `cost_price`**） |
-| `market_value` | 透传 / 推 WS | v5 决策：DB 不存 market_value（前端用行情实时算） |
-| `last_vol` | 透传 | 对账时设 |
-
-#### ast_cfm 字段映射
-
-| broker 字段（xtquant 协议） | server 字段 | 备注 |
-|---|---|---|
-| `total_asset` | `Asset.total_asset` | |
-| `cash` | `Asset.cash` | |
-| `frozen_cash` | `Asset.frozen_cash` | broker 原字段名（**不 alias `frozen`**） |
-| `market_value` | `Asset.market_value` | |
-| `account_id` | 透传 | 暂不入库 |
 
 #### Scenario: push handler 字段名严格匹配 broker
 
@@ -281,16 +261,6 @@ push handler MUST 严格读 broker 原字段名（snake_case），与 parsers �
 - **WHEN** developer 在 push handler 中写 `row.get('trade_id')`（老 alias）
 - **THEN** code review MUST 拒收；正确写法为 `row.get('traded_id')`
 
-#### Scenario: pos_cfm 字段名一致
-
-- **WHEN** broker 推送 `pos_cfm` row 含 `avl_amt` / `avg_price`
-- **THEN** `push_handler_pos.py` MUST 用 `row.get('avl_amt')` / `row.get('avg_price')`，不再 alias `available` / `cost_price`
-
-#### Scenario: ast_cfm 字段名一致
-
-- **WHEN** broker 推送 `ast_cfm` row 含 `frozen_cash`
-- **THEN** `push_handler_ast.py` MUST 用 `row.get('frozen_cash')`，不再 alias `frozen`
-
 ### REQ-PUSH-030: broker status 字段重映射表（v11 新增段）
 
 push handler MUST 严格读 broker 原字段名（snake_case），与 parsers 层对齐；WS payload `status` 字段 MUST 是 broker xtconstant 数字字符串 (`'48'`...`'255'`)，含义与 xtconstant 字典一一对应。
@@ -301,6 +271,78 @@ push handler MUST 严格读 broker 原字段名（snake_case），与 parsers �
 - **THEN** status 字段值必须是 broker xtconstant 字典之一 (48/49/50/51/52/53/54/55/56/57/255)
 - **AND** 前端 view (Trade.vue / Orders.vue) 的 status 分组集合按 broker 字典定义
 - **AND** 不再有"本地推断码"语义层 (旧本地码 49/50/51/53/56 全部对齐到 broker 码)
+
+### REQ-PUSH-031: trd_cfm 触发 Position.vol 增量更新（consolidate-position-data-flow）
+
+broker 推 `trd_cfm` 时,后端在落库 Order / Trade 的同时 MUST 同步更新对应 stock_code 的 `Position.vol` 字段（intra-day 实时性）。增量更新仅作用于 `vol` 字段；`cost_price` / `avl_vol` / `today_buy` / `today_sell` / `last_vol` 等由 day-init reconcile 兜底不动。
+
+#### Scenario: 买单成交 → Position.vol 增加
+
+- **WHEN** broker 推 trd_cfm, order_type='23'（买）, volume=100, stock_code='600030.SH'
+- **AND** Position row 存在（`stock_code='600030.SH'` 已由 day-init reconcile 创建）
+- **THEN** `Position.vol` += 100
+- **AND** `Position.cost_price` / `Position.avl_vol` / `Position.last_vol` 等其他字段不变
+
+#### Scenario: 卖单成交 → Position.vol 减少
+
+- **WHEN** broker 推 trd_cfm, order_type='24'（卖）, volume=50
+- **AND** Position row 存在
+- **THEN** `Position.vol` -= 50
+- **AND** 其他字段不变
+
+#### Scenario: Position 不存在 → log warning 跳过
+
+- **WHEN** broker 推 trd_cfm 且对应 stock_code 的 Position row 不存在（e.g. day-init reconcile 未跑）
+- **THEN** `handle_trd_cfm` MUST log 一条 WARNING（含 order_no / trade_id / stock_code）并跳过 Position.vol 更新
+- **AND** Order / Trade 落库照常进行（不阻塞成交写入）
+
+#### Scenario: cancel-trade (trade_type=1) → 必须跳过 Position 更新
+
+- **WHEN** broker 推 trade_type=1（cancel-trade, user_def='CANCEL:orig_order_no'）的 trd_cfm
+- **THEN** `handle_trd_cfm` MUST 跳过 Position.vol ±volume 逻辑（按 OQ-1 选项 B 决议：DELETE 端点已抹平 `orig.cancelled_volume = orig.volume`，cancel-trade 是状态变更声明而非新增交易）
+- **AND** `Position.vol` / `Position.cost_price` 等其他字段保持不变
+- **AND** Order / Trade 落库照常进行（cancel-trade 走与正常 trd_cfm 相同的 ORM 写入路径）
+
+### REQ-PUSH-032: pos_cfm / ast_cfm 删除（BREAKING，consolidate-position-data-flow）
+
+broker xtquant 协议不发送 `pos_cfm` 与 `ast_cfm` 推送事件（xtquant 推送仅有 `ord_cfm` 与 `trd_cfm` 两个 func 名）。本 MUST 删除所有 `pos_cfm` / `ast_cfm` 路由、handler 文件、WS 频道与前端 store 入口；`pos_cfm` / `ast_cfm` MUST NOT 注册到任何 `_PUSH_CHANNEL` 或 `HANDLERS` dict 中。持仓 / 资金的实时性改由 `trd_cfm → Position.vol` 增量（持仓层，REQ-PUSH-031）+ day-init reconcile（权威快照）共同满足。
+
+#### Scenario: pos_cfm 不再有任何路由/handler/频道
+
+- **WHEN** broker 意外推送 func='pos_cfm' 消息
+- **THEN** push listener MUST log INFO 级别忽略（do not route）
+- **AND** `server/services/push/pos.py` 文件不存在
+- **AND** `server/services/push/routes.py::_PUSH_CHANNEL` 中无 `pos_cfm` 键
+- **AND** `server/services/push/handlers.py::HANDLERS` 中无 `pos_cfm` 入口
+- **AND** WS 频道不存在 `position_update` 端点
+
+#### Scenario: ast_cfm 不再有任何路由/handler/频道
+
+- **WHEN** broker 意外推送 func='ast_cfm' 消息
+- **THEN** push listener MUST log INFO 级别忽略
+- **AND** `server/services/push/ast.py` 文件不存在
+- **AND** `server/services/push/routes.py::_PUSH_CHANNEL` 中无 `ast_cfm` 键
+- **AND** `server/services/push/handlers.py::HANDLERS` 中无 `ast_cfm` 入口
+- **AND** WS 频道不存在 `asset_update` 端点
+
+#### Scenario: 前端 store 移除 pos/ast push 入口
+
+- **WHEN** 前端 store 模块加载
+- **THEN** `client/src/stores/ws_dispatch.js` 中不存在 `_onPositionCfm` / `_onAssetCfm` 函数
+- **AND** `dispatchPayload` switch 中不存在 `pos_cfm` / `ast_cfm` case
+- **AND** `client/src/stores/holdings_push.js` 中不存在 `applyPositionPush` / `applyAssetPush` 函数
+- **AND** `client/src/stores/holdings.js` 不 re-export 这些函数
+
+### REQ-PUSH-033: WS 频道列表（consolidate-position-data-flow 变更后清单）
+
+变更后 WebSocket MUST 仅推送 `order_update`（来自 ord_cfm）与 `trade_update`（来自 trd_cfm）两个频道。`position_update` / `asset_update` 频道 MUST NOT 注册到 `server/ws/manager.py`，**不再存在**。
+
+#### Scenario: 前端依赖 position_update / asset_update 需迁移
+
+- **WHEN** 前端代码或外部集成曾订阅 `position_update` 或 `asset_update` 频道
+- **THEN** 该订阅将永远收不到消息（服务端断流）
+- **AND** **BREAKING**: 调用方必须迁移为轮询 `/api/holdings`（持仓）与 `/api/asset`（资金）
+- **AND** 持仓数量变化 → 通过 Order.status（broker 已报/已成交）推 `order_update` 反查持仓是否变化
 
 ## Scenarios
 
@@ -362,7 +404,6 @@ RS2: [{
 
 ## Known Issues (from analysis)
 
-- 🟡 `position_update` 和 `asset_update` 频道路由待完善
+- ✅ consolidate-position-data-flow: `pos_cfm` / `ast_cfm` / `position_update` / `asset_update` 已删除（REQs 032/033），handler dead code 清除
 - 🟡 `func=qry_pos` 误路由问题根因是 QMT 端，不在本项目修复范围但需健壮处理
-- 🟡 push handler `handle_pos_cfm` 不写 `market_value`（Position ORM 无此列，前端实时计算）
 - 🟢 push listener 的解析器 `_parse_ord_cfm` 散落在 `client.py`，应统一为 `rpc-protocol` 能力
