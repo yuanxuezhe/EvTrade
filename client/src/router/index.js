@@ -6,9 +6,13 @@ const Login = () => import('../views/Login.vue')
 const Dashboard = () => import('../views/Dashboard.vue')
 const Trade = () => import('../views/Trade.vue')
 const Asset = () => import('../views/Asset.vue')
-const Orders = () => import('../views/Orders.vue')
 const Holdings = () => import('../views/Holdings.vue')
-const Trades = () => import('../views/Trades.vue')
+// v12: 当日 / 历史 拆分 — TodayOrders/Trades 读 Pinia + IDB（无 HTTP）,
+//   HistoryOrders/Trades 走 HTTP 局部 state（不入 IDB）
+const TodayOrders = () => import('../views/TodayOrders.vue')
+const TodayTrades = () => import('../views/TodayTrades.vue')
+const HistoryOrders = () => import('../views/HistoryOrders.vue')
+const HistoryTrades = () => import('../views/HistoryTrades.vue')
 const AlgoStrategy = () => import('../views/AlgoStrategy.vue')
 const TStrategy = () => import('../views/TStrategy.vue')
 const Users = () => import('../views/Users.vue')
@@ -32,9 +36,15 @@ const routes = [
   { path: '/positions', redirect: '/t0-trade' },
   { path: '/trade', name: 'Trade', component: Trade, meta: { title: '交易下单', requiresTrader: true } },
   { path: '/asset', name: 'Asset', component: Asset, meta: { title: '账户资金' } },
-  { path: '/orders', name: 'Orders', component: Orders, meta: { title: '委托查询' } },
+  // v12: 委托 / 成交 拆分当日 + 历史 2 套视图
+  { path: '/today/orders', name: 'TodayOrders', component: TodayOrders, meta: { title: '当日委托' } },
+  { path: '/today/trades', name: 'TodayTrades', component: TodayTrades, meta: { title: '当日成交' } },
+  { path: '/history/orders', name: 'HistoryOrders', component: HistoryOrders, meta: { title: '历史委托' } },
+  { path: '/history/trades', name: 'HistoryTrades', component: HistoryTrades, meta: { title: '历史成交' } },
+  // v12: 旧 /orders /trades 路由 redirect 到 today（同义, 旧书签不破）
+  { path: '/orders', redirect: '/today/orders' },
+  { path: '/trades', redirect: '/today/trades' },
   { path: '/holdings', name: 'Holdings', component: Holdings, meta: { title: '持仓查询' } },
-  { path: '/trades', name: 'Trades', component: Trades, meta: { title: '成交查询' } },
   // /to-management 旧路由 → redirect 到 /t0-trade (T0Trade.vue 真快速做T页面)
   { path: '/to-management', redirect: '/t0-trade' },
   { path: '/t-strategy', name: 'TStrategy', component: TStrategy, meta: { title: '策略做T' } },
