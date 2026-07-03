@@ -168,8 +168,8 @@ class RPClient:
         真正的成交通知通过 push 队列异步推送：
           - ord_cfm : 委托状态/成交通知（首次报单、状态变化）
           - trd_cfm : 成交回报
-          - pos_cfm : 持仓变化（可选）
-          - ast_cfm : 资金变化（可选）
+        # change consolidate-position-data-flow: pos_cfm / ast_cfm 不再订阅
+        # (xtquant broker 协议不发送这两个事件名)
 
         协议格式与 ANSWER 类似（func + headers + rows），但无 error_code 语义。
         """

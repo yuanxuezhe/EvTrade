@@ -129,7 +129,7 @@ class PushDispatcher:
         active_trd_date: Optional[str],
         push_trace: str,
     ) -> None:
-        """ord_cfm / pos_cfm / ast_cfm：用 handler 结果或 fallback 行数据广播。
+        """ord_cfm / trd_cfm：用 handler 结果或 fallback 行数据广播。
 
         内部调用 ws_manager.broadcast 返回 coroutine，
         用 asyncio.ensure_future 调度，不阻塞后续行的处理。

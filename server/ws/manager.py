@@ -12,8 +12,8 @@ class WSManager:
         self.active_connections: Dict[str, Set[WebSocket]] = {
             "order_update": set(),
             "trade_update": set(),
-            "position_update": set(),
-            "asset_update": set(),
+            # change consolidate-position-data-flow: position_update / asset_update 频道已删除
+            # (xtquant broker 不发 pos_cfm / ast_cfm, 改由 trd_cfm 增量 + day-init reconcile 兜底)
             "quote_update": set(),
         }
 

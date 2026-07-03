@@ -1,9 +1,13 @@
 """
-push/handlers.py — 4 类 broker push 路由表 + 统一入口 handle_push
+push/handlers.py — 2 类 broker push 路由表 + 统一入口 handle_push
+
+change consolidate-position-data-flow: pos_cfm / ast_cfm handler 已删除
+(xtquant broker 协议不发送这两个事件)。仅剩 ord_cfm / trd_cfm 两个 handler。
 
 调用方：
   - server/services/push/dispatcher.py  _run_handle_push
-  - server/test_push_handlers.py  handle_push, _infer_order_status, TERMINAL_STATUSES, _status_msg
+  - tests/server/services/push/test_handlers.py  handle_push + _infer_order_status
+  - server/test_push_handlers.py  (legacy, 待迁移)
   - server/test_push_async.py  handle_push
 """
 import logging
@@ -21,22 +25,18 @@ from server.services.order_status import (
 from server.services.push.helpers import _float, _int, _str, _utcnow
 from server.services.push.ord import handle_ord_cfm
 from server.services.push.trd import handle_trd_cfm
-from server.services.push.pos import handle_pos_cfm
-from server.services.push.ast import handle_ast_cfm
 
 log = logging.getLogger(__name__)
 
-# 4 类 push → handler 路由表
+# 2 类 push → handler 路由表 (change consolidate-position-data-flow)
 HANDLERS = {
     "ord_cfm": handle_ord_cfm,
     "trd_cfm": handle_trd_cfm,
-    "pos_cfm": handle_pos_cfm,
-    "ast_cfm": handle_ast_cfm,
 }
 
 
 def handle_push(db: Session, func: str, row: Dict[str, Any], ts: str) -> Optional[Dict[str, Any]]:
-    """统一入口 — 同步签名（向后兼容 test_push_handlers.py 11 用例）。
+    """统一入口 — 同步签名（向后兼容 test_push_handlers.py）。
 
     返回 handler 的结果（OrderOut/TradeOut 兼容 dict），供 WS 推送重组包。
     实际调用方在 rpc/transport.py 走 loop.run_in_executor 包装，不阻塞 event loop。
@@ -55,7 +55,7 @@ __all__ = [
     # helpers
     "_str", "_float", "_int", "_utcnow",
     # handlers
-    "handle_ord_cfm", "handle_trd_cfm", "handle_pos_cfm", "handle_ast_cfm",
+    "handle_ord_cfm", "handle_trd_cfm",
     # dispatch
     "HANDLERS", "handle_push",
 ]

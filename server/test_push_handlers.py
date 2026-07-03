@@ -14,7 +14,7 @@ import pytest
 import logging
 from datetime import datetime
 from db import Base, engine, init_db, SessionLocal
-from models.orm import Order, Trade, Position, Asset, SysStatus
+from models.orm import Order, Trade, SysStatus
 from services.push.handlers import handle_push, _infer_order_status, TERMINAL_STATUSES, _status_msg
 
 
@@ -381,139 +381,9 @@ def test_trd_cfm_terminal_status_not_overridden():
     db.close()
 
 
-# ──── pos_cfm ────
-
-def test_pos_cfm_upserts_position():
-    """v10: 严格用 broker 原字段名 avl_amt / avg_price"""
-    db = SessionLocal()
-    # 第一次推送
-    handle_push(db, "pos_cfm", {
-        "stock_code": "600030.SH",
-        "volume": 1000,
-        "avl_amt": 1000,        # v10: 原字段名
-        "avg_price": 12.5,      # v10: 原字段名
-        "market_value": 12500.0,
-    }, ts="20260614 09:30:00")
-    db.commit()
-    db.close()
-
-    # 重新读（按 stock_code PK）
-    db = SessionLocal()
-    p = db.query(Position).filter_by(stock_code="600030.SH").first()
-    assert p is not None
-    assert p.vol == 1000
-    assert p.cost_price == 12.5
-    db.close()
-
-    # 第二次推送 → 覆盖
-    db = SessionLocal()
-    handle_push(db, "pos_cfm", {
-        "stock_code": "600030.SH",
-        "volume": 1100,
-        "avl_amt": 1100,        # v10: 原字段名
-        "avg_price": 12.45,     # v10: 原字段名
-        "market_value": 13695.0,
-    }, ts="20260614 14:00:00")
-    db.commit()
-    p = db.query(Position).filter_by(stock_code="600030.SH").first()
-    assert p.vol == 1100
-    assert p.cost_price == 12.45
-    db.close()
-
-
-def test_pos_cfm_vol_fallback_when_volume_missing():
-    """pos_cfm 行不送 volume 字段（broker 实际行为）→ vol 兜底为 avl_vol
-
-    v10: 严格用 broker 原字段名 avl_amt / avg_price
-    """
-    db = SessionLocal()
-    handle_push(db, "pos_cfm", {
-        "stock_code": "600519.SH",
-        # 不送 volume
-        "avl_amt": 100,         # v10: 原字段名
-        "avg_price": 1500.0,    # v10: 原字段名
-    }, ts="20260614 09:30:00")
-    db.commit()
-    p = db.query(Position).filter_by(stock_code="600519.SH").first()
-    assert p is not None
-    assert p.vol == 100  # 兜底自 avl_vol
-    assert p.avl_vol == 100
-    assert p.cost_price == 1500.0
-    db.close()
-
-
-def test_pos_cfm_vol_explicit_takes_precedence():
-    """pos_cfm 显式送 volume → 不用 avl_vol 兜底
-
-    v10: 严格用 broker 原字段名 avl_amt / avg_price
-    """
-    db = SessionLocal()
-    handle_push(db, "pos_cfm", {
-        "stock_code": "600519.SH",
-        "volume": 200,
-        "avl_amt": 150,         # v10: 原字段名 (vol 200 != avl 150, 冻结 50)
-        "avg_price": 1500.0,    # v10: 原字段名
-    }, ts="20260614 09:30:00")
-    db.commit()
-    p = db.query(Position).filter_by(stock_code="600519.SH").first()
-    assert p.vol == 200  # 不兜底
-    assert p.avl_vol == 150
-    db.close()
-
-
-def test_pos_cfm_zero_holdings_no_fallback():
-    """pos_cfm 推 avl_amt=0 → vol 也应是 0（不兜底错）
-
-    v10: 严格用 broker 原字段名 avl_amt
-    """
-    db = SessionLocal()
-    handle_push(db, "pos_cfm", {
-        "stock_code": "EMPTY.SH",
-        "avl_amt": 0,           # v10: 原字段名
-    }, ts="x")
-    db.commit()
-    p = db.query(Position).filter_by(stock_code="EMPTY.SH").first()
-    assert p is not None
-    assert p.vol == 0
-    assert p.avl_vol == 0
-    db.close()
-
-
-# ──── ast_cfm ────
-
-def test_ast_cfm_upserts_asset():
-    """v10: 严格用 broker 原字段名 frozen_cash"""
-    db = SessionLocal()
-    handle_push(db, "ast_cfm", {
-        "total_asset": 100000.0,
-        "cash": 50000.0,
-        "frozen_cash": 1000.0,  # v10: 原字段名
-        "market_value": 50000.0,
-    }, ts="20260614 09:30:00")
-    db.commit()
-    a = db.query(Asset).first()  # 单行无主键
-    assert a is not None
-    assert a.total_asset == 100000.0
-    assert a.cash == 50000.0
-    assert a.frozen_cash == 1000.0
-    db.close()
-
-
-def test_ast_cfm_overwrites_on_second_push():
-    """v10: 严格用 broker 原字段名 frozen_cash"""
-    db = SessionLocal()
-    handle_push(db, "ast_cfm", {
-        "total_asset": 100000.0, "cash": 50000.0, "frozen_cash": 0, "market_value": 50000.0,  # v10
-    }, ts="x")
-    db.commit()
-    handle_push(db, "ast_cfm", {
-        "total_asset": 150000.0, "cash": 100000.0, "frozen_cash": 0, "market_value": 50000.0,  # v10
-    }, ts="y")
-    db.commit()
-    a = db.query(Asset).first()
-    assert a.total_asset == 150000.0
-    assert a.cash == 100000.0
-    db.close()
+# ──── pos_cfm (change consolidate-position-data-flow: 已删除) ────
+# 占位段,标记原 pos_cfm + ast_cfm 测试已迁移到 tests/server/services/push/test_handlers.py
+# 并同步删除 (本 change 涵盖 7 个用例)
 
 
 # ──── 路由 ────

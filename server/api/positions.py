@@ -1,7 +1,8 @@
 """
 positions.py — v5 重构版（schema refactor）
 
-持仓由 pos_cfm push handler + do_reconcile 写入 positions 表。
+持仓由 trd_cfm push handler (intra-day 增量, Position.vol) + do_reconcile (day-init 全表覆盖) 写入 positions 表。
+change consolidate-position-data-flow: pos_cfm push handler 已删除 (xtquant broker 不发)。
 GET /api/positions 纯读 DB，不调 RPC。
 
 v5 改动：

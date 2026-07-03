@@ -1,8 +1,9 @@
 """
 asset.py — v5 重构版（schema refactor）
 
-资金由 ast_cfm push handler 写入 assets 表（单行，无主键）。
+资金由 day-init reconcile (server.services.reconcile.do_reconcile) 写入 assets 表（单行，无主键）。
 GET /api/asset 纯读 DB，不调 RPC。
+change consolidate-position-data-flow: ast_cfm push handler 已删除 (xtquant broker 不发)。
 
 v5 改动：
 - 移除 TRD_DATE 字段（assets 只保存当前资金）

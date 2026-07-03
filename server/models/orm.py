@@ -124,8 +124,10 @@ class Position(Base):
     """持仓表（单股唯一，无 trd_date；当前快照语义）
 
     📖 详见 `openspec/specs/data-model/spec.md` §1（Position 行）
-    📌 vol 字段：pos_cfm 推送时,row.volume 缺字段或为 0 兜底为 avl_vol
-       （参见 change `2026-06-16-fix-position-vol-display`）
+    📌 vol 字段来源（change consolidate-position-data-flow 后）：
+       - day-init：do_reconcile 全表覆盖（写入 avl_vol / vol / cost_price）
+       - intra-day：trd_cfm push handler 按 trade_type 累加/扣减（vol / avl_vol ± volume）
+       - 不再依赖 pos_cfm 推送（xtquant broker 不发）
     """
     __tablename__ = "positions"
 

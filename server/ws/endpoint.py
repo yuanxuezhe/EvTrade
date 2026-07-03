@@ -32,7 +32,10 @@ def register_ws_endpoint(app: FastAPI):
 
     @app.websocket("/ws/{channel}")
     async def websocket_endpoint(websocket: WebSocket, channel: str):
-        """前端订阅推送。channel ∈ order_update | trade_update | position_update | asset_update。
+        """前端订阅推送。channel ∈ order_update | trade_update（quote_update 走 hqserver :8765，不在此端点处理）。
+
+        change consolidate-position-data-flow: position_update / asset_update 频道已删除
+        (xtquant broker 不发 pos_cfm / ast_cfm, 改由 trd_cfm 增量 + day-init reconcile 兜底).
 
         通过 query param ?token=JWT 认证；无 token 则拒绝连接。
 
