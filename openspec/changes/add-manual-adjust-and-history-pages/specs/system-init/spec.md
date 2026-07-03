@@ -1,4 +1,4 @@
-## MODIFIED Requirements
+## ADDED Requirements
 
 ### Requirement: day-init reconcile 全表覆盖语义（v12 强化）
 

@@ -1,4 +1,4 @@
-## MODIFIED Requirements
+## ADDED Requirements
 
 ### Requirement: 业务数据生命周期 (v12 豁免：orders / trades 当日缓存走 IDB)
 

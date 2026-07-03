@@ -1,4 +1,4 @@
-## MODIFIED Requirements
+## ADDED Requirements
 
 ### Requirement: Position 表结构（v12 删除 today_buy / today_sell 死字段）
 
