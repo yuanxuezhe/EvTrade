@@ -15,7 +15,7 @@ change consolidate-position-data-flow:
 - trade_type=1 (cancel-trade) → MUST 跳过 Position.vol 更新（OQ-1 option B；
   DELETE 端点 R1 抹平已负责 vol 调整）
 - Position 不存在 → log WARNING + 跳过（admin 必须先 day-init reconcile）
-- 不动 Position.cost_price / avl_vol / today_buy / today_sell / last_vol
+- 不动 Position.cost_price / avl_vol / last_vol (today_buy/today_sell 已删除)
 """
 from typing import Any, Dict, Optional
 
@@ -72,15 +72,21 @@ def handle_trd_cfm(db: Session, row: Dict[str, Any], ts: str) -> Optional[Dict[s
     if not order and broker_order_id:
         order = db.query(Order).filter_by(order_id=broker_order_id, trd_date=trd_date).first()
 
+    # v13: amount 本地算 = price × volume (忽略 broker.traded_amount, 与前端
+    #   normalizeTrade 公式一致 — system-delegation-price-fill-calc 设计点)
+    #   broker 偶尔推 999.99 / 999.0 等与本地不一致的金额会污染累计 + avg_price
+    price = _float(row.get('traded_price', 0))         # v10: 原字段名
+    volume = _int(row.get('traded_volume', 0))         # v10: 原字段名
+    amount = round(price * volume, 2) if volume else 0.0
     trade = Trade(
         trd_date=trd_date,
         order_no=broker_remark,
         trade_id=trade_id,
         stock_code=_str(row.get('stock_code', '')),
         order_type=_str(row.get('order_type', '')),
-        price=_float(row.get('traded_price', 0)),       # v10: 原字段名
-        volume=_int(row.get('traded_volume', 0)),       # v10: 原字段名
-        amount=_float(row.get('traded_amount', 0)),     # v10: 原字段名
+        price=price,
+        volume=volume,
+        amount=amount,
         # v10: parse_broker_ts 标准化为 "YYYY-MM-DD HH:MM:SS.fff"
         trade_time=parse_broker_ts(_str(row.get('traded_time', ts)), trd_date, tz='local'),
         # change consolidate-position-data-flow: cancel-trade 区分
@@ -134,7 +140,7 @@ def _update_position_vol(
     """trd_cfm 增量更新 Position.vol（change consolidate-position-data-flow）
 
     设计要点：
-    - 仅累加/扣减 `Position.vol`，不动 cost_price / avl_vol / today_buy / today_sell / last_vol
+    - 仅累加/扣减 `Position.vol`，不动 cost_price / avl_vol / last_vol (today_buy/today_sell 列已删除)
       （这些字段由 day-init reconcile 负责，详见 design DR-2）
     - order_type "23" (买) → vol += volume；"24" (卖) → vol -= volume
     - Position row 不存在 → log WARNING + 跳过（admin 必须先 day-init reconcile）
