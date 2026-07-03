@@ -15,9 +15,11 @@
   - `start_date` / `end_date` 8 位数字字符串 `^\d{8}$`（Pydantic v1 `Query(regex=...)`）；缺省=激活日 trd_date
   - 过滤谓词 `start_date <= trd_date <= end_date`（仅 `start_date` 时 `trd_date >= start_date`；仅 `end_date` 时 `trd_date <= end_date`）
   - 排序 `ORDER BY order_time DESC`
+  - **v12 强化（历史查询核心参数）**：`HistoryOrders.vue` 必须显式传 `start_date` + `end_date`（与可选 `stock_code`）三参数；缺一者返 422。这是历史查询页面的入口契约，与当日 `TodayOrders.vue`（读 Pinia 内存 + IDB）完全分离
 - `GET /api/trades?stock_code=...&start_date=YYYYMMDD&end_date=YYYYMMDD` — 成交列表（走 `qry_trades`）
   - 同上区间参数语义
   - 排序 `ORDER BY trade_time DESC, trade_id DESC`（同秒二级 trade_id 兜底；2026-06-30 改：原 `created_at DESC` 与 broker 成交时刻有毫秒级漂移）
+  - **v12 强化**：`HistoryTrades.vue` 同上三参数强制
 - `GET /api/asset` — 账户资金（走 `qry_asset`）
 - 响应统一 `{code: 0, msg: "", list: [...]}`；code≠0 表示 RPC 错误
 
@@ -146,8 +148,12 @@ DELETE 端点业务写入点固定码 MUST 改 broker 码：
 
 ### REQ-TRADE-004: 鉴权
 
-- 全部 `/api/orders` `/api/trades` `/api/asset` 路由必须登录
+- 全部 `/api/orders` `/api/trades` `/api/asset` `/api/positions` 路由必须登录
 - `POST /orders/place` 和 `DELETE /orders/{no}` 额外要求 `trader` 或 `admin` 角色
+- **v12 新增（admin-only 调平）**：
+  - `PUT /api/asset/adjust`
+  - `PUT /api/positions/{stock_code}/adjust`
+  - 均必须 role=admin（`require_admin` 直接挂端点 dependency，不走 `_AUTH`）
 
 ### REQ-TRADE-005: 前端实时性
 
@@ -355,6 +361,51 @@ register_query(router)
 - `pytest server/test_orders_api.py` 可被 R6 已知问题阻塞（pre-existing "Table 'orders' already defined"），import 完整性必须通过
 - 21 个端点路径不变：POST /api/orders/place、DELETE /api/orders/{order_no}、GET /api/orders、GET /api/orders/history
 
+### REQ-TRADE-009: 资金 / 持仓调平 API（v12 新增）
+
+admin 资金 / 持仓盘中调平端点，**核心合约**详见 `asset-position-adjust/spec.md`。本节给出在 trading 域的鉴权约束与归宿。
+
+- `PUT /api/asset/adjust` —— 同 `asset.py` router（facade），实现 `server/api/asset_adjust.py`
+- `PUT /api/positions/{stock_code}/adjust` —— 同 `positions.py` router（facade），实现 `server/api/position_adjust.py`
+
+#### Scenario: 资金调增
+
+- **WHEN** admin 调 `PUT /api/asset/adjust { delta_cash: 1000.0, reason: "银证转账入金" }`
+- **THEN** 响应 `{code: 0, asset: { cash: 6000.0, synced_from: "manual", ... }}`
+- **AND** DB `Asset.cash += 1000.0`、`Asset.synced_from = "manual"`
+
+#### Scenario: 持仓调增 vol + 不动 avl_vol
+
+- **WHEN** admin 调 `PUT /api/positions/600030.SH/adjust { delta_vol: 100 }`
+- **AND** Position row 已存在
+- **THEN** `Position.vol += 100`，`Position.avl_vol` 不变
+- **AND** `Position.synced_from = "manual"`
+
+#### Scenario: 不存在的 stock_code → 404
+
+- **WHEN** admin 调 `PUT /api/positions/UNKNOWN/adjust { delta_vol: 100 }`
+- **THEN** 返 `404` + `{detail: "POSITION_NOT_FOUND: no Position for stock_code=UNKNOWN"}`
+- **AND** 不自动新建 Position 行（防误操作）
+
+#### Scenario: trader → 403 / 未登录 → 401
+
+- **WHEN** trader 调任一调平端点
+- **THEN** 返 403 `需要管理员权限`
+- **WHEN** 无 token 调任一调平端点
+- **THEN** 返 401 `未登录或登录已过期`
+
+#### Scenario: 缺 delta_* 字段 → 422
+
+- **WHEN** admin 调 `PUT /api/asset/adjust {}` 或 `PUT /api/positions/{stock_code}/adjust {}`
+- **THEN** 返 422 `at least one of delta_* required`
+
+#### 边界（设计约束）
+
+- 负数允许（broker 可透支 / 仓位可临时负值），不抛 ValueError
+- `reason` 仅入 log，不入库（用户不留 audit row）
+- 不引入 `manual_offset_*` 字段，调平值直接体现在 `cash` / `total_asset` / `vol` / `avl_vol` 上
+- 下次 `do_reconcile` 全表覆盖会重置 `synced_from = "rpc_full"`，调平值被 broker 真实值覆盖
+
 ## Scenarios
 
 ### S-TRADE-001: 下一笔限价买单
@@ -385,6 +436,9 @@ Then 返回该股票的全部委托，**不包含**其他股票
 | DELETE | `/api/orders/{id}` | `cancel_ord` | trader |
 | GET | `/api/trades` | `qry_mch` | login |
 | GET | `/api/asset` | `qry_asset` | login |
+| PUT | `/api/asset/adjust` | - | **admin** （v12 调平） |
+| GET | `/api/positions` | - | login |
+| PUT | `/api/positions/{stock_code}/adjust` | - | **admin** （v12 调平） |
 | GET | `/api/system/active-day` | - | login |
 
 ## Known Issues (from analysis)
