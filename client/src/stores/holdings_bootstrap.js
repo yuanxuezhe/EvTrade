@@ -7,9 +7,14 @@
  * 单资源结果应用 helper 已下沉到 holdings_apply_results.js（避免本文件超 250 行）。
  *
  * 职责：
- *   - bootstrap: 拉激活日 → 并行 4 RPC → 启动 ws
+ *   - bootstrap: 拉激活日 → IDB 命中优先 → 并行 RPC → 启动 ws → IDB 写回
  *   - refreshAll: 并行 4 RPC → 写缓存 + 耗时统计
  *   - refreshPositions / refreshAsset: 单资源刷新（兼容旧 API）
+ *
+ * v12 (add-manual-adjust-and-history-pages):
+ *   - bootstrap: IDB hit 时跳过 orders/trades HTTP 拉取（positions / asset 仍拉 RPC）
+ *   - bootstrap: 跨日（IDB.trd_date !== active.trd_date）→ clearDate(昨日)
+ *   - bootstrap: 拉完 orders/trades 后 fire-and-forget 写 IDB（缓存下次 reload）
  *
  * 调用者：holdings.js 内 `createBootstrap({...})` 拿 4 个流程函数。
  */
@@ -20,10 +25,17 @@ import {
   applyAssetResult, applyPositionsResult, applyOrdersResult, applyTradesResult,
   applyAssetRefresh, applyPositionsRefresh, applyOrdersRefresh, applyTradesRefresh,
 } from './holdings_apply_results'
+import {
+  initIDB,
+  loadOrdersForDate, loadTradesForDate,
+  saveOrder, saveTrade,
+  clearDate,
+} from './holdings_idb'
 
-// v9: bootstrap 拉 30 天窗口全量委托/成交缓存（满足 30 天回看需求）
-// 单次激活日窗口 (bootstrap-window) = [active-29, active]，含当天共 30 天
-const BOOTSTRAP_WINDOW_DAYS = 30
+// v13: bootstrap 只拉激活日 (Today 视图消费), 历史走 Phase 4 History 视图独立 RPC
+//   单次窗口 = [active, active], 1 天
+//   配套 IDB 复合 key 单行存: 写 = N 次 O(1) idbPut, 读 = prefix 扫描
+const BOOTSTRAP_WINDOW_DAYS = 1
 
 /**
  * 创建 bootstrap/refresh 流程工厂
@@ -74,9 +86,13 @@ export function createBootstrap({
 
   /**
    * App 启动 / 登录后调用：
-   *   1) 先拉激活日 (api.getActiveDay) → 写 activeTrdDate (v8: 推送守门用)
-   *   2) 并行拉 4 个 RPC（asset / holdings / orders / trades）→ 写缓存 → 写日志
-   *   3) 启动 ws + 实时市值 watcher
+   *   v12 (IDB 优先):
+   *     1) 拉激活日 (api.getActiveDay) → 写 activeTrdDate (v8: 推送守门用)
+   *     2) 尝试 IDB 命中 orders / trades → 写 Pinia（200ms 内显示）
+   *     3) IDB 命中时跳过 orders / trades HTTP 拉取；否则并行 4 RPC → 写缓存 → 写日志
+   *     4) 跨日 → clearDate(昨日)
+   *     5) 拉取完成后 fire-and-forget 写 IDB（缓存下次 reload）
+   *     6) 启动 ws + 实时市值 watcher
    */
   async function bootstrap(wsConnect) {
     if (loading.value) return
@@ -87,13 +103,26 @@ export function createBootstrap({
 
       refCounts.value = { asset: 'loading', positions: 'loading', orders: 'loading', trades: 'loading' }
 
-      const dateRange = _buildWindow()
-      const results = await Promise.allSettled([
+      // ─── v12: IDB 命中优先 ───
+      const idbHit = await _tryIDBFirst()
+
+      // build 委托/成交 拉取范围：仅在 IDB miss 时拉 30 天窗口
+      const dateRange = idbHit ? null : _buildWindow()
+
+      // v12: IDB hit 时 orders/trades 不发 RPC；asset / positions 仍拉
+      const tasks = [
         api.getAsset().catch((e) => { throw e }),
         api.getHoldings().catch((e) => { throw e }),
-        api.getOrders(dateRange).catch((e) => { throw e }),
-        api.getTrades(dateRange).catch((e) => { throw e })
-      ])
+      ]
+      if (dateRange) {
+        tasks.push(api.getOrders(dateRange).catch((e) => { throw e }))
+        tasks.push(api.getTrades(dateRange).catch((e) => { throw e }))
+      } else {
+        // IDB hit 时占位 fulfilled（applyOrdersResult / applyTradesResult 不会动 orders / trades）
+        tasks.push(Promise.resolve({ code: 0, list: [] }))
+        tasks.push(Promise.resolve({ code: 0, list: [] }))
+      }
+      const results = await Promise.allSettled(tasks)
       const [rAsset, rPos, rOrd, rTrd] = results
 
       applyAssetResult(rAsset, refs, 'bootstrap')
@@ -104,6 +133,9 @@ export function createBootstrap({
       bootstrapped.value = true
       lastUpdated.value = Date.now()
 
+      // ─── v12: 拉取完成后 fire-and-forget 写 IDB ───
+      _saveAfterBootstrap()
+
       // 启动 ws（回调由 holdings.js 注入，避免循环依赖）
       if (typeof wsConnect === 'function') wsConnect()
       log('info', '缓存', 'bootstrap', 'WS 已连接, 启动实时订阅')
@@ -112,6 +144,64 @@ export function createBootstrap({
     } finally {
       loading.value = false
     }
+  }
+
+  /**
+   * v12: 尝试从 IDB 同步读回 orders / trades。
+   *   - IDB 命中且 activeDay 一致 → 立刻写 Pinia，返 true（bootstrap 跳过 HTTP 拉取）
+   *   - IDB 跨日或不可用 → 返 false（bootstrap 走正常 RPC）
+   *   - 跨日 → clearDate(昨日 key)
+   * @returns {Promise<boolean>} 是否 IDB hit
+   */
+  async function _tryIDBFirst() {
+    const activeDay = activeTrdDate.value
+    if (!activeDay) return false
+
+    try {
+      await initIDB()  // 可能 reject（Node / SSR），跳 IDB 路径
+      const [cachedOrders, cachedTrades] = await Promise.all([
+        loadOrdersForDate(activeDay),
+        loadTradesForDate(activeDay),
+      ])
+
+      // IDB 跨日检查（防御性：理论上 IDB key 已限定 activeDay，但保留检查）
+      // IDB miss 是合法（首次启动 / 新交易日）— 走 RPC fallback 即可
+      if (cachedOrders === null && cachedTrades === null) {
+        log('info', '缓存', 'idb', `IDB miss for ${activeDay} → 走 RPC`)
+        return false
+      }
+
+      // 命中：立刻写 Pinia（orders/trades ref 是 readonly interface，写入触发响应）
+      if (Array.isArray(cachedOrders)) {
+        orders.value = cachedOrders
+        refCounts.value.orders = 'ok'
+      }
+      if (Array.isArray(cachedTrades)) {
+        trades.value = cachedTrades
+        refCounts.value.trades = 'ok'
+      }
+      log('info', '缓存', 'idb',
+        `IDB 命中 (orders=${cachedOrders?.length ?? 0}, trades=${cachedTrades?.length ?? 0}) — 跳过 RPC 拉取`)
+      return true
+    } catch (e) {
+      // IDB 不可用（隐私模式 / quota）：静默降级
+      log('warn', '缓存', 'idb', `IDB 不可用 → 走 RPC: ${e?.message || e}`)
+      return false
+    }
+  }
+
+  /**
+   * v13: bootstrap / refreshAll 完成后 fire-and-forget 写 IDB。
+   *   - 复合 key 单行存: orders/trades 各 loop saveOrder/saveTrade
+   *   - 加空检查 (risk #5 修复): 全空时不写, 避免无意义 IO
+   *   - 仅当 activeDay 已 resolve 时写
+   */
+  function _saveAfterBootstrap() {
+    const activeDay = activeTrdDate.value
+    if (!activeDay) return
+    if (orders.value.length === 0 && trades.value.length === 0) return
+    for (const order of orders.value) saveOrder(order)
+    for (const trade of trades.value) saveTrade(trade)
   }
 
   /**
@@ -145,6 +235,8 @@ export function createBootstrap({
       ].filter(Boolean)
 
       lastUpdated.value = Date.now()
+      // v12: refresh 拉到的 orders / trades 也 fire-and-forget 写 IDB
+      _saveAfterBootstrap()
       const dt = Date.now() - t0
       log('ok', '用户', 'user', `刷新完成 (${dt}ms): ${summary.join(' / ')}`)
     } catch (e) {

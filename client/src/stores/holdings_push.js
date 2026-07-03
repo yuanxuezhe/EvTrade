@@ -31,7 +31,10 @@ import {
   metaMerge,
   flattenCancelledByRow
 } from './holdings_helpers'
-// 注: 之前的 IDB 持久化已废弃. 当前架构纯 Pinia 内存, ws push 只改内存.
+import { saveOrder, saveTrade } from './holdings_idb'
+// v12: IDB 写通 — ws push 时 fire-and-forget 写 IDB (不阻塞 push)
+// v13: 改复合 key 单行存 (saveOrder/saveTrade 替代 saveOrdersForDate/saveTradesForDate),
+//      O(1) idbPut, 不再读全量 / 写全量
 
 /**
  * 创建 3 个 ws push handler
@@ -43,6 +46,16 @@ export function createPushHandlers(deps) {
   const { positions, orders, trades, cachedAsset, activeTrdDate, log, positionCodes, getQuoteStore } = deps
   // 注: consolidate-position-data-flow 后, ws 不再触发 positions / cachedAsset 写。
   //      positions 仍保留引用作为 createPushHandlers 入参 (兼容未来扩展), 但本工厂不读它。
+
+  // v13: IDB 单行写 helper（fire-and-forget, 不阻塞 push）
+  //   复合 key 维度: 每次 push 单独写 1 行 (O(1) idbPut), 不再扫全量
+  //   间接改 orders 时也单行写, 不再写全量数组
+  function _persistOrder(order) {
+    saveOrder(order)
+  }
+  function _persistTrade(trade) {
+    saveTrade(trade)
+  }
 
   /** ws._onOrderCfm 调用：合并委托 + 写日志
    *  v6: 匹配键用 order_no（本地 8 位序号 PK），order_id 可能为 null
@@ -96,6 +109,8 @@ export function createPushHandlers(deps) {
       orders.value.unshift(merged)
       log('info', '交易', 'ws', `新委托: ${merged.stock_code} ${merged.order_type === '23' ? '买' : '卖'} ${merged.volume}@${merged.price}`)
     }
+    // v13: IDB 单行写 (复合 key 维度, O(1) idbPut)
+    _persistOrder(merged)
   }
 
   /** ws._onTradeCfm 调用
@@ -132,6 +147,8 @@ export function createPushHandlers(deps) {
       volume: row.volume
     })
     trades.value.unshift(newTrade)
+    // v13: IDB 单行写 (复合 key 维度, O(1) idbPut)
+    _persistTrade(newTrade)
     // change: 反向累计 orders 中的对应委托
     if (newTrade.order_no) {
       const orderIdx = orders.value.findIndex((o) => o.order_no === newTrade.order_no)
@@ -139,6 +156,8 @@ export function createPushHandlers(deps) {
         const old = orders.value[orderIdx]
         const updated = recomputeOrderFromTrade(old, newTrade)
         orders.value[orderIdx] = updated
+        // v13: 累计间接改了 orders, 也单行写 IDB
+        _persistOrder(updated)
         log('info', '交易', 'ws', `订单累计: ${updated.stock_code} ${updated.order_no} ${updated.traded_volume}/${updated.volume} status=${updated.status}`)
       }
     }
