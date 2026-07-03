@@ -13,16 +13,17 @@
 
 - `GET /api/positions` 和 `GET /api/holdings`
 - 读本地 `positions` 表，响应 `{code, msg, list: [Position]}`
-- **Position 字段语义（v5 schema-refactor，**详细见 `data-model/spec.md` 第 3 节**）**：
+- **Position 字段语义（v12 schema，**详细见 `data-model/spec.md` 第 3 节**）**：
   - `stock_code` — PK
   - `stock_name` — 股票名
-  - `last_vol` — **期初持仓**（由 `do_reconcile` 设置；pos_cfm 不写）
-  - `today_buy` / `today_sell` — 今日买卖累计（**只由 do_reconcile 设置**）
-  - `avl_vol` — **可用**持仓
-  - `vol` — **总持仓**（pos_cfm 写入；缺字段时兜底为 `avl_vol`，见 REQ-POS-004）
-  - `cost_price` — 成本价
+  - `last_vol` — **期初持仓**（**仅** `do_reconcile` 写入；`today_buy`/`today_sell` 已删除）
+  - `avl_vol` — **可用**持仓（`do_reconcile` 写入 + `manual` 调平）
+  - `vol` — **总持仓**（`do_reconcile` 写入 + `trd_cfm` push 增量；缺字段时兜底为 `avl_vol`，见 REQ-POS-004）
+  - `cost_price` — 成本价（仅 `do_reconcile` 写入）
+  - `synced_at` / `synced_from` — 同步时间和来源
 - **market_value 不由后端计算**：前端通过 `holdings.js:liveMarketValue` 根据实时行情 × 总持仓计算
 - 后端返回 `cost_price * vol` 作为成本市值代理（前端行情未到时的 fallback）
+- **当日买卖累计**（"今日净变动"等展示）改由 `Trade` 表 `order_type` 聚合替代，不依赖 `Position` 字段
 
 ### REQ-POS-002: 鉴权
 
@@ -30,19 +31,24 @@
 
 ### REQ-POS-003: 数据来源
 
-- Push 路径：柜台 `pos_cfm` → `push_handlers.handle_pos_cfm` → 按 `stock_code` 主键 UPSERT positions 表
-  - 字段映射：`row.volume → pos.vol`（**缺字段时兜底 `avl_vol`，见 REQ-POS-004**）、`row.available → pos.avl_vol`、`row.cost_price → pos.cost_price`
-  - **不写** `last_vol` / `today_buy` / `today_sell`（注释："由对账时设置"）
-  - **不写** `market_value`（前端实时算）
+- Push 路径：xtquant broker 不发 `pos_cfm`，**本路径在 consolidate-position-data-flow 已被删除**；v12 仅保留 `trd_cfm` → `Position.vol` 增量路径（intra-day 实时响应成交回报，详见 `push/spec.md` REQ-PUSH-031）
+  - `trd_cfm` 推 `order_type='23'`（买）→ `Position.vol += volume`
+  - `trd_cfm` 推 `order_type='24'`（卖）→ `Position.vol -= volume`
+  - 不动 `last_vol` / `avl_vol` / `cost_price`（由 day-init reconcile 兜底）
 - 对账路径：`do_reconcile` → `qry_positions` RPC → `_apply_broker_data` → 清空 + 批量重写 positions 表
-  - **对账时才写** `last_vol` / `today_buy` / `today_sell`
+  - **对账时全表覆盖** `last_vol` / `avl_vol` / `vol` / `cost_price`（`sync_from = 'rpc_full'`）
+  - **v12 行为变化**：do_reconcile 不再写入 `today_buy` / `today_sell`（字段已删）
+- Manual 调平路径（v12 新增）：`PUT /api/positions/{stock_code}/adjust`（admin 鉴权）
+  - 原子 `vol` 和/或 `avl_vol` 加减
+  - 调平后 `sync_from = 'manual'`；下次 do_reconcile 自动覆盖回 `rpc_full`
 - 读路径：纯读 DB，不调 RPC
 
-### REQ-POS-004: pos_cfm vol 字段兜底（2026-06-16 立）
+### REQ-POS-004: pos_cfm vol 字段兜底（2026-06-16 立，consolidate-position-data-flow 阶段已废）
 
 - pos_cfm 推送行可能不送 `volume` 字段（只送 `available`）；若 `row.volume` 缺/为 0 而 `row.available > 0`，**vol 兜底为 avl_vol**
 - 实现位置：`server/services/push_handlers.py:handle_pos_cfm`
 - 测试用例：pos_cfm 推送 `{stock_code:"X", available:100}` 后 `positions.vol == 100`
+- **v12 注**：xtquant broker 不发 `pos_cfm`，本路径已被 trd_cfm 增量 + day-init reconcile 双路径取代；保留作为历史注释
 
 ## Scenarios
 
@@ -57,7 +63,7 @@ And `Position.vol` 是非负整数（pos_cfm 兜底后一定有值；只有持�
 Given 柜台推送 pos_cfm 行 `{stock_code:"X", available:100, cost_price:12.5}`（**不送 volume**）
 When `handle_pos_cfm` 收到
 Then upsert positions 表对应行，`vol = 100`（兜底自 avl_vol）
-And `last_vol / today_buy / today_sell` 保持不变（只对账写）
+And `last_vol / cost_price` 保持不变（仅 do_reconcile 写）
 
 ### S-POS-003: 推送更新（完整字段）
 

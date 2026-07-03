@@ -14,6 +14,10 @@ ORM 注释必须与本 spec 保持一致（diff 检查项之一）。
 - **数值归零**：所有 Float/Integer 默认 `0.0` / `0`，避免空值歧义
 - **状态码**：订单/持仓等用字符串（`status="48"..`）保持与柜台 wire format 一致
 - **复合业务键替代自增 id**：如 `(trd_date, order_no)` / `(stock_code,)`，`id` 仅在必须时使用
+- **v12 schema 调整**（change `add-manual-adjust-and-history-pages`）：
+  - `positions` 表移除 `today_buy` / `today_sell` 两列（v5 引入以来从未被消费的死字段）
+  - `assets` / `positions` 的 `synced_from` 新增 `'manual'` 取值（admin 调平写入标记）
+  - DB 迁移脚本：`scripts/migrations/2026-07-03-drop-position-today-buy-sell.sql`
 
 ## Tables Overview
 
@@ -213,19 +217,22 @@ ORM 注释必须与本 spec 保持一致（diff 检查项之一）。
 |---|---|---|---|---|
 | `stock_code` | String(16) | NO | — | PK（单股唯一） |
 | `stock_name` | String(64) | NO | "" | 股票名 |
-| `last_vol` | Integer | NO | 0 | **期初持仓**（对账时设置） |
-| `today_buy` | Integer | NO | 0 | 今日买入累计（对账时设置） |
-| `today_sell` | Integer | NO | 0 | 今日卖出累计（对账时设置） |
-| `avl_vol` | Integer | NO | 0 | **可用**持仓 |
-| `vol` | Integer | NO | 0 | **总持仓**（= last_vol + today_buy - today_sell） |
-| `cost_price` | Float | NO | 0.0 | 持仓成本价 |
+| `last_vol` | Integer | NO | 0 | **期初持仓**（仅 do_reconcile 写入） |
+| `avl_vol` | Integer | NO | 0 | **可用**持仓（do_reconcile 写入 + manual 调平） |
+| `vol` | Integer | NO | 0 | **总持仓**（do_reconcile 写入 + trd_cfm 增量 + manual 调平） |
+| `cost_price` | Float | NO | 0.0 | 持仓成本价（仅 do_reconcile 写入） |
 | `synced_at` | DateTime | NO | utcnow | 最近同步时间 |
-| `synced_from` | String(16) | NO | "" | `rpc_full` / `push_pos_cfm` / `manual` |
+| `synced_from` | String(16) | NO | "" | `rpc_full` (do_reconcile) / `push_partial` (trd_cfm 增量) / `manual` (admin 调平) |
 
 **业务规则**:
-- `vol` 的数据源：pos_cfm 推送 → `row.volume` 字段（**缺字段时兜底为 `avl_vol`**，见 change `2026-06-16-fix-position-vol-display`）
-- `last_vol` / `today_buy` / `today_sell` **只能由 do_reconcile 设置**；pos_cfm 不写
+- `vol` 的数据源：
+  - do_reconcile（day-init 全表覆盖）→ 写入 `avl_vol` + `vol` + `cost_price` + `last_vol`
+  - trd_cfm push handler（intra-day 增量）→ 仅 `vol ±= volume`（不影响 avl_vol / last_vol / cost_price）
+  - manual adjust API（admin 调平）→ 直接对 `vol` 和/或 `avl_vol` 做原子 +=
+- `last_vol` / `cost_price` **只能由 do_reconcile 设置**；其他写入源均不动
+- **已删字段**（v12）：`today_buy` / `today_sell` 在 v5 schema 引入以来从未被消费（`do_reconcile` 写入但前端从未读、push handler 不增量），变死字段后删除。**当日买卖累计语义**改由 `Trade` 表 `order_type` + `trd_date` SUM 聚合代替（见 `t0_stats.py` 接口）。
 - `market_value` 不存；前端用 `quote.last_price * vol` 实时算
+- `synced_from` 含义：`rpc_full` 表示对账权威值，`push_partial` 表示 push 增量后的中间态，`manual` 表示 admin 在盘中手工调平（再次 do_reconcile 会重置为 `rpc_full`）
 - 持仓多股；表无 trd_date（当前快照语义）
 
 ### 4. `assets` — 资金表

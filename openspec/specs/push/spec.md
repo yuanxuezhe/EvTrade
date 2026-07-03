@@ -274,7 +274,7 @@ push handler MUST 严格读 broker 原字段名（snake_case），与 parsers �
 
 ### REQ-PUSH-031: trd_cfm 触发 Position.vol 增量更新（consolidate-position-data-flow）
 
-broker 推 `trd_cfm` 时,后端在落库 Order / Trade 的同时 MUST 同步更新对应 stock_code 的 `Position.vol` 字段（intra-day 实时性）。增量更新仅作用于 `vol` 字段；`cost_price` / `avl_vol` / `today_buy` / `today_sell` / `last_vol` 等由 day-init reconcile 兜底不动。
+broker 推 `trd_cfm` 时,后端在落库 Order / Trade 的同时 MUST 同步更新对应 stock_code 的 `Position.vol` 字段（intra-day 实时性）。增量更新仅作用于 `vol` 字段；`cost_price` / `avl_vol` / `last_vol` 等由 day-init reconcile 兜底不动（v12: `today_buy` / `today_sell` 字段已删，详见 `data-model/spec.md` 第 3 节）。
 
 #### Scenario: 买单成交 → Position.vol 增加
 
