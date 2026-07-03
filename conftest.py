@@ -91,8 +91,8 @@ import server.services.t0 as _server_t0
 import server.services.push.handlers as _server_push_handlers
 import server.services.push.ord as _server_push_ord
 import server.services.push.trd as _server_push_trd
-import server.services.push.pos as _server_push_pos
-import server.services.push.ast as _server_push_ast
+# change consolidate-position-data-flow: pos/ast handler 已删除,
+#   不再 import server.services.push.pos / .ast (会 ImportError)
 import server.services.push.helpers as _server_push_helpers
 import server.services.trading_clock as _server_trading_clock
 import server.auth.security as _server_auth_security
@@ -134,8 +134,7 @@ _BARE_ALIASES = {
     "services.push.handlers": _server_push_handlers,
     "services.push.ord": _server_push_ord,
     "services.push.trd": _server_push_trd,
-    "services.push.pos": _server_push_pos,
-    "services.push.ast": _server_push_ast,
+    # change consolidate-position-data-flow: pos/ast alias 移除
     "services.push.helpers": _server_push_helpers,
     "auth": sys.modules.get("server.auth"),
     "auth.security": _server_auth_security,

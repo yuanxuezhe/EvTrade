@@ -7,6 +7,15 @@ push_handler_trd.py — trd_cfm 处理（v10: broker 原字段名）
 - 同步更新 Order traded_volume / traded_amount / avg_price
 - 用 _infer_order_status 本地推断 status（不传 broker_status，trd_cfm 永远不写撤单类）
 - v10 字段对齐：读 broker 原字段 `traded_id`/`traded_volume`/`traded_price`/`traded_amount`/`traded_time`
+
+change consolidate-position-data-flow:
+- 同时增量更新 Position.vol（intra-day 不依赖 day-init reconcile）
+  - order_type "23" (买) → vol += volume
+  - order_type "24" (卖) → vol -= volume
+- trade_type=1 (cancel-trade) → MUST 跳过 Position.vol 更新（OQ-1 option B；
+  DELETE 端点 R1 抹平已负责 vol 调整）
+- Position 不存在 → log WARNING + 跳过（admin 必须先 day-init reconcile）
+- 不动 Position.cost_price / avl_vol / today_buy / today_sell / last_vol
 """
 from typing import Any, Dict, Optional
 
@@ -74,6 +83,9 @@ def handle_trd_cfm(db: Session, row: Dict[str, Any], ts: str) -> Optional[Dict[s
         amount=_float(row.get('traded_amount', 0)),     # v10: 原字段名
         # v10: parse_broker_ts 标准化为 "YYYY-MM-DD HH:MM:SS.fff"
         trade_time=parse_broker_ts(_str(row.get('traded_time', ts)), trd_date, tz='local'),
+        # change consolidate-position-data-flow: cancel-trade 区分
+        # 0=normal 1=cancel-fill (DELETE 端点撤单代理成交)
+        trade_type=_int(row.get('trade_type', 0), 0),
     )
     db.add(trade)
     db.flush()
@@ -93,6 +105,13 @@ def handle_trd_cfm(db: Session, row: Dict[str, Any], ts: str) -> Optional[Dict[s
         print("[trd_cfm] WARN: no order for trade_id={} (order_no={}, order_id={}) — Trade 行已留存".format(
             trade_id, broker_remark, broker_order_id))
 
+    # change consolidate-position-data-flow: trd_cfm 增量更新 Position.vol
+    # OQ-1 option B: trade_type=1 (cancel-trade) MUST 跳过 — DELETE 端点
+    # R1 抹平已负责 vol 调整，本路径再 ± 会与 R1 抹平语义冲突
+    if trade.trade_type == 0:
+        _update_position_vol(db, trade.stock_code, trade.order_type, trade.volume,
+                             order_no=broker_remark, trade_id=trade_id)
+
     print("[trd_cfm] inserted trade_id={} order_no={} vol={} px={} order_status={}".format(
         trade_id, broker_remark, trade.volume, trade.price,
         order.status if order else 'N/A'))
@@ -101,3 +120,66 @@ def handle_trd_cfm(db: Session, row: Dict[str, Any], ts: str) -> Optional[Dict[s
         "trade": _trade_to_out_dict(trade),
         "order": _order_to_out_dict(order),
     }
+
+
+def _update_position_vol(
+    db: Session,
+    stock_code: str,
+    order_type: str,
+    volume: int,
+    *,
+    order_no: str = "",
+    trade_id: str = "",
+) -> None:
+    """trd_cfm 增量更新 Position.vol（change consolidate-position-data-flow）
+
+    设计要点：
+    - 仅累加/扣减 `Position.vol`，不动 cost_price / avl_vol / today_buy / today_sell / last_vol
+      （这些字段由 day-init reconcile 负责，详见 design DR-2）
+    - order_type "23" (买) → vol += volume；"24" (卖) → vol -= volume
+    - Position row 不存在 → log WARNING + 跳过（admin 必须先 day-init reconcile）
+    - 上游 caller 已保证 trade_type != 1（cancel-trade 由 DELETE 端点 R1 抹平，不重复处理）
+    - 异常（DB 错误等）仅 log，不向上抛 — 不能让 push 链路因 Position 更新失败而中断
+      Order/Trade 落库已在外层函数完成
+    """
+    if not stock_code or not volume:
+        return
+
+    from server.models.orm import Position  # lazy: 避免循环 import
+
+    pos = db.query(Position).filter_by(stock_code=stock_code).first()
+    if pos is None:
+        print(
+            "[TRD→POSITION] WARN: Position not found for stock_code={}, "
+            "skipping vol update (order_no={}, trade_id={}, order_type={}, vol={})".format(
+                stock_code, order_no, trade_id, order_type, volume,
+            )
+        )
+        return
+
+    if order_type == "23":  # 买
+        pos.vol = (pos.vol or 0) + volume
+    elif order_type == "24":  # 卖
+        pos.vol = (pos.vol or 0) - volume
+    else:
+        # 异常 order_type（不应发生）— 跳过而非乱动 vol
+        print(
+            "[TRD→POSITION] WARN: unknown order_type={} for stock_code={}, "
+            "skipping vol update (order_no={}, trade_id={})".format(
+                order_type, stock_code, order_no, trade_id,
+            )
+        )
+        return
+
+    # Position ORM 无显式 updated_at 列，沿用 synced_at 标记本次增量更新时刻
+    pos.synced_at = _utcnow()
+    if not pos.synced_from:
+        pos.synced_from = "push_partial"
+
+    print(
+        "[TRD→POSITION] updated Position.vol stock_code={} order_type={} delta={} new_vol={} "
+        "(order_no={}, trade_id={})".format(
+            stock_code, order_type, volume if order_type == "23" else -volume,
+            pos.vol, order_no, trade_id,
+        )
+    )

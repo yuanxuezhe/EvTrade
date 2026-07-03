@@ -11,7 +11,7 @@ import pytest
 import logging
 from datetime import datetime
 from server.db import Base, engine, init_db, SessionLocal
-from server.models.orm import Order, Trade, SysStatus
+from server.models.orm import Order, Trade, SysStatus, Position
 from server.services.push.handlers import handle_push, _infer_order_status, TERMINAL_STATUSES, _status_msg
 
 @pytest.fixture(autouse=True)
@@ -571,4 +571,212 @@ def test_ord_cfm_for_original_does_not_touch_cancel_row():
     orig_row = db.query(Order).filter_by(order_no="10000010", trd_date="20260614").first()
     assert orig_row is not None
     assert orig_row.status == "51", f"orig order status remains 51 (v11: 非终态, broker 已报待撤), got {orig_row.status}"
+    db.close()
+
+
+# ──── consolidate-position-data-flow: trd_cfm → Position.vol 增量 ────
+
+def test_trd_cfm_updates_position_vol_on_buy():
+    """consolidate-position-data-flow §3.2.a: 买单成交 → Position.vol += volume
+
+    初始 Position.vol=100, 成交 30 股买入 → 期望 vol=130
+    """
+    db = SessionLocal()
+    db.add(Order(
+        trd_date="20260614",
+        order_id="OID-PVB", user_def="CID-PVB", order_no="20000001",
+        stock_code="600030.SH", order_type="23", price_type=11, price=12.5, volume=100,
+        status="49", traded_volume=0, traded_amount=0,
+    ))
+    db.add(Position(
+        stock_code="600030.SH", stock_name="中证",
+        last_vol=100, avl_vol=100, vol=100, cost_price=12.0,
+    ))
+    db.commit()
+    db.close()
+
+    db = SessionLocal()
+    handle_push(db, "trd_cfm", {
+        "traded_id": "TID-PVB-1",
+        "remark": "20000001",
+        "stock_code": "600030.SH",
+        "order_type": "23",        # 买
+        "traded_price": 12.5,
+        "traded_volume": 30,
+        "traded_amount": 375.0,
+    }, ts="20260614 09:31:00")
+    db.commit()
+
+    p = db.query(Position).filter_by(stock_code="600030.SH").first()
+    assert p is not None
+    assert p.vol == 130, f"Position.vol should be 100+30=130, got {p.vol}"
+    db.close()
+
+def test_trd_cfm_updates_position_vol_on_sell():
+    """consolidate-position-data-flow §3.2.b: 卖单成交 → Position.vol -= volume
+
+    初始 Position.vol=200, 成交 50 股卖出 → 期望 vol=150
+    """
+    db = SessionLocal()
+    db.add(Order(
+        trd_date="20260614",
+        order_id="OID-PVS", user_def="CID-PVS", order_no="20000002",
+        stock_code="600031.SH", order_type="24", price_type=11, price=15.0, volume=80,
+        status="49", traded_volume=0, traded_amount=0,
+    ))
+    db.add(Position(
+        stock_code="600031.SH", stock_name="测试",
+        last_vol=200, avl_vol=200, vol=200, cost_price=14.0,
+    ))
+    db.commit()
+    db.close()
+
+    db = SessionLocal()
+    handle_push(db, "trd_cfm", {
+        "traded_id": "TID-PVS-1",
+        "remark": "20000002",
+        "stock_code": "600031.SH",
+        "order_type": "24",        # 卖
+        "traded_price": 15.0,
+        "traded_volume": 50,
+        "traded_amount": 750.0,
+    }, ts="20260614 10:00:00")
+    db.commit()
+
+    p = db.query(Position).filter_by(stock_code="600031.SH").first()
+    assert p is not None
+    assert p.vol == 150, f"Position.vol should be 200-50=150, got {p.vol}"
+    db.close()
+
+def test_trd_cfm_skips_when_position_not_found(caplog):
+    """consolidate-position-data-flow §3.2.c: Position 不存在 → log warning + 跳过
+
+    admin 必须先 day-init reconcile 才能开市交易。未跑 reconcile 时 trd_cfm 落 Trade 行
+    但 Position.vol 跳过，不抛错（不能让 push 链路因 Position 缺而中断）。
+    """
+    db = SessionLocal()
+    db.add(Order(
+        trd_date="20260614",
+        order_id="OID-PNF", user_def="CID-PNF", order_no="20000003",
+        stock_code="600032.SH", order_type="23", price_type=11, price=12.5, volume=100,
+        status="49", traded_volume=0,
+    ))
+    # 注意：故意不插 Position 行（模拟 day-init 未跑的场景）
+    db.commit()
+    db.close()
+
+    db = SessionLocal()
+    with caplog.at_level(logging.WARNING):
+        handle_push(db, "trd_cfm", {
+            "traded_id": "TID-PNF-1",
+            "remark": "20000003",
+            "stock_code": "600032.SH",
+            "order_type": "23",
+            "traded_price": 12.5,
+            "traded_volume": 30,
+            "traded_amount": 375.0,
+        }, ts="20260614 09:30:00")
+    db.commit()
+
+    # Trade 行正常插入（与 Position 失败解耦）
+    t = db.query(Trade).filter_by(trade_id="TID-PNF-1", order_no="20000003").first()
+    assert t is not None, "Trade row should still be inserted"
+
+    # Position 仍未创建（我们没有创建，也不会凭空新建）
+    p = db.query(Position).filter_by(stock_code="600032.SH").first()
+    assert p is None, "Position must NOT be auto-created by trd_cfm"
+    db.close()
+
+def test_trd_cfm_does_not_touch_other_position_fields():
+    """consolidate-position-data-flow §3.2.d: trd_cfm 只动 vol，其它字段全部不动
+
+    cost_price / avl_vol / today_buy / today_sell / last_vol / stock_name
+    全部由 day-init reconcile 负责（DR-2 路径分工）。
+    """
+    db = SessionLocal()
+    db.add(Order(
+        trd_date="20260614",
+        order_id="OID-PNT", user_def="CID-PNT", order_no="20000004",
+        stock_code="600033.SH", order_type="23", price_type=11, price=12.5, volume=100,
+        status="49", traded_volume=0,
+    ))
+    db.add(Position(
+        stock_code="600033.SH", stock_name="证券",
+        last_vol=100, today_buy=0, today_sell=20,
+        avl_vol=80, vol=100, cost_price=11.5,
+    ))
+    db.commit()
+    db.close()
+
+    db = SessionLocal()
+    handle_push(db, "trd_cfm", {
+        "traded_id": "TID-PNT-1",
+        "remark": "20000004",
+        "stock_code": "600033.SH",
+        "order_type": "23",
+        "traded_price": 12.5,
+        "traded_volume": 30,
+        "traded_amount": 375.0,
+    }, ts="20260614 09:31:00")
+    db.commit()
+
+    p = db.query(Position).filter_by(stock_code="600033.SH").first()
+    assert p is not None
+    # 必动
+    assert p.vol == 130, f"vol should be 100+30=130, got {p.vol}"
+    # 全不动
+    assert p.last_vol == 100, f"last_vol should remain 100, got {p.last_vol}"
+    assert p.avl_vol == 80, f"avl_vol should remain 80 (T+1, 由 reconcile 负责), got {p.avl_vol}"
+    assert p.today_buy == 0, f"today_buy should remain 0 (由 reconcile 负责), got {p.today_buy}"
+    assert p.today_sell == 20, f"today_sell should remain 20 (由 reconcile 负责), got {p.today_sell}"
+    assert p.cost_price == 11.5, f"cost_price should remain 11.5 (由 reconcile 负责), got {p.cost_price}"
+    assert p.stock_name == "证券", f"stock_name should remain, got {p.stock_name}"
+    db.close()
+
+def test_trd_cfm_cancel_trade_skips_position_vol():
+    """consolidate-position-data-flow §3.2.e + OQ-1 option B: trade_type=1 跳过 Position.vol
+
+    DELETE 端点已对 cancel-trade 做 R1 抹平（cancelled_volume = volume），
+    trd_cfm 这条若再 ±vol 会与 R1 抹平语义冲突。
+    故 trade_type=1 直接跳过 Position.vol 更新（Position 其他字段当然更不动）。
+    """
+    db = SessionLocal()
+    db.add(Order(
+        trd_date="20260614",
+        order_id="OID-CTC", user_def="CID-CTC", order_no="20000005",
+        stock_code="600034.SH", order_type="23", price_type=11, price=12.5, volume=100,
+        status="54",     # broker 已撤 (v11)
+        cancelled_volume=80,       # DELETE 端点 R1 抹平后
+        order_flag=1,              # cancel-row
+        traded_volume=20, traded_amount=250.0,
+    ))
+    db.add(Position(
+        stock_code="600034.SH", stock_name="撤单测试",
+        last_vol=100, avl_vol=100, vol=100, cost_price=12.0,
+    ))
+    db.commit()
+    db.close()
+
+    db = SessionLocal()
+    handle_push(db, "trd_cfm", {
+        "traded_id": "TID-CTC-1",
+        "remark": "20000005",
+        "stock_code": "600034.SH",
+        "order_type": "23",        # broker 仍报 23=买（cancel-trade 实际是 reverse）
+        "traded_price": 12.5,
+        "traded_volume": 80,       # 抹平的 80 股
+        "traded_amount": 1000.0,
+        "trade_type": 1,           # 关键: cancel-trade 标记
+    }, ts="20260614 09:35:00")
+    db.commit()
+
+    # Trade 行正常插入（cancel-trade 也要记录）
+    t = db.query(Trade).filter_by(trade_id="TID-CTC-1", order_no="20000005").first()
+    assert t is not None
+    assert t.trade_type == 1, "Trade.trade_type should be 1"
+
+    # Position.vol 不变（OQ-1 option B: trade_type=1 跳过）
+    p = db.query(Position).filter_by(stock_code="600034.SH").first()
+    assert p is not None
+    assert p.vol == 100, f"Position.vol should remain 100 (cancel-trade skipped), got {p.vol}"
     db.close()
