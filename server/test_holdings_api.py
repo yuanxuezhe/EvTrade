@@ -67,14 +67,14 @@ def _seed_positions(db, count=2):
         Position(
             stock_code="600000",
             stock_name="浦发银行",
-            last_vol=1000, today_buy=200, today_sell=100,
+            last_vol=1000,
             avl_vol=1100, vol=1100, cost_price=10.5,
             synced_from="rpc_reconcile",
         ),
         Position(
             stock_code="600001",
             stock_name="邯郸钢铁",
-            last_vol=2000, today_buy=0, today_sell=500,
+            last_vol=2000,
             avl_vol=1500, vol=1500, cost_price=5.2,
             synced_from="rpc_reconcile",
         ),

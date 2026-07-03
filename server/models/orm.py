@@ -18,6 +18,10 @@ SQLAlchemy ORM models for EvTrade v5 (schema refactor).
   §3 历史：reconcile_report
   §4 行情：quote_snapshots
   §5 序列：order_no_seq
+
+change add-manual-adjust-and-history-pages (v12):
+  - Position 表移除 today_buy / today_sell 两列
+  - Asset / Position 的 synced_from 支持 'manual' 标记（admin 调平）
 """
 from sqlalchemy import (
     Column, Integer, String, Float, Text, DateTime, Boolean,
@@ -128,19 +132,25 @@ class Position(Base):
        - day-init：do_reconcile 全表覆盖（写入 avl_vol / vol / cost_price）
        - intra-day：trd_cfm push handler 按 trade_type 累加/扣减（vol / avl_vol ± volume）
        - 不再依赖 pos_cfm 推送（xtquant broker 不发）
+    📌 change add-manual-adjust-and-history-pages (v12):
+       - 删除 today_buy / today_sell 列（v5 schema 遗留，从未被消费）
+       - manual 调平 API 直接对 vol / avl_vol 做原子加减（不存 delta 字段）
+       - 当日买卖累计语义改由 Trade 表 SUM 聚合替代
     """
     __tablename__ = "positions"
 
     stock_code = Column(String(16), primary_key=True, nullable=False)
     stock_name = Column(String(64), nullable=False, default="")
-    last_vol = Column(Integer, nullable=False, default=0)   # 期初持仓
-    today_buy = Column(Integer, nullable=False, default=0)
-    today_sell = Column(Integer, nullable=False, default=0)
-    avl_vol = Column(Integer, nullable=False, default=0)   # 可用
-    vol = Column(Integer, nullable=False, default=0)       # 总持仓
-    cost_price = Column(Float, nullable=False, default=0.0)
+    last_vol = Column(Integer, nullable=False, default=0)   # 期初持仓（仅 do_reconcile 写入）
+    avl_vol = Column(Integer, nullable=False, default=0)   # 可用（do_reconcile 写入 + manual 调平）
+    vol = Column(Integer, nullable=False, default=0)       # 总持仓（do_reconcile 写入 + trd_cfm 增量 + manual 调平）
+    cost_price = Column(Float, nullable=False, default=0.0)  # 仅 do_reconcile 写入
     synced_at = Column(DateTime, nullable=False, default=_utcnow)
-    synced_from = Column(String(16), nullable=False, default="")  # rpc_full / push_partial / manual
+    # synced_from 取值:
+    #   - rpc_full: do_reconcile 写入
+    #   - push_partial: trd_cfm push handler 增量
+    #   - manual: admin 调平 API 写入（再次 reconcile 会重置为 rpc_full）
+    synced_from = Column(String(16), nullable=False, default="")
 
 
 class Asset(Base):

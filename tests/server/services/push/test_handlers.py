@@ -693,8 +693,9 @@ def test_trd_cfm_skips_when_position_not_found(caplog):
 def test_trd_cfm_does_not_touch_other_position_fields():
     """consolidate-position-data-flow §3.2.d: trd_cfm 只动 vol，其它字段全部不动
 
-    cost_price / avl_vol / today_buy / today_sell / last_vol / stock_name
+    cost_price / avl_vol / last_vol / stock_name
     全部由 day-init reconcile 负责（DR-2 路径分工）。
+    change add-manual-adjust-and-history-pages (v12): today_buy/today_sell 列已删除
     """
     db = SessionLocal()
     db.add(Order(
@@ -705,7 +706,7 @@ def test_trd_cfm_does_not_touch_other_position_fields():
     ))
     db.add(Position(
         stock_code="600033.SH", stock_name="证券",
-        last_vol=100, today_buy=0, today_sell=20,
+        last_vol=100,
         avl_vol=80, vol=100, cost_price=11.5,
     ))
     db.commit()
@@ -730,8 +731,6 @@ def test_trd_cfm_does_not_touch_other_position_fields():
     # 全不动
     assert p.last_vol == 100, f"last_vol should remain 100, got {p.last_vol}"
     assert p.avl_vol == 80, f"avl_vol should remain 80 (T+1, 由 reconcile 负责), got {p.avl_vol}"
-    assert p.today_buy == 0, f"today_buy should remain 0 (由 reconcile 负责), got {p.today_buy}"
-    assert p.today_sell == 20, f"today_sell should remain 20 (由 reconcile 负责), got {p.today_sell}"
     assert p.cost_price == 11.5, f"cost_price should remain 11.5 (由 reconcile 负责), got {p.cost_price}"
     assert p.stock_name == "证券", f"stock_name should remain, got {p.stock_name}"
     db.close()

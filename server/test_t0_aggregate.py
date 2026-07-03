@@ -87,8 +87,6 @@ def _mk_pos(stock_code, vol=0, cost_price=0.0):
         stock_code=stock_code,
         stock_name="",
         last_vol=vol,
-        today_buy=0,
-        today_sell=0,
         avl_vol=vol,
         vol=vol,
         cost_price=cost_price,

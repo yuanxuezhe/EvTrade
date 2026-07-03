@@ -214,8 +214,6 @@ def _apply_broker_data(
             stock_code=stock_code,
             stock_name=str(p.get('stock_name', '')),
             last_vol=int(p.get('last_vol', 0) or 0),
-            today_buy=int(p.get('today_buy', 0) or 0),
-            today_sell=int(p.get('today_sell', 0) or 0),
             avl_vol=int(p.get('avl_vol', 0) or 0),
             vol=int(p.get('vol', 0) or 0),
             cost_price=float(p.get('cost_price', 0) or 0),

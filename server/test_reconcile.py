@@ -87,11 +87,12 @@ def test_init_trading_day_with_auto_reconcile():
     # v7 简化: 委托/成交不再调 qry_orders / qry_trades
     # change consolidate-position-data-flow: mock 数据使用 parser 输出 dict 键名
     # (即与 Position ORM 列名一致: vol/avl_vol/cost_price, 不再有 volume/avl_amt/avg_price/market_value)
+    # change add-manual-adjust-and-history-pages (v12): today_buy/today_sell 已删除
     mock_pos = AsyncMock(return_value={
         "code": 0, "msg": "ok", "list": [
             {"stock_code": "600030.SH", "vol": 100, "avl_vol": 100,
              "cost_price": 12.5,
-             "last_vol": 0, "today_buy": 0, "today_sell": 0},
+             "last_vol": 0},
         ]
     })
     mock_asset = AsyncMock(return_value={
