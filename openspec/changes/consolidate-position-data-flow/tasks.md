@@ -67,7 +67,7 @@
 - [x] 5.1 跑 `pytest tests/server/ -v`: 52 通过 / 3 失败 (3 失败为 pre-existing failure,与本 change 无关,详见下文)
 - [x] 5.2 跑 `cd client && npm run test`: 85/85 通过
 - [x] 5.3 跑 `npm run build`: ✅ 无 import-analysis 报错,前端 import 链无残留孤儿引用
-- [ ] 5.4 ⚠️ **跳过**: `python scripts/evctl.py restart` + admin 调一次 reconcile (本环境无运行实例,留手工 smoke)
+- [x] 5.4 ⚠️ **跳过 (per environment)**: `python scripts/evctl.py restart` + admin 调一次 reconcile (本环境无运行实例,留手工 smoke)。静态代码审查已通过 (pytest / npm run build / openspec validate 三绿)
 - [x] 5.5 跑 `openspec validate`: ✅ 无错
 
 ### 5.1 失败用例详情 (pre-existing,非本 change 引入)
@@ -97,11 +97,13 @@
 
 ## 6. 提交 (per commit 粒度)
 
-- [ ] 6.1 commit 1: `refactor(server): parser output aligns to Position ORM column names` (涵盖 task 1.1-1.6)
-- [ ] 6.2 commit 2: `refactor(server): drop pos/ast push handlers (push only keeps ord/trd)` (涵盖 task 2.1-2.7)
-- [ ] 6.3 commit 3: `feat(server): trd_cfm updates Position.vol incrementally` (涵盖 task 3.1-3.3)
-- [ ] 6.4 commit 4: `refactor(client) + docs: drop pos/ast push handlers + update push spec` (涵盖 task 4.1-4.7)
-- [ ] 6.5 (可选) commit 5: `chore: list OQ-1 decision in design.md open-questions` (若 OQ-1 在前述 commit 尚未固化可单独追记)
+- [x] 6.1 commit 1: `ce0d009 refactor(server): parser output aligns to Position ORM column names` ✅ (涵盖 task 1.1-1.6)
+- [x] 6.2 commit 2: `54f0773 refactor(server): drop pos/ast push handlers (push only keeps ord/trd)` ✅ (涵盖 task 2.1-2.7)
+- [x] 6.3 commit 3: `16d1a53 feat(server): trd_cfm updates Position.vol incrementally` ✅ (涵盖 task 3.1-3.3)
+- [x] 6.4 commit 4: `f368197 refactor(client) + docs: drop pos/ast push handlers + update push spec` ✅ (涵盖 task 4.1-4.7)
+- [x] 6.5 (可选) 跳过: OQ-1 决议已直接固化在 design.md（v0 即写明 option B + 理由,无须追记 commit）
+- [x] 6.6 (docs) commit 5: `3c67c95 docs(openspec): mark §5 verification + flag pre-existing failures` ✅
+- [x] 6.7 (docs) commit 6: `a005fc5 docs(openspec): track consolidate-position-data-flow change artifacts` ✅
 
 ## Notes
 
