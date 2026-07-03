@@ -59,14 +59,20 @@ function _onOrderCfm(row) {
     return
   }
 
+  // v13: 拿 applyOrderPush 返回的 final status (merged.status / row.status)
+  //   之前用 row.status (broker 原始) 与表格显示 (merged.status 推断) 不一致
+  //   守门/跳过返 null, 不发通知
+  let finalStatus = null
   try {
     const holdings = useHoldingsStore()
-    holdings.applyOrderPush(row, 'update')
+    finalStatus = holdings.applyOrderPush(row, 'update')
   } catch (e) {
     console.error('[ws._onOrderCfm] applyOrderPush failed:', e)
   }
 
-  _notifyOrder(row.stock_code, row.status, row)
+  if (finalStatus != null) {
+    _notifyOrder(row.stock_code, finalStatus, row)
+  }
 }
 
 function _onTradeCfm(row) {

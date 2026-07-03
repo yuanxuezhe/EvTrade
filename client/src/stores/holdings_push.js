@@ -70,13 +70,17 @@ export function createPushHandlers(deps) {
    *  change system-delegation-price-fill-calc:
    *      - 普通 row: 调 metaMerge(row, ref) 仅覆盖 PK + 元数据, ref 累计字段保留
    *      - cancel-row: 写 cancel-row 自身 + 调 flattenCancelledByRow 反向抹平原委托 cancelled_volume
+   *  v13: 返回 final status (普通 row = merged.status, cancel-row = row.status)
+   *      供 ws_dispatch._onOrderCfm 调 _notifyOrder 时用 (避免用 broker.status 与表格显示不一致)
+   *      - 守门 / 跳过路径返 null (调用方不发通知)
+   *  @returns {string|null} final status 码, 跳过返 null
    */
   function applyOrderPush(row, action /* 'open' | 'update' | 'status' */) {
-    if (!row || !row.order_no) return
+    if (!row || !row.order_no) return null
     // v8 激活日守门
     if (activeTrdDate.value && row.trd_date && row.trd_date !== activeTrdDate.value) {
       log('warn', '交易', 'ws', `委托推送忽略: trd_date=${row.trd_date} != active=${activeTrdDate.value} (${row.stock_code} ${row.order_no})`)
-      return
+      return null
     }
     // v9 短路: cancel-row (order_flag=1) 不走 metaMerge（其 status 由 DELETE 端点写死, 不重算）
     if (Number(row.order_flag) === 1) {
@@ -95,7 +99,7 @@ export function createPushHandlers(deps) {
         ? `, flatten orig[${affected.map((a) => a.index).join(',')}]`
         : ''
       log('info', '交易', 'ws', `撤单审计: ${row.stock_code} ${row.order_no} status=${row.status} (order_flag=1${flattenInfo})`)
-      return
+      return row.status
     }
     // change: 普通 row 走 metaMerge — 仅覆盖 PK + 元数据, ref 累计字段保留
     // status 在 metaMerge 内部由 inferOrderStatus(ref 累计 + 可选 row.status) 重推断
@@ -111,6 +115,7 @@ export function createPushHandlers(deps) {
     }
     // v13: IDB 单行写 (复合 key 维度, O(1) idbPut)
     _persistOrder(merged)
+    return merged.status
   }
 
   /** ws._onTradeCfm 调用
