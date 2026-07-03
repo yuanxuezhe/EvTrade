@@ -56,7 +56,7 @@ The system SHALL 在以下时机写 IDB：
 
 ### Requirement: bootstrap 加载顺序契约（v12 详细化）
 
-详见 `frontend/spec.md` v12 修订的 `bootstrap` 顺序段。本 spec 强调核心 invariant：**IDB 命中时 Pinia 立刻有数据 + 用户看不到空白**。
+The system MUST 保证 IDB 命中时 Pinia 立刻有数据 + 用户看不到空白（详见 `frontend/spec.md` v12 修订的 `bootstrap` 顺序段）。
 
 #### Scenario: F5 后 200ms 内显示当日委托
 

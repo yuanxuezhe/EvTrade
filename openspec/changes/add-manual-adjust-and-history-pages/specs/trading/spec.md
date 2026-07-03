@@ -73,3 +73,14 @@
 | `/trades`（混合当日+历史） | `/today/trades` + `/history/trades` |
 
 详见 `intraday-orders-trades-cache/spec.md` 与 `orders-trades-history-query/spec.md`。
+
+#### Scenario: 旧路由重定向兼容
+
+- **WHEN** user 导航到 `/orders` 或 `/trades`
+- **THEN** router 重定向到 `/today/...` 对应路由（旧书签兼容）
+
+#### Scenario: 委托/成交视图按 today/history 拆分
+
+- **WHEN** 实施本 change
+- **THEN** `TodayOrders.vue` / `TodayTrades.vue` 读 `useHoldingsStore()` (Pinia + IDB write-through, 无 HTTP)
+- **AND** `HistoryOrders.vue` / `HistoryTrades.vue` 走局部 HTTP 查询, 不入 IDB

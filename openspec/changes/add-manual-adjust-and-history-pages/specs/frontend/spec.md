@@ -19,6 +19,8 @@ The system SHALL hold the 4 business data tables (资金 / 持仓 / 委托 / 成
 
 ### Requirement: 路由（v12 today / history 拆分）
 
+The system SHALL 新增 4 个 today/history 路由到 router:
+
 | 路径 | 视图 | 鉴权 |
 |---|---|---|
 | `/today/orders` | `TodayOrders.vue` | login |
@@ -60,7 +62,7 @@ The system SHALL 在 ws push handler `applyOrderPush` / `applyTradePush` 内同�
 
 ### Requirement: holdings_idb.js 模块契约（v12）
 
-`client/src/stores/holdings_idb.js` 提供 4 个函数：
+`client/src/stores/holdings_idb.js` MUST 提供 6 个函数:
 - `initIDB()` —— 打开 `EvTradeIDB`（version=1），含 `orders` / `trades` 两个 object store（keyPath=`_id`，复合 `{trd_date, order_no / trade_id}`）
 - `saveOrdersForDate(trdDate, orders)` —— PUT `orders[trd_date]`
 - `loadOrdersForDate(trdDate)` —— GET `orders[trd_date]` 或返 `[]`
