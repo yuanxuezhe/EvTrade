@@ -11,6 +11,9 @@ v5 改动：
 
 v10 改动（rpc-field-alignment-ts-unify）：
 - synced_at 序列化为标准格式 "YYYY-MM-DD HH:MM:SS.fff" (format_db_dt)
+
+v12 改动（add-manual-adjust-and-history-pages）：
+- 装配 PUT /adjust 调平端点（admin 鉴权），实现见 server/api/asset_adjust.py
 """
 from fastapi import APIRouter, Depends
 from typing import Optional, List
@@ -20,8 +23,10 @@ from sqlalchemy.orm import Session
 from server.db import get_db
 from server.models.orm import Asset
 from server.utils.time import format_db_dt
+from server.api.asset_adjust import register_adjust
 
 router = APIRouter()
+register_adjust(router)  # v12: PUT /adjust（admin 调平）
 
 
 class AssetOut(BaseModel):

@@ -17,6 +17,10 @@ v5 改动：
 v10 改动（rpc-field-alignment-ts-unify）：
 - synced_at 序列化为标准格式 "YYYY-MM-DD HH:MM:SS.fff" (format_db_dt)
 
+v12 改动（add-manual-adjust-and-history-pages）：
+- 装配 PUT /{stock_code}/adjust 调平端点（admin 鉴权），实现见 server/api/position_adjust.py
+- 移除 today_buy / today_sell 字段（v5 schema 遗留死字段）
+
 NOTE: market_value 字段
 - 后端不存 market_value（Position ORM 无此列）
 - 前端用 quote store 实时重算真实市值
@@ -30,16 +34,16 @@ from sqlalchemy.orm import Session
 from server.db import get_db
 from server.models.orm import Position
 from server.utils.time import format_db_dt
+from server.api.position_adjust import register_adjust
 
 router = APIRouter()
+register_adjust(router)  # v12: PUT /{stock_code}/adjust（admin 调平）
 
 
 class PositionOut(BaseModel):
     stock_code: str
     stock_name: str
     last_vol: int
-    today_buy: int
-    today_sell: int
     avl_vol: int
     vol: int
     cost_price: float
@@ -68,8 +72,6 @@ async def list_positions(
             stock_code=r.stock_code,
             stock_name=r.stock_name,
             last_vol=r.last_vol,
-            today_buy=r.today_buy,
-            today_sell=r.today_sell,
             avl_vol=r.avl_vol,
             vol=r.vol,
             cost_price=r.cost_price,
