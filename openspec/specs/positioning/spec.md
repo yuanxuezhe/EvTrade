@@ -50,43 +50,6 @@
 - 测试用例：pos_cfm 推送 `{stock_code:"X", available:100}` 后 `positions.vol == 100`
 - **v12 注**：xtquant broker 不发 `pos_cfm`，本路径已被 trd_cfm 增量 + day-init reconcile 双路径取代；保留作为历史注释
 
-## Scenarios
-
-### S-POS-001: 正常查持仓
-
-When `GET /api/positions`
-Then 返回当前激活交易日持仓，按 `stock_code` 排序
-And `Position.vol` 是非负整数（pos_cfm 兜底后一定有值；只有持仓真的为 0 才是 0）
-
-### S-POS-002: 推送更新（vol 字段缺失）
-
-Given 柜台推送 pos_cfm 行 `{stock_code:"X", available:100, cost_price:12.5}`（**不送 volume**）
-When `handle_pos_cfm` 收到
-Then upsert positions 表对应行，`vol = 100`（兜底自 avl_vol）
-And `last_vol / cost_price` 保持不变（仅 do_reconcile 写）
-
-### S-POS-003: 推送更新（完整字段）
-
-Given 柜台推送 pos_cfm 行 `{stock_code:"X", volume:200, available:150, cost_price:12.5}`
-When `handle_pos_cfm` 收到
-Then `vol = 200`（不兜底），`avl_vol = 150`
-
-## API Surface
-
-| Method | Path | 数据源 | Auth |
-|---|---|---|---|
-| GET | `/api/positions` | DB | login |
-| GET | `/api/holdings` | DB | login |
-
-## Known Issues (from analysis)
-
-- 🟥 ~~`POST /api/positions/{code}/init` 内存 init 接口~~ → **已删**
-- 🟥 ~~pos_cfm vol 字段缺失时显示 0~~ → **本轮已修**（change `2026-06-16-fix-position-vol-display`，vol 兜底 avl_vol）
-- 🟡 `position_update` WS 频道 push 路由待完善
-- 🟡 `market_value` 字段由前端计算，后端不存（commit `2026-06-15` 确认设计）
-
-
-## ADDED Requirements
 
 ### Requirement: 持仓查询响应字段（v12）
 
@@ -125,3 +88,38 @@ Then `vol = 200`（不兜底），`avl_vol = 150`
 - **THEN** 弹出输入框 `delta_vol` / `delta_avl_vol` / `reason`（reason 仅入 log）
 - **AND** 提交时调用 `api.adjustPosition(stockCode, deltaVol, deltaAvlVol)`
 - **AND** 成功后在表格中即时反映（前端 watcher 触发）—— 不依赖 re-fetch
+
+## Scenarios
+
+### S-POS-001: 正常查持仓
+
+When `GET /api/positions`
+Then 返回当前激活交易日持仓，按 `stock_code` 排序
+And `Position.vol` 是非负整数（pos_cfm 兜底后一定有值；只有持仓真的为 0 才是 0）
+
+### S-POS-002: 推送更新（vol 字段缺失）
+
+Given 柜台推送 pos_cfm 行 `{stock_code:"X", available:100, cost_price:12.5}`（**不送 volume**）
+When `handle_pos_cfm` 收到
+Then upsert positions 表对应行，`vol = 100`（兜底自 avl_vol）
+And `last_vol / cost_price` 保持不变（仅 do_reconcile 写）
+
+### S-POS-003: 推送更新（完整字段）
+
+Given 柜台推送 pos_cfm 行 `{stock_code:"X", volume:200, available:150, cost_price:12.5}`
+When `handle_pos_cfm` 收到
+Then `vol = 200`（不兜底），`avl_vol = 150`
+
+## API Surface
+
+| Method | Path | 数据源 | Auth |
+|---|---|---|---|
+| GET | `/api/positions` | DB | login |
+| GET | `/api/holdings` | DB | login |
+
+## Known Issues (from analysis)
+
+- 🟥 ~~`POST /api/positions/{code}/init` 内存 init 接口~~ → **已删**
+- 🟥 ~~pos_cfm vol 字段缺失时显示 0~~ → **本轮已修**（change `2026-06-16-fix-position-vol-display`，vol 兜底 avl_vol）
+- 🟡 `position_update` WS 频道 push 路由待完善
+- 🟡 `market_value` 字段由前端计算，后端不存（commit `2026-06-15` 确认设计）

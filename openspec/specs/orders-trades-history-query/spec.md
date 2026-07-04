@@ -1,4 +1,8 @@
-## ADDED Requirements
+## Purpose
+
+历史委托 / 成交按 `start_date` / `end_date` / `stock_code` 区间查询，**不走** Pinia / IDB —— 历史数据非"业务实时"语义，每次查询独立拉取。
+
+## Requirements
 
 ### Requirement: 历史委托视图（v12 新增）
 

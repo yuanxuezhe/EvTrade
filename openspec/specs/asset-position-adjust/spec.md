@@ -1,4 +1,8 @@
-## ADDED Requirements
+## Purpose
+
+管理员对 `Asset` / `Position` 表做盘中调平补丁：手动调整资金总量 / 资金可用 / 持仓总量 / 持仓可用，绕开对账窗口内的延迟。**调平值在下次 `do_reconcile` 全表覆盖时被抹掉**，定位为临时补丁。
+
+## Requirements
 
 ### Requirement: Asset 调平 API（v12 新增）
 

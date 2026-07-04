@@ -1,4 +1,8 @@
-## ADDED Requirements
+## Purpose
+
+委托 / 成交 当日数据通过 Pinia + 浏览器 IDB write-through 持久化，无需重新拉取即可在 F5 / 重新打开 tab 后立即恢复（< 200ms）。positions / asset 不持久化（实时性 + 安全考虑）。
+
+## Requirements
 
 ### Requirement: 当日委托 / 当日成交视图（v12 新增）
 

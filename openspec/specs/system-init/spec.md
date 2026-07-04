@@ -80,7 +80,7 @@ WS 推 {channel: "system_update", type: "trading_day_changed", trd_date: today}
 - `pytest server/test_fee_config.py` — 费率 CRUD
 
 
-## ADDED Requirements
+## Requirements
 
 ### Requirement: day-init reconcile 全表覆盖语义（v12 强化）
 

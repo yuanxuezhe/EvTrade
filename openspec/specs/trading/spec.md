@@ -406,55 +406,6 @@ admin 资金 / 持仓盘中调平端点，**核心合约**详见 `asset-position
 - 不引入 `manual_offset_*` 字段，调平值直接体现在 `cash` / `total_asset` / `vol` / `avl_vol` 上
 - 下次 `do_reconcile` 全表覆盖会重置 `synced_from = "rpc_full"`，调平值被 broker 真实值覆盖
 
-## Scenarios
-
-### S-TRADE-001: 下一笔限价买单
-
-Given trader 已登录，钱够  
-When `POST /api/orders/place {stock_code:"600030.SH", order_type:"23", volume:100, price:12.34, price_type:11}`  
-Then 柜台返回 ack（order_id 形式 `{exchange}|{seq}`）  
-And 数秒后 WS 收到 `order_update` 推送（status: "48" 待报 或 "49" 已报）
-
-### S-TRADE-002: 撤单
-
-Given 委托 12345 状态是已报  
-When `DELETE /api/orders/12345`  
-Then 柜台返回 ack  
-And WS `order_update` 推送 status="54" 已撤
-
-### S-TRADE-003: 查委托（按股票过滤）
-
-When `GET /api/orders?stock_code=600030.SH`  
-Then 返回该股票的全部委托，**不包含**其他股票
-
-## API Surface
-
-| Method | Path | RPC | Auth |
-|---|---|---|---|
-| GET | `/api/orders` | `qry_orders` | login |
-| POST | `/api/orders/place` | `ord_stk` | trader |
-| DELETE | `/api/orders/{id}` | `cancel_ord` | trader |
-| GET | `/api/trades` | `qry_mch` | login |
-| GET | `/api/asset` | `qry_asset` | login |
-| PUT | `/api/asset/adjust` | - | **admin** （v12 调平） |
-| GET | `/api/positions` | - | login |
-| PUT | `/api/positions/{stock_code}/adjust` | - | **admin** （v12 调平） |
-| GET | `/api/system/active-day` | - | login |
-
-## Known Issues (from analysis)
-
-- 🟥 ~~`DELETE /orders/{id}` 之前只改内存假撤单~~ → **本轮已修**（走真 RPC）
-- 🟥 ~~`services/trading.py` 118 行内存仓~~ → **本轮已删**
-- 🟥 ~~撤单 URL 用 order_id~~ → **v8 已修**（change `2026-06-21-order-push-trd-date-authority`，Trade.vue handleCancel 改传 order_no + trd_date）
-- 🟡 前端 `order.js` `cancelOrder` 硬编码 `order.status = '54'`（与后端本地推断不一致）→ 参见 change `2026-06-16-frontend-infer-order-status`
-- 🟡 前端 Trade.vue / Orders.vue 状态码分组用了 broker 原始码（55=已成等）而不是后端本地推断码（56=已成）→ 同上 change
-- 🟡 `asset_update` 推送功能未实现（RPC 客户端收到资产变更无路由）
-- 🟡 价格类型枚举在 api 层用数字、后端 RPC 用数字、文档用文字 → 应统一映射
-- 🟢 ~~POST /orders/place 响应缺 list 字段，前端 T0Trade.vue 误读 res.code~~ → **v8 已修**（change `2026-06-21-order-push-trd-date-authority`，list 冗余 1 行 + res 直接是 OrderOut）
-- 🟢 ~~前端 5s 轮询 fetchOrders + 缓存双源（orderStore/holdings）~~ → **v8 已修**（change `2026-06-21-order-push-trd-date-authority`，统一 holdings 单一源 + 删 5s 轮询改手动刷新）
-
-
-## ADDED Requirements
 
 ### Requirement: 历史查询参数契约（v12 强化）
 
@@ -540,3 +491,50 @@ Then 返回该股票的全部委托，**不包含**其他股票
 - **WHEN** 实施本 change
 - **THEN** `TodayOrders.vue` / `TodayTrades.vue` 读 `useHoldingsStore()` (Pinia + IDB write-through, 无 HTTP)
 - **AND** `HistoryOrders.vue` / `HistoryTrades.vue` 走局部 HTTP 查询, 不入 IDB
+
+## Scenarios
+
+### S-TRADE-001: 下一笔限价买单
+
+Given trader 已登录，钱够  
+When `POST /api/orders/place {stock_code:"600030.SH", order_type:"23", volume:100, price:12.34, price_type:11}`  
+Then 柜台返回 ack（order_id 形式 `{exchange}|{seq}`）  
+And 数秒后 WS 收到 `order_update` 推送（status: "48" 待报 或 "49" 已报）
+
+### S-TRADE-002: 撤单
+
+Given 委托 12345 状态是已报  
+When `DELETE /api/orders/12345`  
+Then 柜台返回 ack  
+And WS `order_update` 推送 status="54" 已撤
+
+### S-TRADE-003: 查委托（按股票过滤）
+
+When `GET /api/orders?stock_code=600030.SH`  
+Then 返回该股票的全部委托，**不包含**其他股票
+
+## API Surface
+
+| Method | Path | RPC | Auth |
+|---|---|---|---|
+| GET | `/api/orders` | `qry_orders` | login |
+| POST | `/api/orders/place` | `ord_stk` | trader |
+| DELETE | `/api/orders/{id}` | `cancel_ord` | trader |
+| GET | `/api/trades` | `qry_mch` | login |
+| GET | `/api/asset` | `qry_asset` | login |
+| PUT | `/api/asset/adjust` | - | **admin** （v12 调平） |
+| GET | `/api/positions` | - | login |
+| PUT | `/api/positions/{stock_code}/adjust` | - | **admin** （v12 调平） |
+| GET | `/api/system/active-day` | - | login |
+
+## Known Issues (from analysis)
+
+- 🟥 ~~`DELETE /orders/{id}` 之前只改内存假撤单~~ → **本轮已修**（走真 RPC）
+- 🟥 ~~`services/trading.py` 118 行内存仓~~ → **本轮已删**
+- 🟥 ~~撤单 URL 用 order_id~~ → **v8 已修**（change `2026-06-21-order-push-trd-date-authority`，Trade.vue handleCancel 改传 order_no + trd_date）
+- 🟡 前端 `order.js` `cancelOrder` 硬编码 `order.status = '54'`（与后端本地推断不一致）→ 参见 change `2026-06-16-frontend-infer-order-status`
+- 🟡 前端 Trade.vue / Orders.vue 状态码分组用了 broker 原始码（55=已成等）而不是后端本地推断码（56=已成）→ 同上 change
+- 🟡 `asset_update` 推送功能未实现（RPC 客户端收到资产变更无路由）
+- 🟡 价格类型枚举在 api 层用数字、后端 RPC 用数字、文档用文字 → 应统一映射
+- 🟢 ~~POST /orders/place 响应缺 list 字段，前端 T0Trade.vue 误读 res.code~~ → **v8 已修**（change `2026-06-21-order-push-trd-date-authority`，list 冗余 1 行 + res 直接是 OrderOut）
+- 🟢 ~~前端 5s 轮询 fetchOrders + 缓存双源（orderStore/holdings）~~ → **v8 已修**（change `2026-06-21-order-push-trd-date-authority`，统一 holdings 单一源 + 删 5s 轮询改手动刷新）
