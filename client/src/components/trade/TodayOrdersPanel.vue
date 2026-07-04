@@ -132,7 +132,9 @@ const refreshing = ref(false)
 const cancellingOrderNo = ref('')
 
 const bodyRef = ref(null)
-const bodyMaxHeight = ref('calc(100vh - 280px)')
+// 100% 让 el-table 填父容器 .tp-body (已 flex:1),不再用 100vh 错算
+//   高度由外层 Trade.vue 的 .trade-panels-col > * { flex:1; overflow:hidden } 限高
+const bodyMaxHeight = ref('100%')
 const scrollProgress = ref(0)
 
 const brandPrimary = '#4f7cff'
