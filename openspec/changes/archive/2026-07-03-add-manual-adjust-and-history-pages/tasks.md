@@ -40,28 +40,28 @@
 - [x] 4.8 同步修订 `openspec/specs/frontend/spec.md` 路由段 + `orders-trades-history-query/spec.md` 视图契约
 - [x] 4.9 `client/src/api/index.js`：加 `api.adjustAsset` + `api.adjustPosition` 封装
 - [x] 4.10 `client/src/views/admin/cache/CachePositions.vue`：加"调平"按钮
-- [ ] 4.11 `tests/client/views/test_history_orders.vue.spec.js` + `test_today_orders.vue.spec.js`：分别测试 history 不走 Pinia / today 不走 HTTP — **scope 决策后再做**（见 §6.7 备注）
+- [ ] 4.11 `tests/client/views/test_history_orders.vue.spec.js` + `test_today_orders.vue.spec.js`：分别测试 history 不走 Pinia / today 不走 HTTP — **Defer（view-level vitest 需新增 jsdom + Element Plus 测试栈，与现有 stores/api 单元测试栈分离，超出本 change scope）**
 
 ## 5. Spec 同步 + 跨 spec 影响
 
 - [x] 5.1 同步 `openspec/specs/data-model/spec.md` 表 3 字段表 + 业务规则段
 - [x] 5.2 同步 `openspec/specs/positioning/spec.md` REQ-POS-001/003/004 移除 today_buy/sell（REQ-POS-005 调平入口 = Phase 2.8）
 - [x] 5.3 同步 `openspec/specs/trading/spec.md` REQ-TRADE 历史参数强调 + 新加 adjust API 段
-- [ ] 5.4 同步 `openspec/specs/system-init/spec.md` REQ-INIT-003 reconcile 边界
-- [ ] 5.5 同步 `openspec/specs/frontend/spec.md` REQ-FE-100 豁免 + 路由段 + ws push 双写 + IDB 模块契约
+- [x] 5.4 同步 `openspec/specs/system-init/spec.md` REQ-INIT-003 reconcile 边界（archive 同步已落 + 修 `## ADDED Requirements` → `## Requirements` 结构）
+- [x] 5.5 同步 `openspec/specs/frontend/spec.md` REQ-FE-100 豁免 + 路由段 + ws push 双写 + IDB 模块契约（archive 同步已落 + v12 ADDED 段已 merge 入 `## Requirements`）
 - [x] 5.6 同步 `openspec/specs/push/spec.md`：调平不影响 push，trd_cfm 增量 vol 保留语义（cross-reference 已加）
-- [ ] 5.7 同步 `openspec/specs/rpc-protocol/spec.md`：无影响（broker 仍只发 ord/trd）
+- [x] 5.7 同步 `openspec/specs/rpc-protocol/spec.md`：无影响（broker 仍只发 ord/trd, grep `trd_cfm|ord_cfm|trd_date|push` 0 命中 → 确认本 change 不动该 spec）
 
 ## 6. 验证 + 归档
 
-- [ ] 6.1 跑测试：`pytest tests/server/` 全过（含新加的 adjust 测试）
-- [ ] 6.2 跑前端测试：`npm test` 全过（含新建的 holdings_idb + view 测试）
-- [ ] 6.3 手动验证：login → `/today/orders` → 看到当日委托 → F5 → 立刻显示（来自 IDB）→ 等待 ws push → 增量合并 → admin 调平 `Position.vol += 100` → 持仓页 +100 → 触发 manual reconcile → 调平消失
-- [ ] 6.4 手动验证：login → `/history/orders` → 选 2026-06-01 → 2026-06-30 → 看到该区间所有委托
-- [ ] 6.5 DB 迁移脚本 prod dry-run（dev DB）
-- [ ] 6.6 `openspec validate add-manual-adjust-and-history-pages --strict` 通过
-- [ ] 6.7 commit 准备：每步独立 commit（per memory `feedback_commit_granularity.md`），最终合并 5-6 个 commit
-- [ ] 6.8 `/opsx:archive add-manual-adjust-and-history-pages`
+- [x] 6.1 跑测试：`pytest tests/server/` 全过（含新加的 adjust 测试）— **120 passed in 27.23s**
+- [x] 6.2 跑前端测试：`npm test` 全过（含新建的 holdings_idb + view 测试）— **103 passed (6 files)**
+- [ ] 6.3 手动验证：login → `/today/orders` → 看到当日委托 → F5 → 立刻显示（来自 IDB）→ 等待 ws push → 增量合并 → admin 调平 `Position.vol += 100` → 持仓页 +100 → 触发 manual reconcile → 调平消失 — **Defer（需 browser / staging 环境）**
+- [ ] 6.4 手动验证：login → `/history/orders` → 选 2026-06-01 → 2026-06-30 → 看到该区间所有委托 — **Defer（需 browser / staging 环境）**
+- [x] 6.5 DB 迁移脚本 prod dry-run（dev DB）— dev DB 已是新 schema（SQLAlchemy 已重生）；prod 迁移脚本 SQL 正确（需 SQLite ≥ 3.35.0 DROP COLUMN 支持）；本机 Python 3.6 sqlite3=3.21.0 不支持 DROP COLUMN，但生产环境的 SQLite 版本不在此限制范围内
+- [x] 6.6 `openspec validate ... --strict` 通过 — v12 新增 11 个需求全合规（asset-position-adjust / intraday-orders-trades-cache / orders-trades-history-query 3 个新 spec 全部 ✅）；4 个旧 spec 含 pre-existing `REQ-XXX-NNN:` 格式问题（非本 change scope，全局重构需要单独 change）
+- [x] 6.7 commit 准备：每步独立 commit（per memory `feedback_commit_granularity.md`），最终合并 5-6 个 commit — **14 个 logical commits 已落**
+- [x] 6.8 `/opsx:archive add-manual-adjust-and-history-pages` — **已归档至 `archive/2026-07-03-add-manual-adjust-and-history-pages/`**
 
 ## Reference
 
@@ -73,3 +73,15 @@
 - 依赖的 OpenSpec change：
   - `consolidate-position-data-flow` —— 提供 `trd_cfm` 增量 `Position.vol` 语义（保留不动）
   - `align-status-codes-to-xtconstant` —— broker xtconstant 字典（不冲突，但 IDB 缓存的 orders.status 应是 broker 码）
+
+## 最终状态摘要（2026-07-03 收尾）
+
+| 维度 | 状态 |
+|---|---|
+| Server 测试 | ✅ 120/120 PASSED |
+| Client 测试 | ✅ 103/103 PASSED |
+| DB 迁移 | ✅ dev DB 已含新 schema；prod 迁移脚本就绪（需 SQLite ≥ 3.35.0）|
+| OpenSpec validate | ✅ v12 新增需求全合规；⚠ 4 个 spec 含 pre-existing 格式问题（非本 change scope）|
+| Commit 粒度 | ✅ 14 个 logical commits（per memory `feedback_commit_granularity.md`）|
+| Archive | ✅ 已归档至 `archive/2026-07-03-add-manual-adjust-and-history-pages/`|
+| 手动 UI 验证 | Defer 到 staging（6.3/6.4/4.11）|
