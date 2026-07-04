@@ -14,6 +14,17 @@ export const useUiStore = defineStore('ui', () => {
   // 主题
   const theme = ref(localStorage.getItem('evtrade-theme') || 'light')
 
+  // 操作记录栏折叠状态（OperationLog v-model:expanded 共享）
+  //   true  = 展开 (320px), false = 折叠 (44px)
+  //   任何需要让 viewport-based calc 跟随 OperationLog 高度的视图(Trade.vue) 都要读它
+  const oplogExpanded = ref(false)
+  function setOplogExpanded(v) {
+    oplogExpanded.value = !!v
+  }
+  function toggleOplog() {
+    oplogExpanded.value = !oplogExpanded.value
+  }
+
   function toggleTheme() {
     theme.value = theme.value === 'dark' ? 'light' : 'dark'
     localStorage.setItem('evtrade-theme', theme.value)
@@ -61,6 +72,9 @@ export const useUiStore = defineStore('ui', () => {
     isMobile,
     mobileSidebarOpen,
     theme,
+    oplogExpanded,
+    setOplogExpanded,
+    toggleOplog,
     toggleSidebar,
     toggleTheme,
     onRouteChange,

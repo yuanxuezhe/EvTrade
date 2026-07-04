@@ -27,8 +27,12 @@
         </main>
       </div>
     </div>
-    <!-- 页面底部固定操作记录栏（贴底 fixed） -->
-    <OperationLog v-if="authStore.isAuthenticated" />
+    <!-- 页面底部固定操作记录栏（贴底 fixed）
+         v-model:expanded 共享给 uiStore,让其它视图（如 Trade.vue）能跟随高度变化 -->
+    <OperationLog
+      v-if="authStore.isAuthenticated"
+      v-model:expanded="uiStore.oplogExpanded"
+    />
   </template>
 </template>
 
