@@ -1,15 +1,31 @@
 <!--
-  HistoryTrades.vue — 历史成交通视图（v12）
+  HistoryTrades.vue — 历史成交通视图（v12 + v13 预设 chip + 强制历史范围）
 
   数据源：api.getTrades({ startDate, endDate, stockCode }) 局部查询
   不走 Pinia（历史数据非"实时"语义）
   不入 IDB（页面切换后下次进来重新拉）
+
+  v13 修订: 同 HistoryOrders.vue — 加 4 个预设 chip, picker 禁 today+, onMounted 留空
 -->
 <template>
   <div class="history-trades-view fade-in-up">
     <!-- 查询条件 -->
     <div class="content-card filter-bar">
       <div class="filter-left">
+        <!-- 预设日期 chip (历史区间, 不含今日) -->
+        <div class="filter-chips">
+          <button
+            v-for="(preset, idx) in PRESETS"
+            :key="preset.label"
+            type="button"
+            class="filter-chip"
+            :class="{ active: activePreset === idx }"
+            :title="preset.tooltip"
+            @click="setPreset(preset)"
+          >
+            {{ preset.label }}
+          </button>
+        </div>
         <el-date-picker
           v-model="dateRange"
           type="daterange"
@@ -20,6 +36,7 @@
           format="YYYY-MM-DD"
           :clearable="true"
           :editable="false"
+          :disabled-date="isAfterToday"
           style="width: 280px"
         />
         <el-input
@@ -139,24 +156,44 @@
 </template>
 
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Search, Refresh, Download } from '@element-plus/icons-vue'
 import { api } from '../api'
 import { formatMoney, formatNumber } from '../utils/format'
-import { useHoldingsStore } from '../stores/holdings'
+import { shiftDateStr } from '../utils/date'
 
 /**
- * 历史成交通视图（v12）
+ * 历史成交通视图（v12 + v13 trade-page-redesign-v2）
  *
- * 数据契约（spec/orders-trades-history-query.md）：
- * - 数据源：api.getTrades({ startDate, endDate, stockCode }) 局部 HTTP 查询
- * - 不走 Pinia holdings（历史数据非"实时"语义）
- * - 不入 IDB（页面切换后下次进来重新拉）
- * - 默认 startDate = endDate = activeTrdDate
- * - 金额本地算 = price × volume（与后端 trd_cfm amount 公式一致）
+ * 数据契约: 同 HistoryOrders (v13 修订: 加 4 chip, picker 禁 today+, onMounted 留空)
  */
-const holdingsStore = useHoldingsStore()
+const PRESETS = [
+  { label: '昨日',     startOffset: -1,  endOffset: -1,  tooltip: '查询昨天 1 天（不含今日）' },
+  { label: '最近三天', startOffset: -3,  endOffset: -1,  tooltip: '查询 today-3 ~ today-1, 不含今日' },
+  { label: '最近一周', startOffset: -7,  endOffset: -1,  tooltip: '查询 today-7 ~ today-1, 不含今日' },
+  { label: '最近一个月', startOffset: -30, endOffset: -1, tooltip: '查询 today-30 ~ today-1, 不含今日' }
+]
+
+function todayYYYYMMDD() {
+  const dt = new Date()
+  const y = dt.getFullYear()
+  const m = String(dt.getMonth() + 1).padStart(2, '0')
+  const d = String(dt.getDate()).padStart(2, '0')
+  return `${y}${m}${d}`
+}
+
+function isAfterToday(date) {
+  const y = date.getFullYear()
+  const m = String(date.getMonth() + 1).padStart(2, '0')
+  const d = String(date.getDate()).padStart(2, '0')
+  return `${y}${m}${d}` >= todayYYYYMMDD()
+}
+
+function presetRange(preset) {
+  const today = todayYYYYMMDD()
+  return [shiftDateStr(today, preset.startOffset), shiftDateStr(today, preset.endOffset)]
+}
 
 const dateRange = ref(null)
 const stockCode = ref('')
@@ -185,6 +222,16 @@ const pagedResults = computed(() => {
   return results.value.slice(start, start + pageSize.value)
 })
 
+// chip ↔ picker 双向联动高亮
+const activePreset = computed(() => {
+  if (!isDateRangeValid.value) return -1
+  const [curS, curE] = dateRange.value
+  return PRESETS.findIndex((p) => {
+    const [s, e] = presetRange(p)
+    return curS === s && curE === e
+  })
+})
+
 async function runQuery() {
   if (!isDateRangeValid.value) return
   const [startDate, endDate] = dateRange.value
@@ -201,6 +248,11 @@ async function runQuery() {
   } finally {
     loading.value = false
   }
+}
+
+async function setPreset(preset) {
+  dateRange.value = presetRange(preset)
+  await runQuery()
 }
 
 function resetQuery() {
@@ -240,14 +292,7 @@ function exportCSV() {
   ElMessage.success('已导出')
 }
 
-// 页面挂载默认查询激活日
-onMounted(async () => {
-  const day = holdingsStore.activeTrdDate
-  if (day) {
-    dateRange.value = [day, day]
-    await runQuery()
-  }
-})
+// v13: onMounted 留空 (无默认查询, 用户主动选 chip 或 picker)
 </script>
 
 <style scoped>
@@ -272,6 +317,38 @@ onMounted(async () => {
   align-items: center;
 }
 .filter-right { display: flex; gap: var(--space-2); }
+
+/* v13: 预设日期 chip (历史区间, 不含今日) */
+.filter-chips {
+  display: flex;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  align-items: center;
+}
+.filter-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px 14px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--border-base);
+  background: var(--bg-elevated);
+  color: var(--text-regular);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  white-space: nowrap;
+}
+.filter-chip:hover {
+  border-color: var(--brand-primary);
+  color: var(--brand-primary);
+}
+.filter-chip.active {
+  background: var(--brand-primary);
+  color: white;
+  border-color: var(--brand-primary);
+}
 
 .stats-row {
   display: grid;

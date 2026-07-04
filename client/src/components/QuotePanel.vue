@@ -1,103 +1,134 @@
+<!--
+  QuotePanel.vue — 行情面板（v15.1 quote-panel-template-match r3）
+
+  按 broker 终端 行情模板.png 重排版 (r3 修订):
+    头部 (Symbol + 名+码, 码字大) → hero (大最新价 + 涨跌, 可点)
+    → 卖盘纵栈 (5→1, 单击带价)
+    → 买盘纵栈 (1→5, 单击带价)
+    → 16 格 stats grid (含昨收, 价格格均可点)
+
+  r3 删除:
+    - 委比/委差 row (后端不支持, 视觉冗余)
+    - 卖 1 / 买 1 中间的"最新价"浮标 (hero 已显示, 重复)
+
+  交互:
+    - 所有"价格"cells 单击带入 OrderForm 委托价 (替代 v14 双击)
+    - 卖/买 5 档价 + hero 最新价 + stats grid 7 个价格格 (昨收/开盘/最高/最低/均价/涨停/跌停)
+    - hover 态 + tooltip 提示可点击
+
+  衍生字段 (client-side 计算):
+    - 均价 / 振幅 / 涨停 / 跌停
+    - 后端未支持字段 (现手 / 量比 / 市值 / 费率) 显示 `—`
+-->
 <template>
   <div class="quote-panel content-card">
-    <!-- 标题 + 标的 -->
+    <!-- ① 头部: Symbol + 名 + 码 -->
     <div class="qp-header">
-      <div class="qp-title">
-        <el-icon><DataLine /></el-icon>
-        <span>行情面板</span>
-        <span v-if="code" class="qp-stock-code">{{ code }}</span>
-      </div>
-      <span v-if="lastPriceText" class="qp-last-time">更新 {{ updatedAgo }}</span>
+      <span class="qp-symbol" :class="heroClass">{{ statusSymbol }}</span>
+      <span class="qp-name">{{ stockName }}</span>
+      <span class="qp-code">{{ code }}</span>
     </div>
 
-    <!-- ① 顶部：最新价 + 涨跌幅（核心）：未订阅时显示占位 -->
-    <div class="qp-hero" :class="heroClass">
-      <div class="qp-hero-price">{{ lastPriceText }}</div>
-      <div class="qp-hero-chg">
-        <span>{{ changeText }}</span>
-        <span class="qp-hero-pct">{{ changePctText }}</span>
-      </div>
-      <span v-if="!code" class="qp-hero-hint">输入股票代码订阅行情</span>
+    <!-- ② hero: 大最新价 + 涨跌 + 涨跌幅 (可点击带价) -->
+    <div
+      class="qp-hero"
+      :class="[heroClass, { 'is-clickable': lastPrice != null }]"
+      :title="lastPrice != null ? '点击带入委托价' : ''"
+      @click="emitApply(lastPrice)"
+    >
+      <span class="qp-hero-price">{{ lastPriceText }}</span>
+      <span class="qp-hero-chg">{{ changeText }}</span>
+      <span class="qp-hero-pct">{{ changePctText }}</span>
     </div>
 
-    <!-- ② 中部：6 字段（开/高/低/昨收/量/额） -->
-    <div class="qp-grid">
-      <div class="qp-cell" @dblclick="emitApply(quote?.fields?.[FIELD.OPEN])" title="双击带入限价">
-        <span class="qp-cell-label">今开</span>
-        <span class="qp-cell-value">{{ formatNum(quote?.fields?.[FIELD.OPEN]) }}</span>
-      </div>
-      <div class="qp-cell" @dblclick="emitApply(quote?.fields?.[FIELD.HIGH])" title="双击带入限价">
-        <span class="qp-cell-label">最高</span>
-        <span class="qp-cell-value">{{ formatNum(quote?.fields?.[FIELD.HIGH]) }}</span>
-      </div>
-      <div class="qp-cell" @dblclick="emitApply(quote?.fields?.[FIELD.LOW])" title="双击带入限价">
-        <span class="qp-cell-label">最低</span>
-        <span class="qp-cell-value">{{ formatNum(quote?.fields?.[FIELD.LOW]) }}</span>
-      </div>
-      <div class="qp-cell" @dblclick="emitApply(quote?.fields?.[FIELD.PREV_CLOSE])" title="双击带入限价（昨收）">
-        <span class="qp-cell-label">昨收</span>
-        <span class="qp-cell-value">{{ formatNum(quote?.fields?.[FIELD.PREV_CLOSE]) }}</span>
-      </div>
-      <div class="qp-cell">
-        <span class="qp-cell-label">成交量</span>
-        <span class="qp-cell-value">{{ formatBigNum(quote?.fields?.[FIELD.VOLUME]) }}</span>
-      </div>
-      <div class="qp-cell">
-        <span class="qp-cell-label">成交额</span>
-        <span class="qp-cell-value">{{ formatBigNum(quote?.fields?.[FIELD.AMOUNT]) }}</span>
-      </div>
-    </div>
-
-    <!-- ③ 5 档盘口（卖5..卖1 + 最新价 + 买1..买5）—— 未订阅时仍显示空骨架 -->
-    <div class="qp-orderbook" :class="{ 'is-empty': !quote }">
-      <div class="qp-ob-head">
-        <span class="qp-ob-label ask">卖盘</span>
-        <span class="qp-ob-label">最新</span>
-        <span class="qp-ob-label bid">买盘</span>
-      </div>
+    <!-- ③ 卖盘纵栈 (5→1) — 单击带价 -->
+    <div class="qp-stack qp-stack-ask">
       <div
         v-for="i in 5"
-        :key="i"
-        class="qp-ob-row"
+        :key="`ask-${i}`"
+        class="qp-row qp-row-ask"
+        :class="{ 'is-disabled': !hasAsk(i) }"
+        :title="hasAsk(i) ? '点击带入委托价' : '无该档行情'"
+        @click="emitApply(getAskPrice(i))"
       >
-        <!-- 卖5..卖1（i=5→1 倒序） -->
-        <div
-          class="qp-ob-cell ask"
-          @dblclick="emitApply(getAskPrice(6 - i))"
-          title="双击带入限价（卖盘）"
-        >
-          <span class="qp-ob-rank">卖{{ 6 - i }}</span>
-          <span class="qp-ob-price">{{ formatNum(getAskPrice(6 - i)) }}</span>
-          <span class="qp-ob-vol">{{ formatBigNum(getAskVol(6 - i)) }}</span>
-        </div>
-        <!-- 最新价列（中间，第 3 列高亮） -->
-        <div
-          v-if="i === 3"
-          class="qp-ob-cell mid"
-          :class="heroClass"
-        >
-          <span class="qp-ob-mid-price">{{ lastPriceText }}</span>
-        </div>
-        <div v-else class="qp-ob-cell mid empty"></div>
-        <!-- 买1..买5 -->
-        <div
-          class="qp-ob-cell bid"
-          @dblclick="emitApply(getBidPrice(i))"
-          title="双击带入限价（买盘）"
-        >
-          <span class="qp-ob-rank">买{{ i }}</span>
-          <span class="qp-ob-price">{{ formatNum(getBidPrice(i)) }}</span>
-          <span class="qp-ob-vol">{{ formatBigNum(getBidVol(i)) }}</span>
-        </div>
+        <span class="qp-rank">卖{{ 6 - i }}</span>
+        <span class="qp-price" :class="heroClass">{{ formatNum(getAskPrice(6 - i)) }}</span>
+        <span class="qp-vol">{{ formatBigNum(getAskVol(6 - i)) }}</span>
       </div>
     </div>
+
+    <!-- ④ 买盘纵栈 (1→5) — 单击带价 -->
+    <div class="qp-stack qp-stack-bid">
+      <div
+        v-for="i in 5"
+        :key="`bid-${i}`"
+        class="qp-row qp-row-bid"
+        :class="{ 'is-disabled': !hasBid(i) }"
+        :title="hasBid(i) ? '点击带入委托价' : '无该档行情'"
+        @click="emitApply(getBidPrice(i))"
+      >
+        <span class="qp-rank">买{{ i }}</span>
+        <span class="qp-price" :class="heroClass">{{ formatNum(getBidPrice(i)) }}</span>
+        <span class="qp-vol">{{ formatBigNum(getBidVol(i)) }}</span>
+      </div>
+    </div>
+
+    <!-- ⑤ 16 格 stats grid (label-left / value-right; 价格格均可点) -->
+    <div class="qp-stats-grid">
+      <div
+        class="qp-stats-cell is-clickable"
+        :title="prevClose != null ? '点击带入委托价' : ''"
+        @click="emitApply(prevClose)"
+      ><span class="qp-cell-label">昨收</span><span class="qp-cell-value" :class="heroClass">{{ formatNum(prevClose) }}</span></div>
+      <div
+        class="qp-stats-cell is-clickable"
+        :title="(quote?.fields?.[F.OPEN] != null && Number(quote?.fields?.[F.OPEN]) > 0) ? '点击带入委托价' : ''"
+        @click="emitApply(quote?.fields?.[F.OPEN])"
+      ><span class="qp-cell-label">开盘</span><span class="qp-cell-value" :class="heroClass">{{ formatNum(quote?.fields?.[F.OPEN]) }}</span></div>
+      <div class="qp-stats-cell"><span class="qp-cell-label">涨跌</span><span class="qp-cell-value" :class="signClass(changeNum)">{{ changeText }}</span></div>
+      <div
+        class="qp-stats-cell is-clickable"
+        :title="(quote?.fields?.[F.HIGH] != null && Number(quote?.fields?.[F.HIGH]) > 0) ? '点击带入委托价' : ''"
+        @click="emitApply(quote?.fields?.[F.HIGH])"
+      ><span class="qp-cell-label">最高</span><span class="qp-cell-value" :class="heroClass">{{ formatNum(quote?.fields?.[F.HIGH]) }}</span></div>
+      <div class="qp-stats-cell"><span class="qp-cell-label">涨幅</span><span class="qp-cell-value" :class="signClass(changePct)">{{ changePctText }}</span></div>
+      <div
+        class="qp-stats-cell is-clickable"
+        :title="(quote?.fields?.[F.LOW] != null && Number(quote?.fields?.[F.LOW]) > 0) ? '点击带入委托价' : ''"
+        @click="emitApply(quote?.fields?.[F.LOW])"
+      ><span class="qp-cell-label">最低</span><span class="qp-cell-value" :class="heroClass">{{ formatNum(quote?.fields?.[F.LOW]) }}</span></div>
+      <div class="qp-stats-cell"><span class="qp-cell-label">振幅</span><span class="qp-cell-value">{{ amplitudeText }}</span></div>
+      <div
+        class="qp-stats-cell is-clickable"
+        :title="avgPrice != null ? '点击带入委托价' : ''"
+        @click="emitApply(avgPrice)"
+      ><span class="qp-cell-label">均价</span><span class="qp-cell-value">{{ avgPriceText }}</span></div>
+      <div class="qp-stats-cell"><span class="qp-cell-label">现手</span><span class="qp-cell-value">—</span></div>
+      <div class="qp-stats-cell"><span class="qp-cell-label">金额</span><span class="qp-cell-value">{{ formatBigNum(quote?.fields?.[F.AMOUNT]) }}</span></div>
+      <div class="qp-stats-cell"><span class="qp-cell-label">总手</span><span class="qp-cell-value">{{ formatBigNum(quote?.fields?.[F.VOLUME]) }}</span></div>
+      <div class="qp-stats-cell"><span class="qp-cell-label">量比</span><span class="qp-cell-value">—</span></div>
+      <div
+        class="qp-stats-cell is-clickable"
+        :title="limitUp != null ? '点击带入委托价' : ''"
+        @click="emitApply(limitUp)"
+      ><span class="qp-cell-label">涨停</span><span class="qp-cell-value text-up">{{ limitUpText }}</span></div>
+      <div
+        class="qp-stats-cell is-clickable"
+        :title="limitDown != null ? '点击带入委托价' : ''"
+        @click="emitApply(limitDown)"
+      ><span class="qp-cell-label">跌停</span><span class="qp-cell-value text-down">{{ limitDownText }}</span></div>
+      <div class="qp-stats-cell"><span class="qp-cell-label">市值</span><span class="qp-cell-value">—</span></div>
+      <div class="qp-stats-cell"><span class="qp-cell-label">费率</span><span class="qp-cell-value">—</span></div>
+    </div>
+
+    <!-- 未订阅提示 -->
+    <div v-if="!code" class="qp-empty">输入股票代码订阅行情</div>
   </div>
 </template>
 
 <script setup>
 import { computed, onBeforeUnmount, ref } from 'vue'
-import { DataLine } from '@element-plus/icons-vue'
-import { useQuoteStore, FIELD as F } from '../stores/quote'
+import { useQuoteStore, FIELD } from '../stores/quote'
 
 const props = defineProps({
   stockCode: { type: String, default: '' }
@@ -106,9 +137,9 @@ const props = defineProps({
 const emit = defineEmits(['apply-price'])
 
 const quoteStore = useQuoteStore()
-const FIELD = F  // 模板里直接用 FIELD.X
+const F = FIELD
 
-const tick = ref(0)  // 每秒 tick 一次用于刷新"X秒前"
+const tick = ref(0)
 let timer = null
 function startTick() {
   if (timer) return
@@ -120,55 +151,92 @@ function stopTick() {
 
 const code = computed(() => (props.stockCode || '').toUpperCase().trim())
 const quote = computed(() => (tick.value, quoteStore.get(code.value)))
-const lastPrice = computed(() => quote.value?.last_price ?? null)
-const lastPriceText = computed(() => {
-  const v = lastPrice.value
-  if (v == null || !Number.isFinite(v)) return '—'
-  return String(v)
+
+const stockName = computed(() => {
+  // 行情数据未携带股票名, 暂回退空 (trader 看代码)
+  return ''
+})
+
+const lastPrice = computed(() => {
+  const q = quote.value
+  if (!q) return null
+  return q.last_price ?? Number(q.fields?.[F.LAST]) ?? null
+})
+const lastPriceText = computed(() => formatNum(lastPrice.value))
+
+const prevClose = computed(() => Number(quote.value?.fields?.[F.PREV_CLOSE]) || null)
+
+const changeNum = computed(() => {
+  const last = lastPrice.value
+  const prev = prevClose.value
+  if (last == null || prev == null) return null
+  return Number(last) - Number(prev)
+})
+const changeText = computed(() => {
+  const v = changeNum.value
+  if (v == null) return '—'
+  return `${v >= 0 ? '+' : ''}${v.toFixed(2)}`
 })
 
 const changePct = computed(() => {
-  const q = quote.value
-  if (!q || !q.fields) return null
-  const last = Number(q.fields[F.LAST])
-  const prev = Number(q.fields[F.PREV_CLOSE])
+  const last = Number(lastPrice.value)
+  const prev = Number(prevClose.value)
   if (!Number.isFinite(last) || !Number.isFinite(prev) || prev === 0) return null
   return ((last - prev) / prev) * 100
 })
 const changePctText = computed(() => {
   const v = changePct.value
   if (v == null) return '—'
-  const sign = v > 0 ? '+' : v < 0 ? '' : ''
+  const sign = v > 0 ? '+' : ''
   return `${sign}${v.toFixed(2)}%`
 })
-const changeText = computed(() => {
-  const q = quote.value
-  if (!q || !q.fields) return '—'
-  const last = Number(q.fields[F.LAST])
-  const prev = Number(q.fields[F.PREV_CLOSE])
-  if (!Number.isFinite(last) || !Number.isFinite(prev)) return '—'
-  const diff = last - prev
-  return `${diff >= 0 ? '+' : ''}${diff.toFixed(2)}`
-})
+
 const heroClass = computed(() => {
   const v = changePct.value
   if (v == null) return ''
-  if (v > 0) return 'text-up'      // 涨红
-  if (v < 0) return 'text-down'   // 跌绿
-  return 'text-flat'              // 平黑
+  if (v > 0) return 'text-up'
+  if (v < 0) return 'text-down'
+  return 'text-flat'
 })
 
-const updatedAgo = computed(() => {
+const statusSymbol = computed(() => {
+  const v = changePct.value
+  if (v == null) return '·'
+  if (v > 0) return '▲'
+  if (v < 0) return '▼'
+  return '▬'
+})
+
+// ─── 衍生: 均价 / 振幅 / 涨/跌停 ───
+const avgPrice = computed(() => {
   const q = quote.value
-  if (!q) return ''
-  const sec = Math.max(0, Math.floor((Date.now() - q.ts) / 1000))
-  if (sec < 60) return `${sec}s 前`
-  if (sec < 3600) return `${Math.floor(sec / 60)}m 前`
-  return new Date(q.ts).toLocaleTimeString()
+  if (!q || !q.fields) return null
+  const amount = Number(q.fields[F.AMOUNT])
+  const volume = Number(q.fields[F.VOLUME])
+  if (!Number.isFinite(amount) || !Number.isFinite(volume) || volume === 0) return null
+  return amount / volume
 })
+const avgPriceText = computed(() => avgPrice.value != null ? avgPrice.value.toFixed(3) : '—')
 
-// 5 档盘口取值
-function getAskPrice(level) {  // level 1..5
+const amplitude = computed(() => {
+  const q = quote.value
+  if (!q || !q.fields) return null
+  const high = Number(q.fields[F.HIGH])
+  const low = Number(q.fields[F.LOW])
+  const prev = Number(q.fields[F.PREV_CLOSE])
+  if (!Number.isFinite(high) || !Number.isFinite(low) || !Number.isFinite(prev) || prev === 0) return null
+  return ((high - low) / prev) * 100
+})
+const amplitudeText = computed(() => amplitude.value != null ? `${amplitude.value.toFixed(2)}%` : '—')
+
+// TODO 区分板块: 创业板/科创板 20%, ST 5%; 当前简化为主板 10%
+const limitUp = computed(() => prevClose.value != null ? Number((prevClose.value * 1.10).toFixed(2)) : null)
+const limitDown = computed(() => prevClose.value != null ? Number((prevClose.value * 0.90).toFixed(2)) : null)
+const limitUpText = computed(() => limitUp.value != null ? limitUp.value.toFixed(2) : '—')
+const limitDownText = computed(() => limitDown.value != null ? limitDown.value.toFixed(2) : '—')
+
+// ─── 5 档盘口 ───
+function getAskPrice(level) {
   return quote.value?.fields?.[F.ASK_PRICE + (level - 1)] ?? null
 }
 function getBidPrice(level) {
@@ -180,8 +248,16 @@ function getAskVol(level) {
 function getBidVol(level) {
   return quote.value?.fields?.[F.BID_VOL + (level - 1)] ?? null
 }
+function hasAsk(level) {
+  const p = getAskPrice(level)
+  return p != null && Number(p) > 0
+}
+function hasBid(level) {
+  const p = getBidPrice(level)
+  return p != null && Number(p) > 0
+}
 
-// 格式化：保留原始精度（行情原始数据）
+// ─── 格式化 ───
 function formatNum(v) {
   if (v == null || v === '') return '—'
   const n = Number(v)
@@ -195,8 +271,15 @@ function formatBigNum(v) {
   if (!Number.isFinite(n)) return '—'
   return n.toLocaleString('zh-CN')
 }
+function signClass(v) {
+  if (v == null || !Number.isFinite(Number(v))) return ''
+  const n = Number(v)
+  if (n > 0) return 'text-up'
+  if (n < 0) return 'text-down'
+  return 'text-flat'
+}
 
-// 双击：带入限价（emit 给父组件 Trade.vue 统一处理）
+// ─── 单击: 带入限价 ───
 function emitApply(v) {
   if (v == null || v === '') return
   const n = Number(v)
@@ -209,56 +292,99 @@ startTick()
 </script>
 
 <style scoped>
-.quote-panel { padding: 14px 16px 12px; display: flex; flex-direction: column; gap: 10px; }
-.qp-header { display: flex; align-items: center; justify-content: space-between; }
-.qp-title { display: flex; align-items: center; gap: 8px; font-weight: 600; color: var(--text-primary, #1f2329); }
-.qp-title .el-icon { color: var(--primary-color, #2d6cdf); }
-.qp-stock-code { font-family: 'Roboto Mono', monospace; color: var(--text-secondary, #6b7785); font-weight: 500; }
-.qp-last-time { font-size: 12px; color: var(--text-tertiary, #8f95a1); }
-.qp-empty { display: flex; align-items: center; justify-content: center; gap: 8px; padding: 24px 0; color: var(--text-tertiary, #8f95a1); font-size: 13px; }
+.quote-panel {
+  padding: 12px 14px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-family: 'Roboto Mono', 'Menlo', monospace;
+  font-size: 13px;
+}
 
-/* 最新价 标题区 */
-.qp-hero { display: flex; align-items: baseline; gap: 16px; padding: 6px 0 4px; }
-.qp-hero-price { font-size: 32px; font-weight: 700; font-family: 'Roboto Mono', monospace; letter-spacing: -0.5px; }
-.qp-hero-chg { display: flex; align-items: baseline; gap: 6px; font-size: 14px; font-family: 'Roboto Mono', monospace; }
-.qp-hero-pct { font-weight: 600; }
-.qp-hero-hint { font-size: 12px; color: var(--text-tertiary, #8f95a1); margin-left: auto; font-weight: 400; font-family: inherit; }
+/* ① 头部 */
+.qp-header {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  border-bottom: 1px solid var(--border-light);
+  padding-bottom: 6px;
+}
+.qp-symbol { font-size: 14px; font-weight: 700; }
+.qp-name { font-size: 15px; font-weight: 600; color: var(--text-primary, #1f2329); }
+.qp-code {
+  font-size: 18px; font-weight: 600;
+  color: var(--text-secondary, #6b7785);
+  margin-left: auto;
+  letter-spacing: 0.5px;
+}
 
-/* 6 格字段 */
-.qp-grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 6px; }
-.qp-cell {
-  display: flex; flex-direction: column; align-items: center; justify-content: center;
-  padding: 8px 4px; border-radius: 4px;
-  background: var(--bg-secondary, #f5f6f8); cursor: pointer; transition: background .15s;
+/* ② hero (可点击带价) */
+.qp-hero {
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--border-light);
+  border-radius: 3px;
+  transition: background .15s;
+}
+.qp-hero.is-clickable { cursor: pointer; user-select: none; }
+.qp-hero.is-clickable:hover { background: var(--bg-hover, #e9ecf2); }
+.qp-hero-price { font-size: 30px; font-weight: 700; letter-spacing: -0.5px; }
+.qp-hero-chg   { font-size: 14px; font-weight: 500; }
+.qp-hero-pct   { font-size: 14px; font-weight: 600; }
+
+/* ③ / ④ 卖/买纵栈 */
+.qp-stack { display: flex; flex-direction: column; gap: 1px; }
+.qp-stack-ask { background: var(--ask-tint-bg, rgba(245, 71, 93, 0.04)); border-radius: 3px; padding: 2px 0; }
+.qp-stack-bid { background: var(--bid-tint-bg, rgba(22, 181, 114, 0.04)); border-radius: 3px; padding: 2px 0; }
+
+/* 可点击行 */
+.qp-row {
+  display: grid;
+  grid-template-columns: 56px 1fr 80px;
+  align-items: center;
+  padding: 4px 8px;
+  cursor: pointer;
+  transition: background .15s;
   user-select: none;
 }
-.qp-cell:hover { background: var(--bg-hover, #e9ecf2); }
-.qp-cell-label { font-size: 11px; color: var(--text-tertiary, #8f95a1); margin-bottom: 2px; }
-.qp-cell-value { font-size: 13px; font-weight: 600; font-family: 'Roboto Mono', monospace; color: var(--text-primary, #1f2329); }
+.qp-row:hover { background: var(--bg-hover, #e9ecf2); }
+.qp-row.is-disabled { cursor: default; opacity: 0.4; }
+.qp-rank  { font-size: 11px; color: var(--text-tertiary, #8f95a1); }
+.qp-price { text-align: right; font-weight: 600; }
+.qp-vol   { text-align: right; font-size: 11px; color: var(--color-vol, #2db7f5); }
 
-/* 5 档盘口 */
-.qp-orderbook { display: flex; flex-direction: column; gap: 2px; border: 1px solid var(--border-color, #e5e6eb); border-radius: 4px; padding: 4px 0; background: var(--bg-secondary, #fafbfc); transition: opacity .2s; }
-.qp-orderbook.is-empty { opacity: .55; }
-.qp-ob-head { display: grid; grid-template-columns: 1fr 1fr 1fr; padding: 2px 8px; }
-.qp-ob-label { font-size: 11px; color: var(--text-tertiary, #8f95a1); }
-.qp-ob-label.ask { color: var(--color-down, #16b572); text-align: left; }
-.qp-ob-label.bid { color: var(--color-up, #f5475d); text-align: right; }
-.qp-ob-label:not(.ask):not(.bid) { text-align: center; }
+/* ⑦ 16 格 stats */
+.qp-stats-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1px;
+  background: var(--border-light, #ebeef5);
+  border-radius: 3px;
+  overflow: hidden;
+}
+.qp-stats-cell {
+  display: grid;
+  grid-template-columns: 48px 1fr;
+  align-items: baseline;
+  padding: 4px 8px;
+  background: var(--bg-elevated, #fff);
+}
+.qp-stats-cell.is-clickable { cursor: pointer; transition: background .15s; user-select: none; }
+.qp-stats-cell.is-clickable:hover { background: var(--bg-hover, #e9ecf2); }
+.qp-cell-label { font-size: 11px; color: var(--text-tertiary, #8f95a1); }
+.qp-cell-value { font-size: 13px; font-weight: 600; text-align: right; color: var(--text-primary, #1f2329); }
 
-.qp-ob-row { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 2px; padding: 2px 4px; }
-.qp-ob-cell { display: grid; grid-template-columns: auto 1fr auto; gap: 6px; padding: 3px 6px; border-radius: 3px; font-family: 'Roboto Mono', monospace; font-size: 12px; cursor: pointer; transition: background .15s; user-select: none; }
-.qp-ob-cell:hover { background: var(--bg-hover, #e9ecf2); }
-.qp-ob-cell.ask .qp-ob-rank { color: var(--color-down, #16b572); }
-.qp-ob-cell.bid .qp-ob-rank { color: var(--color-up, #f5475d); }
-.qp-ob-rank { width: 26px; font-size: 11px; }
-.qp-ob-price { text-align: right; font-weight: 600; }
-.qp-ob-vol { width: 42px; text-align: right; color: var(--text-tertiary, #8f95a1); font-size: 11px; }
-.qp-ob-cell.mid { display: flex; align-items: center; justify-content: center; background: var(--bg-primary, #fff); cursor: default; }
-.qp-ob-cell.mid.empty { background: transparent; }
-.qp-ob-mid-price { font-weight: 700; font-size: 14px; }
+.qp-empty {
+  text-align: center;
+  font-size: 12px;
+  color: var(--text-tertiary, #8f95a1);
+  padding: 12px 0 0;
+}
 
-/* 颜色 */
-.text-up { color: var(--color-up, #f5475d); }
-.text-down { color: var(--color-down, #16b572); }
-.text-flat { color: var(--text-primary, #1f2329); }
+/* 语义色 */
+.text-up    { color: var(--color-up, #f5475d); }      /* 涨红 */
+.text-down  { color: var(--color-down, #16b572); }    /* 跌绿 */
+.text-flat  { color: var(--text-primary, #1f2329); }
 </style>

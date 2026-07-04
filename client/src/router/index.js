@@ -7,10 +7,8 @@ const Dashboard = () => import('../views/Dashboard.vue')
 const Trade = () => import('../views/Trade.vue')
 const Asset = () => import('../views/Asset.vue')
 const Holdings = () => import('../views/Holdings.vue')
-// v12: 当日 / 历史 拆分 — TodayOrders/Trades 读 Pinia + IDB（无 HTTP）,
+// v13 trade-page-redesign-v2: 删除 TodayOrders/TodayTrades view（由 Trade.vue 内嵌 mini-panel 承担）
 //   HistoryOrders/Trades 走 HTTP 局部 state（不入 IDB）
-const TodayOrders = () => import('../views/TodayOrders.vue')
-const TodayTrades = () => import('../views/TodayTrades.vue')
 const HistoryOrders = () => import('../views/HistoryOrders.vue')
 const HistoryTrades = () => import('../views/HistoryTrades.vue')
 const AlgoStrategy = () => import('../views/AlgoStrategy.vue')
@@ -36,14 +34,16 @@ const routes = [
   { path: '/positions', redirect: '/t0-trade' },
   { path: '/trade', name: 'Trade', component: Trade, meta: { title: '交易下单', requiresTrader: true } },
   { path: '/asset', name: 'Asset', component: Asset, meta: { title: '账户资金' } },
-  // v12: 委托 / 成交 拆分当日 + 历史 2 套视图
-  { path: '/today/orders', name: 'TodayOrders', component: TodayOrders, meta: { title: '当日委托' } },
-  { path: '/today/trades', name: 'TodayTrades', component: TodayTrades, meta: { title: '当日成交' } },
+  // v13 trade-page-redesign-v2: /today/* 路由删除, 改 redirect
+  //   HistoryOrders/Trades 走 HTTP 局部 state（不入 IDB）
   { path: '/history/orders', name: 'HistoryOrders', component: HistoryOrders, meta: { title: '历史委托' } },
   { path: '/history/trades', name: 'HistoryTrades', component: HistoryTrades, meta: { title: '历史成交' } },
-  // v12: 旧 /orders /trades 路由 redirect 到 today（同义, 旧书签不破）
-  { path: '/orders', redirect: '/today/orders' },
-  { path: '/trades', redirect: '/today/trades' },
+  // v13: 旧 /orders /trades 路由 redirect 到 history (新入口)
+  { path: '/orders', redirect: '/history/orders' },
+  { path: '/trades', redirect: '/history/trades' },
+  // v13: 老 /today/* 书签兼容 redirect (跳到 history view)
+  { path: '/today/orders', redirect: '/history/orders' },
+  { path: '/today/trades', redirect: '/history/trades' },
   { path: '/holdings', name: 'Holdings', component: Holdings, meta: { title: '持仓查询' } },
   // /to-management 旧路由 → redirect 到 /t0-trade (T0Trade.vue 真快速做T页面)
   { path: '/to-management', redirect: '/t0-trade' },

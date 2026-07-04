@@ -1,8 +1,4 @@
-## Purpose
-
-历史委托 / 成交按 `start_date` / `end_date` / `stock_code` 区间查询，**不走** Pinia / IDB —— 历史数据非"业务实时"语义，每次查询独立拉取。
-
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: 历史委托视图（v12 + v13 预设 chip + 强制历史范围）
 
@@ -68,6 +64,8 @@ The system SHALL 提供 `HistoryTrades.vue`，与历史委托视图对称，按 
 
 - 同 `HistoryOrders.vue`（成交版）
 
+## ADDED Requirements
+
 ### Requirement: history 视图预设日期范围 chip（v13 新增）
 
 The system SHALL 在 `HistoryOrders.vue` 与 `HistoryTrades.vue` 的 filter-bar 内提供 4 个 chip 按钮，
@@ -125,51 +123,14 @@ The system SHALL 让 `HistoryOrders.vue` 与 `HistoryTrades.vue` 在 onMounted �
 - **AND** MUST NOT 出现 v-loading 状态
 - **AND** el-table MUST 渲染 el-empty
 
-### Requirement: History 页面不持有状态（契约）
+## REMOVED Requirements
 
-The system SHALL 让 `HistoryOrders.vue` / `HistoryTrades.vue` 仅持有查询结果，不放入 `useHoldingsStore()` —— 历史数据非"业务实时"语义。
+### Requirement: history view onMounted 默认查询 activeDay（v13 删除）
 
-#### Scenario: HistoryOrders.vue 局部 state
+**Reason**：v13 起 Trade.vue 内嵌 mini-panel 承担"今日"数据展示，history view 严格只服务历史数据；
+若 onMounted 默认查 activeDay 会与 mini-panel 的当日数据重复展示，违反"今日数据 = Trade.vue 内嵌 + 缓存直读，历史数据 = 独立路由 + 后端区间"的分层语义。
 
-- **WHEN** 实施本 change
-- **THEN** `HistoryOrders.vue` 仅用 `ref([])` 局部 state 存查询结果
-- **AND** 不调 `holdings.refreshOrders` 或任何 holdings.actions
-- **AND** 每次"查询"按钮 = 新一次 HTTP 请求 + 覆盖局部 state
-
-#### Scenario: 不持久化历史数据
-
-- **WHEN** user 离开 `/history/orders`
-- **THEN** 下次再回来 = 默认查询激活日 + 重新拉取
-- **AND** 局部 state 不入 Pinia / 不入 IDB
-
-### Requirement: 端点契约重申（v12）
-
-`GET /api/orders` 与 `GET /api/trades` MUST 支持：
-- `start_date=YYYYMMDD`（8 位数字字符串）—— 必填
-- `end_date=YYYYMMDD`（8 位数字字符串）—— 必填
-- `stock_code=...`（可选）
-- 缺省时 = 激活日 trd_date（保持原契约）
-
-排序：
-- `/api/orders`：`ORDER BY order_time DESC`
-- `/api/trades`：`ORDER BY trade_time DESC, trade_id DESC`（v8 二级 trade_id 兜底）
-
-#### Scenario: 8 位数字校验
-
-- **WHEN** 传 `start_date=2026-6-1`（非 8 位）
-- **THEN** Pydantic 校验失败，返 422
-
-#### Scenario: stock_code 可选
-
-- **WHEN** 不传 `stock_code`
-- **THEN** 返回该日期区间内的所有股票的委托
-
-### Requirement: history 视图与 today 视图互斥加载
-
-The system SHALL 确保 user 同时打开 `/today/orders` 与 `/history/orders` 时不会互相污染 —— 前者读 Pinia、后者读 HTTP。
-
-#### Scenario: 两个 tab 同时打开
-
-- **WHEN** user 开 2 个 tab：一个在 `/today/orders`、一个在 `/history/orders`
-- **THEN** today tab 显示 Pinia 实时 orders；history tab 显示当前查询条件下的 HTTP 响应
-- **AND** 两者独立，互不刷新
+**Migration**：
+- `HistoryOrders.vue` / `HistoryTrades.vue` 的 `onMounted` 移除 `runQuery()` 调用
+- `dateRange` 初值从 `[activeDay, activeDay]` 改 `null`
+- 用户首次进入看到 el-empty + 4 个 chip 引导；点 chip 即查

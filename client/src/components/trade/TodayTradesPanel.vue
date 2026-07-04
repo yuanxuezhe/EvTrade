@@ -1,37 +1,25 @@
 <!--
-  TodayTradesPanel.vue — 今日成交 mini 面板
+  TodayTradesPanel.vue — 今日成交 mini 面板 (v13.2 分页版)
 
   数据源: useHoldingsStore().trades (Pinia + IDB write-through)
   严格过滤: trd_date === activeTrdDate + exclude cancel-fill (trade_type=1)
   嵌在 Trade.vue 右侧 (与下单表单 + 委托面板同屏)
   无撤单按钮 (trades 是终态历史, 不可撤)
-  滚动进度条: 行数 > 表格可视高度时, 底部进度条 + 滚动百分比提示
+  分页: el-pagination 默认 20 行/页, 与 TodayOrdersPanel 对称
 -->
 <template>
   <div class="tp-shell content-card">
     <div class="tp-header">
       <h3 class="tp-title">今日成交</h3>
-      <div class="tp-header-right">
-        <span class="tp-count text-mono">{{ todayTrades.length }} 笔</span>
-        <button
-          class="tp-icon-btn"
-          @click="refresh"
-          :class="{ spinning: refreshing }"
-          title="刷新"
-        >
-          <el-icon><Refresh /></el-icon>
-        </button>
-      </div>
+      <span class="tp-count text-mono">{{ todayTrades.length }} 笔</span>
     </div>
 
-    <div class="tp-body" ref="bodyRef">
+    <div class="tp-body">
       <el-table
-        :data="todayTrades"
+        :data="pagedTrades"
         :show-overflow-tooltip="true"
-        :max-height="bodyMaxHeight"
         stripe
         size="small"
-        v-loading="refreshing"
         class="tp-table"
       >
         <el-table-column prop="trade_time" label="时间" width="78">
@@ -78,24 +66,33 @@
       </el-table>
     </div>
 
-    <!-- 滚动进度条: 表格内容超过可视高度时显示 -->
-    <div v-if="scrollProgress > 0" class="tp-scroll-progress">
-      <el-progress
-        :percentage="Math.round(scrollProgress)"
-        :stroke-width="3"
-        :show-text="false"
-        :color="brandPrimary"
+    <!-- 分页: 行数 > pageSize 时显示 -->
+    <div v-if="todayTrades.length > pageSize" class="tp-pagination">
+      <el-pagination
+        v-model:current-page="page"
+        v-model:page-size="pageSize"
+        :total="todayTrades.length"
+        :page-sizes="[10, 20, 50, 100]"
+        layout="total, sizes, prev, pager, next"
+        small
+        background
+        @current-change="onPageChange"
       />
-      <span class="tp-scroll-hint text-mono">
-        {{ todayTrades.length }} 笔 · 已滚 {{ Math.round(scrollProgress) }}%
-      </span>
     </div>
   </div>
 </template>
 
 <script setup>
-import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
-import { Refresh } from '@element-plus/icons-vue'
+/**
+ * TodayTradesPanel.vue — 今日成交 mini 面板 (v13.2)
+ *
+ * 数据契约:
+ *   - useHoldingsStore().trades (Pinia 内存 + IDB write-through)
+ *   - 范围过滤 (panel-local computed): trd_date === activeDay + trade_type !== 1
+ *   - 分页: panel-local state, 不入 Pinia / IDB
+ *   - 无撤单按钮 (trades 是终态历史)
+ */
+import { computed, nextTick, ref } from 'vue'
 import { formatMoney, formatNumber } from '../../utils/format'
 import { useHoldingsStore } from '../../stores/holdings'
 
@@ -110,65 +107,90 @@ const todayTrades = computed(() => {
   )
 })
 
-const refreshing = ref(false)
-
-const bodyRef = ref(null)
-// 100% 让 el-table 填父容器 .tp-body (已 flex:1),不再用 100vh 错算
-//   高度由外层 Trade.vue 的 .trade-panels-col > * { flex:1; overflow:hidden } 限高
-const bodyMaxHeight = ref('100%')
-const scrollProgress = ref(0)
-
-const brandPrimary = '#4f7cff'
+// 分页 (panel-local state)
+const page = ref(1)
+const pageSize = ref(20)
+const pagedTrades = computed(() => {
+  const start = (page.value - 1) * pageSize.value
+  return todayTrades.value.slice(start, start + pageSize.value)
+})
 
 // 本地算 amount (price × volume), 与后端 trd_cfm 公式一致
 function localAmount(t) {
   return (Number(t.volume) || 0) * (Number(t.price) || 0)
 }
 
-async function refresh() {
-  refreshing.value = true
-  try {
-    await holdingsStore.refreshAll()
-  } finally {
-    refreshing.value = false
-  }
+// 翻页后 el-table 滚动条归顶
+function onPageChange() {
+  nextTick(() => {
+    const wrap = document.querySelector('.tp-table .el-scrollbar__wrap')
+    if (wrap) wrap.scrollTop = 0
+  })
 }
-
-// 滚动进度条
-let resizeObserver = null
-let scrollEl = null
-
-function updateScrollProgress() {
-  if (!scrollEl) return
-  const max = scrollEl.scrollHeight - scrollEl.clientHeight
-  if (max <= 0) {
-    scrollProgress.value = 0
-    return
-  }
-  const pct = (scrollEl.scrollTop / max) * 100
-  scrollProgress.value = Math.min(100, Math.max(0, pct))
-}
-
-function attachScrollListener() {
-  if (!bodyRef.value) return
-  scrollEl = bodyRef.value.querySelector('.el-scrollbar__wrap')
-  if (!scrollEl) return
-  scrollEl.addEventListener('scroll', updateScrollProgress, { passive: true })
-  resizeObserver = new ResizeObserver(() => updateScrollProgress())
-  resizeObserver.observe(scrollEl)
-  nextTick(updateScrollProgress)
-}
-
-onMounted(() => {
-  nextTick(attachScrollListener)
-})
-
-onBeforeUnmount(() => {
-  if (scrollEl) {
-    scrollEl.removeEventListener('scroll', updateScrollProgress)
-  }
-  if (resizeObserver) {
-    resizeObserver.disconnect()
-  }
-})
 </script>
+
+<style scoped>
+.tp-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.tp-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--border-light);
+  flex-shrink: 0;
+}
+
+.tp-title {
+  font-size: 14px;
+  font-weight: 600;
+  margin: 0;
+}
+
+.tp-count {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.tp-body {
+  flex: 1 1 0;
+  min-height: 0;
+  overflow: auto;
+  padding: 0 var(--space-3);
+}
+
+.tp-table {
+  width: 100%;
+}
+
+.tp-stock-code {
+  font-family: var(--font-mono);
+  font-weight: 600;
+}
+
+.tp-dir-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1px 8px;
+  border-radius: var(--radius-xs);
+  font-size: 12px;
+  font-weight: 600;
+}
+.tp-dir-chip.buy { background: var(--color-up-bg); color: var(--color-up); }
+.tp-dir-chip.sell { background: var(--color-down-bg); color: var(--color-down); }
+
+.tp-pagination {
+  display: flex;
+  justify-content: flex-end;
+  padding: var(--space-3) var(--space-4);
+  border-top: 1px solid var(--border-light);
+  flex-shrink: 0;
+}
+</style>

@@ -35,6 +35,9 @@ import {
 // v13: bootstrap 只拉激活日 (Today 视图消费), 历史走 Phase 4 History 视图独立 RPC
 //   单次窗口 = [active, active], 1 天
 //   配套 IDB 复合 key 单行存: 写 = N 次 O(1) idbPut, 读 = prefix 扫描
+// v13 trade-page-redesign-v2: 单日窗口即"今日缓存"设计语义 — Trade.vue 内嵌 mini-panel
+//   (TodayOrdersPanel / TodayTradesPanel) 客户端再守门 trd_date === activeDay, 与本字段解耦;
+//   历史数据由 HistoryOrders.vue / HistoryTrades.vue 独立 RPC 路径承担, 不入此窗口。
 const BOOTSTRAP_WINDOW_DAYS = 1
 
 /**

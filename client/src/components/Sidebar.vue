@@ -62,8 +62,6 @@
 import { computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { useUiStore } from '../stores/ui'
-import { useOrderStore } from '../stores/order'
-import { useHoldingsStore } from '../stores/holdings'
 import {
   Odometer, Wallet, Money, DataAnalysis, List, Tickets,
   Fold, Expand, TrendCharts, UserFilled, Files,
@@ -73,27 +71,19 @@ import { useAuthStore } from '../stores/auth'
 
 const route = useRoute()
 const uiStore = useUiStore()
-const orderStore = useOrderStore()
-const holdingsStore = useHoldingsStore()  // v8: orders 唯一权威源
 const authStore = useAuthStore()
 
-// v8: 委托/成交统一从 holdings 拿, orderStore 已不暴露 orders (REQ-FE-009)
-const pendingCount = computed(() =>
-  holdingsStore.orders.filter((o) => o.status === 'pending' || o.status === 'partial').length
-)
-
+// v13 trade-page-redesign-v2: pendingCount badge 删除
+//   旧实现读 holdings.orders + 老本地 status 码 (pre-existing bug, 'pending'/'partial' 不在 broker 字典)
+//   替代: AppHeader 已有总持仓 badge; ws push 实时反映 status 变化
 const menuItems = computed(() => {
   const base = [
     { path: '/', label: '仪表盘', icon: Odometer },
     { path: '/trade', label: '交易下单', icon: TrendCharts },
-    {
-      path: '/orders',
-      label: '委托查询',
-      icon: List,
-      badge: pendingCount.value > 0 ? pendingCount.value : null
-    },
+    // v13: 委托 / 成交入口改名为"历史委托" / "历史成交" (今日数据由 Trade.vue 内嵌 mini-panel 承担)
+    { path: '/orders', label: '历史委托', icon: List },
     { path: '/holdings', label: '持仓查询', icon: Files },
-    { path: '/trades', label: '成交查询', icon: Tickets },
+    { path: '/trades', label: '历史成交', icon: Tickets },
     // 账户资金 / 个人资料 入口移到头部用户菜单, 不再放侧栏
     // 策略交易分组
     { divider: true, label: '策略交易' },

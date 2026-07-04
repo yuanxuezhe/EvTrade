@@ -113,19 +113,21 @@ The shared component is [client/src/components/CacheTableView.vue](../../client/
 
 
 
-### REQ-FE-001: 路由（v12 拆分 today / history）
+### REQ-FE-001: 路由（v13：移除 /today/*, 统一指向 history）
 
-| 路径 | 视图 | 鉴权 | 说明 |
+| 路径 | 视图 / 行为 | 鉴权 | 说明 |
 |---|---|---|---|
-| `/login` | Login.vue | public | |
-| `/` | Dashboard.vue | login | |
-| `/trade` | Trade.vue | trader | 顶部加"今日委托 →" / "今日成交 →" 链接（v12 不再内嵌委托表） |
-| `/today/orders` | `TodayOrders.vue` | login | **v12 新增**：读 Pinia.orders（IDB write-through）；无 HTTP |
-| `/today/trades` | `TodayTrades.vue` | login | **v12 新增**：读 Pinia.trades（IDB write-through）；无 HTTP |
-| `/history/orders` | `HistoryOrders.vue` | login | **v12 新增**：el-date-picker 区间 + `api.getOrders({startDate,endDate,stockCode})` |
-| `/history/trades` | `HistoryTrades.vue` | login | **v12 新增**：同上 + `api.getTrades(...)` |
-| `/orders` | → redirect `/today/orders` | login | **v12 修订**：旧路由兼容 |
-| `/trades` | → redirect `/today/trades` | login | **v12 修订**：旧路由兼容 |
+| `/login` | Login.vue | public | 不变 |
+| `/` | Dashboard.vue | login | 不变 |
+| `/trade` | Trade.vue | trader | **v13 修订**：移除顶部"今日委托 →" / "今日成交 →" 外链；委托 / 成交数据**内嵌**到右侧两个 mini-panel（`TodayOrdersPanel` + `TodayTradesPanel`） |
+| ~~`/today/orders`~~ | (删除) | — | **v13 移除**：由 `TodayOrdersPanel` 内嵌承担；`/orders` redirect 改成 `/history/orders` |
+| ~~`/today/trades`~~ | (删除) | — | **v13 移除**：由 `TodayTradesPanel` 内嵌承担；`/trades` redirect 改成 `/history/trades` |
+| `/history/orders` | `HistoryOrders.vue` | login | **v13 修订**：onMounted 留空（无默认查询）；加 4 个预设 chip |
+| `/history/trades` | `HistoryTrades.vue` | login | **v13 修订**：同上 |
+| `/orders` | → redirect `/history/orders` | login | **v13 修订**：redirect 目标从 `/today/orders` 改 `/history/orders` |
+| `/trades` | → redirect `/history/trades` | login | **v13 修订**：redirect 目标从 `/today/trades` 改 `/history/trades` |
+| `/today/orders` | → redirect `/history/orders` | login | **v13 新增**：老书签兼容 redirect |
+| `/today/trades` | → redirect `/history/trades` | login | **v13 新增**：老书签兼容 redirect |
 | `/positions` | → redirect `/t0-trade` | login | 旧 `/to-management` 路径合并 |
 | `/t0-trade` | T0Trade.vue（快速做T） | login | |
 | `/t-strategy` | TStrategy.vue（策略做T） | login | |
@@ -613,13 +615,107 @@ OperationLog 上沿之上，不被底部操作记录栏遮挡。
 - **AND** el-empty 居中显示在 panel `.tp-body` 中
 - **AND** panel 总高度 = `.trade-panels-col` 高度 - `var(--space-3)` gap
 
+### Requirement: Trade.vue 顶部不含 quicklinks
+
+The system SHALL **删除** `Trade.vue` 模板顶部的 `<div class="trade-quicklinks">` 行（含"刷新"按钮等低价值入口）；用户改用 AppHeader 顶部的"刷新"按钮或 ws 推送实时更新。
+
+#### Scenario: Trade.vue 无顶部 quicklinks
+
+- **WHEN** user 导航到 `/trade`
+- **THEN** `Trade.vue` 渲染时 MUST NOT 出现 `.trade-quicklinks` DOM 节点
+- **AND** `Refresh` 图标 import 不在 `Trade.vue` script setup 中
+
+### Requirement: Trade.vue 左列 flex 链整屏填充
+
+The system SHALL 让 `Trade.vue` 左列 `.trade-form-col` 内的两个组件 (`OrderForm` + `QuotePanel`) 通过 `flex: 1 1 0; min-height: 0` 等分左列可用高度，避免在 OrderForm / QuotePanel 任一组件内容较短时出现底部空白。
+
+#### Scenario: 双组件等分左列
+
+- **WHEN** viewport ≥ 1100px 且左列渲染
+- **THEN** `.trade-form-col > * { flex: 1 1 0; min-height: 0; overflow: hidden }` 生效
+- **AND** OrderForm 与 QuotePanel 各占左列 50% 垂直空间
+- **AND** 组件内容短时下沿不留白
+
+### Requirement: 委托 / 成交 mini-panel 内嵌分页（20 行/页）
+
+The system SHALL 让 `TodayOrdersPanel` 与 `TodayTradesPanel` 在表格下方加 `<el-pagination>`，
+让单日委托 / 成交量大（>20 笔）的活跃日用户在 panel 内能翻页，**不**滚动整个 panel shell。
+
+- `pageSize` 默认 `20`，`pageSizes: [10, 20, 50, 100]`
+- `<el-table :data="pagedOrders|pagedTrades">` — `paged* = computed(() => today*.slice((page-1)*pageSize, page*pageSize))`
+- pagination 不入 Pinia / 不入 IDB（panel-local state）
+- pagination 切换 pageSize 或 page SHALL 触发 `<el-table>` 重新渲染（Vue reactivity）
+
+#### Scenario: 20 笔成交时分页生效
+
+- **WHEN** 当前交易日有 35 笔成交 (trd_date === activeDay) 且 trade_type !== 1
+- **THEN** 默认 page=1, pageSize=20 显示前 20 笔
+- **AND** 用户点 page 2 → 显示 21-35 笔
+- **AND** 翻页后 el-table 滚动条归顶
+
+#### Scenario: 0 笔时分页不显示
+
+- **WHEN** 当前交易日 0 笔委托 / 成交
+- **THEN** el-table 显示 el-empty
+- **AND** el-pagination 隐藏 (`v-if="total > pageSize"`)
+
+### Requirement: 撤单按钮只出现在今日数据源
+
+The system SHALL 让撤单 UI 按钮仅在 `TodayOrdersPanel.vue` (内嵌在 Trade.vue) 出现；`HistoryOrders.vue` 与 `TodayTradesPanel.vue` MUST NOT 含撤单按钮（架构约束：撤单风控限定在当日 / 当前交易日）。
+
+- 撤单 UI 控制范围：
+  - **允许**：`TodayOrdersPanel.vue` 中 `canCancel(row)` 为 true 的行渲染"撤"按钮
+  - **禁止**：`HistoryOrders.vue` 不含撤单列 / 撤单按钮 / `api.cancelOrder` 调用
+  - **禁止**：`TodayTradesPanel.vue` 不含撤单按钮（trades 是终态历史）
+- `TodayOrdersPanel.vue` 的 `canCancel(row)` MUST 满足：
+  - `Number(row.order_flag) !== 1`（cancel-row 不再撤）
+  - `row.status` 不在 broker 终态集 `{51, 52, 53, 54, 55, 56, 57}`
+  - 数据范围 = `trd_date === activeTrdDate`（panel computed `todayOrders` 已强制）
+
+#### Scenario: HistoryOrders.vue 无撤单列
+
+- **WHEN** user 导航到 `/history/orders`
+- **THEN** `HistoryOrders.vue` table 渲染 MUST NOT 出现"操作"列或任何撤单 UI
+- **AND** `api.cancelOrder(...)` MUST NOT 在该 view 的 script setup 中被调用
+
+#### Scenario: TodayTradesPanel.vue 无撤单按钮
+
+- **WHEN** user 查看 `Trade.vue` 右下角 `TodayTradesPanel`
+- **THEN** table MUST NOT 含"操作"列 / 撤单按钮（trades 是终态历史，无可撤数据）
+
+#### Scenario: TodayOrdersPanel mini-panel 撤单仅作用于 activeDay 行
+
+- **WHEN** `TodayOrdersPanel.todayOrders` computed 已过滤 `trd_date === activeDay` + `order_flag !== 1`
+- **THEN** 该 panel 内 click-to-cancel 只能撤"今日委托"（broker 仅接受 `trd_date=activeDay` 撤单）
+
 ## Scenarios
 
 ### S-FE-001: 未登录访问 `/orders`
 
-When 浏览器请求 `/orders`  
-Then router.beforeEach 检测到无 token → 重定向 `/login?redirect=/orders`  
+When 浏览器请求 `/orders`
+Then router.beforeEach 检测到无 token → 重定向 `/login?redirect=/orders`
 And 登录成功后跳回 `/orders`
+
+#### Scenario: /orders → /history/orders（v13 修订）
+
+- **WHEN** user 导航到 `/orders`
+- **THEN** router 重定向到 `/history/orders`（v13 之前是 `/today/orders`）
+
+#### Scenario: /trades → /history/trades（v13 修订）
+
+- **WHEN** user 导航到 `/trades`
+- **THEN** router 重定向到 `/history/trades`（v13 之前是 `/today/trades`）
+
+#### Scenario: 老书签 /today/* 兼容（v13 新增）
+
+- **WHEN** 老用户书签跳 `/today/orders`
+- **THEN** router 重定向到 `/history/orders`（不再 404）
+
+#### Scenario: sidebar 标签改为历史（v13）
+
+- **WHEN** user 登录后查看 sidebar
+- **THEN** "委托查询" 标签改为 "历史委托"（路由仍 `/orders` → redirect `/history/orders`）
+- **AND** "成交查询" 标签改为 "历史成交"（路由仍 `/trades` → redirect `/history/trades`）
 
 ### S-FE-002: viewer 访问 `/trade`
 
@@ -662,6 +758,51 @@ And Asset/Holdings 等视图若订阅了该股则自动刷新
 - **WHEN** 视图层渲染订单状态
 - **THEN** 48/49/50/51/52/55 等中间态 MUST 有脉冲动画（true）
 - **AND** 53/54/56/57/255 等终态 MUST 无脉冲动画（false）
+
+### Requirement: OrderForm 三段全宽垂直堆叠（价格类型 / 委托价格 / 委托数量）
+
+The system SHALL 让 `client/src/components/OrderForm.vue` 中
+`价格类型` / `委托价格` / `委托数量` 三段各自渲染为独立的 `<el-form-item>`,
+每段占满 `<el-form>` 100% 宽度（不再任何 grid 容器共享横向空间）,
+确保 `el-segmented` 4 段 (限价 / 最新价 / 挂单价 / 市价) label 在 Trade.vue 左列窄宽度下全部完整可见。
+
+- 字段顺序 MUST 保持: `股票代码` → `价格类型` → `委托价格` → `委托数量`
+- 每段 MUST NOT 用 `<div class="price-row">` 等 grid 容器包裹
+- `.price-row` / `.price-type-col { min-width: 180px }` / `.price-col` CSS MUST 全部删除
+
+#### Scenario: 价格类型 2×2 radio 网格渲染（r2: 替换 el-segmented）
+
+- **WHEN** user 打开 `/trade` 看到 `OrderForm.vue`
+- **THEN** `价格类型` 段 MUST 渲染为独立全宽 `<el-form-item>`, 内含 `<el-radio-group class="price-type-grid">`
+- **AND** MUST 渲染 2 行 × 2 列布局: `[限价 | 最新价]` 在上, `[挂单价 | 市价]` 在下
+- **AND** 4 个 `<el-radio>` MUST 各占 grid cell 50% 宽度 (CSS `grid-template-columns: 1fr 1fr`)
+- **AND** 每个 radio label (`限价` / `最新价` / `挂单价` / `市价`) MUST 完整可见（无 ellipsis 截断）
+- **AND** `el-segmented` MUST NOT 在该 view 中出现 (DOM 不含 `.el-segmented` 节点)
+
+#### Scenario: 委托价格独立全宽行渲染
+
+- **WHEN** user 打开 `/trade` 看到 `OrderForm.vue`
+- **THEN** `委托价格` 段 MUST 渲染为独立全宽 `<el-form-item>`
+- **AND** MUST 与 `价格类型` 段垂直对齐（不共享 grid 行）
+- **AND** MUST NOT 含 `.price-row` / `.price-col` 包裹 DOM
+
+#### Scenario: 委托数量保持独立全宽行
+
+- **WHEN** user 打开 `/trade` 看到 `OrderForm.vue`
+- **THEN** `委托数量` 段 MUST 仍为独立全宽 `<el-form-item>` (与 `委托价格` 对称, 中间无 grid 容器)
+
+#### Scenario: DOM 不含旧价格行容器
+
+- **WHEN** 浏览器渲染 `OrderForm.vue`
+- **THEN** 渲染出的 DOM 中 MUST NOT 出现 `.price-row` 节点
+- **AND** MUST NOT 出现 `.price-type-col` / `.price-col` class 包裹元素
+
+#### Scenario: 行为不变
+
+- **WHEN** user 切换 `价格类型` (`限价` / `最新价` / `挂单价` / `市价`) 或输入 `委托价格` / `委托数量`
+- **THEN** `form.price_type` / `form.price` / `form.volume` 响应式行为 MUST 与改造前完全一致
+- **AND** `handleSubmit` 校验 / `ElMessageBox.confirm` / `props.onSubmit` 调用 MUST 不变
+- **AND** radio-group `v-model` 单选互斥 MUST 生效 (任一时刻仅 1 项 checked)
 
 ### REQ-FE-012: 移除前端 fall-back 兼容 key（v11）
 
@@ -737,13 +878,13 @@ And Asset/Holdings 等视图若订阅了该股则自动刷新
 - 🟢 ~~T0Trade.vue submitOrder 误读 res.code 永远走 else 分支~~ → **v8 已修**（同上 change，submitOrder 改 orderStore.placeOrder）
 - 🟢 ~~ws.test.js / useT0Balance.test.js 10 个预存失败~~ → **未修**（独立 issue，与 v8 改造无关）
 
-### REQ-FE-300: IDB 持久化模块契约（v12 add-manual-adjust-and-history-pages）
+### REQ-FE-300: IDB 持久化模块契约（v14 fix-idb-store-missing-on-upgrade）
 
 `client/src/stores/holdings_idb.js` 提供委托 / 成交 当日数据 IDB 持久化，**仅 orders / trades**，**不影响** positions / asset。
 
 #### Scenario: 模块公开 API
 
-- `initIDB()` —— 打开 `EvTrade-holdings-cache` (version=1)，含 `orders` / `trades` 两个 object store
+- `initIDB()` —— 打开 `EvTrade-holdings-cache` (version=**3**), 含 `orders` / `trades` 两个 object store
   - 单例：同进程内多次调用复用同一 IDBDatabase
   - reject 时不抛（向上 throw 给调用方，由 caller 决定降级策略）
 - `saveOrdersForDate(trdDate, orders)` —— **fire-and-forget** PUT `orders[trdDate] = JSON.parse(JSON.stringify(orders || []))`
@@ -758,9 +899,16 @@ And Asset/Holdings 等视图若订阅了该股则自动刷新
 
 #### Scenario: IDB 写异常不外抛（critical path 不被 IDB 卡住）
 
-- **WHEN** `saveOrdersForDate` 内部 IDB put 抛错（quota exceeded / 浏览器隐私模式 / navigator.storage undefined）
-- **THEN** 函数 catch + `console.warn('[IDB] saveOrdersForDate failed:', ...)`
+- **WHEN** `saveOrder` / `saveTrade` 内部 IDB put 抛错（quota exceeded / 浏览器隐私模式 / navigator.storage undefined）
+- **THEN** 函数 catch + `console.warn('[IDB] saveOrder/saveTrade failed:', ...)`
 - **AND** 调用方（bootstrap / push handler）不需要 try/catch
+
+#### Scenario: 升级路径 store 重建（v14 fix）
+
+- **WHEN** IDB upgrade fires (oldV < 3, 含 fresh install 0→3 或 v12→v13→v3)
+- **THEN** 升级回调 MUST 在 `deleteObjectStore(STORE_ORDERS|TRADES)` (当存在) 后**立刻显式 `createObjectStore`** -- 即使 openDB 包装已有 auto-create-if-missing 循环, 用户回调 delete 后仍需兜底 create
+- **AND** DB 升到 v3 后 MUST 必含 `orders` / `trades` 两个 object store (即使之前 v2 因 bug 而 store 缺失, v3 升级触发即可 self-heal)
+- **AND** 后续 `_loadByDate` 调用 MUST NOT 抛 `NotFoundError: object stores was not found` (除非运行时外部误删)
 
 #### Scenario: 与 ws push 双写契约
 
@@ -804,3 +952,144 @@ And Asset/Holdings 等视图若订阅了该股则自动刷新
 - **保留**：useT0OrderSubmit / onQuickBuy/Sell/Balance / holdingsStore.refreshPositions / 抽屉
 - **移动端**（≤768px）：副行 sparkline 隐藏，曲线压缩到 60px
 - **行数**：1704 → 823（-52%）
+
+### Requirement: QuotePanel 按行情模板.png 重排版（卖盘纵栈 + 买盘纵栈 + 16 格 stats）
+
+The system SHALL 让 `client/src/components/QuotePanel.vue` 渲染顺序与布局
+对照 broker 终端 `行情模板.png` 重排：
+
+- 头部：股票名 + 股票代码（其上方有"涨跌状态标识" -- 当前 v15 用 Symbol 按涨/跌/平显示 `▲`/`▼`/`▬`）, **r3**: 股票代码字号 18px + `font-weight: 600`
+- 最新价 hero：大字号最新价 + 涨跌额 + 涨跌幅（涨红跌绿）, **r3**: hero 整行可点击带价
+- ~~委比/委差 row~~ **(r3 移除)**
+- 卖盘纵栈 5 行（档位 ↓ 价格 ↓ 量），顺序 `卖5` → `卖1`（卖5 在顶）
+- ~~中间最新价浮标~~ **(r3 移除, hero 已显示最新价, 重复)**
+- 买盘纵栈 5 行，顺序 `买1` → `买5`（买1 在顶）
+- 16 格 stats grid（8 行 2 列，**label 在左 / 数值在右**），按顺序 **(r3 Row1 改)**：
+  `[昨收, 开盘]`, `[涨跌, 最高]`, `[涨幅, 最低]`, `[振幅, 均价]`,
+  `[现手, 金额]`, `[总手, 量比]`, `[涨停, 跌停]`, `[市值, 费率]`
+- **r3 价格格全部可点**: hero + 卖/买 5×2 价 + stats 7 个价格格 (昨收/开盘/最高/最低/均价/涨停/跌停) 共 18 个 emit 点
+
+数字不可计算 / 后端未提供时 MUST 显示 `—` 而不是隐藏 (布局稳定)。
+
+#### Scenario: 头部标的与最新价 hero 渲染
+
+- **WHEN** `OrderForm` 输入了有效 stock_code 且 quote ws push 已到
+- **THEN** `QuotePanel.vue` 顶部 MUST 渲染 `名+码` (Symbol ▲/▼/▬ + 股票名 + 空格 + 股票代码)
+- **AND** 股票代码 MUST 字号 18px + `font-weight: 600` (r3)
+- **AND** 大最新价 + 涨跌额 + 涨跌幅 MUST 在同一行展示, 颜色按 `text-up` 涨红 / `text-down` 跌绿 / `text-flat` 平黑
+- **AND** hero 整行 MUST 可点击带价 (r3): `@click="emitApply(lastPrice)"` + `is-clickable` 类 + `title="点击带入委托价"` + hover 态 `var(--bg-hover)`
+
+#### Scenario: ~~委比/委差 row 计算并展示~~ — r3 移除
+
+- **r3 状态**: 不再渲染。trader 反馈: 后端 5 档口径与全档口径有差异, 视觉冗余。`script setup` 中 `committeeDiff` / `committeeRatio` / `sumAskVol` / `sumBidVol` helper 已删除。
+
+#### Scenario: 卖盘纵栈 5 行渲染
+
+- **WHEN** quote ws push 含 askPrice[1..5]
+- **THEN** MUST 渲染 5 行 sell, 顺序 `卖5` (顶) → `卖1` (底)
+- **AND** 每行 MUST 含 `档位` (左) / `价格` (中) / `量` (右, 整数千分位)
+- **AND** 缺档位时 MUST 显示 `—` (不塌陷行)
+
+#### Scenario: 买盘纵栈 5 行渲染
+
+- **WHEN** quote ws push 含 bidPrice[1..5]
+- **THEN** MUST 渲染 5 行 buy, 顺序 `买1` (顶) → `买5` (底)
+- **AND** 每行 MUST 含 `档位` / `价格` / `量`, 缺档位显示 `—`
+
+#### Scenario: 16 格 stats grid 渲染
+
+- **WHEN** `QuotePanel.vue` 渲染于正常数据状态
+- **THEN** MUST 渲染 8 行 × 2 列 = 16 格 grid, label 左值右
+- **AND** 字段 MUST 按顺序 **(r3 Row1 首格改)** `昨收 / 开盘 / 涨跌 / 最高 / 涨幅 / 最低 / 振幅 / 均价 / 现手 / 金额 / 总手 / 量比 / 涨停 / 跌停 / 市值 / 费率`
+- **AND** 已计算的字段 MUST 填实:
+  - `均价 = amount / volume` (除 0 显示 `—`) — **r3 可点击**
+  - `振幅 = (high - low) / prevClose * 100%` (prevClose=0 显示 `—`)
+  - `涨停 = prevClose * 1.10` (2 位小数) — **r3 可点击**
+  - `跌停 = prevClose * 0.90` (2 位小数) — **r3 可点击**
+  - `昨收` = `fields[PREV_CLOSE]` — **r3 可点击**
+  - `开盘` = `fields[OPEN]` — **r3 可点击**
+  - `最高` = `fields[HIGH]` — **r3 可点击**
+  - `最低` = `fields[LOW]` — **r3 可点击**
+- **AND** 未计算的字段 (`现手` / `量比` / `市值` / `费率`) MUST 显示 `—`
+
+### Requirement: QuotePanel 单击价格带入 OrderForm 委托价（替代双击; r3 覆盖 18 个 cell）
+
+The system SHALL 让 `client/src/components/QuotePanel.vue` 中
+
+> **改前**（v15 之前）：卖盘/买盘 cell / 6 格 cell 用 `@dblclick="emitApply(...)"` 触发价格带入
+> **改后**（v15）：改用 `@click="emitApply(...)"`，鼠标 hover 态有视觉提示 (cursor + bg color + title tooltip)
+> **r3 扩展**：覆盖 18 个 price cell (hero 1 + 卖 5 + 买 5 + stats 7 = 18); 非价格的 cells (涨跌/涨幅/振幅/金额/总手/现手/量比/市值/费率) 保持静态
+
+行为约束：
+- 卖 1..卖 5 / 买 1..买 5 任一档位的"价格"列 MUST 单击即向父组件 `Trade.vue` emit `apply-price` 事件
+- hero 大最新价 MUST 单击可带入 (r3)
+- 7 个 stats 价格格 (`昨收 / 开盘 / 最高 / 最低 / 均价 / 涨停 / 跌停`) MUST 单击可带入 (r3)
+- emit payload MUST 为数字 (Number 类型, 保留原始精度)
+- 鼠标 hover 任一可点击 cell MUST 变更 background 至 `var(--bg-hover)` + `cursor: pointer` + `title="点击带入委托价"`
+- 非价格格 (涨跌/涨幅/振幅/金额/总手/未计算字段) MUST NOT 触发 emit (无 cursor: pointer, 无 hover 态)
+
+#### Scenario: 单击卖 1 价带入 OrderForm
+
+- **WHEN** user 鼠标 hover 卖盘第 `卖1` 行价格列
+- **THEN** background 变 `var(--bg-hover)` + cursor `pointer`
+- **WHEN** user click 卖 1 价格 cell
+- **THEN** MUST emit `apply-price` 事件, payload = `Number(askPrice[0])`
+- **AND** Trade.vue 调用 `onApplyPrice` → `orderStore.setPrice(price)` → OrderForm `form.price` 更新
+
+#### Scenario: 单击买 3 价带入 OrderForm
+
+- **WHEN** user click 买 3 价格 cell
+- **THEN** MUST emit `apply-price`, payload = `Number(bidPrice[2])`
+
+#### Scenario: 单击 hero 最新价带入 OrderForm (r3)
+
+- **WHEN** user 鼠标 hover hero 整行
+- **THEN** background 变 `var(--bg-hover)` + cursor `pointer`
+- **WHEN** user click hero (任意位置)
+- **THEN** MUST emit `apply-price`, payload = `Number(lastPrice)`
+
+#### Scenario: 单击 stats 昨收 / 开盘 / 最高 / 最低 / 均价 / 涨停 / 跌停 价带入 OrderForm (r3)
+
+- **WHEN** user click stats grid 中 `昨收` / `开盘` / `最高` / `最低` / `均价` / `涨停` / `跌停` 任一 cell
+- **THEN** MUST emit `apply-price`, payload 对应 `prevClose` / `open` / `high` / `low` / `avgPrice` / `limitUp` / `limitDown` 数字
+
+#### Scenario: 缺档位时不可点击
+
+- **WHEN** 卖/买某档缺价 (null / 0) 或 stats 价格格字段未提供 (null / 0)
+- **THEN** 该 cell MUST NOT 渲染 `cursor: pointer` 且 click MUST NOT emit (内部 `emitApply` 已对 null/0 早返)
+
+#### Scenario: 非价格格 (涨跌/涨幅/振幅/未支持) 不可点击
+
+- **WHEN** user hover stats grid 中 `涨跌` / `涨幅` / `振幅` / `现手` / `量比` / `市值` / `费率` cell
+- **THEN** MUST NOT 变更 background + MUST NOT 显示 `cursor: pointer`
+- **AND** click MUST NOT emit
+
+### REMOVED Requirements
+
+#### Requirement: QuotePanel 双击价格带入（v15 之前行为）
+
+**Reason**：v15 改单击, 双击与单击并存会让用户困惑; 单击节奏更短, 符合 trader "看价 → 点 → 下单" 的快节奏。
+
+**Migration**：
+- 删 `client/src/components/QuotePanel.vue` 中所有 `@dblclick="emitApply(...)"` 的模板节点
+- 改为 `@click="emitApply(...)"`, tooltip `title` 改为 "点击带入委托价"
+- Trade.vue `@apply-price="onApplyPrice"` 监听器不变, emit 协议不变
+
+#### Requirement: QuotePanel 委比 / 委差 row 渲染（v15 首次实现）— r3 移除
+
+**Reason**：trader 反馈: 1) 后端 5 档口径与全档口径不一致, 显示值易误导; 2) hero 已显最新价 + 涨跌/涨幅, 委比/委差视觉冗余。
+
+**Migration**：
+- 删 `<div class="qp-committee">` 模板块
+- 删 `.qp-committee` CSS 块
+- 删 `<script setup>` 中 `committeeDiff` / `committeeRatio` / `committeeDiffText` / `committeeRatioText` 4 个 computed + `sumAskVol` / `sumBidVol` 2 个 helper
+- Trade.vue 不消费这两个字段, 无下游影响
+
+#### Requirement: QuotePanel 卖 1 / 买 1 中间最新价浮标（v15 首次实现）— r3 移除
+
+**Reason**：hero 已显示最新价, 中间浮标重复; 且移除后视线直"卖压 → 买力", 更紧凑。
+
+**Migration**：
+- 删 `<div class="qp-mid">` 模板块
+- 删 `.qp-mid` / `.qp-mid-label` / `.qp-mid-price` CSS 块
+- 卖盘栈与买盘栈之间不留空 row, 直接堆叠

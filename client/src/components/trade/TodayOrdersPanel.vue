@@ -1,37 +1,26 @@
 <!--
-  TodayOrdersPanel.vue — 今日委托 mini 面板
+  TodayOrdersPanel.vue — 今日委托 mini 面板 (v13.2 分页版)
 
   数据源: useHoldingsStore().orders (Pinia + IDB write-through)
-  严格过滤: trd_date === activeTrdDate + exclude cancel-row
-  嵌在 Trade.vue 右侧 (与下单表单同屏)
+  严格过滤: trd_date === activeTrdDate + exclude cancel-fill (order_flag=1)
+  嵌在 Trade.vue 右侧 (与下单表单 + 委托面板同屏)
   click-to-cancel: 委托行点'撤' → ElMessageBox.confirm → orderStore.cancelOrder
-  滚动进度条: 行数 > 表格可视高度时, 底部进度条 + 滚动百分比提示
+  分页: el-pagination 默认 20 行/页, pageSizes [10,20,50,100]
+       panel-local state, 不入 Pinia
 -->
 <template>
   <div class="tp-shell content-card">
     <div class="tp-header">
       <h3 class="tp-title">今日委托</h3>
-      <div class="tp-header-right">
-        <span class="tp-count text-mono">{{ todayOrders.length }} 笔</span>
-        <button
-          class="tp-icon-btn"
-          @click="refresh"
-          :class="{ spinning: refreshing }"
-          title="刷新"
-        >
-          <el-icon><Refresh /></el-icon>
-        </button>
-      </div>
+      <span class="tp-count text-mono">{{ todayOrders.length }} 笔</span>
     </div>
 
-    <div class="tp-body" ref="bodyRef">
+    <div class="tp-body">
       <el-table
-        :data="todayOrders"
+        :data="pagedOrders"
         :show-overflow-tooltip="true"
-        :max-height="bodyMaxHeight"
         stripe
         size="small"
-        v-loading="refreshing"
         class="tp-table"
       >
         <el-table-column prop="order_time" label="时间" width="78">
@@ -92,25 +81,34 @@
       </el-table>
     </div>
 
-    <!-- 滚动进度条: 表格内容超过可视高度时显示 -->
-    <div v-if="scrollProgress > 0" class="tp-scroll-progress">
-      <el-progress
-        :percentage="Math.round(scrollProgress)"
-        :stroke-width="3"
-        :show-text="false"
-        :color="brandPrimary"
+    <!-- 分页: 行数 > pageSize 时显示 (避免行数少时的视觉噪声) -->
+    <div v-if="todayOrders.length > pageSize" class="tp-pagination">
+      <el-pagination
+        v-model:current-page="page"
+        v-model:page-size="pageSize"
+        :total="todayOrders.length"
+        :page-sizes="[10, 20, 50, 100]"
+        layout="total, sizes, prev, pager, next"
+        small
+        background
+        @current-change="onPageChange"
       />
-      <span class="tp-scroll-hint text-mono">
-        {{ todayOrders.length }} 笔 · 已滚 {{ Math.round(scrollProgress) }}%
-      </span>
     </div>
   </div>
 </template>
 
 <script setup>
-import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+/**
+ * TodayOrdersPanel.vue — 今日委托 mini 面板 (v13.2)
+ *
+ * 数据契约:
+ *   - useHoldingsStore().orders (Pinia 内存 + IDB write-through)
+ *   - 范围过滤 (panel-local computed): trd_date === activeDay + order_flag !== 1
+ *   - 分页: panel-local state, 不入 Pinia / IDB
+ *   - 撤单: canCancel(row) 守卫限于 activeDay + 非终态 + 非 cancel-row
+ */
+import { computed, nextTick, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Refresh } from '@element-plus/icons-vue'
 import { formatMoney, formatNumber } from '../../utils/format'
 import OrderStatusBadge from '../OrderStatusBadge.vue'
 import { useHoldingsStore } from '../../stores/holdings'
@@ -128,31 +126,21 @@ const todayOrders = computed(() => {
   )
 })
 
-const refreshing = ref(false)
+// 分页 (panel-local state)
+const page = ref(1)
+const pageSize = ref(20)
+const pagedOrders = computed(() => {
+  const start = (page.value - 1) * pageSize.value
+  return todayOrders.value.slice(start, start + pageSize.value)
+})
+
 const cancellingOrderNo = ref('')
-
-const bodyRef = ref(null)
-// 100% 让 el-table 填父容器 .tp-body (已 flex:1),不再用 100vh 错算
-//   高度由外层 Trade.vue 的 .trade-panels-col > * { flex:1; overflow:hidden } 限高
-const bodyMaxHeight = ref('100%')
-const scrollProgress = ref(0)
-
-const brandPrimary = '#4f7cff'
 
 // 可撤状态: 非撤单审计 + 状态不在终态集
 const TERMINAL_STATUSES = new Set(['51', '52', '53', '54', '55', '56', '57'])
 function canCancel(row) {
   if (Number(row.order_flag) === 1) return false
   return !TERMINAL_STATUSES.has(String(row.status))
-}
-
-async function refresh() {
-  refreshing.value = true
-  try {
-    await holdingsStore.refreshAll()
-  } finally {
-    refreshing.value = false
-  }
 }
 
 async function handleCancel(row) {
@@ -180,44 +168,77 @@ async function handleCancel(row) {
   }
 }
 
-// 滚动进度条: 监听 el-table 内部 el-scrollbar 的 scroll
-let resizeObserver = null
-let scrollEl = null
-
-function updateScrollProgress() {
-  if (!scrollEl) return
-  const max = scrollEl.scrollHeight - scrollEl.clientHeight
-  if (max <= 0) {
-    scrollProgress.value = 0
-    return
-  }
-  const pct = (scrollEl.scrollTop / max) * 100
-  scrollProgress.value = Math.min(100, Math.max(0, pct))
+// 翻页后 el-table 滚动条归顶 (翻页体验更自然)
+function onPageChange() {
+  nextTick(() => {
+    const wrap = document.querySelector('.tp-table .el-scrollbar__wrap')
+    if (wrap) wrap.scrollTop = 0
+  })
 }
-
-function attachScrollListener() {
-  if (!bodyRef.value) return
-  // el-table 内部的滚动容器选择器
-  scrollEl = bodyRef.value.querySelector('.el-scrollbar__wrap')
-  if (!scrollEl) return
-  scrollEl.addEventListener('scroll', updateScrollProgress, { passive: true })
-  // 监听容器尺寸变化 (新增行时触发)
-  resizeObserver = new ResizeObserver(() => updateScrollProgress())
-  resizeObserver.observe(scrollEl)
-  // 初次同步
-  nextTick(updateScrollProgress)
-}
-
-onMounted(() => {
-  nextTick(attachScrollListener)
-})
-
-onBeforeUnmount(() => {
-  if (scrollEl) {
-    scrollEl.removeEventListener('scroll', updateScrollProgress)
-  }
-  if (resizeObserver) {
-    resizeObserver.disconnect()
-  }
-})
 </script>
+
+<style scoped>
+.tp-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.tp-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--border-light);
+  flex-shrink: 0;
+}
+
+.tp-title {
+  font-size: 14px;
+  font-weight: 600;
+  margin: 0;
+}
+
+.tp-count {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.tp-body {
+  flex: 1 1 0;
+  min-height: 0;
+  overflow: auto;
+  padding: 0 var(--space-3);
+}
+
+.tp-table {
+  width: 100%;
+}
+
+.tp-stock-code {
+  font-family: var(--font-mono);
+  font-weight: 600;
+}
+
+.tp-dir-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1px 8px;
+  border-radius: var(--radius-xs);
+  font-size: 12px;
+  font-weight: 600;
+}
+.tp-dir-chip.buy { background: var(--color-up-bg); color: var(--color-up); }
+.tp-dir-chip.sell { background: var(--color-down-bg); color: var(--color-down); }
+
+.tp-pagination {
+  display: flex;
+  justify-content: flex-end;
+  padding: var(--space-3) var(--space-4);
+  border-top: 1px solid var(--border-light);
+  flex-shrink: 0;
+}
+</style>

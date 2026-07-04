@@ -1,8 +1,25 @@
-## Purpose
+## REMOVED Requirements
 
-委托 / 成交 当日数据通过 Pinia + 浏览器 IDB write-through 持久化，无需重新拉取即可在 F5 / 重新打开 tab 后立即恢复（< 200ms）。positions / asset 不持久化（实时性 + 安全考虑）。
+### Requirement: 独立 /today/orders 与 /today/trades 视图（v13 删除）
 
-## Requirements
+**Reason**：v13 起 `/today/orders` 与 `/today/trades` 路由删除（由 router redirect 指向 `/history/*`）。
+当日委托 / 当日成交数据展示改由 `TodayOrdersPanel` / `TodayTradesPanel` 两个 mini-panel
+组件**内嵌**到 `Trade.vue` 右侧 sticky 列，**不**作为独立路由 / 独立视图存在。
+
+**数据契约不变**：mini-panel 与原 view 一样读 `useHoldingsStore().orders` / `.trades`（Pinia 内存 + IDB 持久化），
+不走 `/api/orders` / `/api/trades` HTTP 拉取。ws 推送通过 `applyOrderPush` / `applyTradePush`
+自动 merge 到 Pinia + IDB，panel 通过 Vue reactivity 自动更新。
+
+**Migration**：
+- 删 `client/src/views/TodayOrders.vue` 与 `client/src/views/TodayTrades.vue`
+- 删 `client/src/router/index.js` 中 `/today/orders` `/today/trades` component 注册
+- `router` 加 `/today/orders` `/today/trades` redirect → `/history/*` (老书签兼容)
+- 现有 `client/src/components/trade/TodayOrdersPanel.vue` / `TodayTradesPanel.vue` 即承担旧 view 展示职责
+  - 数据流同 v12: Pinia 内存读 → IDB 写穿透 → ws push 增量
+  - 唯一区别: panel 是 mini 视图, 含分页, 不含独立页 banner / 汇总 / 日期过滤
+- 用户视角: 打开 `/trade` 即看到今日委托 / 今日成交 (右侧 mini-panel)，无需再跳 `/today/*`
+
+## ADDED Requirements
 
 ### Requirement: 今日委托 panel（TodayOrdersPanel 内嵌于 Trade.vue）
 
@@ -79,77 +96,3 @@ The system SHALL 让 `Trade.vue` 右侧 `.trade-panels-col` 列内 `TodayOrdersP
 - **WHEN** viewport ≥ 1100px
 - **THEN** 两个 panel 各占右列高度的 50%
 - **AND** panel 内容短时下沿 MUST 不留白（el-empty 居中 + flex 撑满）
-
-### Requirement: IDB write-through 行为（v12 + v13 复合 PK 重构）
-
-The system SHALL 在以下时机写 IDB：
-
-- **写时机**：
-  - `bootstrap()` 完成 + Pinia ref 初始填充后，loop `saveOrder(order)` + `saveTrade(trade)` 逐行写
-  - `applyOrderPush` / `applyTradePush` 每次合并后，调 `saveOrder(merged)` / `saveTrade(newTrade)` 写**单行**（O(1) idbPut）
-- **IDB schema (v13 复合 PK)**：
-  - DB version = 2, 2 个 object store: `orders` / `trades`
-  - `orders`  key = `${trd_date}:${order_no}`              value = 单行 OrderOut
-  - `trades`  key = `${trd_date}:${order_no}:${trade_id}` value = 单行 TradeOut
-  - 镜像 server/models/orm.py: Order/Trade PK 维度
-- **读时机**：
-  - `bootstrap()` 第 2 步：loadOrdersForDate / loadTradesForDate 走 idbGetAllKeys 扫描 + 前缀过滤
-- **清时机**：
-  - `bootstrap()` 检测到 `activeTrdDate !== IDB 中存在的 trd_date` → `clearDate(昨日的 trd_date)` 清理（同样走扫描）
-
-#### Scenario: IDB 写成功（v13 单行写）
-
-- **WHEN** `applyOrderPush` 完成 merge
-- **THEN** IDB 中 `orders` store 的 `${trd_date}:${order_no}` 键立刻同步
-- **AND** F5 后 `bootstrap` 读到 IDB 数据与 ws 增量合并后保持一致
-
-#### Scenario: IDB 写异常不抛
-
-- **WHEN** `saveOrder` / `saveTrade` 内 IDB put 抛错（quota exceeded / 浏览器隐私模式）
-- **THEN** catch all + `console.warn('[IDB] saveOrder/saveTrade failed:')`
-- **AND** Pinia ref 不动（数据完整）
-
-#### Scenario: 跨日清 IDB
-
-- **WHEN** 早上 09:00 bootstrap，`activeDay = 20260704`
-- **AND** IDB.orders 仍有 `20260703:` 前缀的 key
-- **THEN** `clearDate(20260703)` 清掉所有 `20260703:` 前缀的 key（orders + trades）
-- **AND** 走正常 bootstrap 拉今日当日数据并存入 IDB
-
-### Requirement: bootstrap 加载顺序契约（v12 详细化）
-
-The system MUST 保证 IDB 命中时 Pinia 立刻有数据 + 用户看不到空白（详见 `frontend/spec.md` v12 修订的 `bootstrap` 顺序段）。
-
-#### Scenario: F5 后 200ms 内显示当日委托
-
-- **WHEN** user F5 后 200ms 内
-- **THEN** `holdings.orders.length > 0`（来自 IDB 同步读）
-- **AND** UI 不显示空态、显示加载 spinner 或直接表格
-
-#### Scenario: IDB 缺失 → fallback 拉取
-
-- **WHEN** IDB 中无 `activeDay` 键
-- **THEN** bootstrap 走 `getOrders({ trdDate: activeDay })` 拉取当前 active 1 day 窗口
-- **AND** 拉取成功后立刻写 IDB
-
-### Requirement: 单 tab 与多 tab 行为（约束）
-
-The system SHALL 接受多 tab 各自的 Pinia 内存态不同 —— IDB write-through 仅保证单 tab 内 page reload 数据连续，不保证跨 tab 同步。
-
-#### Scenario: 多 tab 不竞争
-
-- **WHEN** user 开 2 个 tab 同登录
-- **THEN** IDB 是 last-write-wins（浏览器 IDB 自身并发模型）
-- **AND** 2 tab 的 ws 各自独立收到 push，各自 merge 到本地 Pinia
-- **AND** 不保证 2 tab 显示完全一致（同上一 explore 分析 §4.3）
-
-### Requirement: ws push 同时写 Pinia + IDB 不阻塞 event loop
-
-The system SHALL 确保 IDB 写是 fire-and-forget（异步），不阻塞 ws push 的 UI 更新。
-
-#### Scenario: IDB put 100ms 延迟
-
-- **WHEN** IDB put 耗时 100ms（罕见）
-- **THEN** ws push handler 不 `await` IDB put
-- **AND** UI 立刻反映新 push 数据
-- **AND** IDB put 后台完成

@@ -1,5 +1,5 @@
 /**
- * holdings_idb.js — 当日 orders / trades IDB 持久化（v13: 复合 PK 改造）
+ * holdings_idb.js — 当日 orders / trades IDB 持久化（v14: 修升级回调 store 缺失）
  *
  * 用途：
  *   - 解决"Today's Orders 页面 F5 后空白等待"痛点
@@ -7,7 +7,7 @@
  *   - ws push 时 fire-and-forget 写 IDB（不阻塞 event loop）
  *
  * 设计 (v13 复合 key):
- *   - DB schema v2, 2 个 object store: `orders` / `trades`
+ *   - DB schema v3, 2 个 object store: `orders` / `trades`
  *   - key = 复合 PK 字符串:
  *       orders  → `${trd_date}:${order_no}`        (镜像 server/models/orm.py:Order PK)
  *       trades  → `${trd_date}:${order_no}:${trade_id}`  (镜像 Trade PK)
@@ -20,6 +20,14 @@
  *   - v12 key = trd_date, value = array（不兼容 v13 复合 key 维度）
  *   - 升级 onUpgrade 回调: 删旧 store, 由 openDB 自动重建
  *   - IDB 是 cache, 丢旧数据可接受（bootstrap 重新拉 RPC 写回）
+ *
+ * v13 → v14 fix: 升级回调 deleteObjectStore 后漏 createObjectStore
+ *   - 原 bug: `oldV < 2` 时, openDB 在 onupgradeneeded **先**自动按 storeNames 创建缺失 store,
+ *     用户回调**后**无条件 deleteObjectStore; fresh install (oldV=0) 也满足 `< 2`,
+ *     结果 v2 DB store 全部缺失 → `_loadByDate` 报 "object stores was not found".
+ *   - 修复: deleteObjectStore 后**立刻**显式 createObjectStore (覆盖 fresh install + v12 升级两条路径).
+ *   - DB_VERSION bump: 2 → 3, 让已损坏的 v2 (store 缺失) DB 触发 onupgradeneeded self-heal.
+ *   - change fix-idb-store-missing-on-upgrade
  *
  * 调用者：
  *   - holdings_bootstrap.js：bootstrap 启动 initIDB() + loadXxxForDate
@@ -35,7 +43,7 @@
 import { openDB, idbGet, idbPut, idbDelete, idbGetAllKeys } from '../utils/idb'
 
 const DB_NAME = 'holdings-cache'
-const DB_VERSION = 2
+const DB_VERSION = 3
 const STORE_ORDERS = 'orders'
 const STORE_TRADES = 'trades'
 
@@ -71,7 +79,11 @@ function _isKeyOfDate(key, trdDate) {
  * 多次调用复用同一 connection；IDB API 不可用（Node / SSR）时 reject。
  *
  * v12 → v13 升级：删旧 v12 store (key = trd_date, value = array),
- * 由 openDB 内 storeNames 循环按需重建.
+ * 删完**显式重建** v13 复合 key store (v14 fix 修复了 delete 后漏 create 的 bug).
+ *
+ * v13 → v14 fix: openDB 包装会在 onupgradeneeded 里按 storeNames 自动 create
+ * 缺失 store, 但用户回调 `if (oldV < 2)` 在 fresh install (oldV=0) 路径下
+ * 也会匹配, 把刚创建的 store 立刻删掉. v14 在 delete 后显式 create 兜底.
  *
  * @returns {Promise<IDBDatabase>}
  */
@@ -91,6 +103,13 @@ export function initIDB() {
         if (db.objectStoreNames.contains(STORE_TRADES)) {
           db.deleteObjectStore(STORE_TRADES)
         }
+      }
+      // v14 fix: delete 后**显式重建** (覆盖 fresh install + v12 升级 + 已损坏 v2 三条路径)
+      if (!db.objectStoreNames.contains(STORE_ORDERS)) {
+        db.createObjectStore(STORE_ORDERS)
+      }
+      if (!db.objectStoreNames.contains(STORE_TRADES)) {
+        db.createObjectStore(STORE_TRADES)
       }
     }
   )

@@ -35,29 +35,34 @@
           </el-input>
         </el-form-item>
 
-        <!-- 价格类型 + 委托价格：同一行 -->
-        <div class="price-row">
-          <el-form-item label="价格类型" class="row-tight price-type-col">
-            <el-segmented
-              v-model="form.price_type"
-              :options="priceTypeOptions"
-              block
-              size="small"
-            />
-          </el-form-item>
-          <el-form-item label="委托价格" class="row-tight price-col">
-            <el-input-number
-              v-model="form.price"
-              :min="0"
-              :precision="2"
-              :step="form.price_type === PriceType.LIMIT ? 0.01 : null"
-              :disabled="form.price_type !== PriceType.LIMIT"
-              :placeholder="form.price_type === PriceType.LIMIT ? '输入价格' : '市价单无需输入'"
-              controls-position="right"
-              style="width: 100%"
-            />
-          </el-form-item>
-        </div>
+        <!-- 价格类型：独立全宽 2×2 radio 网格 (v14 trade-board-beautiful r2: 替换 el-segmented 避免 ellipsis 截断) -->
+        <el-form-item label="价格类型" class="row-tight">
+          <el-radio-group v-model="form.price_type" class="price-type-grid">
+            <el-radio
+              v-for="opt in priceTypeOptions"
+              :key="opt.value"
+              :value="opt.value"
+              border
+              size="default"
+            >
+              {{ opt.label }}
+            </el-radio>
+          </el-radio-group>
+        </el-form-item>
+
+        <!-- 委托价格：独立全宽行 (与"委托数量"对称) -->
+        <el-form-item label="委托价格" class="row-tight">
+          <el-input-number
+            v-model="form.price"
+            :min="0"
+            :precision="2"
+            :step="form.price_type === PriceType.LIMIT ? 0.01 : null"
+            :disabled="form.price_type !== PriceType.LIMIT"
+            :placeholder="form.price_type === PriceType.LIMIT ? '输入价格' : '市价单无需输入'"
+            controls-position="right"
+            style="width: 100%"
+          />
+        </el-form-item>
 
         <el-form-item label="委托数量" class="row-tight">
           <el-input-number
@@ -278,17 +283,6 @@ function handleReset() {
   padding: var(--space-3) var(--space-4);
 }
 
-.price-row {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  gap: var(--space-3);
-  align-items: start;
-}
-
-.price-type-col {
-  min-width: 180px;
-}
-
 .volume-quick {
   display: flex;
   gap: var(--space-1);
@@ -365,5 +359,29 @@ function handleReset() {
 :deep(.el-input__wrapper),
 :deep(.el-input-number) {
   font-size: 13px;
+}
+
+/* v14 trade-board-beautiful r2: 价格类型 2×2 radio 网格, 替换原 el-segmented 避免 ellipsis 截断 */
+.price-type-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-2);
+  width: 100%;
+}
+
+/* el-radio 默认有 right margin 多余空间, grid 子项需 reset */
+:deep(.price-type-grid .el-radio) {
+  margin-right: 0;
+  width: 100%;
+}
+
+:deep(.price-type-grid .el-radio__wrapper) {
+  /* 让 border 样式 radio 撑满 grid cell (默认 inline-flex 受限于 label 宽度) */
+  display: flex;
+  width: 100%;
+  box-sizing: border-box;
+  justify-content: center;
+  padding-left: var(--space-2);
+  padding-right: var(--space-2);
 }
 </style>

@@ -1,23 +1,17 @@
 <!--
   Trade.vue — 交易下单页（v13 panel 嵌入重构）
 
-  顶部: 快捷链接 + 刷新按钮
   主体 grid 2 列:
-    - 左列: OrderForm 下单 + QuotePanel 行情
-    - 右列: TodayOrdersPanel + TodayTradesPanel (sticky 跟随滚动)
+    - 左列: OrderForm 下单 + QuotePanel 行情 (flex 等分左列高度)
+    - 右列: TodayOrdersPanel + TodayTradesPanel (sticky 跟随滚动, flex 等分右列)
 
-  v13 修订: 委托 / 成交 从外链按钮改为右侧嵌入 mini panel
-  v12 修订: 委托 / 成交 已拆到 /today/orders /today/trades 独立路由 (完整版)
+  v13.2 修订: 删 .trade-quicklinks 行 (低价值入口移除, 改用 AppHeader 顶部刷新按钮)
+  v13.1 修订: 左列子组件等分 (flex 链填满不留白)
+  v13   修订: 委托 / 成交 从外链按钮改为右侧嵌入 mini panel
+  v12   修订: 委托 / 成交 曾拆到 /today/orders /today/trades 独立路由 (v13 删除, 由 mini panel 承担)
 -->
 <template>
   <div class="trade-view fade-in-up" :style="tradeViewStyle">
-    <!-- 顶部快捷操作 -->
-    <div class="trade-quicklinks">
-      <el-button text :icon="Refresh" @click="refreshAll" :loading="refreshing" title="刷新 holdings 缓存">
-        刷新
-      </el-button>
-    </div>
-
     <div class="trade-grid">
       <!-- 左侧: 下单表单 + 行情面板 -->
       <div class="trade-form-col">
@@ -44,21 +38,16 @@
 </template>
 
 <script setup>
-import { computed, onMounted, ref } from 'vue'
-import { ElMessage } from 'element-plus'
-import { Refresh } from '@element-plus/icons-vue'
+import { computed, ref } from 'vue'
 import OrderForm from '../components/OrderForm.vue'
 import QuotePanel from '../components/QuotePanel.vue'
 import TodayOrdersPanel from '../components/trade/TodayOrdersPanel.vue'
 import TodayTradesPanel from '../components/trade/TodayTradesPanel.vue'
 import { useOrderStore } from '../stores/order'
-import { useHoldingsStore } from '../stores/holdings'
 import { useUiStore } from '../stores/ui'
 
 const orderStore = useOrderStore()
-const holdings = useHoldingsStore()
 const uiStore = useUiStore()
-const refreshing = ref(false)
 const orderFormRef = ref(null)
 const quickStock = ref('')
 
@@ -86,36 +75,17 @@ function onApplyPrice(price) {
     orderFormRef.value.onExternalApply(price)
   }
 }
-
-// 手动刷新按钮（兜底, 不再轮询）
-//   正常情况下: WS 推送 → applyOrderPush / applyTradePush → UI 实时更新
-//   异常情况: 用户怀疑数据滞后, 点此按钮重拉 4 个 RPC (委托 / 成交 / 持仓 / 资金)
-async function refreshAll() {
-  if (refreshing.value) return
-  refreshing.value = true
-  try {
-    await holdings.refreshAll()
-    ElMessage.success('已刷新')
-  } finally {
-    refreshing.value = false
-  }
-}
-
-onMounted(() => {
-  // 不再 onMounted fetch(违反单一源纪律; holdings 已在 AppHeader 启动 bootstrap)
-})
 </script>
 
 <style scoped>
 /*
- * Trade.vue 布局 (v13 panel 嵌入 + v13.1 上下填满)
+ * Trade.vue 布局 (v13 panel 嵌入 + v13.1 上下填满 + v13.2 quicklinks 删除 + 左列 flex 链填充)
 
  * 整体策略: flex 链 + grid 拆分列
  *   .trade-view         flex column, 填满 .app-content 的可用区
- *   .trade-quicklinks   不缩,固定 32px 高
- *   .trade-grid         flex:1, 占据剩余垂直空间 (填满到 OperationLog 之上)
- *   .trade-form-col     左列 (单格表单), flex column
- *   .trade-panels-col   右列, flex column, sticky + max-height(跟随 --oplog-h)
+ *   .trade-grid         flex:1, 占据垂直空间 (填满到 OperationLog 之上)
+ *   .trade-form-col     左列 (单格表单), flex column; 子组件 (OrderForm + QuotePanel) 等分左列
+ *   .trade-panels-col   右列, flex column, sticky + max-height(跟随 --oplog-h); 子 panel 等分右列
 
  * OperationLog 遮挡修复:
  *   --oplog-h 由 uiStore.oplogExpanded 驱动 (折叠 44px / 展开 320px)
@@ -128,14 +98,6 @@ onMounted(() => {
   gap: var(--space-4);
   height: 100%;
   min-height: 0;
-}
-
-.trade-quicklinks {
-  display: flex;
-  gap: var(--space-2);
-  align-items: center;
-  flex-wrap: wrap;
-  flex-shrink: 0;
 }
 
 .trade-grid {
@@ -152,6 +114,13 @@ onMounted(() => {
   gap: var(--space-3);
   min-height: 0;
   /* 左列内容(下单表单 + 行情) 高度超过行高时,允许内部滚动 */
+  overflow: hidden;
+}
+
+/* 左列两个组件 (OrderForm + QuotePanel) 等分左列高度 */
+.trade-form-col > * {
+  flex: 1 1 0;
+  min-height: 0;
   overflow: hidden;
 }
 
