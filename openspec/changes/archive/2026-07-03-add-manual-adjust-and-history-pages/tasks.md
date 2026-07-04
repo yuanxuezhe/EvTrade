@@ -40,7 +40,7 @@
 - [x] 4.8 同步修订 `openspec/specs/frontend/spec.md` 路由段 + `orders-trades-history-query/spec.md` 视图契约
 - [x] 4.9 `client/src/api/index.js`：加 `api.adjustAsset` + `api.adjustPosition` 封装
 - [x] 4.10 `client/src/views/admin/cache/CachePositions.vue`：加"调平"按钮
-- [ ] 4.11 `tests/client/views/test_history_orders.vue.spec.js` + `test_today_orders.vue.spec.js`：分别测试 history 不走 Pinia / today 不走 HTTP — **Defer（view-level vitest 需新增 jsdom + Element Plus 测试栈，与现有 stores/api 单元测试栈分离，超出本 change scope）**
+- [ ] 4.11 `tests/client/views/test_history_orders.vue.spec.js` + `test_today_orders.vue.spec.js`：分别测试 history 不走 Pinia / today 不走 HTTP — **🔵 Defer**
 
 ## 5. Spec 同步 + 跨 spec 影响
 
@@ -85,3 +85,13 @@
 | Commit 粒度 | ✅ 14 个 logical commits（per memory `feedback_commit_granularity.md`）|
 | Archive | ✅ 已归档至 `archive/2026-07-03-add-manual-adjust-and-history-pages/`|
 | 手动 UI 验证 | Defer 到 staging（6.3/6.4/4.11）|
+
+## Defer 清单与原因
+
+| 任务 | 类别 | 原因 | 解除条件 |
+|---|---|---|---|
+| **4.11** view 测试 (HistoryOrders/TodayOrders) | 测试栈扩展 | 现有 vitest 仅覆盖 stores/api 单元（103 用例），view-level 测试需新增 jsdom + Element Plus stub 栈，与现有栈分离 | 新 change `add-view-level-vitest-stack` 搭测试基础设施 |
+| **6.3** 手动 UI 验证 today 流程 | 浏览器验证 | login → /today/orders → IDB 恢复 → ws push → 调平 reconcile 全链路需浏览器操作 | staging 环境部署后手动跑 |
+| **6.4** 手动 UI 验证 history 查询 | 浏览器验证 | /history/orders 日期区间选择需 el-date-picker 交互 | staging 环境部署后手动跑 |
+
+4.11 是**测试栈扩展**（dev infra），不是 view 自身缺失；6.3/6.4 是**端到端浏览器验证**（E2E），不是自动化测试。三者 Defer 各自独立, 互不阻塞。
