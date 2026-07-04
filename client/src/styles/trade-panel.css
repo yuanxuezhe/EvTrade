@@ -1,0 +1,122 @@
+/*
+ * trade-panel.css — Trade.vue 右侧 panel 共享样式
+
+ * 给 TodayOrdersPanel / TodayTradesPanel 用
+ * 通过 <style scoped> 内 @import 引入 (Vue SFC scoped 隔离)
+ * 或者直接在 scoped 内 :deep() 引用
+ */
+
+/* panel 外壳 */
+.tp-shell {
+  display: flex;
+  flex-direction: column;
+  padding: var(--space-3) var(--space-4);
+  gap: var(--space-2);
+}
+
+/* 标题栏 */
+.tp-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: var(--space-2);
+  border-bottom: 1px solid var(--border-light);
+}
+.tp-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 0;
+}
+.tp-header-right {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.tp-count {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+/* 表格容器 */
+.tp-body {
+  flex: 1;
+  min-height: 0;
+}
+.tp-table {
+  font-size: 12px;
+}
+.tp-table :deep(.el-table__cell) {
+  padding: 4px 0;
+}
+.tp-table :deep(.el-table__header-cell) {
+  background: var(--bg-soft);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  padding: 6px 0;
+}
+
+/* 股票代码 (mono 字体) */
+.tp-stock-code {
+  font-family: var(--font-mono);
+  font-weight: 600;
+}
+
+/* 买卖 chip */
+.tp-dir-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1px 6px;
+  border-radius: var(--radius-xs);
+  font-size: 11px;
+  font-weight: 600;
+  min-width: 24px;
+}
+.tp-dir-chip.buy { background: var(--color-up-bg); color: var(--color-up); }
+.tp-dir-chip.sell { background: var(--color-down-bg); color: var(--color-down); }
+
+/* 标题栏刷新按钮 */
+.tp-icon-btn {
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  background: transparent;
+  border: 1px solid var(--border-base);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  font-size: 12px;
+}
+.tp-icon-btn:hover {
+  color: var(--brand-primary);
+  border-color: var(--brand-primary);
+  background: var(--bg-soft);
+}
+.tp-icon-btn.spinning :deep(svg) {
+  animation: tp-spin 1s linear infinite;
+}
+@keyframes tp-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+/* 滚动进度条 */
+.tp-scroll-progress {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--border-light);
+}
+.tp-scroll-progress :deep(.el-progress) {
+  flex: 1;
+}
+.tp-scroll-hint {
+  font-size: 11px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
