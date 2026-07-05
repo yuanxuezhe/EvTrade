@@ -20,13 +20,13 @@
 
 **目标**: 主表买/卖/配平按钮 disabled 条件加 insufficientCash/Position, tooltip 注明缺额
 
-- [ ] 2.1 T0Trade.vue 操作列 button disabled 条件:
-  - `买X%`: `isBuyDisabled(row) || submitting || !cashCheck.ok` (cash 不足)
-  - `卖X%`: `submitting || !positionCheck.ok` (持仓不足)
-  - `配±N`: 现有条件 + cash/position check (按 side)
-- [ ] 2.2 加 `<el-tooltip>` 显示"资金 ¥X 不足 / 缺持仓 Y 股"
-- [ ] 2.3 校验走 `lib/t0-calc.js` 纯函数, 不再 import 计算常量 (单一权威)
-- [ ] 2.4 单测: `tests/client/views/t0Trade.buttons.test.js` (新) — mock cash=0 / position=0 / volume 不足, 验证按钮 disabled
+- [x] 2.1 T0Trade.vue 操作列 button disabled 条件:
+  - `买X%`: `isBuyDisabled(row) || submitting || !cashCheck.ok` (cash 不足) → `buyState(row).disabled`
+  - `卖X%`: `submitting || !positionCheck.ok` (持仓不足) → `sellState(row).disabled`
+  - `配±N`: 现有条件 + cash/position check (按 side) → `balanceState(row).disabled`
+- [x] 2.2 加 `<el-tooltip>` 显示"资金 ¥X 不足 / 缺持仓 Y 股"
+- [x] 2.3 校验走 `lib/t0-calc.js` 纯函数, 不再 import 计算常量 (单一权威): 新建 `useT0TradeButtons.js` composable 委派 lib
+- [x] 2.4 单测: `tests/composables/useT0TradeButtons.test.js` (新, 18 用例) — mock cash=0 / position=0 / volume 不足, 验证按钮 disabled
 
 ## 3. t0Stats 30s 缓存 + 差量更新 (commit: perf(client): t0Stats 缓存)
 

@@ -95,21 +95,21 @@
       <el-table-column label="操作" align="center" width="200" fixed="right">
         <template #default="{ row }">
           <div class="op-col">
-            <el-tooltip :content="isBuyDisabled(row) ? `${row.stock_code} 持仓为 0, 无法按比例买` : `按 ${quickPct}% 仓位买入`" placement="top">
-              <el-button type="primary" size="small" :disabled="isBuyDisabled(row) || submitting" @click.stop="onQuickBuy(row)" class="op-btn-buy">
+            <el-tooltip :content="buyState(row).tip" placement="top">
+              <el-button type="primary" size="small" :disabled="buyState(row).disabled" @click.stop="onQuickBuy(row)" class="op-btn-buy">
                 买{{ quickPct }}%
               </el-button>
             </el-tooltip>
-            <el-tooltip content="按全局 % 仓位卖出 (0 持仓自动跳过)" placement="top">
-              <el-button type="danger" size="small" :disabled="submitting" @click.stop="onQuickSell(row)" class="op-btn-sell">
+            <el-tooltip :content="sellState(row).tip" placement="top">
+              <el-button type="danger" size="small" :disabled="sellState(row).disabled" @click.stop="onQuickSell(row)" class="op-btn-sell">
                 卖{{ quickPct }}%
               </el-button>
             </el-tooltip>
-            <el-tooltip :content="getBalanceTip(row)" placement="top">
+            <el-tooltip :content="balanceState(row).tip" placement="top">
               <el-button
                 type="warning"
                 size="small"
-                :disabled="submitting || !getBalanceQty(row)"
+                :disabled="balanceState(row).disabled"
                 @click.stop="onQuickBalance(row)"
                 class="op-btn-balance"
               >
@@ -303,11 +303,15 @@ import { storeToRefs } from 'pinia'
 import { useHoldingsStore } from '../stores/holdings'
 import { useQuoteStore } from '../stores/quote'
 import { useOrderStore } from '../stores/order'
+import { useAssetStore } from '../stores/asset'
 import {
   PCT_OPTIONS, PRICE_TYPE_OPTIONS,
   loadQuickDefaults, saveQuickDefaults,
   isBuyDisabled, buildQuickOrder, calcBalanceQty,
 } from '../composables/useQuickT0'
+import {
+  buyBtnState, sellBtnState, balanceBtnState,
+} from '../composables/useT0TradeButtons'
 import { t0StatsApi } from '../api/t0_stats'
 import { formatNumber, formatPrice, formatAmount } from '../utils/format'
 import { useT0ChartGeometry, useT0DrawerChartGeometry } from '../composables/useT0ChartGeometry'
@@ -316,7 +320,9 @@ import { useT0OrderSubmit } from '../composables/useT0OrderSubmit'
 const holdingsStore = useHoldingsStore()
 const orderStore = useOrderStore()
 const quoteStore = useQuoteStore()
+const assetStore = useAssetStore()
 const { positions } = storeToRefs(holdingsStore)
+const { asset: assetData } = storeToRefs(assetStore)
 
 // stockCode: 默认取第一个持仓，不再硬编码 600519.SH
 const stockCode = ref(null)
@@ -421,6 +427,32 @@ function getBalanceTip(row) {
   const net = netExposure(row)
   if (net === 0) return '已配平'
   return `配平: ${net > 0 ? `卖${Math.abs(net)}` : `买${Math.abs(net)}`} 抵消今日净敞口`
+}
+
+// ---- 按钮 disabled + tooltip 状态 (委派 useT0TradeButtons + lib/t0-calc) ----
+function _rowBalance(row) {
+  const net = netExposure(row)
+  if (net === 0) return null
+  return { side: net > 0 ? 'sell' : 'buy', qty: Math.abs(net) }
+}
+function buyState(row) {
+  return buyBtnState(row, {
+    pct: quickPct.value,
+    cash: assetData.value?.cash,
+    price: quoteStore.getLastPrice(row.stock_code),
+    submitting: submitting.value,
+  })
+}
+function sellState(row) {
+  return sellBtnState(row, { pct: quickPct.value, submitting: submitting.value })
+}
+function balanceState(row) {
+  return balanceBtnState(row, {
+    balance: _rowBalance(row),
+    cash: assetData.value?.cash,
+    price: quoteStore.getLastPrice(row.stock_code),
+    submitting: submitting.value,
+  })
 }
 
 // ---- 底部累计曲线 (按当前 stockCode) ----
