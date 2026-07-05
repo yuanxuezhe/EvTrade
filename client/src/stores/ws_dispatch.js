@@ -19,6 +19,7 @@
 import { ElNotification } from 'element-plus'
 import { useQuoteStore } from './quote'
 import { useHoldingsStore } from './holdings'
+import { useStrategyStore } from './strategy'
 import { STATUS_LABEL } from '../utils/format'
 
 /**
@@ -30,6 +31,7 @@ export function dispatchPayload(payload) {
   if (t === 'ord_cfm') _onOrderCfm(payload.data)
   else if (t === 'trd_cfm') _onTradeCfm(payload.data)
   else if (t === 'quote') _onQuote(payload.data)
+  else if (t === 'strategy_update') _onStrategyUpdate(payload.data)
 }
 
 function _onQuote(row) {
@@ -115,4 +117,45 @@ function _notifyOrder(code, status, row) {
   else if (s === '49') { nType = 'info'; msg = `${code} 已报` }
 
   ElNotification({ title: '委托更新', message: msg, type: nType, duration: 3500 })
+}
+
+/**
+ * change strategy_trade task 12: strategy_update 频道分发
+ * 后端 engine._broadcast() 推送:
+ *   - event: 'regime_changed' / 'grid_triggered' / 'regime_cooldown'
+ *   - data: { strategy_id, event, regime_id?, flags_active?, current_price?, action?, order_no?, reject_reason?, ts }
+ * 这里把每条事件作为单条 audit 推入 store.appendAudit
+ */
+function _onStrategyUpdate(row) {
+  if (!row || row.strategy_id == null) {
+    console.warn('[ws._onStrategyUpdate] 缺 strategy_id, 跳过:', row)
+    return
+  }
+  try {
+    const store = useStrategyStore()
+    const trdDate = String(row.trd_date || _todayYYYYMMDD())
+    const audit = {
+      id: row.audit_id ?? `push-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,
+      strategy_id: row.strategy_id,
+      regime_id: row.regime_id ?? null,
+      trd_date: trdDate,
+      trigger_type: row.event || 'grid_triggered',
+      flags_active: row.flags_active || [],
+      current_price: row.current_price ?? null,
+      position_vol: row.position_vol ?? null,
+      base_volume: row.base_volume ?? null,
+      action_payload: row.action || null,
+      order_no: row.order_no || null,
+      reject_reason: row.reject_reason || null,
+      created_at: row.ts || new Date().toISOString(),
+    }
+    store.appendAudit(row.strategy_id, trdDate, audit)
+  } catch (e) {
+    console.error('[ws._onStrategyUpdate] failed:', e)
+  }
+}
+
+function _todayYYYYMMDD() {
+  const d = new Date()
+  return `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`
 }

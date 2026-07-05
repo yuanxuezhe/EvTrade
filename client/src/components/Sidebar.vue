@@ -91,7 +91,7 @@ const menuItems = computed(() => {
 // 路由 /to-management 改 redirect 到 /t0-trade (兼容旧书签)
     { path: '/t0-trade', label: '快速做T', icon: Coin },
     { path: '/t-strategy', label: '策略做T', icon: MagicStick },
-    { path: '/algo-strategy', label: '策略交易', icon: Cpu }
+    { path: '/strategy-trade', label: '策略交易', icon: Cpu }
   ]
   if (authStore.isAdmin) {
     base.push({ divider: true, label: '系统管理' })

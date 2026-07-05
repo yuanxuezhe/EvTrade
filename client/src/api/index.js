@@ -283,6 +283,12 @@ export const userApi = {
 }
 
 // ============================================================
+// 策略 API（change strategy_trade task 10）
+// ============================================================
+// 独立子模块，详见 ./strategy.js（避免主文件膨胀）
+export { strategyApi } from './strategy'
+
+// ============================================================
 // WebSocket（保留）
 // ============================================================
 export function createWSConnection(channel = 'order_update') {

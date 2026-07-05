@@ -13,6 +13,7 @@ const HistoryOrders = () => import('../views/HistoryOrders.vue')
 const HistoryTrades = () => import('../views/HistoryTrades.vue')
 const AlgoStrategy = () => import('../views/AlgoStrategy.vue')
 const TStrategy = () => import('../views/TStrategy.vue')
+const StrategyTrade = () => import('../views/StrategyTrade.vue')
 const Users = () => import('../views/Users.vue')
 const Profile = () => import('../views/Profile.vue')
 const SystemInit = () => import('../views/SystemInit.vue')
@@ -48,7 +49,11 @@ const routes = [
   // /to-management 旧路由 → redirect 到 /t0-trade (T0Trade.vue 真快速做T页面)
   { path: '/to-management', redirect: '/t0-trade' },
   { path: '/t-strategy', name: 'TStrategy', component: TStrategy, meta: { title: '策略做T' } },
-  { path: '/algo-strategy', name: 'AlgoStrategy', component: AlgoStrategy, meta: { title: '策略交易' } },
+  // change strategy_trade task 12: 策略交易视图（trader + admin 可访问）
+  { path: '/strategy-trade', name: 'StrategyTrade', component: StrategyTrade, meta: { title: '策略交易', requiresTrader: true } },
+  // change strategy_trade task 12: 旧 /algo-strategy 占位页 → 新 /strategy-trade
+  //   AlgoStrategy.vue 保留 (其他 view 可能引用), 但路由重定向
+  { path: '/algo-strategy', redirect: '/strategy-trade' },
   {
     path: '/users',
     name: 'Users',

@@ -15,7 +15,7 @@
  */
 import { ref } from 'vue'
 
-export const CHANNELS = ['order_update', 'trade_update', 'quote_update']
+export const CHANNELS = ['order_update', 'trade_update', 'quote_update', 'strategy_update']
 
 // v7 改: WS 重连从固定 3s 改为指数退避
 //   delay = min(1000 * 2^retryCount, 30000)
