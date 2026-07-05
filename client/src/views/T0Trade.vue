@@ -27,6 +27,30 @@
       </div>
     </div>
 
+    <!-- quota frame: 5 个账户级 metric pill (change-quota-frame) -->
+    <div class="quota-frame">
+      <div class="qf-pill" data-pill="cashAvail">
+        <span class="qf-label">现金余量</span>
+        <span class="qf-value text-mono">¥{{ formatAmount(quotaAggregate.cashAvail) }}</span>
+      </div>
+      <div class="qf-pill" data-pill="frozenCash">
+        <span class="qf-label">冻结资金</span>
+        <span class="qf-value text-mono">¥{{ formatAmount(quotaAggregate.frozenCash) }}</span>
+      </div>
+      <div class="qf-pill" data-pill="t0AvailVol">
+        <span class="qf-label">T+0 可用持仓</span>
+        <span class="qf-value text-mono">{{ formatNumber(quotaAggregate.t0AvailVol) }}</span>
+      </div>
+      <div class="qf-pill" data-pill="todayPnl" :class="todayPnlClass">
+        <span class="qf-label">今日已盈亏</span>
+        <span class="qf-value text-mono">{{ todayPnlText }}</span>
+      </div>
+      <div class="qf-pill qf-pill--desktop-only" data-pill="marketValue">
+        <span class="qf-label">持仓市值</span>
+        <span class="qf-value text-mono">¥{{ formatAmount(quotaAggregate.marketValue) }}</span>
+      </div>
+    </div>
+
     <!-- 主表 (占视口主体, 含副行 + 操作列) -->
     <el-table
       :data="sortedRows"
@@ -89,6 +113,29 @@
           <span :class="holdingsStore.getReturnRate(row.stock_code) >= 0 ? 'up' : 'down'">
             {{ (holdingsStore.getReturnRate(row.stock_code) * 100).toFixed(2) }}%
           </span>
+        </template>
+      </el-table-column>
+
+      <!-- quota 列 (change-quota-frame): 可买 + 可卖 -->
+      <el-table-column label="可买" align="right" width="80" prop="max_buyable">
+        <template #default="{ row }">
+          <el-tooltip
+            :content="quoteStore.getLastPrice(row.stock_code) ? `依赖最新价 ¥${formatPrice(quoteStore.getLastPrice(row.stock_code))}` : '依赖最新价, 未到时显示 0'"
+            placement="top"
+          >
+            <span class="text-mono quota-cell" :class="`quota-${quotaLevel(quotaForRow(row).maxBuyable)}`">
+              {{ formatNumber(quotaForRow(row).maxBuyable) }}
+            </span>
+          </el-tooltip>
+        </template>
+      </el-table-column>
+      <el-table-column label="可卖" align="right" width="80" prop="max_sellable">
+        <template #default="{ row }">
+          <el-tooltip content="持仓可用 vol (avl_vol)" placement="top">
+            <span class="text-mono quota-cell" :class="`quota-${quotaLevel(quotaForRow(row).maxSellable)}`">
+              {{ formatNumber(quotaForRow(row).maxSellable) }}
+            </span>
+          </el-tooltip>
         </template>
       </el-table-column>
 
@@ -340,6 +387,7 @@ import {
 } from '../composables/useT0TradeButtons'
 import { useT0Stats } from '../composables/useT0Stats'
 import { useT0Keybindings } from '../composables/useT0Keybindings'
+import { useT0Quota, quotaLevel } from '../composables/useT0Quota'
 import { useUiStore } from '../stores/ui'
 import { t0StatsApi } from '../api/t0_stats'
 import { formatNumber, formatPrice, formatAmount } from '../utils/format'
@@ -474,6 +522,21 @@ function _selectedRow() {
 
 // ---- t0StatsMap: 每个持仓的今日统计 (走 useT0Stats 30s TTL 缓存) ----
 const t0StatsMap = ref({})
+
+// ---- quota frame: 账户级 5 pill 概览 (change-quota-frame) ----
+const { aggregate: quotaAggregate, rowQuota: quotaForRow } = useT0Quota(t0StatsMap)
+const todayPnlText = computed(() => {
+  const v = quotaAggregate.value.todayPnl
+  if (v === 0) return '¥0'
+  const sign = v > 0 ? '+' : '-'
+  return `${sign}¥${formatAmount(Math.abs(v))}`
+})
+const todayPnlClass = computed(() => {
+  const v = quotaAggregate.value.todayPnl
+  if (v > 0) return 'qf-pill--up'
+  if (v < 0) return 'qf-pill--down'
+  return ''
+})
 async function loadAllT0Stats() {
   const codes = holdingsPositions.value?.map(p => p.stock_code) || []
   const map = await useT0Stats.loadAll(codes)
@@ -693,6 +756,44 @@ watch(stockCode, async (code) => {
   border-bottom: 1px solid var(--el-border-color-lighter);
   flex-wrap: wrap;
 }
+
+/* quota frame: 5 个账户级 metric pill (change-quota-frame) */
+.quota-frame {
+  display: flex;
+  gap: 8px;
+  padding: 6px 12px;
+  background: var(--el-bg-color);
+  border-bottom: 1px solid var(--el-border-color-lighter);
+  flex-wrap: wrap;
+}
+.qf-pill {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 4px 12px;
+  background: var(--el-fill-color-light);
+  border-radius: 4px;
+  min-width: 110px;
+}
+.qf-label {
+  font-size: 11px;
+  color: var(--el-text-color-secondary);
+  font-weight: 500;
+}
+.qf-value {
+  font-size: 14px;
+  font-weight: 600;
+}
+.qf-pill--up .qf-value { color: #f56c6c; }
+.qf-pill--down .qf-value { color: #67c23a; }
+
+/* 移动端窄屏 (<1100px): 持仓市值折叠 */
+@media (max-width: 1100px) {
+  .qf-pill--desktop-only { display: none; }
+  .quota-frame { gap: 6px; }
+  .qf-pill { min-width: 90px; padding: 4px 8px; }
+}
 .t0-title {
   font-size: 16px;
   font-weight: 700;
@@ -833,6 +934,13 @@ watch(stockCode, async (code) => {
 .down { color: #67c23a; }
 .muted { color: var(--el-color-info); }
 .text-mono { font-family: var(--mono-font); }
+
+/* quota 单元格颜色 (change-quota-frame) */
+.quota-cell { font-weight: 600; }
+.quota-high { color: #67c23a; }   /* 绿: ≥1000 充足 */
+.quota-mid  { color: #e6a23c; }   /* 橙: 100-999 紧张 */
+.quota-low  { color: #f56c6c; }   /* 红: 1-99 极紧 */
+.quota-none { color: var(--el-color-info); }  /* 灰: 0 */
 
 /* 抽屉样式 (保持与原版本一致) */
 .t0-drawer {
