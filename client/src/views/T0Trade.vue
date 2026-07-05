@@ -150,17 +150,42 @@
                 {{ ((t0StatsMap[row.stock_code]?.win_rate || 0) * 100).toFixed(1) }}%
               </span>
             </div>
-            <div class="sub-item sub-sparkline" v-if="t0StatsMap[row.stock_code]">
-              <span class="sub-label">30天趋势</span>
-              <svg :viewBox="`0 0 150 30`" preserveAspectRatio="none" width="150" height="30" class="mini-sparkline">
-                <path
-                  v-if="sparklinePoints(row.stock_code).length > 1"
-                  :d="sparklinePath(row.stock_code)"
-                  :stroke="sparklineLast(row.stock_code) >= 0 ? '#f56c6c' : '#67c23a'"
-                  stroke-width="1.5"
-                  fill="none"
-                />
-              </svg>
+            <div class="sub-item sub-popover" v-if="t0StatsMap[row.stock_code]">
+              <span class="sub-label">30天</span>
+              <el-popover
+                trigger="hover"
+                placement="top"
+                :width="220"
+                :show-after="100"
+                @show="() => ensureHistory30d(row.stock_code)"
+              >
+                <template #reference>
+                  <span class="sub-value text-mono sub-popover-ref">
+                    <template v-if="history30dMap[row.stock_code]?.length > 0">
+                      ¥{{ formatAmount(history30dMap[row.stock_code][history30dMap[row.stock_code].length - 1]) }}
+                      <span :class="history30dMap[row.stock_code][history30dMap[row.stock_code].length - 1] >= 0 ? 'up' : 'down'">{{ history30dMap[row.stock_code][history30dMap[row.stock_code].length - 1] >= 0 ? '↑' : '↓' }}</span>
+                    </template>
+                    <template v-else>
+                      <span class="text-secondary">hover ↗</span>
+                    </template>
+                  </span>
+                </template>
+                <div class="sub-popover-list">
+                  <div v-if="!history30dMap[row.stock_code] || history30dMap[row.stock_code].length === 0" class="text-secondary text-mono" style="padding: 4px 0">
+                    加载中...
+                  </div>
+                  <div
+                    v-for="(v, i) in [...(history30dMap[row.stock_code] || [])].reverse()"
+                    :key="i"
+                    class="sub-popover-row"
+                  >
+                    <span class="text-secondary">D-{{ i }}</span>
+                    <span class="text-mono" :class="v >= 0 ? 'up' : 'down'">
+                      {{ v >= 0 ? '+' : '' }}{{ formatAmount(v) }}
+                    </span>
+                  </div>
+                </div>
+              </el-popover>
             </div>
           </div>
         </template>
@@ -483,19 +508,10 @@ const {
   zeroY: bottomZeroY,
 } = useT0ChartGeometry(cumHistory, { W: bottomChartW, H: bottomChartH, pad: bottomChartPad })
 
-// ---- Sparkline (副行 30 天 mini 曲线) ----
-const sparklineCache = ref({})
-function sparklinePoints(code) {
-  if (sparklineCache.value[code]) return sparklineCache.value[code]
-  // 从 drawer API 获取 30 天历史，缓存结果
-  const pts = []
-  let cum = 0
-  // lazy load via async path - for now use a simple inline approach
-  sparklineCache.value[code] = pts
-  return pts
-}
-async function loadSparkline(code) {
-  if (sparklineCache.value[code]) return
+// ---- 副行 30 天 hover popover (改文字列表) ----
+const history30dMap = ref({})
+async function ensureHistory30d(code) {
+  if (!code || history30dMap.value[code]) return
   try {
     const hist = await t0StatsApi.getHistory(code, 30)
     const pts = []
@@ -506,29 +522,11 @@ async function loadSparkline(code) {
         pts.push(cum)
       }
     }
-    sparklineCache.value[code] = pts
+    history30dMap.value = { ...history30dMap.value, [code]: pts }
   } catch (e) {
-    console.warn(`sparkline failed for ${code}`, e)
-    sparklineCache.value[code] = []
+    console.warn(`history30d failed for ${code}`, e)
+    history30dMap.value = { ...history30dMap.value, [code]: [] }
   }
-}
-function sparklinePath(code) {
-  const pts = sparklinePoints(code)
-  if (pts.length < 2) return ''
-  const W = 150, H = 30, pad = 4
-  const min = Math.min(...pts)
-  const max = Math.max(...pts)
-  const range = max - min || 1
-  const step = W / (pts.length - 1)
-  return pts.map((v, i) => {
-    const x = i * step
-    const y = pad + (1 - (v - min) / range) * (H - pad * 2)
-    return `${i === 0 ? 'M' : 'L'}${x.toFixed(1)},${y.toFixed(1)}`
-  }).join(' ')
-}
-function sparklineLast(code) {
-  const pts = sparklinePoints(code)
-  return pts.length > 0 ? pts[pts.length - 1] : 0
 }
 
 // ---- 提交下单 (保持 useT0OrderSubmit) ----
@@ -592,7 +590,7 @@ onMounted(async () => {
   if (!stockCode.value && holdingsPositions.value.length > 0) {
     stockCode.value = holdingsPositions.value[0].stock_code
     await loadT0History()
-    await loadSparkline(stockCode.value)
+    // 副行 30 天 popover: lazy load via @show 触发, 不在 onMounted 预拉
   }
   window.addEventListener('keydown', onKeyDown)
 })
@@ -606,11 +604,10 @@ watch(() => holdingsPositions.value.map(p => p.stock_code), async (newCodes, old
   await loadDiffT0Stats(newCodes, oldCodes)
 })
 
-// 监听 stockCode 变化 → 加载底部曲线
+// 监听 stockCode 变化 → 加载底部曲线 (副行 30 天由 popover @show 触发, 不预拉)
 watch(stockCode, async (code) => {
   if (code && !drawerVisible.value) {
     await loadT0History()
-    await loadSparkline(code)
   }
 })
 </script>
@@ -706,13 +703,28 @@ watch(stockCode, async (code) => {
   align-items: center;
   gap: 2px;
 }
-.sub-sparkline {
+/* 副行 hover popover (改文字列表) */
+.sub-popover {
   flex-direction: row;
   align-items: center;
   gap: 8px;
 }
-.mini-sparkline {
-  display: block;
+.sub-popover-ref {
+  cursor: pointer;
+  border-bottom: 1px dashed var(--el-color-primary);
+  padding: 0 2px;
+}
+.sub-popover-list {
+  max-height: 240px;
+  overflow-y: auto;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.sub-popover-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 1px 0;
 }
 .sub-label {
   font-size: 11px;
@@ -845,8 +857,8 @@ watch(stockCode, async (code) => {
     gap: 12px;
     padding: 4px 8px 6px;
   }
-  .sub-sparkline {
-    display: none;
+  .sub-popover {
+    display: none;  /* 移动端 hover 不工作, 静态隐藏 30 天明细 */
   }
   .bottom-chart-svg {
     height: 60px;

@@ -47,10 +47,10 @@
 
 **目标**: 删重复 SVG, 副行 30 日数据改 hover-only popover; 移动端不渲染
 
-- [ ] 4.1 T0Trade.vue 副行 `<el-table-column type="expand">` 内部: 移除 `<svg.mini-sparkline>` 150x30 SVG; 移除 `sparklinePoints` / `sparklinePath` / `sparklineLast` / `loadSparkline` 4 函数
-- [ ] 4.2 副行"30天趋势"字段 (现位置) 改为 `<el-popover trigger="hover">`, reference 显示 "¥{last} {emoji}", content 列 D-1..D-30 数值
-- [ ] 4.3 CSS `@media (max-width: 768px) .sub-sparkline { display: none }` 移到 .sub-popover, 桌面 hover, 移动端静态隐藏 (避免 mobile hover 不工作)
-- [ ] 4.4 验证: `npm test` 仍 133+, build OK, grep 验证无 `sparkline` 引用残留
+- [x] 4.1 T0Trade.vue 副行 `<el-table-column type="expand">` 内部: 移除 `<svg.mini-sparkline>` 150x30 SVG; 移除 `sparklinePoints` / `sparklinePath` / `sparklineLast` / `loadSparkline` 4 函数 → 改 `ensureHistory30d`
+- [x] 4.2 副行"30天"字段改为 `<el-popover trigger="hover">`, reference 显示 "¥{last} ↑/↓", content 列 D-1..D-30 数值 (lazy load via @show)
+- [x] 4.3 CSS `@media (max-width: 768px) .sub-popover { display: none }` 桌面 hover, 移动端静态隐藏 (避免 mobile hover 不工作)
+- [x] 4.4 验证: `npm test` 165/165 全过, build OK, grep `sparkline` in T0Trade.vue = 0
 
 ## 5. 排序 + 快捷键 (commit: feat(client): t0Trade 排序+快捷键)
 
