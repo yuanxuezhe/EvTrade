@@ -56,15 +56,15 @@
 
 **目标**: sortable 列 + 全局快捷键 B/S/P/↑↓/Enter, uiStore 加 toggle
 
-- [ ] 5.1 T0Trade.vue 主表 `<el-table>` 加 `sortable="custom"` + `@sort-change` handler, 默认按"浮盈% desc" (与今入仓习惯一致)
-- [ ] 5.2 state: `sortBy = ref('return_rate')`, `sortOrder = ref('descending')`, `selectedRowCode = ref(null)`; computed `sortedRows` 用 lodash.orderBy 或手写
-- [ ] 5.3 新建 `client/src/composables/useT0Keybindings.js`:
-  - `addEventListener('keydown', handler)` (在 onMounted 加 / onUnmounted 移)
-  - 字母键 B/S/P → 调对应 row 的 quickBuy/Sell/Balance (需 selectedRowCode)
-  - ↑↓ → 改 selectedRowCode (按 sortedRows 顺序); Enter → 开抽屉
-  - 守门: `if (['input','textarea','select'].includes(target.tagName)) return`; `if (drawerVisible.value) return`
-- [ ] 5.4 `client/src/stores/ui.js` 加 `t0Keybindings: true` (默认开), `toggleT0Keybindings()` action
-- [ ] 5.5 单测 `tests/client/composables/useT0Keybindings.test.js` — 输入框不触发 / 抽屉打开不触发 / 5 键 mapping 5 action
+- [x] 5.1 T0Trade.vue 主表 `<el-table>` 加 `sortable="custom"` (6 列: 持仓/现价/涨跌/今盈/净敞口/浮盈%) + `@sort-change="onSortChange"`
+- [x] 5.2 state: `sortBy / sortOrder / selectedRowCode`; computed `sortedRows` 手写 sort; `_moveSelection(±1)` 按 sortedRows 切换 stockCode
+- [x] 5.3 新建 `client/src/composables/useT0Keybindings.js`:
+  - onMounted/onUnmounted 自管 keydown 监听
+  - B/S/P → onBuy/Sell/Balance(selectedRow)
+  - ↑↓ → onSelectPrev/Next; Enter → onEnter (开抽屉)
+  - 守门: uiStore.t0Keybindings + drawerVisible + tagName(contentEditable/Input/Textarea/Select) + 修键
+- [x] 5.4 `client/src/stores/ui.js` 加 `t0Keybindings` (localStorage 持久, 默认 true), `toggleT0Keybindings()` / `setT0Keybindings()`
+- [x] 5.5 单测 `tests/composables/useT0Keybindings.test.js` — 10 用例 (5 键 mapping / 大小写 / 修键守门 / 输入框 / isEnabled / Escape 不拦截 / 透传)
 
 ## 6. 同步 OpenSpec specs + 验证 + 归档 (commit: docs(openspec): sync t0-trade-polish scenarios)
 

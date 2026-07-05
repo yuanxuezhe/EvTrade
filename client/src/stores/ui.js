@@ -31,6 +31,18 @@ export const useUiStore = defineStore('ui', () => {
     document.documentElement.classList.toggle('dark', theme.value === 'dark')
   }
 
+  // T0Trade 快捷键开关 (change t0-trade-polish-bundle commit 5)
+  //   true  = 启用 (默认), false = 禁用 (输入框/外接键盘)
+  const t0Keybindings = ref(localStorage.getItem('evtrade-t0-keys') !== '0')
+  function toggleT0Keybindings() {
+    t0Keybindings.value = !t0Keybindings.value
+    localStorage.setItem('evtrade-t0-keys', t0Keybindings.value ? '1' : '0')
+  }
+  function setT0Keybindings(v) {
+    t0Keybindings.value = !!v
+    localStorage.setItem('evtrade-t0-keys', t0Keybindings.value ? '1' : '0')
+  }
+
   // 初始化时应用主题
   if (typeof document !== 'undefined') {
     document.documentElement.classList.toggle('dark', theme.value === 'dark')
@@ -77,6 +89,9 @@ export const useUiStore = defineStore('ui', () => {
     toggleOplog,
     toggleSidebar,
     toggleTheme,
+    t0Keybindings,
+    toggleT0Keybindings,
+    setT0Keybindings,
     onRouteChange,
   }
 })

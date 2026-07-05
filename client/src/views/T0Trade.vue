@@ -29,9 +29,10 @@
 
     <!-- 主表 (占视口主体, 含副行 + 操作列) -->
     <el-table
-      :data="holdingsPositions"
+      :data="sortedRows"
       :row-class-name="ptRowClass"
       @row-click="onOpenDrawer"
+      @sort-change="onSortChange"
       class="position-table"
       empty-text="暂无持仓"
       size="default"
@@ -40,17 +41,17 @@
       <el-table-column label="名称" width="80">
         <template #default="{ row }">{{ row.stock_name || row.stock_code }}</template>
       </el-table-column>
-      <el-table-column label="持仓" align="right" width="70">
+      <el-table-column prop="vol" label="持仓" align="right" width="70" sortable="custom">
         <template #default="{ row }">{{ formatNumber(row.vol) }}</template>
       </el-table-column>
-      <el-table-column label="现价" align="right" width="80">
+      <el-table-column prop="last_price" label="现价" align="right" width="80" sortable="custom">
         <template #default="{ row }">
           <span :class="quoteStore.getChangePct(row.stock_code) >= 0 ? 'up' : 'down'">
             {{ formatPrice(quoteStore.getLastPrice(row.stock_code)) }}
           </span>
         </template>
       </el-table-column>
-      <el-table-column label="涨跌" align="right" width="70">
+      <el-table-column prop="change_pct" label="涨跌" align="right" width="70" sortable="custom">
         <template #default="{ row }">
           <span :class="quoteStore.getChangePct(row.stock_code) >= 0 ? 'up' : 'down'">
             {{ quoteStore.getChangePct(row.stock_code)?.toFixed(2) }}%
@@ -59,7 +60,7 @@
       </el-table-column>
 
       <!-- 今盈 (t0Stats realized_pnl, 按需加载) -->
-      <el-table-column label="今盈" align="right" width="90">
+      <el-table-column prop="realized_pnl" label="今盈" align="right" width="90" sortable="custom">
         <template #default="{ row }">
           <template v-if="t0StatsMap[row.stock_code]">
             <span :class="t0StatsMap[row.stock_code].realized_pnl >= 0 ? 'up' : 'down'">
@@ -71,7 +72,7 @@
       </el-table-column>
 
       <!-- 净敞口 (today_buy_volume - today_sell_volume) -->
-      <el-table-column label="净敞口" align="right" width="80">
+      <el-table-column prop="net_exposure" label="净敞口" align="right" width="80" sortable="custom">
         <template #default="{ row }">
           <template v-if="t0StatsMap[row.stock_code]">
             <span :class="netExposure(row) > 0 ? 'up' : netExposure(row) < 0 ? 'down' : ''">
@@ -82,8 +83,8 @@
         </template>
       </el-table-column>
 
-      <!-- 浮盈% (holdingsStore.getReturnRate) -->
-      <el-table-column label="浮盈%" align="right" width="70">
+      <!-- 浮盈% (holdingsStore.getReturnRate) — 默认按此 desc -->
+      <el-table-column prop="return_rate" label="浮盈%" align="right" width="70" sortable="custom">
         <template #default="{ row }">
           <span :class="holdingsStore.getReturnRate(row.stock_code) >= 0 ? 'up' : 'down'">
             {{ (holdingsStore.getReturnRate(row.stock_code) * 100).toFixed(2) }}%
@@ -338,6 +339,8 @@ import {
   buyBtnState, sellBtnState, balanceBtnState,
 } from '../composables/useT0TradeButtons'
 import { useT0Stats } from '../composables/useT0Stats'
+import { useT0Keybindings } from '../composables/useT0Keybindings'
+import { useUiStore } from '../stores/ui'
 import { t0StatsApi } from '../api/t0_stats'
 import { formatNumber, formatPrice, formatAmount } from '../utils/format'
 import { useT0ChartGeometry, useT0DrawerChartGeometry } from '../composables/useT0ChartGeometry'
@@ -347,6 +350,7 @@ const holdingsStore = useHoldingsStore()
 const orderStore = useOrderStore()
 const quoteStore = useQuoteStore()
 const assetStore = useAssetStore()
+const uiStore = useUiStore()
 const { positions } = storeToRefs(holdingsStore)
 const { asset: assetData } = storeToRefs(assetStore)
 
@@ -404,7 +408,10 @@ watch(drawerVisible, async (v) => {
   }
 })
 function ptRowClass({ row }) {
-  return row.stock_code === stockCode.value ? 'is-selected' : ''
+  const classes = []
+  if (row.stock_code === stockCode.value) classes.push('is-selected')
+  if (row.stock_code === selectedRowCode.value) classes.push('is-focused')
+  return classes.join(' ')
 }
 
 // ---- 快速做T 全局设置 ----
@@ -417,6 +424,53 @@ watch([quickPct, quickPriceType], ([p, pt]) => {
 
 // ---- 持仓列表 ----
 const holdingsPositions = computed(() => positions.value)
+
+// ---- 排序 + 选中行 (change t0-trade-polish-bundle commit 5) ----
+// sortBy/sortOrder: el-table @sort-change 写入, sortedRows 派生
+//   null = 用户没排序, 走原顺序 (positions.value 顺序)
+// selectedRowCode: ↑↓ 切换, 排序变化时按 stockCode 同步 (不变性)
+const sortBy = ref(null)         // 'vol' | 'last_price' | 'change_pct' | 'realized_pnl' | 'net_exposure' | 'return_rate' | null
+const sortOrder = ref(null)      // 'ascending' | 'descending' | null
+const selectedRowCode = ref(null)
+function onSortChange({ prop, order }) {
+  sortBy.value = order ? prop : null
+  sortOrder.value = order || null
+}
+function _rowSortValue(row, key) {
+  if (!key) return 0
+  switch (key) {
+    case 'vol': return Number(row.vol) || 0
+    case 'last_price': return quoteStore.getLastPrice(row.stock_code) || 0
+    case 'change_pct': return quoteStore.getChangePct(row.stock_code) || 0
+    case 'realized_pnl': return t0StatsMap.value[row.stock_code]?.realized_pnl ?? 0
+    case 'net_exposure': return netExposure(row)
+    case 'return_rate': return holdingsStore.getReturnRate(row.stock_code) || 0
+    default: return 0
+  }
+}
+const sortedRows = computed(() => {
+  const list = [...holdingsPositions.value]
+  if (!sortBy.value || !sortOrder.value) return list
+  const dir = sortOrder.value === 'ascending' ? 1 : -1
+  list.sort((a, b) => {
+    const va = _rowSortValue(a, sortBy.value)
+    const vb = _rowSortValue(b, sortBy.value)
+    return (va - vb) * dir
+  })
+  return list
+})
+function _moveSelection(delta) {
+  const list = sortedRows.value
+  if (list.length === 0) return
+  const curIdx = list.findIndex(r => r.stock_code === selectedRowCode.value)
+  let next = curIdx + delta
+  if (next < 0) next = 0
+  if (next >= list.length) next = list.length - 1
+  selectedRowCode.value = list[next].stock_code
+}
+function _selectedRow() {
+  return sortedRows.value.find(r => r.stock_code === selectedRowCode.value)
+}
 
 // ---- t0StatsMap: 每个持仓的今日统计 (走 useT0Stats 30s TTL 缓存) ----
 const t0StatsMap = ref({})
@@ -572,15 +626,22 @@ function onQuickBalance(row) {
 }
 
 
-// ---- 快捷键 ----
-function onKeyDown(e) {
-  if (e.key === 'Escape') {
-    if (drawerVisible.value) drawerVisible.value = false
-    return
+// ---- 快捷键 (change t0-trade-polish-bundle commit 5) ----
+useT0Keybindings({
+  isEnabled: () => uiStore.t0Keybindings && !drawerVisible.value,
+  onBuy: () => { const r = _selectedRow(); if (r && !buyState(r).disabled) onQuickBuy(r) },
+  onSell: () => { const r = _selectedRow(); if (r && !sellState(r).disabled) onQuickSell(r) },
+  onBalance: () => { const r = _selectedRow(); if (r && !balanceState(r).disabled) onQuickBalance(r) },
+  onSelectPrev: () => _moveSelection(-1),
+  onSelectNext: () => _moveSelection(1),
+  onEnter: () => { const r = _selectedRow(); if (r) onOpenDrawer(r) },
+})
+
+// Escape 单独监听 (无 uiStore 开关, 抽屉打开随时关)
+function onEscapeKey(e) {
+  if (e.key === 'Escape' && drawerVisible.value) {
+    drawerVisible.value = false
   }
-  const tag = (e.target?.tagName || '').toLowerCase()
-  if (['input', 'textarea', 'select'].includes(tag)) return
-  if (e.ctrlKey || e.metaKey || e.altKey) return
 }
 
 // ---- 初始化 ----
@@ -592,11 +653,12 @@ onMounted(async () => {
     await loadT0History()
     // 副行 30 天 popover: lazy load via @show 触发, 不在 onMounted 预拉
   }
-  window.addEventListener('keydown', onKeyDown)
+  window.addEventListener('keydown', onEscapeKey)
 })
 onUnmounted(() => {
-  window.removeEventListener('keydown', onKeyDown)
+  window.removeEventListener('keydown', onEscapeKey)
 })
+// 注: useT0Keybindings 已自管 onMounted/onUnmounted, 不在此再 addEventListener
 
 // 当持仓变化时，仅差量加载 t0Stats (新增标的 fetch, 删除标的无需动作, 走 cache)
 watch(() => holdingsPositions.value.map(p => p.stock_code), async (newCodes, oldCodes) => {
@@ -666,6 +728,9 @@ watch(stockCode, async (code) => {
 }
 .position-table :deep(tr.is-selected td) {
   background-color: var(--el-color-primary-light-9) !important;
+}
+.position-table :deep(tr.is-focused td) {
+  box-shadow: inset 3px 0 0 var(--el-color-primary);
 }
 
 /* 操作列 */
