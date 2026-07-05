@@ -133,7 +133,7 @@ async def get_t0_exposure(
     trades = db.query(Trade).filter(Trade.trd_date == trd_date).all()
     positions = _query_positions_dict(db)
 
-    f_orders, f_trades = apply_user_def_filter(orders, trades, user_def)
+    f_orders, f_trades = apply_user_def_filter(orders, trades, user_def, db=db)
     rows = aggregate_by_stock(f_trades, f_orders, positions, fee_cfg)
 
     # totals
@@ -180,7 +180,7 @@ async def get_t0_aggregate(
     trades = db.query(Trade).filter(Trade.trd_date >= cutoff).all()
     positions = _query_positions_dict(db)
 
-    f_orders, f_trades = apply_user_def_filter(orders, trades, user_def)
+    f_orders, f_trades = apply_user_def_filter(orders, trades, user_def, db=db)
 
     by_stock_rows = aggregate_by_stock(f_trades, f_orders, positions, fee_cfg)
     by_day_rows = aggregate_by_day(f_trades, positions, fee_cfg)

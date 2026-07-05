@@ -7,9 +7,12 @@ t0_aggregators.py — T0 聚合函数
 - aggregate_by_day: 按日聚合
 - aggregate_summary: 累计 + 胜率 + 回报率
 - apply_user_def_filter: 按 user_def 标签过滤
+- resolve_t0_user_defs: 解析 user_def 标签（含 T0 策略单）— task 8 (strategy_trade)
 """
 from collections import defaultdict
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Set, Tuple
+
+from sqlalchemy.orm import Session
 
 from server.models.orm import FeeConfig, Order, Position, Trade
 
@@ -231,20 +234,50 @@ def apply_user_def_filter(
     orders: List[Order],
     trades: List[Trade],
     user_def: str,
+    db: Optional[Session] = None,
 ) -> Tuple[List[Order], List[Trade]]:
     """按 user_def 过滤（空字符串 = 全部）
 
     Args:
         orders: 全部订单
         trades: 全部成交
-        user_def: 要过滤的标签（'T0' 或 '' 表示全部）
+        user_def: 要过滤的标签（'T0' / '' = 全部 / 其他 = 字面匹配）
+        db: 可选 — 传入时扩展支持 'T0' 策略单（user_def = str(strategy.id) where type='t0'）
 
     Returns:
         (filtered_orders, filtered_trades)
     """
     if not user_def:
         return orders, trades
-    order_nos = {o.order_no for o in orders if o.user_def == user_def}
-    f_orders = [o for o in orders if o.user_def == user_def]
+    if db is not None:
+        allowed = resolve_t0_user_defs(db, user_def)
+    else:
+        allowed = {user_def}
+    f_orders = [o for o in orders if o.user_def in allowed]
+    order_nos = {o.order_no for o in f_orders}
     f_trades = [t for t in trades if t.order_no in order_nos]
     return f_orders, f_trades
+
+
+def resolve_t0_user_defs(db: Session, user_def: str) -> Optional[Set[str]]:
+    """解析 user_def 标签，扩展支持 T0 策略单（change strategy_trade task 8）
+
+    Args:
+        db: SQLAlchemy session
+        user_def: 标签值
+
+    Returns:
+        None = 不限（user_def 空字符串）
+        Set[str] = 允许的 user_def 值集合
+            - 'T0' → {'T0'} ∪ {所有 type='t0' 的 strategy id as str}
+            - 其他 → {user_def} 单值
+    """
+    if not user_def:
+        return None
+    if user_def == 'T0':
+        from server.services.strategy.models import Strategy
+        t0_ids = {
+            str(s.id) for s in db.query(Strategy.id).filter(Strategy.type == 't0').all()
+        }
+        return {'T0'} | t0_ids
+    return {user_def}

@@ -33,6 +33,7 @@ from server.models.user import User
 from server.services.guards import resolve_default_trd_date
 from server.services.t0 import get_fee_config
 from server.services.t0.aggregate_api import calc_realized_pnl
+from server.services.t0.aggregators import resolve_t0_user_defs
 
 router = APIRouter()
 
@@ -83,7 +84,9 @@ async def t0_stats(
         Order.stock_code == stock_code,
     )
     if t0_only:
-        orders_today = orders_today.filter(Order.user_def == "T0")
+        # T0 扩展：user_def='T0' literal + 所有 type='t0' 策略的 user_def（task 8）
+        allowed = resolve_t0_user_defs(db, "T0")
+        orders_today = orders_today.filter(Order.user_def.in_(allowed))
     orders_today = orders_today.all()
 
     trades_today = db.query(Trade).filter(
@@ -91,7 +94,7 @@ async def t0_stats(
         Trade.stock_code == stock_code,
     )
     if t0_only:
-        # 通过关联本地委托（user_def='T0'）来过滤成交
+        # 通过关联本地委托来过滤成交
         t0_order_nos = {
             o.order_no for o in orders_today
         }
@@ -202,9 +205,10 @@ def t0_history(
         Trade.trd_date <= today,
     )
     if t0_only:
-        # 关联 user_def='T0' 的 Order，过滤成交
+        # T0 扩展：user_def='T0' literal + 所有 type='t0' 策略的 user_def（task 8）
+        allowed = resolve_t0_user_defs(db, "T0")
         t0_order_nos = {
-            o.order_no for o in db.query(Order).filter(Order.user_def == "T0").all()
+            o.order_no for o in db.query(Order).filter(Order.user_def.in_(allowed)).all()
         }
         if t0_order_nos:
             q = q.filter(Trade.order_no.in_(t0_order_nos))
