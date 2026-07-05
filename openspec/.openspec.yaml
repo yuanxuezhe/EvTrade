@@ -25,6 +25,7 @@ specs:
   - frontend         # Vue3 路由 / 角色守卫 / WS 客户端
   - configuration    # 环境变量 / 配置分层 / 启动校验
   - rpc-protocol     # msgpacket RPC 客户端契约
+  - strategy         # 网格策略交易引擎（regime + flag + grid + engine + quote_consumer）
 
 # 变更工作流
 workflow:
@@ -51,13 +52,19 @@ validation:
 # 跨 capability 的关联
 cross_references:
   - from: trading
-    to: [rpc-protocol, push, auth]
-    reason: 下单/撤单走 RPC，状态变更靠 push 推送，需鉴权
+    to: [rpc-protocol, push, auth, strategy]
+    reason: 下单/撤单走 RPC，状态变更靠 push 推送，需鉴权；strategy 引擎下单通过 Order.user_def 关联
   - from: positioning
     to: [rpc-protocol, auth]
   - from: quotes
-    to: [push, frontend]
+    to: [push, frontend, strategy]
+    reason: strategy engine 通过 QuoteConsumer 订阅 hqserver 行情推送
   - from: frontend
-    to: [auth, quotes, push]
+    to: [auth, quotes, push, strategy]
+    reason: strategy-trade 路由 + strategy_update WS 频道
   - from: push
-    to: [rpc-protocol]
+    to: [rpc-protocol, strategy]
+    reason: strategy_update 频道由 strategy engine._broadcast 推送
+  - from: strategy
+    to: [quotes, trading, push, configuration]
+    reason: QuoteConsumer 接 hqserver；engine 下单走 RPC；audit/regime 状态走 strategy_update WS 推送；STRATEGY_ENGINE_ENABLED 控制启用

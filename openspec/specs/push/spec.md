@@ -402,6 +402,47 @@ RS2: [{
 - 用 `order_no`（解析 `remark` 字段得到）作为 Trade PK 第二段（PK = `(trd_date, order_no, trade_id)`）
 - 若 `remark` 解析失败 → 打 warning 日志，跳过该条成交（不要让一条缺关联的成交写入）
 
+### REQ-PUSH-040: strategy_update 频道（strategy_trade）
+
+- **频道常量**：`STRATEGY_WS_CHANNEL = "strategy_update"`（注册到 `ws_manager.active_connections`）
+- **payload schema**（由 `engine._broadcast()` 推送）：
+  ```json
+  {
+    "type": "strategy_update",
+    "channel": "strategy_update",
+    "ts": "ISO8601",
+    "data": {
+      "strategy_id": 5,
+      "event": "regime_changed | grid_triggered | regime_cooldown",
+      "regime_id": 11,
+      "flags_active": ["ma_bullish", "vol_breakout"],
+      "current_price": 10.5,
+      "position_vol": 1000,
+      "base_volume": 300,
+      "action": { "direction": "buy", "volume": 200, "trigger_price": 10.0, "grid_id": 33 },
+      "order_no": "ORD-001",
+      "reject_reason": null,
+      "trd_date": "20260706"
+    }
+  }
+  ```
+- **前端分发**：`ws_dispatch.js::_onStrategyUpdate(row)` 把 `data` 包装为 `AuditRecord` 调 `store.appendAudit(strategy_id, trd_date, audit)`
+- **缺 strategy_id**：静默丢弃（console.warn）
+- **event 字段**：3 种枚举
+  - `regime_changed` — 当前匹配 regime 变更
+  - `grid_triggered` — 网格触发（含 action 字段 + 可能含 order_no）
+  - `regime_cooldown` — 冷却期内尝试切换被拒（reject_reason=`cooldown_active`）
+
+#### Scenario: strategy_update 缺 strategy_id 静默丢弃
+
+- **WHEN** payload.data.strategy_id 缺失
+- **THEN** MUST console.warn + 不写入 audit cache
+
+#### Scenario: grid_triggered 含 order_no
+
+- **WHEN** 买单已报 status='50'
+- **THEN** audit 记录 MUST 含 `order_no='ORD-...'` + `trigger_type='grid_triggered'`
+
 ## Known Issues (from analysis)
 
 - ✅ consolidate-position-data-flow: `pos_cfm` / `ast_cfm` / `position_update` / `asset_update` 已删除（REQs 032/033），handler dead code 清除

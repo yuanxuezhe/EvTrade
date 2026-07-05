@@ -513,6 +513,39 @@ admin 资金 / 持仓盘中调平端点，**核心合约**详见 `asset-position
 - **WHEN** user 导航到 `/orders` 或 `/trades`
 - **THEN** router 重定向到 `/today/...` 对应路由（旧书签兼容）
 
+### REQ-TRADE-011: Order.user_def 关联约定 + IX_ORDERS_USER_DEF + T0 端点 JOIN 迁移（strategy_trade）
+
+`strategy` 引擎触发的下单与历史 T0 委托的归属查询需要统一的 `user_def` 关联约定。
+
+- **`Order.user_def = str(strategy.id)`**：strategy 引擎下单时把 strategy 主键 int 序列化为字符串写入 `user_def` 列
+  - 与字面量 `"T0"` 共存（人工 T0 单仍写 `"T0"`，strategy 自动单写 `"5"`、`"7"` 等）
+- **索引 `ix_orders_user_def`**：在 `Order` 表加 B-tree 索引支撑 T0 端点 JOIN 过滤
+  - `server/models/orm.py::Order.Index("ix_orders_user_def", "user_def")`
+  - `server/db.py::init_db` 幂等迁移：`CREATE INDEX IF NOT EXISTS ix_orders_user_def ON orders(user_def)`
+- **T0 端点 JOIN 迁移**（`server/api/t0_stats.py` + `t0_aggregate.py`）：
+  - `Order.user_def == "T0"` → `Order.user_def.in_(resolve_t0_user_defs(db, "T0"))`
+  - `resolve_t0_user_defs(db, user_def) -> Optional[Set[str]]`：返 Set[str]，含字面量 `"T0"` + 所有 `type='t0'` strategy.id 的字符串化
+  - `apply_user_def_filter(..., db=db)`：可选 db 参数，无 db 时回退到旧字面量集合（向后兼容）
+  - 影响端点：`t0_stats` / `t0_history`（spec 误写为 `t0_trades`）/ `t0_exposure` / `t0_aggregate`
+- 与 REQ-TRADE-002 一致：`remark` 字段透传 `order_no`
+
+#### Scenario: strategy 委托 user_def=str(id)
+
+- **GIVEN** strategy.id=5
+- **WHEN** grid 触发下单
+- **THEN** Order.user_def MUST = "5"
+
+#### Scenario: T0 端点含 t0 strategy 单子
+
+- **GIVEN** strategy id=7, type=t0
+- **WHEN** GET /api/t0/stats?t0_only=true
+- **THEN** MUST 包含 user_def in {"T0", "7"} 的委托
+
+#### Scenario: 旧调用无 db 兼容
+
+- **GIVEN** apply_user_def_filter(..., db=None) 被旧代码调用
+- **THEN** MUST 回退到 {"T0"} 字面量集合（行为不变）
+
 #### Scenario: 委托/成交视图按 today/history 拆分
 
 - **WHEN** 实施本 change

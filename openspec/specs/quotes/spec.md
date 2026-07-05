@@ -35,6 +35,47 @@ QMT 柜台通过 FANOUT exchange `quota.exchange` 推送行情快照。
 - `HQ_NUM_WORKERS` / `HQ_MAX_QUEUE_SIZE` / `HQ_PREFETCH_COUNT` / `HQ_WS_HOST` / `HQ_WS_PORT`
 - 配置从 `server/.env` 加载（与 FastAPI 后端共享）
 
+### REQ-QUOTE-005: 后端 WS 接入（strategy_trade）
+
+- **`QuoteConsumer`**（`server/services/strategy/quote_consumer.py`）— 后端首次接入 hqserver WebSocket
+- **单连接广播模型**：hqserver **不支持** subscribe/unsubscribe（无条件广播），QuoteConsumer 全收 tick，本地按 `stock_code` 过滤 fan-out 到对应 `StrategyEngine`
+- **连接配置**：`HQ_WS_URL`（默认 `ws://127.0.0.1:8765`，与 hqserver 同机部署时无需修改）
+- **生命周期**：模块级 singleton `_quote_consumer` + `get_quote_consumer()` / `close_quote_consumer()`（仿 RPClient 模式）
+- **启动控制**：`STRATEGY_ENGINE_ENABLED=false` 时 QuoteConsumer 不启动（与 REST 灰度门同步）
+- **优雅停机**：`stop()` 设 `_stop` Event + `await ws.close()`
+- **重连退避**：指数退避 1s → 2s → 4s → 8s → 16s → 30s (cap)
+- **健康检查**：30s 心跳 log（订阅数 / buffer size）+ 60s 无 tick 警告（**不**主动重连，连接是活的）
+- **prev_close 注入**：启动时从 `QuoteSnapshot` 表读最近一日的 `prev_close`，注入每个 engine 实例
+
+#### Scenario: 重连指数退避
+
+- **WHEN** connect 失败
+- **THEN** delay 序列 MUST 是 1s → 2s → 4s → 8s → 16s → 30s (cap)
+
+#### Scenario: 60s 无 tick 警告
+
+- **GIVEN** 连接活跃
+- **WHEN** 60s 内无 tick
+- **THEN** MUST log warning（**不**主动重连）
+
+#### Scenario: 优雅停机
+
+- **WHEN** stop()
+- **THEN** `_stop.set()` → connect_loop 退出 + consume_loop 退出 + ws.close()
+
+#### Scenario: 灰度门关闭时不启动
+
+- **GIVEN** STRATEGY_ENGINE_ENABLED=false
+- **WHEN** app startup
+- **THEN** MUST NOT 创建 QuoteConsumer（log info `[INIT] STRATEGY_ENGINE_ENABLED=false, quote consumer not started`）
+
+#### Scenario: tick fan-out 到匹配 engine
+
+- **GIVEN** 活跃 strategy stock_code=600519.SH
+- **WHEN** 收到 tick `stock_code=600519.SH`
+- **THEN** MUST 调 `engine.evaluate_tick(tick)`
+- **AND** 非活跃 stock 的 tick MUST 丢弃（仍记录 `_latest_price`）
+
 ## Scenarios
 
 ### S-QUOTE-001: 正常行情推送

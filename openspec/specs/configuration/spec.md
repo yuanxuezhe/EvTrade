@@ -74,6 +74,32 @@ EvTrade 部署在 Windows（开发/QMT 柜台）+ Linux（前后端服务），�
 - URL：`/api/admin/trading-day*` → **`/api/admin/sys-status*`**
 - Pydantic：`TradingDayOut` → **`SysStatusOut`**，字段 `current_date` → **`trd_date`**
 
+### REQ-CFG-008: Strategy engine env（strategy_trade）
+
+| Key | 默认 | 说明 |
+|---|---|---|
+| `STRATEGY_ENGINE_ENABLED` | `false` | 是否启用 strategy 引擎（REST 路由 + WS 推送 + QuoteConsumer 启动统一开关） |
+| `HQ_WS_URL` | `ws://127.0.0.1:8765` | hqserver WebSocket 地址（QuoteConsumer 接入点，与 hqserver.HQ_WS_PORT 对应） |
+
+- **STRATEGY_ENGINE_ENABLED 语义**：
+  - `false`（默认）：strategy REST 路由除 `/api/strategy/flags` 外全部返 503；QuoteConsumer 不启动；前端 `/strategy-trade` 路由可访问但所有数据为空
+  - `true`：全功能启用；QuoteConsumer 在 app startup 启动；REST 路由正常工作
+- **HQ_WS_URL**：
+  - 与 `HQ_WS_HOST` / `HQ_WS_PORT` 组合（`ws://{HQ_WS_HOST}:{HQ_WS_PORT}`）语义一致；用 URL 形式便于部署时切换网络拓扑
+  - QuoteConsumer 默认 `ws://127.0.0.1:8765`（与 hqserver 同机）；跨机部署时需显式覆盖
+
+#### Scenario: STRATEGY_ENGINE_ENABLED=false 时访问 REST
+
+- **GIVEN** STRATEGY_ENGINE_ENABLED=false
+- **WHEN** GET /api/strategy
+- **THEN** MUST 返 503（与 SPEC REQ-STRAT-009 同步）
+
+#### Scenario: HQ_WS_URL 跨机部署
+
+- **GIVEN** HQ_WS_URL=ws://10.0.0.5:8765
+- **WHEN** QuoteConsumer start
+- **THEN** MUST 连接 ws://10.0.0.5:8765（非默认 127.0.0.1）
+
 ## Scenarios
 
 ### S-CFG-001: 首次部署

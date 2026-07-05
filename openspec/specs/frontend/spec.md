@@ -1102,6 +1102,37 @@ The system SHALL 让 `client/src/components/QuotePanel.vue` 中
 - **THEN** MUST 显示 D-1..D-30 倒序数值列表 (lazy load via @show)
 - **AND** 移动端 (< 768px) MUST 静态隐藏 popover (避免 hover 不工作)
 
+### REQ-FE-310: 策略交易路由 + 角色守卫（strategy_trade）
+
+- **`/strategy-trade` 路由**：`client/src/views/StrategyTrade.vue` 主视图（左侧 StrategyList + 编辑表单 / 右侧 StrategyMonitor）
+- **角色守卫**：`meta.requiresTrader = true`（trader 或 admin 可访问）
+- **旧路由重定向**：`/algo-strategy` → `/strategy-trade`（旧书签兼容）
+- **WS 频道**：在 `ws_heartbeat.js::CHANNELS` 加 `'strategy_update'`，由 `ws_dispatch.js::_onStrategyUpdate` 分发到 `useStrategyStore().appendAudit`
+- **导航栏入口**：Sidebar.vue 加 `/strategy-trade` 链接
+
+#### Scenario: trader 访问 /strategy-trade
+
+- **GIVEN** role=trader
+- **WHEN** router push /strategy-trade
+- **THEN** MUST 渲染 StrategyTrade 视图
+
+#### Scenario: 非 trader 访问 /strategy-trade
+
+- **GIVEN** role ≠ trader 且 ≠ admin
+- **WHEN** router push /strategy-trade
+- **THEN** MUST 重定向到 /
+
+#### Scenario: 旧 /algo-strategy 重定向
+
+- **WHEN** router push /algo-strategy
+- **THEN** MUST 重定向到 /strategy-trade
+
+#### Scenario: strategy_update WS 推送到 audit cache
+
+- **WHEN** 收到 WS payload `type='strategy_update', data.strategy_id=5`
+- **THEN** MUST 包装为 AuditRecord 推入 `store.auditCache[5][trd_date]`
+- **AND** 缺 strategy_id MUST 静默丢弃
+
 ### REMOVED Requirements
 
 #### Requirement: QuotePanel 双击价格带入（v15 之前行为）
