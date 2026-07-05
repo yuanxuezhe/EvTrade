@@ -31,6 +31,7 @@ import {
   saveOrder, saveTrade,
   clearDate,
 } from './holdings_idb'
+import { useT0Stats } from '../composables/useT0Stats'
 
 // v13: bootstrap 只拉激活日 (Today 视图消费), 历史走 Phase 4 History 视图独立 RPC
 //   单次窗口 = [active, active], 1 天
@@ -286,6 +287,12 @@ export function createBootstrap({
       const activeList = await api.getActiveDay()
       const active = Array.isArray(activeList) ? activeList[0] : activeList
       if (active && active.status === 'active' && active.trd_date) {
+        // change t0-trade-polish-bundle (commit 3): 跨日 → 清空 t0Stats 缓存
+        //   避免昨日的 today_buy_volume / realized_pnl 命中今日视图
+        if (activeTrdDate.value && activeTrdDate.value !== active.trd_date) {
+          useT0Stats.invalidateAll()
+          log('info', '缓存', 'bootstrap', `跨日切换 ${activeTrdDate.value} → ${active.trd_date}, t0Stats 清空`)
+        }
         activeTrdDate.value = active.trd_date
         activeDayStatus.value = 'active'
         log('ok', '缓存', 'bootstrap', `激活交易日 = ${active.trd_date}`)

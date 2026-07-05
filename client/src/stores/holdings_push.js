@@ -32,6 +32,7 @@ import {
   flattenCancelledByRow
 } from './holdings_helpers'
 import { saveOrder, saveTrade } from './holdings_idb'
+import { useT0Stats } from '../composables/useT0Stats'
 // v12: IDB 写通 — ws push 时 fire-and-forget 写 IDB (不阻塞 push)
 // v13: 改复合 key 单行存 (saveOrder/saveTrade 替代 saveOrdersForDate/saveTradesForDate),
 //      O(1) idbPut, 不再读全量 / 写全量
@@ -55,6 +56,12 @@ export function createPushHandlers(deps) {
   }
   function _persistTrade(trade) {
     saveTrade(trade)
+  }
+  // change t0-trade-polish-bundle (commit 3): t0Stats 缓存失效
+  //   委托/成交推送可能改 today_buy_volume / today_sell_volume / realized_pnl,
+  //   推送时 invalid 让下次 useT0Stats.getStats → cache miss → fetch 新值
+  function _invalidateT0Stats(code) {
+    if (code) useT0Stats.invalidate(code)
   }
 
   /** ws._onOrderCfm 调用：合并委托 + 写日志
@@ -115,6 +122,9 @@ export function createPushHandlers(deps) {
     }
     // v13: IDB 单行写 (复合 key 维度, O(1) idbPut)
     _persistOrder(merged)
+    // change t0-trade-polish-bundle (commit 3): 委托推送使该标的 t0Stats 缓存失效
+    //   下次 useT0Stats.getStats(stock_code) → cache miss → fetch 新值
+    _invalidateT0Stats(merged.stock_code)
     return merged.status
   }
 
@@ -166,6 +176,9 @@ export function createPushHandlers(deps) {
         log('info', '交易', 'ws', `订单累计: ${updated.stock_code} ${updated.order_no} ${updated.traded_volume}/${updated.volume} status=${updated.status}`)
       }
     }
+    // change t0-trade-polish-bundle (commit 3): 成交通知使该标的 t0Stats 缓存失效
+    //   today_buy_volume / today_sell_volume / realized_pnl 都可能改变 → invalid
+    _invalidateT0Stats(newTrade.stock_code)
     if (tradeType === 1) {
       log('ok', '交易', 'ws', `撤单审计: ${newTrade.stock_code} 取消 ${newTrade.volume}@${newTrade.price} (${newTrade.trade_id})`)
     } else {

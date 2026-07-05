@@ -312,6 +312,7 @@ import {
 import {
   buyBtnState, sellBtnState, balanceBtnState,
 } from '../composables/useT0TradeButtons'
+import { useT0Stats } from '../composables/useT0Stats'
 import { t0StatsApi } from '../api/t0_stats'
 import { formatNumber, formatPrice, formatAmount } from '../utils/format'
 import { useT0ChartGeometry, useT0DrawerChartGeometry } from '../composables/useT0ChartGeometry'
@@ -392,20 +393,21 @@ watch([quickPct, quickPriceType], ([p, pt]) => {
 // ---- 持仓列表 ----
 const holdingsPositions = computed(() => positions.value)
 
-// ---- t0StatsMap: 每个持仓的今日统计 ----
+// ---- t0StatsMap: 每个持仓的今日统计 (走 useT0Stats 30s TTL 缓存) ----
 const t0StatsMap = ref({})
 async function loadAllT0Stats() {
   const codes = holdingsPositions.value?.map(p => p.stock_code) || []
-  const results = await Promise.allSettled(
-    codes.map(code => t0StatsApi.get(code).catch(e => { console.warn(`t0 stats failed for ${code}`, e); return null }))
-  )
-  const map = {}
-  results.forEach((result, i) => {
-    if (result.status === 'fulfilled' && result.value) {
-      map[codes[i]] = result.value
-    }
-  })
+  const map = await useT0Stats.loadAll(codes)
   t0StatsMap.value = map
+}
+// 差量加载: 仅拉新增标的 (持仓变化时只补差量, 删的标的无需动作)
+async function loadDiffT0Stats(newCodes, oldCodes) {
+  const oldSet = new Set(oldCodes || [])
+  const added = newCodes.filter(c => !oldSet.has(c))
+  if (added.length === 0) return
+  const addedMap = await useT0Stats.loadAll(added)
+  // merge 到现有 t0StatsMap
+  t0StatsMap.value = { ...t0StatsMap.value, ...addedMap }
 }
 
 // ---- 净敞口 / 配平按钮文本 ----
@@ -598,11 +600,10 @@ onUnmounted(() => {
   window.removeEventListener('keydown', onKeyDown)
 })
 
-// 当持仓变化时，重新加载所有 t0Stats
-watch(() => holdingsPositions.value.length, async (newLen, oldLen) => {
-  if (oldLen !== null && newLen !== oldLen) {
-    await loadAllT0Stats()
-  }
+// 当持仓变化时，仅差量加载 t0Stats (新增标的 fetch, 删除标的无需动作, 走 cache)
+watch(() => holdingsPositions.value.map(p => p.stock_code), async (newCodes, oldCodes) => {
+  if (!oldCodes) return  // initial 不触发 (onMounted 已全量)
+  await loadDiffT0Stats(newCodes, oldCodes)
 })
 
 // 监听 stockCode 变化 → 加载底部曲线

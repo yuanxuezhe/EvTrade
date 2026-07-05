@@ -32,16 +32,16 @@
 
 **目标**: 30 持仓只首次全量拉, 后续命中缓存; ws push 即时 invalid
 
-- [ ] 3.1 新建 `client/src/composables/useT0Stats.js`:
-  - 内部 Map `_cache: stockCode -> {data, ts}`, TTL 30s
+- [x] 3.1 新建 `client/src/composables/useT0Stats.js`:
+  - 内部 Map `_cache: stockCode -> {data, ts}`, TTL 30s (module-level singleton)
   - `getStats(code, force=false)`: 命中返 / miss fetch 后 set
   - `loadAll(codes[])`: 并发 fetch, 复用 getStats 单标的
   - `invalidate(code)` / `invalidateAll()`
-  - `_resetCache()` (测试用)
-- [ ] 3.2 T0Trade.vue 改 `loadAllT0Stats` → `useT0Stats().loadAll(codes)`; `watch holdings.length` 改 diffOnly: 新增 fetch, 删除无效化
-- [ ] 3.3 `client/src/stores/holdings_push.js` ws handler: `applyOrderPush` / `applyTradePush` 末尾 `useT0Stats.invalidate(stock_code)` (避免循环依赖 → 动态 import 或 store 注册)
-- [ ] 3.4 跨日切换 `holdings_bootstrap._resolveActiveDay` 触发 `useT0Stats.invalidateAll()`
-- [ ] 3.5 单测 `tests/client/composables/useT0Stats.test.js` — TTL 过期 / invalidate / 并发 / 错码 4 用例
+  - `_resetCache()` / `_size()` (测试用)
+- [x] 3.2 T0Trade.vue 改 `loadAllT0Stats` → `useT0Stats.loadAll(codes)`; `watch holdings.length` 改 diffOnly: 新增 fetch, 删除标的无需动作
+- [x] 3.3 `client/src/stores/holdings_push.js` ws handler: `applyOrderPush` / `applyTradePush` 末尾 `useT0Stats.invalidate(stock_code)`
+- [x] 3.4 跨日切换 `holdings_bootstrap._resolveActiveDay` 检测 trd_date 变化 → `useT0Stats.invalidateAll()`
+- [x] 3.5 单测 `tests/composables/useT0Stats.test.js` — 14 用例: TTL 过期 / invalidate / 并发 / 错码 / force / 空 codes / 去重
 
 ## 4. 副行 sparkline 移除 (commit: refactor(client): t0Trade 副行减负)
 
