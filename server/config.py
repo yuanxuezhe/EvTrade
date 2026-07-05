@@ -99,6 +99,12 @@ class Settings:
     API_HOST: str = _env("EVTRADE_API_HOST", "0.0.0.0")
     API_PORT: int = _env_int("EVTRADE_API_PORT", 8001)
 
+    # ---- Strategy engine (change strategy_trade task 7) ----
+    # 灰度开关：false 时 quote_consumer 不启动，strategy REST API 返 503
+    STRATEGY_ENGINE_ENABLED: bool = _env_int("STRATEGY_ENGINE_ENABLED", 0) == 1
+    # hqserver WS 地址（hq/hqserver.py 默认监听 8765）
+    HQ_WS_URL: str = _env("HQ_WS_URL", "ws://127.0.0.1:8765")
+
 
 settings = Settings()
 

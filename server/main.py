@@ -25,11 +25,16 @@ from server.api import positions, holdings, orders, trades, asset, auth as auth_
 from server.api import clock, fee_config
 from server.api import system as system_api  # v8: 系统级查询（active-day）
 from server.api import t0_stats, t0_aggregate
+from server.api import strategy as strategy_api  # change strategy_trade task 9
 from server.api.admin import sys_status as admin_sys_status, reconcile as admin_reconcile, session as admin_session
 from server.middleware.request_logging import RequestLoggingMiddleware
 from server.rpc.client import get_rpc_client, close_rpc_client
 from server.ws import register_ws_endpoint
 from server.lifecycle import init_and_seed
+from server.config import settings
+from server.services.strategy.quote_consumer import (
+    get_quote_consumer, close_quote_consumer,
+)
 
 # v10 增: 显式配 root logger (server-interaction-logging REQ-LOG-005)
 #   uvicorn 启动时只给 uvicorn.* 配了 handler, root 默认 WARNING, INFO 被过滤
@@ -106,6 +111,26 @@ async def on_shutdown_rpc():
         print(f"[SHUTDOWN] RPC client close error: {e}")
 
 
+@app.on_event("startup")
+async def on_startup_quote_consumer():
+    """启动 QuoteConsumer（受 STRATEGY_ENGINE_ENABLED 控制）。"""
+    if not settings.STRATEGY_ENGINE_ENABLED:
+        print("[INIT] STRATEGY_ENGINE_ENABLED=false, quote consumer not started")
+        return
+    try:
+        await get_quote_consumer()
+    except Exception as e:
+        print(f"[INIT] quote consumer failed to start: {e}")
+
+
+@app.on_event("shutdown")
+async def on_shutdown_quote_consumer():
+    try:
+        await close_quote_consumer()
+    except Exception as e:
+        print(f"[SHUTDOWN] quote consumer close error: {e}")
+
+
 # ---- Public routes ------------------------------------------------------
 app.include_router(auth_api.router, prefix="/api/auth", tags=["auth"])
 app.include_router(clock.router, prefix="/api/trading", tags=["trading-clock"])
@@ -123,6 +148,8 @@ app.include_router(trades.router, prefix="/api/trades", tags=["trades"], depende
 app.include_router(asset.router, prefix="/api/asset", tags=["asset"], dependencies=_AUTH)
 app.include_router(fee_config.router, prefix="/api/fee-config", tags=["fee-config"], dependencies=_AUTH)
 app.include_router(system_api.router, prefix="/api/system", tags=["system"], dependencies=_AUTH)  # v8
+# strategy REST（change strategy_trade task 9）— 端点内部 _require_engine_enabled 灰度门
+app.include_router(strategy_api.router, dependencies=_AUTH)
 
 
 # ---- Admin routes (login required, role checked by handler) ----------------

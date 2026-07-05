@@ -8,3 +8,5 @@ python-jose>=3.3.0,<4.0.0
 python-multipart>=0.0.5,<1.0.0
 bcrypt>=4.0.0,<5.0.0
 passlib>=1.7.0,<2.0.0
+# change strategy_trade task 7: 后端 WS 客户端接 hqserver
+websockets>=9.0,<11.0
