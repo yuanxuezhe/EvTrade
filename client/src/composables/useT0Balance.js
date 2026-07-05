@@ -4,6 +4,11 @@ import { useHoldingsStore } from '../stores/holdings'
 import { useAssetStore } from '../stores/asset'
 import { storeToRefs } from 'pinia'
 import { t0StatsApi } from '../api/t0_stats'
+import {
+  roundToLot as _roundToLot,
+  calcInsufficientCash as _calcInsufficientCash,
+  calcInsufficientPosition as _calcInsufficientPosition,
+} from '../lib/t0-calc'
 
 /**
  * T0 配平计算 composable
@@ -101,10 +106,11 @@ export function useT0Balance(stockCodeRef) {
   })
 
   // 整手取整 + 配平系数（与后端 calc_t0_volume 对齐）
+  // 应用 balanceCoeff 后委托 @/lib/t0-calc.roundToLot 做纯取整 (单一权威源)
   const roundToLot = (qty, lot = 100) => {
     if (qty === 0) return 0
     const sign = qty > 0 ? 1 : -1
-    return sign * Math.floor((Math.abs(qty) * balanceCoeff.value) / lot) * lot
+    return _roundToLot(sign * Math.abs(qty) * balanceCoeff.value, lot)
   }
 
   // 配平后的实际下单数
@@ -147,16 +153,19 @@ export function useT0Balance(stockCodeRef) {
   // 一键配平：套 balanceQty
   const oneClickBalanceQty = computed(() => balanceQty.value)
 
-  // 资金校验：买方向所需资金 > 现金？
-  const insufficientCash = computed(() => {
-    if (direction.value !== 'buy' || !hasQuote.value) return false
-    return balanceAmount.value > (Number(assetData.value?.cash) || 0)
-  })
-  // 持仓校验：卖方向所需股数 > 可用？
-  const insufficientPosition = computed(() => {
-    if (direction.value !== 'sell') return false
-    return Math.abs(balanceQty.value) > currentVolume.value
-  })
+  // 资金校验：买方向所需资金 > 现金？ (委托 lib/t0-calc.calcInsufficientCash, 保留 boolean API)
+  const insufficientCash = computed(() => !_calcInsufficientCash({
+    side: direction.value,
+    qty: balanceQty.value,
+    price: lastPrice.value,
+    cash: assetData.value?.cash,
+  }).ok)
+  // 持仓校验：卖方向所需股数 > 可用？ (委托 lib/t0-calc.calcInsufficientPosition)
+  const insufficientPosition = computed(() => !_calcInsufficientPosition({
+    side: direction.value,
+    qty: balanceQty.value,
+    currentVolume: currentVolume.value,
+  }).ok)
 
   // ---- 切换 stockCode 时，重置目标持仓为 currentVolume ----
   watch(currentVolume, (v) => {
