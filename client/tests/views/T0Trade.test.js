@@ -192,4 +192,66 @@ describe('T0Trade', () => {
     expect(wrapper.vm.ptRowClass({ row: positions[0] })).toContain('is-selected')
     expect(wrapper.vm.ptRowClass({ row: positions[1] })).not.toContain('is-selected')
   })
+
+  // ─── change-quota-frame: quota frame + 行内配额列 ───
+
+  it('quota frame 5 pill 渲染', async () => {
+    const wrapper = mountView(T0Trade)
+    await flushPromises()
+    const pills = wrapper.findAll('.qf-pill')
+    expect(pills.length).toBe(5)
+    expect(pills[0].attributes('data-pill')).toBe('cashAvail')
+    expect(pills[1].attributes('data-pill')).toBe('frozenCash')
+    expect(pills[2].attributes('data-pill')).toBe('t0AvailVol')
+    expect(pills[3].attributes('data-pill')).toBe('todayPnl')
+    expect(pills[4].attributes('data-pill')).toBe('marketValue')
+  })
+
+  it('quotaAggregate.cashAvail = cash - frozen_cash', () => {
+    const wrapper = mountView(T0Trade)
+    expect(wrapper.vm.quotaAggregate.cashAvail).toBe(100000)  // 100000 - 0
+  })
+
+  it('quotaAggregate.t0AvailVol = sum(avl_vol)', () => {
+    const wrapper = mountView(T0Trade)
+    expect(wrapper.vm.quotaAggregate.t0AvailVol).toBe(1500)  // 1000 + 500 + 0
+  })
+
+  it('todayPnlText: 正 → "+¥X"', () => {
+    const wrapper = mountView(T0Trade)
+    wrapper.vm.t0StatsMap = { '600030.SH': { realized_pnl: 800 }, '600519.SH': { realized_pnl: -300 } }
+    expect(wrapper.vm.todayPnlText).toMatch(/^\+¥/)
+    expect(wrapper.vm.todayPnlClass).toBe('qf-pill--up')
+  })
+
+  it('todayPnlText: 负 → "-¥X"', () => {
+    const wrapper = mountView(T0Trade)
+    wrapper.vm.t0StatsMap = { '600030.SH': { realized_pnl: -100 } }
+    expect(wrapper.vm.todayPnlText).toMatch(/^-¥/)
+    expect(wrapper.vm.todayPnlClass).toBe('qf-pill--down')
+  })
+
+  it('quotaForRow: 可买按 cash + last_price 估算', () => {
+    const wrapper = mountView(T0Trade)
+    const row = { stock_code: '600030.SH', avl_vol: 1000 }
+    const q = wrapper.vm.quotaForRow(row)
+    // cash=100000, 默认 last_price 未设 → mock quoteStore.getLastPrice 返 null → maxBuyable=0
+    expect(q.maxBuyable).toBe(0)
+    expect(q.maxSellable).toBe(1000)  // row.avl_vol = 1000
+  })
+
+  it('quotaForRow: 可卖 = avl_vol', () => {
+    const wrapper = mountView(T0Trade)
+    const row = { stock_code: '600030.SH', avl_vol: 500 }
+    const q = wrapper.vm.quotaForRow(row)
+    expect(q.maxSellable).toBe(500)
+  })
+
+  it('quotaLevel: 颜色阈值 (1000/100/1/0)', () => {
+    const wrapper = mountView(T0Trade)
+    expect(wrapper.vm.quotaLevel(5000)).toBe('high')
+    expect(wrapper.vm.quotaLevel(500)).toBe('mid')
+    expect(wrapper.vm.quotaLevel(50)).toBe('low')
+    expect(wrapper.vm.quotaLevel(0)).toBe('none')
+  })
 })
