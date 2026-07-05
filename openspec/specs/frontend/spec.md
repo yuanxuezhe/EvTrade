@@ -688,9 +688,9 @@ The system SHALL 让撤单 UI 按钮仅在 `TodayOrdersPanel.vue` (内嵌在 Tra
 - **WHEN** `TodayOrdersPanel.todayOrders` computed 已过滤 `trd_date === activeDay` + `order_flag !== 1`
 - **THEN** 该 panel 内 click-to-cancel 只能撤"今日委托"（broker 仅接受 `trd_date=activeDay` 撤单）
 
-## Scenarios
+### Scenarios
 
-### S-FE-001: 未登录访问 `/orders`
+#### S-FE-001: 未登录访问 `/orders`
 
 When 浏览器请求 `/orders`
 Then router.beforeEach 检测到无 token → 重定向 `/login?redirect=/orders`
@@ -866,7 +866,7 @@ The system SHALL 让 `client/src/components/OrderForm.vue` 中
   - 提交时 `form.price` 已是 float，直接走 `OrderOut.price: float` 后端 schema
 - **非限价单**（市价/最新价/挂单价）：input disabled，precision 无实际作用
 
-## Known Issues (from analysis)
+### Known Issues (from analysis)
 
 - 🟡 `TStrategy.vue` / `AlgoStrategy.vue` 各 43 行，**未实现内容**
 - 🟡 `auth.js` store 应该在 401 时自动清 token + 跳 login，目前**依赖** axios 拦截器调用 `setUnauthorizedHandler`
