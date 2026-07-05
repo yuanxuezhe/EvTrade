@@ -172,6 +172,33 @@ DELETE 端点业务写入点固定码 MUST 改 broker 码：
 - WS broadcast payload 加 `trd_date + order_no + remark`（供前端推送守门匹配）
 - 详见归档 `archive/2026-06-21-order-push-trd-date-authority/spec-deltas/trading.md`
 
+### REQ-TRADE-010: 下单前置 disabled 校验（v17 t0-trade-polish-bundle commit 2）
+
+> 前端 UI 必须在用户点 [买 / 卖 / 配平] 按钮之前, 校验资金/持仓足够, 否则禁用按钮 + tooltip 注明缺额。
+> 与后端 broker PriceCalc.compute_required 同口径 (`need = qty * price`), 不存在双源。
+
+#### Scenario: 资金不足买按钮 disabled
+
+- **WHEN** 主表买按钮触发, `asset.cash < qty * price` (走 `lib/t0-calc.calcInsufficientCash`)
+- **THEN** MUST 禁用按钮 + tooltip "资金 ¥X 不足 (需 ¥X, 现有 ¥X)"
+- **AND** 后端 RPC 仍接受并按 broker 规则拒单 (前端 disabled 是 UX 优化, 不是后端拦截)
+
+#### Scenario: 持仓不足卖按钮 disabled
+
+- **WHEN** 主表卖按钮触发, `currentVolume < sellQty` (走 `lib/t0-calc.calcInsufficientPosition`)
+- **THEN** MUST 禁用按钮 + tooltip "持仓 X 股不足, 缺 Y 股"
+- **AND** 与 broker `Position.avl_vol` 口径对齐 (avl_vol 优先, vol 兜底)
+
+#### Scenario: 配平按钮按 side 分别校验
+
+- **WHEN** 配平按钮触发, side=buy (净卖锁仓) → 查 cash; side=sell (净买锁仓) → 查持仓
+- **THEN** 任意一边不足 MUST 禁用 + tooltip 注明哪边不足
+
+#### Scenario: 校验公式与 broker 同口径
+
+- **WHEN** 前端计算 `need = qty * price`
+- **THEN** MUST 与 `server/services/order_calc.py::PriceCalc.compute_required` 输出同公式, 单测覆盖 0/NaN/负数/边界
+
 ### REQ-TRADE-006: T0 敞口与累计收益（v1）
 
 > 📌 **范围**：本端点只读不写。T0 标签 = `Order.user_def == 'T0'`，由 T0Trade.vue 下单时自动注入。

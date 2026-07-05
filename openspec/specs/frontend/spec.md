@@ -1064,6 +1064,44 @@ The system SHALL 让 `client/src/components/QuotePanel.vue` 中
 - **THEN** MUST NOT 变更 background + MUST NOT 显示 `cursor: pointer`
 - **AND** click MUST NOT emit
 
+### REQ-FE-210: T0Trade 主表 polish bundle (t0-trade-polish-bundle)
+
+主表快速操作 (买/卖/配平/详情) 5 项 polish, 单 change 多 commit 实施.
+
+#### Scenario: 资金/持仓校验 disabled (commit 2)
+
+- **WHEN** user 在主表 hover 买按钮且 cash < qty × price (走 lib/t0-calc.calcInsufficientCash)
+- **THEN** MUST 显示 tooltip "资金 ¥X.XXw 不足 (需 ¥X.XXw, 现有 ¥X.XXk)" + MUST 禁用按钮
+- **AND** 持仓不足卖时 MUST 显示 "持仓 X 股不足, 缺 Y 股"
+- **AND** 配平按钮按 side 分别查 cash (买) / 持仓 (卖), tooltip 注明
+
+#### Scenario: t0Stats 30s TTL 缓存命中 (commit 3)
+
+- **WHEN** 主表 30 持仓, 30s 内重复访问同一 stock_code
+- **THEN** MUST 只在首次 fetch, 后续命中 useT0Stats 模块级 Map 缓存
+- **AND** ws 委托/成交推送 MUST 触发 useT0Stats.invalidate(stock_code)
+- **AND** 跨日切换 MUST 触发 useT0Stats.invalidateAll()
+
+#### Scenario: 排序点击表头响应 (commit 5)
+
+- **WHEN** user click 主表 6 列 (持仓/现价/涨跌/今盈/净敞口/浮盈%) 表头
+- **THEN** MUST 切 `sortable="custom"` 排序方向 (asc/desc), sortedRows computed 派生
+- **AND** selectedRowCode 按 sortedRows 顺序切换 (排序变化时 stockCode 不变性)
+
+#### Scenario: 快捷键触发对应行操作 (commit 5)
+
+- **WHEN** user 按 B (买) / S (卖) / P (配平) 键, uiStore.t0Keybindings === true, drawerVisible === false
+- **THEN** MUST 触发 selectedRow 的 onQuickBuy/Sell/Balance
+- **AND** ↑↓ MUST 切 selectedRowCode, Enter MUST 开抽屉
+- **AND** 输入框 / textarea / select / contenteditable MUST 不触发
+- **AND** 修键 (Ctrl/Meta/Alt) MUST 不触发
+
+#### Scenario: 副行 hover popover 显示 30 日累计 (commit 4)
+
+- **WHEN** user hover 副行"30天"字段
+- **THEN** MUST 显示 D-1..D-30 倒序数值列表 (lazy load via @show)
+- **AND** 移动端 (< 768px) MUST 静态隐藏 popover (避免 hover 不工作)
+
 ### REMOVED Requirements
 
 #### Requirement: QuotePanel 双击价格带入（v15 之前行为）
@@ -1093,3 +1131,12 @@ The system SHALL 让 `client/src/components/QuotePanel.vue` 中
 - 删 `<div class="qp-mid">` 模板块
 - 删 `.qp-mid` / `.qp-mid-label` / `.qp-mid-price` CSS 块
 - 卖盘栈与买盘栈之间不留空 row, 直接堆叠
+
+#### Requirement: T0Trade 副行 mini-sparkline（v16 首次实现）— t0-trade-polish-bundle commit 4 移除
+
+**Reason**：与底部 7/30/90D 曲线是同一数据 2 次绘制; 副行占视觉空间但 trader 仅在 hover 才看趋势; 移动端 hover 不工作, 静态隐藏反而误导。
+
+**Migration**：
+- 删 `client/src/views/T0Trade.vue` 中 `<svg.mini-sparkline>` 150x30 SVG + `sparklinePoints` / `sparklinePath` / `sparklineLast` / `loadSparkline` 4 函数
+- 副行 30 天改为 `<el-popover trigger="hover">` reference "¥{last} ↑/↓" + content D-1..D-30 倒序
+- CSS `@media (max-width: 768px) .sub-popover { display: none }`

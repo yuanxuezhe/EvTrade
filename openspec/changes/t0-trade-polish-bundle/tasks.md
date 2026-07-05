@@ -68,20 +68,15 @@
 
 ## 6. 同步 OpenSpec specs + 验证 + 归档 (commit: docs(openspec): sync t0-trade-polish scenarios)
 
-- [ ] 6.1 同步 `openspec/specs/frontend/spec.md`:
-  - MODIFIED `QuotePanel...` 等已有 REQ 不动, 新增 REQ: `T0Trade 主表快速操作 (b/A/C/E/F bundle)`
-  - 新增 6 个 Scenario: 资金不足按钮 disabled / 持仓不足按钮 disabled / t0Stats 缓存命中 / 排序点击 / 快捷键触发 / 副行 popover hover
-- [ ] 6.2 同步 `openspec/specs/trading/spec.md`:
-  - MODIFIED 既有"下单校验"REQ, 加 insufficientCash/Position 校验为 spec 要求
-- [ ] 6.3 全量验证:
-  - `cd client && npm test -- --run` → 133+ ≥ 全部通过
+- [x] 6.1 同步 `openspec/specs/frontend/spec.md`:
+  - MODIFIED `QuotePanel...` 等已有 REQ 不动, 新增 REQ-FE-210: `T0Trade 主表 polish bundle` (5 Scenario: 资金/持仓校验 / t0Stats 缓存 / 排序 / 快捷键 / 副行 popover)
+  - 新增 REMOVED: 副行 mini-sparkline (commit 4)
+- [x] 6.2 同步 `openspec/specs/trading/spec.md`:
+  - MODIFIED 新增 REQ-TRADE-010: 下单前置 disabled 校验 (4 Scenario: cash 不足 / position 不足 / 配平 side / 与 broker 同口径)
+- [x] 6.3 全量验证:
+  - `cd client && npm test -- --run` → 175/175 全部通过
   - `cd client && npx vite build` → OK
-  - `grep -r 'lib/t0-calc' client/src/composables` → ≥ 1
-  - `grep -r 'sparkline' client/src/views/T0Trade.vue` → 0
-- [ ] 6.4 dev 启后浏览器走 `/t0-trade`:
-  - 30 持仓账户, 主表首屏响应 (缓存 miss 一次, 不卡); 滚动/点击 watch holdings.length 应仅新标的 fetch
-  - 资金不足时买按钮 disabled + hover tooltip 显示缺额
-  - 排序点击表头响应 (浮盈% desc → 切 asc)
-  - 按 B/S/P 触发对应行操作; ↑↓ 切换行; Enter 开抽屉
-  - 副行 hover 显示 30 日明细
+  - `grep -r 'lib/t0-calc' client/src/composables` → 6 (useT0Balance 4 + useT0TradeButtons 2) ≥ 1 ✓
+  - `grep -r 'sparkline' client/src/views/T0Trade.vue` → 0 ✓
+- [ ] 6.4 dev 启后浏览器走 `/t0-trade` (手动 smoke, 见 commit msg 备注)
 - [ ] 6.5 归档: `openspec archive t0-trade-polish-bundle --change 2026-07-05-t0-trade-polish-bundle` → `openspec/changes/archive/2026-07-05-t0-trade-polish-bundle/`
