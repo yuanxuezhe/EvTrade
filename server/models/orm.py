@@ -63,6 +63,7 @@ class Order(Base):
         Index("ix_orders_trd_status", "trd_date", "status"),
         Index("ix_orders_order_id", "order_id"),
         Index("ix_orders_stock", "stock_code"),
+        Index("ix_orders_user_def", "user_def"),  # change strategy_trade: 支撑策略关联查询
     )
 
     trd_date = Column(String(8), primary_key=True, nullable=False)  # 交易日

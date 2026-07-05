@@ -4,7 +4,7 @@ SQLite database setup (SQLAlchemy 1.4)
 import os
 import logging
 from contextlib import contextmanager
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker, declarative_base, Session
 
 log = logging.getLogger(__name__)
@@ -18,6 +18,20 @@ engine = create_engine(
     connect_args={"check_same_thread": False},
     echo=False,
 )
+
+
+# ─────────────── SQLite FK enforcement ───────────────
+# SQLite 默认关闭外键约束（PRAGMA foreign_keys=OFF），导致 ForeignKey(ondelete="CASCADE")
+# 在 DB 层不生效；ORM 层 cascade 仅处理已加载对象，未加载/孤儿行不会被清。
+# 用 connect 事件为每个新连接启用 PRAGMA，让所有 FK ON DELETE CASCADE 真正生效。
+@event.listens_for(engine, "connect")
+def _set_sqlite_pragma(dbapi_connection, connection_record):
+    cursor = dbapi_connection.cursor()
+    try:
+        cursor.execute("PRAGMA foreign_keys=ON")
+    finally:
+        cursor.close()
+
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
@@ -63,4 +77,10 @@ def init_db():
     """Create all tables. Called at startup."""
     # Import models so they are registered on the metadata
     from server.models import user, orm  # noqa: F401
+    from server.services.strategy import models as strategy_models  # noqa: F401  # change strategy_trade
     Base.metadata.create_all(bind=engine)
+    # change strategy_trade: 给已存在的 orders 表加 ix_orders_user_def 索引
+    # （SQLAlchemy create_all 对已存在表是幂等空操作，新索引需手动 IF NOT EXISTS）
+    with engine.begin() as conn:
+        from sqlalchemy import text
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_orders_user_def ON orders(user_def)"))
