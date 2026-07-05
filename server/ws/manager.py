@@ -15,6 +15,8 @@ class WSManager:
             # change consolidate-position-data-flow: position_update / asset_update 频道已删除
             # (xtquant broker 不发 pos_cfm / ast_cfm, 改由 trd_cfm 增量 + day-init reconcile 兜底)
             "quote_update": set(),
+            # change strategy_trade: 策略引擎事件频道（regime_changed / grid_triggered / regime_cooldown）
+            "strategy_update": set(),
         }
 
     async def connect(self, websocket: WebSocket, channel: str, token: Optional[str] = None):
