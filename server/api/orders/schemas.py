@@ -44,6 +44,7 @@ class OrderOut(BaseModel):
     status: str
     status_msg: str
     order_time: str
+    raw_id: Optional[str] = None  # v13 NEW: cancel-row 写 = 原 order_no；普通行 None
 
 
 class PlaceOrderResponse(BaseModel):
@@ -89,4 +90,5 @@ def _to_order_out(o):
         order_flag=o.order_flag or 0,
         status=o.status,
         status_msg=o.status_msg, order_time=o.order_time,
+        raw_id=o.raw_id,  # v13 NEW: cancel-row 透传；普通行为 None
     )

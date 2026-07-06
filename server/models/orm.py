@@ -57,6 +57,11 @@ class Order(Base):
     v10 schema 改动:
     - order_time 字段类型 String(8) → String(23)，
       格式由 "HH:MM:SS" 改为 "YYYY-MM-DD HH:MM:SS.fff" (rpc-field-alignment-ts-unify)
+    v13 NEW schema 改动（layered-architecture-and-strategy-master）:
+    - 加 raw_id 字段（String(8)，nullable=True）
+      cancel-row 写入时存 = 原 order_no；普通 strategy 委托 raw_id 永远为 NULL
+      与 user_def="CANCEL:{orig.order_no}" 共存（结构化冗余，便于 JOIN 过滤）
+      不加 NOT NULL DEFAULT — 旧 orders 数据无破坏（NULL fallback）
     """
     __tablename__ = "orders"
     __table_args__ = (
@@ -83,6 +88,7 @@ class Order(Base):
     status = Column(String(2), nullable=False, default="48")  # 48=待报 49=已报 50=部成 51=已成 52=部撤 53=已撤 55=废单
     status_msg = Column(String(255), nullable=False, default="")
     order_time = Column(String(23), nullable=False, default="")  # v10: "YYYY-MM-DD HH:MM:SS.fff"
+    raw_id = Column(String(8), nullable=True)  # v13 NEW: cancel-row 写 = 原 order_no；普通行 NULL
     created_at = Column(DateTime, nullable=False, default=_utcnow)
     updated_at = Column(
         DateTime, nullable=False, default=_utcnow, onupdate=_utcnow

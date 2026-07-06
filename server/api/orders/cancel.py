@@ -1,5 +1,5 @@
 """
-cancel.py — DELETE /api/orders/{order_no} 撤单端点（v9 重写）
+cancel.py — DELETE /api/orders/{order_no} 撤单端点（v9 重写 + v13 增 raw_id）
 
 关键架构（broker 协议约束）:
 - cancel_ord RPC 只接 order_id,没 remark 字段
@@ -10,12 +10,13 @@ cancel.py — DELETE /api/orders/{order_no} 撤单端点（v9 重写）
 5 步流程:
   1. Pre-checks (status ∈ {48,49}、order_id 存在):不插行,直接返
   2. INSERT cancel-row (commit 立即落库避免 RPC 异常时孤儿)
+     v13 增 raw_id = orig.order_no（结构化冗余；user_def 仍 = "CANCEL:{orig.order_no}"）
   3. Call RPC (try/except 捕获网络异常)
   4. 分支:
      - ack.code == 0 → cancel_row.status="53",同时 INSERT cancel-trade
      - ack.code != 0 → cancel_row.status="55" (废单,审计保留)
      - RPC 抛异常 → 同上 status="55"
-  5. WS broadcast: 始终推 order_update,仅成功时推 trade_update
+  5. WS broadcast: 始终推 order_update,仅成功时推 trade_update（payload 含 raw_id）
 
 依赖（late import 拿 patched symbol 用于 monkeypatch 测试）：
 - from server.api.orders import rpc_cancel_order, ws_manager
@@ -32,7 +33,7 @@ from server.db import get_db
 from server.models.orm import Order, Trade
 from server.models.user import User
 from server.services.guards import require_trader, require_trading_day, require_trading_session
-from server.repo.orders import next_order_no
+from server.repo.orders import next_order_no, insert_cancel_row  # v13: insert_cancel_row helper
 from server.utils.time import format_ts
 from server.api.orders.schemas import (
     CancelResponse,
@@ -49,7 +50,7 @@ def register_cancel(router):
                    dependencies=[Depends(require_trader), Depends(require_trading_day), Depends(require_trading_session)])
     async def cancel_order(order_no: str, trd_date: str = Query(..., description="8 位数字 YYYYMMDD"),
                           user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-        """撤单（v9 重写:本地代理 cancel-order 行 + cancel-trade 行）"""
+        """撤单（v9 重写:本地代理 cancel-order 行 + cancel-trade 行；v13 增 raw_id 写入）"""
         # Late import 拿 patched symbol
         from server.api.orders import rpc_cancel_order, ws_manager
 
@@ -71,28 +72,14 @@ def register_cancel(router):
                 order_id="", cancel_order=None, error="BROKER_NOT_READY",
             )
 
-        # ── 2. INSERT cancel-row (LOCAL-ONLY) ──
+        # ── 2. INSERT cancel-row (LOCAL-ONLY, v13 用 insert_cancel_row helper) ──
         cancel_order_no = next_order_no(db)
-        cancel_row = Order(
-            trd_date=trd_date,
-            order_no=cancel_order_no,
-            order_id=None,                    # broker 永远不报这个 row
-            user_def="CANCEL:{}".format(order_no),  # 关联: cancel → orig
-            stock_code=order.stock_code,       # 镜像
-            order_type=order.order_type,       # 镜像 23/24
-            price_type=order.price_type,       # 镜像
-            price=order.price,                 # 镜像
-            volume=0,                          # ★ 用户选择: 零委托量
-            traded_volume=0, traded_amount=0.0, avg_price=0.0,
-            cancelled_volume=0,
-            order_flag=1,                      # ★ 撤单委托标记
-            status="48",                       # sentinel 待发
-            status_msg="撤单请求中",
-            order_time=format_ts(tz='local'),  # v10: "YYYY-MM-DD HH:MM:SS.fff"
+        cancel_row = insert_cancel_row(
+            db,
+            orig=order,
+            cancel_order_no=cancel_order_no,
+            raw_id=order_no,  # v13 NEW: 结构化冗余字段 = orig.order_no
         )
-        db.add(cancel_row)
-        db.commit()
-        db.refresh(cancel_row)
 
         # ── 3. Call broker cancel_ord RPC ──
         ack = None
@@ -163,6 +150,7 @@ def register_cancel(router):
                 "traded_volume": cancel_row.traded_volume,
                 "order_flag": cancel_row.order_flag,
                 "user_def": cancel_row.user_def,
+                "raw_id": cancel_row.raw_id,  # v13 NEW: 透传结构化 raw_id
             })
             if cancel_trade:
                 await ws_manager.broadcast("trade_update", {
