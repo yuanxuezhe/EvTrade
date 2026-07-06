@@ -76,7 +76,7 @@
   - 下单 API `POST /api/orders/place` 接受可选 `user_def` 字段透传（无业务约束，仅落库）
   - 下单幂等改由 `order_no` 单调递增保证（同 ord_stk RPC 第二次调用方会被 broker 拒绝）
 
-### REQ-TRADE-003: 撤单（v11 broker 码业务写入点）
+### REQ-TRADE-003: 撤单（v11 broker 码业务写入点 + v13 raw_id 结构化冗余）
 
 DELETE 端点业务写入点固定码 MUST 改 broker 码：
 - `cancel.py:74` cancel-row 起手 status: `'48'` (本地 sentinel, 保留)
@@ -87,15 +87,16 @@ DELETE 端点业务写入点固定码 MUST 改 broker 码：
 - `DELETE /api/orders/{order_no}?trd_date=YYYYMMDD`
 - **v6 BREAKING**：URL 参数从 `order_id` 改为 `order_no`（本地 8 位序号）；后端按 `(trd_date, order_no)` 定位 Order
 - **v9 BREAKING**：DELETE 端点**立即 INSERT 一条 cancel-row**（`order_flag=1`），用于本地撤单审计；broker 不会推这个 row（broker `ord_cfm` 的 `remark` 永远是**原委托**的 `order_no`，不会回带 cancel-row 的 `order_no`）
+- **v13 ENHANCE**：INSERT cancel-row 时**同时**写 `raw_id = orig.order_no`（结构化冗余；`user_def` 仍 = `"CANCEL:{orig_order_no}"` 不动）；WS broadcast payload 增加 `raw_id` 字段
 - **5 步流程**：
   1. **Pre-checks**（v11 broker 码）：原委托 `status` 不在 `{48,49,50}` → 返 `{code: NO_CANCELABLE}`，**不插行**；`order_id` 缺失 → 返 `{code: NO_ORDER_ID, http=409}`，**不插行**
-  2. **INSERT cancel-row**（commit 立即落库，避免 RPC 异常时孤儿）：`order_no = next_order_no(db)`；`user_def = "CANCEL:{orig_order_no}"`；`stock_code/order_type/price_type/price` 镜像；`volume=0`；`order_flag=1`；`status=48`（broker UNREPORTED 本地 sentinel）
+  2. **INSERT cancel-row**（v13 增 raw_id，commit 立即落库避免 RPC 异常时孤儿）：`order_no = next_order_no(db)`；`user_def = "CANCEL:{orig_order_no}"`；**`raw_id = orig.order_no`（v13 NEW 结构化冗余）**；`stock_code/order_type/price_type/price` 镜像；`volume=0`；`order_flag=1`；`status=48`（broker UNREPORTED 本地 sentinel）
   3. **Call RPC**：`await rpc_cancel_order(order_id=orig.order_id)`，try/except 捕获网络异常
   4. **分支处理**（v11 broker 码）：
      - `ack.code == 0` → cancel-row `status=54`（broker CANCELED 已撤） `status_msg=已撤`；**同步** INSERT cancel-trade（`volume=orig.volume-orig.traded_volume`、`price=orig.avg_price or orig.price`、`trade_type=1`、`trade_id=CANCEL-{cancel_order_no}-{unix_ts}`、关联 cancel-row 的 order_no）
      - `ack.code != 0` → cancel-row `status=57`（broker JUNK 废单） `status_msg=ack.msg or 撤单失败`，**不**插 cancel-trade（保留 audit）
      - RPC 抛 Exception → cancel-row `status=57`（broker JUNK 废单） `status_msg=str(e)`，**不**插 cancel-trade
-  5. **WS broadcast**（broker 不推 cancel-row，必须手动 broadcast）：始终推 `order_update`（payload 含 `order_flag=1, user_def, status, status_msg, ...`，status 是 broker 码 54 或 57）；仅成功时推 `trade_update`（payload 含 `trade_type=1, ...`）
+  5. **WS broadcast**（broker 不推 cancel-row，必须手动 broadcast）：始终推 `order_update`（payload 含 `order_flag=1, user_def, status, status_msg, raw_id, ...`，status 是 broker 码 54 或 57）；仅成功时推 `trade_update`（payload 含 `trade_type=1, ...`）
 
 #### Scenario: cancel.py DELETE 成功写入 broker 54（v11 修订）
 
@@ -551,6 +552,37 @@ admin 资金 / 持仓盘中调平端点，**核心合约**详见 `asset-position
 - **WHEN** 实施本 change
 - **THEN** `TodayOrders.vue` / `TodayTrades.vue` 读 `useHoldingsStore()` (Pinia + IDB write-through, 无 HTTP)
 - **AND** `HistoryOrders.vue` / `HistoryTrades.vue` 走局部 HTTP 查询, 不入 IDB
+
+### REQ-TRADE-012: cancel-row.raw_id 字段契约（v13 NEW，layered-architecture-and-strategy-master）
+
+`Order.raw_id` 是 cancel-row 专属字段，提供与 `user_def` 并存的结构化关联。
+
+- **`Order.raw_id` 写入规则**：
+  - DELETE 端点 INSERT cancel-row 时写入：`raw_id = orig.order_no`
+  - place 端点 INSERT 普通行时：`raw_id = NULL`
+  - broker `ord_cfm` 不写 `raw_id`（broker 不知道这个本地概念）
+  - 旧数据全 NULL（迁移脚本不强制回填）
+- **`raw_id` 与 `user_def` 关系**：
+  - `user_def = f"CANCEL:{orig.order_no}"`（v9 约定，远程 v9 audit 兼容，纯字符串）
+  - `raw_id = orig.order_no`（v13 新增，结构化字段，`String(8)` 纯数字）
+  - 两者表达同一关联（cancel-row → 父委托），但 `raw_id` 是结构化字段（query / JOIN 友好）
+- **前端 / 后端 query 优先用 `raw_id` 做结构化 JOIN / 过滤**；`user_def` 保留作 audit 兼容
+- **不新增** `raw_id` 索引（cancel-row query 走 `WHERE trd_date=? AND order_no=?` 已有 PK 覆盖；`raw_id` 单列查询少）
+- **不动** `ix_orders_user_def` 索引（远程 `2026-07-05-strategy_trade` 已加）
+- **冗余可接受**：未来如彻底迁移到 `raw_id`，可走独立的 deprecation 流程；本 change 不动 `user_def` 既有写入规则
+- **WS broadcast payload**：`order_update` payload 增加 `raw_id` 字段（值同 INSERT 时 = `orig.order_no`），前端 `holdings.applyOrderPush` 透传此字段到 IDB
+
+#### Scenario: cancel-row 双重字段冗余校验（v13 NEW）
+
+- **GIVEN** 数据库中存在 `order_flag=1` 的 cancel-row
+- **WHEN** 系统校验该行
+- **THEN** MUST 同时满足：`user_def LIKE "CANCEL:%"` **AND** `raw_id` 非 NULL **AND** `raw_id = substr(user_def, 8)`（即 user_def 的 8 位数字 = raw_id）
+
+#### Scenario: 反向查询 parent ↔ cancel（v13 NEW）
+
+- **GIVEN** 数据库中存在 cancel-row（order_flag=1, raw_id='10000007'）
+- **WHEN** 执行 `SELECT orig.* FROM orders AS orig JOIN orders AS cancel ON cancel.raw_id = orig.order_no WHERE cancel.order_flag = 1`
+- **THEN** MUST 返回原委托（order_no='10000007'）
 
 ## Scenarios
 

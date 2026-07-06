@@ -63,6 +63,7 @@ ORM 注释必须与本 spec 保持一致（diff 检查项之一）。
 | `created_at` | DateTime | NO | utcnow | DB 写入时间 |
 | `updated_at` | DateTime | NO | utcnow | onupdate=utcnow |
 | `pushed_at` | DateTime | YES | NULL | 最近一次 broker push 写入时间 |
+| `raw_id` | String(8) | YES | NULL | **v13 NEW**：被撤/被引用委托的本地 order_no；DELETE 端点 INSERT cancel-row 时写入 = 原委托 order_no；非 cancel-row 为 NULL；旧数据全 NULL（迁移脚本 `server/migrations/2026-07-06-add-orders-raw-id.py`） |
 
 **Unique/Index**:
 - ~~`uq_orders_client_trd`~~ — **v7 删除**（幂等不再走 client_order_id 唯一约束；走 `order_no` 唯一 + RPC 返回确认）
@@ -100,6 +101,16 @@ ORM 注释必须与本 spec 保持一致（diff 检查项之一）。
   - `client_order_id` UNIQUE 约束无法用 — order_id 下单时为空，对应 broker 约束才能稳定
   - `user_def` 是纯透传字段（前端可写可读），不参与任何 DB 约束
   - `order_no` 本身就是 8 位唯一序号，下单流程幂等靠 RPC 客户端 `client_order_id` 透传 + 后端落表前查重（应用层去重）
+- **v13 schema 调整**（`layered-architecture-and-strategy-master` 实施）：
+  - 新增 `raw_id` 字段：`String(8)`，nullable，**无 default**
+  - **仅 DELETE 端点 INSERT cancel-row 时写入**：`raw_id = orig.order_no`；place 端点 INSERT 普通行时 `raw_id = NULL`；broker `ord_cfm` 不写 `raw_id`（broker 不知道这个本地概念）
+  - **`raw_id` 与 `order_id` 区别**：`order_id = broker 真实柜台号`（ord_cfm 到达时写入）；`raw_id = 本地 order_no`（cancel-row 指向父单）；两者语义完全不同
+  - **`raw_id` 与 `user_def` 关系**：cancel-row 写入后**两者并存**：
+    - `user_def = f"CANCEL:{orig.order_no}"`（v9 约定，远程 v9 audit 兼容）
+    - `raw_id = orig.order_no`（v13 新增，结构化关联，避免 user_def 字符串解析）
+  - **不新增** `raw_id` 索引（cancel-row query 走 `WHERE trd_date=? AND order_no=?` 已有 PK 覆盖）
+  - **不动** `ix_orders_user_def`（远程 `2026-07-05-strategy_trade` 已加）
+  - DB 迁移脚本：`server/migrations/2026-07-06-add-orders-raw-id.py`（idempotent `ALTER TABLE orders ADD COLUMN raw_id VARCHAR(8)`；列存在则 skip；不强制回填）
 
 ### v11 Requirements: orders.status 字典与历史 backfill
 
