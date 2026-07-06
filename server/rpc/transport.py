@@ -1,5 +1,5 @@
 """
-transport.py — RPClient 传输骨架（simplify-rpc-transport-thin）
+transport.py — RPClient 传输骨架（simplify-rpc-transport-thin + layered-architecture v13）
 
 职责（传输层本分）：
 - RPClient 类：维护 RabbitMQ 长连接、消息发布、in-flight pending futures
@@ -10,6 +10,13 @@ transport.py — RPClient 传输骨架（simplify-rpc-transport-thin）
 - 协议常量 re-export：RABBITMQ_URL / EXCHANGE_NAME / QUEUE_REQ / QUEUE_REPLY / QUEUE_PUSH
 - push 业务编排已迁到 server/services/push/dispatcher.py（REQ-RPC-012）
 - push 行提取已迁到 server/rpc/parsers_push.py
+
+v13 分层改造：
+- RPClient 继承自 server.infra.mq.MessageQueueClient（基类封装 aio_pika RMQ 长连接）
+- connect() 委托给 super().connect()（声明 exchange + req/reply/push 队列）
+- publish() 委托给 super().publish()（publisher confirm + timeout）
+- listen_replies/listen_pushs 委托给 super().listen_*(callback)（基类做 iterator + process）
+- 业务级字段（pending / _publish_confirm_timeout / _dispatcher）+ 业务方法（_handle_reply / call / _log_reply / _count_reply_rows / close）保留
 """
 import asyncio
 import logging
@@ -21,6 +28,7 @@ from aio_pika import ExchangeType, Message
 from msgpacket import MsgPacket, MSG_TYPE_REQUEST, MSG_TYPE_PUSH
 
 from server.config import settings
+from server.infra.mq import MessageQueueClient
 from server.services.push.dispatcher import PushDispatcher
 
 log = logging.getLogger(__name__)
@@ -66,16 +74,22 @@ def _wire_dump(pkt: "MsgPacket") -> str:
 
 # ──────────────────────────── RPClient ────────────────────────────
 
-class RPClient:
+class RPClient(MessageQueueClient):
+    """业务级 RMQ 客户端（继承 MessageQueueClient 传输基类）。
+
+    本类负责：
+    - 业务级 pending future 管理
+    - MsgPacket 构造 / 解码 / 报文 dump
+    - publisher confirm 超时 → RuntimeError 转换
+    - push 业务 dispatcher 编排（PushDispatcher）
+    - 协议常量到队列名的绑定
+    """
+
     def __init__(self, url: str = RABBITMQ_URL):
-        self.url = url
-        self.conn: Optional[aio_pika.Connection] = None
-        self.channel: Optional[aio_pika.Channel] = None
-        self.exchange: Optional[aio_pika.Exchange] = None
-        self.reply_queue: Optional[aio_pika.Queue] = None
-        self.push_queue: Optional[aio_pika.Queue] = None
+        super().__init__(url)
+        # 业务级字段（inherited from MessageQueueClient: conn/channel/exchange/reply_queue/push_queue/url）
         self.pending: dict = {}  # msgid -> asyncio.Future
-        # publisher confirm 超时（防 broker 不 ack 时永久挂起）
+        # publisher confirm 超时（防 broker 不 ack 时永久挂起）；保留旧字段名兼容测试
         self._publish_confirm_timeout: float = 5.0
         # push 业务编排器（connect 时构造，simplify-rpc-transport-thin 后迁出）
         self._dispatcher: Optional[PushDispatcher] = None
@@ -85,20 +99,13 @@ class RPClient:
         if self.conn is not None and not self.conn.is_closed:
             log.debug("RPClient.connect: already connected, skip")
             return
-        self.conn = await aio_pika.connect_robust(self.url)
-        # publisher_confirms=True 让 publish() 等 broker ack，broker 重启/磁盘满不再静默丢包
-        self.channel = await self.conn.channel(publisher_confirms=True)
-        self.exchange = await self.channel.declare_exchange(
-            EXCHANGE_NAME, ExchangeType.TOPIC, durable=True,
+        # 委托基类声明 exchange + req/reply/push 队列 + bind
+        await super().connect(
+            exchange_name=EXCHANGE_NAME,
+            reply_queue_name=QUEUE_REPLY,
+            push_queue_name=QUEUE_PUSH,
+            request_queue_name=QUEUE_REQ,
         )
-        # 显式 declare + bind 三条 durable 队列（REQ-RPC-007）
-        # routing_key 用队列名本身（topic exchange 支持字面 key，不依赖柜台预绑定）
-        req_q = await self.channel.declare_queue(QUEUE_REQ, durable=True)
-        await req_q.bind(self.exchange, routing_key=QUEUE_REQ)
-        self.reply_queue = await self.channel.declare_queue(QUEUE_REPLY, durable=True)
-        await self.reply_queue.bind(self.exchange, routing_key=QUEUE_REPLY)
-        self.push_queue = await self.channel.declare_queue(QUEUE_PUSH, durable=True)
-        await self.push_queue.bind(self.exchange, routing_key=QUEUE_PUSH)
         # 构造 push 业务编排器（在 listener 启动前完成，避免漏掉首批 push）
         self._dispatcher = PushDispatcher(self)
         asyncio.ensure_future(self._listen_replies())
@@ -116,14 +123,14 @@ class RPClient:
         协议要求柜台在应答包中回写请求的 msgid；若柜台未回写，
         这里的 "msg_id not in pending" 日志会指明收到的 msgid 是什么、
         以及当前等待的 msgid 列表，便于排查链路问题。
+
+        基类 MessageQueueClient.listen_replies 负责 iterator + message.process；
+        本方法只提供 on_message 回调：log wire 长度 + 委托给 _handle_reply。
         """
-        log.info("RPClient reply listener started")
-        async with self.reply_queue.iterator() as qiter:
-            async for msg in qiter:
-                async with msg.process():
-                    wire_data = msg.body
-                    log.info("RPClient <<< reply wire_len=%d", len(wire_data))
-                    await self._handle_reply(wire_data)
+        async def _on_reply_wire(wire_data: bytes):
+            log.info("RPClient <<< reply wire_len=%d", len(wire_data))
+            await self._handle_reply(wire_data)
+        await super().listen_replies(_on_reply_wire)
 
     async def _handle_reply(self, wire_data: bytes):
         """解析 reply 报文并匹配 pending future。"""
@@ -160,9 +167,8 @@ class RPClient:
     async def _listen_pushs(self):
         """监听 EvTrade.Test.Push 队列，把柜台主动推送转交给 dispatcher。
 
-        transport 只负责：消息循环 + 解码 + 委托给 self._dispatcher.dispatch。
-        所有 push 业务编排（行提取、落库、广播、trd_date 注入）由
-        server/services/push/dispatcher.py 承担（REQ-RPC-012）。
+        基类 MessageQueueClient.listen_pushs 负责 iterator + message.process；
+        本方法提供 on_message 回调：decode + 委托给 dispatcher。
 
         柜台不会回包给 ord_stk 的请求方（fire-and-forget），
         真正的成交通知通过 push 队列异步推送：
@@ -173,28 +179,22 @@ class RPClient:
 
         协议格式与 ANSWER 类似（func + headers + rows），但无 error_code 语义。
         """
-        if not self.push_queue:
-            log.warning("RPClient push listener skipped: push_queue not declared")
-            return
         if not self._dispatcher:
             log.warning("RPClient push listener skipped: dispatcher not initialized")
             return
-        log.info("RPClient push listener started, queue=%s", QUEUE_PUSH)
-        async with self.push_queue.iterator() as qiter:
-            async for msg in qiter:
-                async with msg.process():
-                    wire = msg.body
-                    try:
-                        pkt = MsgPacket.decode(wire)
-                        func = _clean_id(pkt.func())
-                        mt = self._safe_msg_type(pkt)
-                        log.info(
-                            "RPClient.push <<< wire_len=%d func=%r type=%r",
-                            len(wire), func, mt,
-                        )
-                        await self._dispatcher.dispatch(pkt, func, mt, len(wire))
-                    except Exception as e:
-                        log.exception("RPClient.push decode/handle error: %s", e)
+        async def _on_push_wire(wire: bytes):
+            try:
+                pkt = MsgPacket.decode(wire)
+                func = _clean_id(pkt.func())
+                mt = self._safe_msg_type(pkt)
+                log.info(
+                    "RPClient.push <<< wire_len=%d func=%r type=%r",
+                    len(wire), func, mt,
+                )
+                await self._dispatcher.dispatch(pkt, func, mt, len(wire))
+            except Exception as e:
+                log.exception("RPClient.push decode/handle error: %s", e)
+        await super().listen_pushs(_on_push_wire)
 
     # ── shared helpers ─────────────────────────────────────
 
@@ -274,11 +274,9 @@ class RPClient:
             trace_id=msg_id,
         )
         try:
-            await asyncio.wait_for(
-                self.exchange.publish(
-                    Message(body=wire_data), routing_key=QUEUE_REQ
-                ),
-                timeout=self._publish_confirm_timeout,
+            # 委托基类 publish（封装 Message 构造 + publisher confirm + wait_for timeout）
+            await super().publish(
+                wire_data, routing_key=QUEUE_REQ, timeout=self._publish_confirm_timeout,
             )
         except asyncio.TimeoutError:
             self.pending.pop(msg_id, None)
@@ -357,6 +355,7 @@ class RPClient:
         return 0
 
     async def close(self):
+        # 保留原行为：仅关闭连接，不清空 conn/channel 字段（让基类幂等守卫正常工作）
         if self.conn:
             await self.conn.close()
 

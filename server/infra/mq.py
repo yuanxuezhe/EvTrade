@@ -41,10 +41,11 @@ class MessageQueueClient:
         exchange_name: str,
         reply_queue_name: str,
         push_queue_name: str,
+        request_queue_name: str,
         exchange_type: ExchangeType = ExchangeType.TOPIC,
         durable: bool = True,
     ) -> None:
-        """建立 RMQ 长连接 + 声明 exchange + 声明 reply/push 队列 + 绑定。
+        """建立 RMQ 长连接 + 声明 exchange + 声明 req/reply/push 队列 + 绑定。
 
         幂等守卫：已连接且未关闭 → 直接返回（避免 FastAPI 重启/双启动时重复 declare）。
         """
@@ -57,6 +58,9 @@ class MessageQueueClient:
         self.exchange = await self.channel.declare_exchange(
             exchange_name, exchange_type, durable=durable,
         )
+        # request queue（broker 消费端订阅；publisher 仅按 routing_key 发布，不强需 declare 但对称声明便于排查）
+        req_q = await self.channel.declare_queue(request_queue_name, durable=durable)
+        await req_q.bind(self.exchange, routing_key=request_queue_name)
         # reply queue
         self.reply_queue = await self.channel.declare_queue(reply_queue_name, durable=durable)
         await self.reply_queue.bind(self.exchange, routing_key=reply_queue_name)
@@ -64,8 +68,8 @@ class MessageQueueClient:
         self.push_queue = await self.channel.declare_queue(push_queue_name, durable=durable)
         await self.push_queue.bind(self.exchange, routing_key=push_queue_name)
         log.info(
-            "MessageQueueClient connected, exchange=%s reply=%s push=%s (confirms=on)",
-            exchange_name, reply_queue_name, push_queue_name,
+            "MessageQueueClient connected, exchange=%s req=%s reply=%s push=%s (confirms=on)",
+            exchange_name, request_queue_name, reply_queue_name, push_queue_name,
         )
 
     async def publish(
