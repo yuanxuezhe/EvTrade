@@ -1,13 +1,19 @@
 """
-test_order_no.py — 验证 8 位订单序号生成器原子自增
+test_orders_repo.py — 验证 8 位订单序号生成器原子自增（v13 从 server/test_order_no.py 迁入并改名）
+
+覆盖：
+- next_order_no 连续 3 次调用：递增
+- 并发 100 次调用：全部唯一
+- 调用方 rollback 不影响序号递增（函数内 commit）
+- 返回 8 位数字字符串
 """
-import sys, os
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'server'))
+import asyncio
 
 import pytest
-import asyncio
+
 from db import Base, SessionLocal, init_db
 from models.orm import OrderNoSeq, Order
+from server.repo.orders import next_order_no
 
 
 @pytest.fixture(autouse=True)
@@ -23,7 +29,6 @@ def engine_reset():
 
 
 def test_next_sequential():
-    from services.order_no import next_order_no
     db = SessionLocal()
     n1 = next_order_no(db)
     db.commit()
@@ -39,7 +44,6 @@ def test_next_sequential():
 
 def test_no_duplicates_under_concurrency():
     """并发 100 次调用，必须全部唯一"""
-    from services.order_no import next_order_no
     results = []
     errors = []
     lock = asyncio.Lock()
@@ -84,7 +88,6 @@ def test_atomic_no_callback_commit():
       db.rollback()  # 撤销后续 Order INSERT
       n2 = next_order_no(db)  # 拿到 n1+1 (last_value 已持久化)
     """
-    from services.order_no import next_order_no
     db = SessionLocal()
     try:
         n1 = next_order_no(db)  # 函数内已 commit
@@ -109,7 +112,6 @@ def test_atomic_no_callback_commit():
 
 def test_upsert_returns_eight_digit_string():
     """验证: 返回 8 位数字字符串"""
-    from services.order_no import next_order_no
     db = SessionLocal()
     try:
         n = next_order_no(db)
