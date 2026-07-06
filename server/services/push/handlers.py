@@ -15,7 +15,7 @@ from typing import Any, Dict, Optional
 
 from sqlalchemy.orm import Session
 
-from server.services.order_status import (
+from server.repo.orders import (
     ORDER_STATUS,
     TERMINAL_STATUSES,
     _get_active_trd_date,

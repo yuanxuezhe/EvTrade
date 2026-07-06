@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 from server.db import db_session
 from server.models.orm import SysStatus
 from server.models.user import User
-from server.services.trading_clock import TradingClock
+from server.repo.system import TradingClock
 from server.auth.deps import get_current_user
 
 

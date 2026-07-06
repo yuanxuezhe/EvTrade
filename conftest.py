@@ -83,8 +83,6 @@ if str(_ROOT) not in sys.path:
 import server.db as _server_db
 import server.models.orm as _server_orm
 import server.models.user as _server_user
-import server.services.order_no as _server_order_no
-import server.services.order_status as _server_order_status
 import server.services.guards as _server_guards
 import server.services.reconcile as _server_reconcile
 import server.services.t0 as _server_t0
@@ -94,7 +92,9 @@ import server.services.push.trd as _server_push_trd
 # change consolidate-position-data-flow: pos/ast handler 已删除,
 #   不再 import server.services.push.pos / .ast (会 ImportError)
 import server.services.push.helpers as _server_push_helpers
-import server.services.trading_clock as _server_trading_clock
+# v13 layered-architecture: order_no / order_status / trading_clock 已迁 server.repo.{orders,system}
+import server.repo.orders as _server_repo_orders
+import server.repo.system as _server_repo_system
 import server.auth.security as _server_auth_security
 import server.auth.deps as _server_auth_deps
 import server.enums.trading as _server_enums_trading
@@ -124,18 +124,20 @@ _BARE_ALIASES = {
     "models.orm": _server_orm,
     "models.user": _server_user,
     "services": sys.modules.get("server.services"),
-    "services.order_no": _server_order_no,
-    "services.order_status": _server_order_status,
+    # v13 layered-architecture: 旧 services.order_no/status/trading_clock alias 移除（迁 repo/）
     "services.guards": _server_guards,
     "services.reconcile": _server_reconcile,
     "services.t0": _server_t0,
-    "services.trading_clock": _server_trading_clock,
     "services.push": sys.modules.get("server.services.push"),
     "services.push.handlers": _server_push_handlers,
     "services.push.ord": _server_push_ord,
     "services.push.trd": _server_push_trd,
     # change consolidate-position-data-flow: pos/ast alias 移除
     "services.push.helpers": _server_push_helpers,
+    # v13 NEW: repo 路径别名（兼容 test_infer_mirror.py 等）
+    "repo": sys.modules.get("server.repo"),
+    "repo.orders": _server_repo_orders,
+    "repo.system": _server_repo_system,
     "auth": sys.modules.get("server.auth"),
     "auth.security": _server_auth_security,
     "auth.deps": _server_auth_deps,

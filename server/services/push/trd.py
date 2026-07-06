@@ -22,7 +22,7 @@ from typing import Any, Dict, Optional
 from sqlalchemy.orm import Session
 
 from server.models.orm import Order, Trade
-from server.services.order_status import _get_active_trd_date, _infer_order_status, _status_msg
+from server.repo.orders import _get_active_trd_date, _infer_order_status, _status_msg
 from server.services.push.helpers import _float, _int, _str, _utcnow, parse_broker_ts, _order_to_out_dict, _trade_to_out_dict
 
 

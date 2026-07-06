@@ -22,7 +22,7 @@ import sys
 
 import pytest
 
-from server.services.order_status import _infer_order_status
+from server.repo.orders import _infer_order_status
 
 
 # 12 case 覆盖全部 4 段推断规则 + 终态保持

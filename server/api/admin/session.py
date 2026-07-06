@@ -92,7 +92,7 @@ async def update_session(req: SessionUpdate, db: Session = Depends(get_db), _=De
     db.commit()
     db.refresh(row)
     # 清缓存
-    from server.services.trading_clock import TradingClock
+    from server.repo.system import TradingClock
     TradingClock.invalidate_cache()
     return SessionOut(
         morning_start=row.morning_start.isoformat(),

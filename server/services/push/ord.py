@@ -13,7 +13,7 @@ from typing import Any, Dict, Optional
 from sqlalchemy.orm import Session
 
 from server.models.orm import Order
-from server.services.order_status import _infer_order_status, _status_msg
+from server.repo.orders import _infer_order_status, _status_msg
 from server.services.push.helpers import _float, _int, _str, _utcnow, parse_broker_ts, _order_to_out_dict
 
 

@@ -29,7 +29,7 @@ from server.services.strategy.audit import write_audit
 from server.api.orders import ord_stk
 from server.db import db_session
 from server.models.orm import Order
-from server.services.order_no import next_order_no
+from server.repo.orders import next_order_no
 from server.utils.time import format_ts
 from server.services.guards import resolve_default_trd_date
 from server.ws.manager import ws_manager

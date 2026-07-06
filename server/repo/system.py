@@ -1,12 +1,15 @@
 """
-trading_clock.py — 交易时段判断
+repo/system.py — 系统配置仓库（v13 从 services/trading_clock.py 迁入）
 
-- 缓存 TradingSession 配置 60s
-- 半天（is_half_day）走 morning 段
-- is_in_trading_session() 协程安全（无状态）
+包含：
+- TradingClock 类（缓存 TradingSession 配置 60s；半天/全天判断；is_in_trading_session 协程安全）
+- sys_status / fee_config / reconcile_config / trading_session 的 CRUD 由后续 commit 补充
+
+规范：openspec/changes/2026-07-06-layered-architecture-and-strategy-master (v13 分层)
 """
 from datetime import datetime, time as dtime
 from typing import Optional
+
 from server.db import db_session
 from server.models.orm import TradingSession, SysStatus
 
