@@ -88,6 +88,40 @@ EvTrade 部署在 Windows（开发/QMT 柜台）+ Linux（前后端服务），�
   - 与 `HQ_WS_HOST` / `HQ_WS_PORT` 组合（`ws://{HQ_WS_HOST}:{HQ_WS_PORT}`）语义一致；用 URL 形式便于部署时切换网络拓扑
   - QuoteConsumer 默认 `ws://127.0.0.1:8765`（与 hqserver 同机）；跨机部署时需显式覆盖
 
+### REQ-CFG-009: MySQL 数据库连接（v14 sqlite → mysql 迁移）
+
+| Key | 默认 | 说明 |
+|---|---|---|
+| `EVTRADE_DB_URL` | `mysql+pymysql://EvTrade:p%40ssw0rd@127.0.0.1:33066/evtrade?charset=utf8mb4` | SQLAlchemy URL（driver=pymysql 纯 Python，跨平台零编译）|
+| `EVTRADE_DB_ADMIN_URL` | 留空 | **DDL-only URL**（init_db 建表 / 一次性 migration 用）。生产部署完成后建议从 env 删除避免误用 |
+| `EVTRADE_DB_POOL_SIZE` | `5` | MySQL pool size（SQLite StaticPool 忽略）|
+| `EVTRADE_DB_MAX_OVERFLOW` | `10` | 超额连接上限 |
+| `EVTRADE_DB_POOL_RECYCLE` | `1800` | 连接回收秒数（防止 MySQL 8 wait_timeout 主动断开）|
+| `EVTRADE_DB_POOL_PRE_PING` | `true` | 断连自动重连（防 wait_timeout 后 stale connection）|
+
+- **driver 优先级**：pymysql（纯 Python）— 已写进 `requirements.txt` + 已装到 host Python 3.13
+- **URL 优先级**：`EVTRADE_DB_URL` env → fallback `sqlite:///./evtrade.db`（保留 dev fallback）
+- **密码特殊符号 URL encode**：`@` → `%40`、`#` → `%23`
+- **字符集**：服务端 `utf8mb4` / 排序规则 `utf8mb4_unicode_ci`（连接参数 `charset=utf8mb4`）
+- **存储引擎**：InnoDB（MySQL 8.0 默认；事务 + FK + 行锁全支持）
+- **池配置 driver-aware**：SQLite 走 `StaticPool + check_same_thread=False`，MySQL 走 `QueuePool + pool_size/max_overflow/recycle/pre_ping`
+- **PRAGMA foreign_keys 走 driver-aware connect hook**：仅 SQLite 启用，MySQL 默认 enforce
+- **legacy 兼容常量**：`BASE_DIR` / `DB_PATH` 保留在 `infra/db.py`，`server/db.py` facade 不动（42 处 import 路径不变）
+
+### REQ-CFG-010: 双用户最小权限（v14 MySQL 安全姿态）
+
+业务库 `evtrade` 两类用户，按用途严格隔离：
+
+| User | 密码 | 权限范围 | 用途 |
+|---|---|---|---|
+| `EvTrade` | `p%40ssw0rd` | `SELECT/INSERT/UPDATE/DELETE` ON `evtrade.*` | runtime 业务账号 |
+| `evtrade_dba` | `p%40ssw0rd` | `SELECT/INSERT/UPDATE/DELETE/CREATE/DROP/ALTER/INDEX/REFERENCES` ON `evtrade.*` | init_db 建表 / 一次性 migration |
+| `root` | `p%40ssw0rd` | `localhost` socket only（TCP 远程拒登 + `ACCOUNT LOCK`）| 容器内紧急维护 |
+
+- **最小权限原则**：业务账号无 DDL，攻击面收敛到数据行；DDL 走专门 dba 账号
+- **DDL admin 账号生命周期**：部署 → init_db → 可选 `REVOKE` / `DROP USER evtrade_dba`（详见 ops docs）
+- **密码 URL encode**：业务账号在 DSN 里必须 `p%40ssw0rd`（`@` 已编码）
+
 #### Scenario: STRATEGY_ENGINE_ENABLED=false 时访问 REST
 
 - **GIVEN** STRATEGY_ENGINE_ENABLED=false
@@ -99,6 +133,35 @@ EvTrade 部署在 Windows（开发/QMT 柜台）+ Linux（前后端服务），�
 - **GIVEN** HQ_WS_URL=ws://10.0.0.5:8765
 - **WHEN** QuoteConsumer start
 - **THEN** MUST 连接 ws://10.0.0.5:8765（非默认 127.0.0.1）
+
+#### Scenario: S-CFG-006 (新增): 业务账号 DDL 被拒
+
+**Given** FastAPI runtime 用 `EVTRADE_DB_URL`（业务账号）  
+**When** 业务代码意外调 `CREATE TABLE` 或 `ALTER TABLE`  
+**Then** MUST 抛 `1142 CREATE command denied to user 'EvTrade'@'%'`  
+**And** **不静默降级** —— 立刻暴露到日志，避免误用 DDL 走业务账号
+
+#### Scenario: S-CFG-007 (新增): MySQL 8 wait_timeout 自动重连
+
+**Given** backend 闲置超过 `wait_timeout`（默认 28800s）  
+**When** 下一次 SQL 请求落到 stale 连接  
+**Then** SQLAlchemy `pool_pre_ping` 触发 ping → 失败 → 自动重连 → 请求正常完成  
+**And** **不抛 2013 Lost connection 错误**
+
+#### Scenario: S-CFG-008 (新增): SQLite dev fallback
+
+**Given** `.env` 未设 `EVTRADE_DB_URL`  
+**When** FastAPI 启动  
+**Then** `infra/db.py` 退回 `sqlite:///./evtrade.db`  
+**And** PRAGMA foreign_keys 启用（让 dev 行为对齐 MySQL FK 语义）  
+**And** `pool_*` 配置跳过（StaticPool）
+
+#### Scenario: S-CFG-009 (新增): admin URL 缺失时 DDL 报错
+
+**Given** `.env` 仅设 `EVTRADE_DB_URL`（业务账号）未设 `EVTRADE_DB_ADMIN_URL`  
+**When** 运维跑 `init_db()` 建表  
+**Then** MySQL 抛 `1142 CREATE command denied`  
+**And** 提示运维读 `REQ-CFG-009` / `REQ-CFG-010` 启用 `evtrade_dba` 账号或设 ADMIN_URL
 
 ## Scenarios
 
