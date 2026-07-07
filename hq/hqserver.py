@@ -108,7 +108,9 @@ async def _broadcast_ws(payload: dict):
                 _ws_clients.discard(c)
 
 
-async def _ws_handler(websocket: WebSocketServerProtocol, path: str):
+# change hq-websockets-compat: websockets>=11 调用 serve() 时只传 (websocket,)，handler 不能再接 path 参数
+#   实际 handler 内部没用到 path（只是 keepalive），删掉兼容即可
+async def _ws_handler(websocket: WebSocketServerProtocol):
     """每个 WS 连接一个 task。客户端不发消息，仅 keepalive。"""
     await _register_ws(websocket)
     try:
