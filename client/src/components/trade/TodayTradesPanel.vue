@@ -27,6 +27,11 @@
             <span class="text-mono text-secondary">{{ row.trade_time }}</span>
           </template>
         </el-table-column>
+        <el-table-column prop="trade_id" label="成交编号" min-width="140" show-overflow-tooltip>
+          <template #default="{ row }">
+            <span class="text-mono text-secondary">{{ row.trade_id }}</span>
+          </template>
+        </el-table-column>
         <el-table-column label="类型" width="68">
           <template #default="{ row }">
             <el-tag v-if="Number(row.trade_type) === 1" type="warning" size="small">撤单</el-tag>

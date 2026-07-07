@@ -23,45 +23,60 @@
         size="small"
         class="tp-table"
       >
+        <el-table-column prop="order_no" label="委托编号" width="98" show-overflow-tooltip>
+          <template #default="{ row }">
+            <span class="text-mono text-secondary">{{ row.order_no }}</span>
+          </template>
+        </el-table-column>
         <el-table-column prop="order_time" label="时间" width="78">
           <template #default="{ row }">
             <span class="text-mono text-secondary">{{ row.order_time }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="类型" width="68">
+        <el-table-column label="类型" width="60">
           <template #default="{ row }">
             <el-tag v-if="Number(row.order_flag) === 1" type="warning" size="small">撤单</el-tag>
             <span v-else class="text-secondary">委托</span>
           </template>
         </el-table-column>
-        <el-table-column prop="stock_code" label="代码" width="100">
+        <el-table-column prop="stock_code" label="代码" width="92">
           <template #default="{ row }">
             <span class="tp-stock-code">{{ row.stock_code }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="方向" width="56">
+        <el-table-column label="方向" width="48">
           <template #default="{ row }">
             <span class="tp-dir-chip" :class="row.order_type === '23' ? 'buy' : 'sell'">
               {{ row.order_type === '23' ? '买' : '卖' }}
             </span>
           </template>
         </el-table-column>
-        <el-table-column prop="volume" label="量" align="right" width="68" sortable>
+        <el-table-column prop="volume" label="委托量" align="right" width="64" sortable>
           <template #default="{ row }">
             <span class="text-mono">{{ formatNumber(row.volume) }}</span>
           </template>
         </el-table-column>
-        <el-table-column prop="price" label="价" align="right" width="80" sortable>
+        <el-table-column prop="traded_volume" label="成交量" align="right" width="64" sortable>
+          <template #default="{ row }">
+            <span class="text-mono">{{ formatNumber(row.traded_volume || 0) }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column prop="price" label="价" align="right" width="68" sortable>
           <template #default="{ row }">
             <span class="text-mono">{{ formatMoney(row.price) }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="状态" width="92">
+        <el-table-column label="金额" align="right" width="92">
+          <template #default="{ row }">
+            <span class="text-mono">¥{{ formatMoney(orderAmount(row)) }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="状态" width="78">
           <template #default="{ row }">
             <OrderStatusBadge :status="row.status" :remark="row.remark" :status_msg="row.status_msg" />
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="56" fixed="right">
+        <el-table-column label="操作" width="48" fixed="right">
           <template #default="{ row }">
             <el-button
               v-if="canCancel(row)"
@@ -166,6 +181,11 @@ async function handleCancel(row) {
   } finally {
     cancellingOrderNo.value = ''
   }
+}
+
+// 本地算 amount (price × traded_volume), 与后端 trd_cfm 公式一致
+function orderAmount(o) {
+  return (Number(o.price) || 0) * (Number(o.traded_volume ?? o.volume) || 0)
 }
 
 // 翻页后 el-table 滚动条归顶 (翻页体验更自然)
