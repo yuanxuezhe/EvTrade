@@ -1,4 +1,7 @@
 import axios from 'axios'
+import { makeLogger } from '../utils/logger'
+
+const log = makeLogger('api')
 
 const API_BASE = '/api'
 const TOKEN_KEY = 'evtrade-token'
@@ -47,7 +50,7 @@ async function _showRpcError(msg) {
     ElMessage.error(msg || '请求失败')
   } catch (e) {
     // eslint-disable-next-line no-console
-    console.error('[api] failed to show ElMessage:', e)
+    log.error('failed to show ElMessage:', e)
   }
 }
 

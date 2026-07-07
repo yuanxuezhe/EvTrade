@@ -14,6 +14,9 @@
  * 通过依赖注入 onMessage 回调（ws_dispatch.dispatchPayload）, 不直接 import dispatch
  */
 import { ref } from 'vue'
+import { makeLogger } from '../utils/logger'
+
+const log = makeLogger('ws')
 
 export const CHANNELS = ['order_update', 'trade_update', 'quote_update', 'strategy_update']
 
@@ -23,24 +26,29 @@ export const CHANNELS = ['order_update', 'trade_update', 'quote_update', 'strate
 export const RECONNECT_BASE_DELAY = 1000
 export const RECONNECT_MAX_DELAY = 30000
 
-// 行情直连 hqserver :8765，不再走 server 后端转发
+// change ws-quote-fanout: quote_update 改为走后端 /ws/quote_update，不再直连 hqserver :8765
+//   - 原因：hqserver 是裸 ws，不支持 wss；公网访问必然 TLS 失败
+//   - 数据来源：后端 quote_consumer 已通过 ws_manager.broadcast('quote_update', ...) fanout
+//   - 保留 VITE_QUOTE_WS_URL 兼容：若设置成同源 URL（含 token query），仍可被旧代码消费
 const QUOTE_WS_HOST = (() => {
-  // 优先用环境变量；否则复用当前 host（hqserver 通常跟前端同机部署）
   if (typeof import.meta !== 'undefined' && import.meta.env?.VITE_QUOTE_WS_URL) {
     return import.meta.env.VITE_QUOTE_WS_URL.replace(/^ws/, '')
   }
-  return window.location.hostname + ':8765'
+  // 默认同源走后端：'localhost' 或 'evtrade.ngx.evdata.top'
+  return window.location.host
 })()
 
 function _wsUrl(channel) {
   const proto = window.location.protocol === 'https:' ? 'wss' : 'ws'
-  // quote_update 直连 hqserver；其他 channel 走后端
-  if (channel === 'quote_update') {
-    return `${proto}://${QUOTE_WS_HOST}/`
-  }
-  // 后端 WS 需要 JWT token（查询参数）
+  // 所有 channel 一律走后端 /ws/{channel}?token=JWT
+  //   - 后端 endpoint 已注册到 /ws/{channel}，heartbeat sender 对 quote_update 特判跳过服务端 ping
+  //   - quote_update 的实时数据靠 quote_consumer 的 ws_manager.broadcast 提供
   const token = localStorage.getItem('evtrade-token') || ''
   const sep = token ? '?' : ''  // 第一个 query 参数用 ?，不是 &
+  // quote_update: 如果 VITE_QUOTE_WS_URL 是自定义的（局域网直连 hqserver），则不加 token
+  if (channel === 'quote_update' && typeof import.meta !== 'undefined' && import.meta.env?.VITE_QUOTE_WS_URL) {
+    return `${proto}://${QUOTE_WS_HOST}/`
+  }
   return `${proto}://${window.location.host}/ws/${channel}${sep}token=${encodeURIComponent(token)}`
 }
 
@@ -71,9 +79,11 @@ export function createWsManager(onMessage) {
       _retryCount[channel] = 0  // v7 增: 连接成功重置退避计数
       _pongMissed[channel] = 0  // v10 增: 重置 pong 计数
       // eslint-disable-next-line no-console
-      console.log(`[WS] ${channel} connected`)
-      // v10 增: 客户端 30s 主动 ping（quote_update 走 hqserver 不需要）
-      if (channel !== 'quote_update' && !_heartbeatTimer[channel]) {
+      log.info(`${channel} connected`)
+      // change ws-quote-fanout: 客户端 30s 主动 ping — quote_update 现在走后端，
+      //   同样走 ping/pong 心跳。后端 quote_update 通道的 heartbeat sender 已特判跳过服务端 ping，
+      //   但客户端主动 ping 后端仍会回 pong（见 server/ws/endpoint.py: ping/pong 双向逻辑）。
+      if (!_heartbeatTimer[channel]) {
         _heartbeatTimer[channel] = setInterval(() => {
           if (_sockets[channel]?.readyState === WebSocket.OPEN) {
             try {
@@ -81,7 +91,7 @@ export function createWsManager(onMessage) {
               _pongMissed[channel] = (_pongMissed[channel] || 0) + 1
               // 连续 3 次 (90s) 没回 pong → 主动断开触发重连
               if (_pongMissed[channel] >= 3) {
-                console.warn(`[WS] ${channel} pong missed ${_pongMissed[channel]}x, force close`)
+                log.warn(`${channel} pong missed ${_pongMissed[channel]}x, force close`)
                 _sockets[channel]?.close()
               }
             } catch (_) { /* 忽略发送失败 */ }
@@ -96,7 +106,7 @@ export function createWsManager(onMessage) {
       _retryCount[channel] = c
       const delay = Math.min(RECONNECT_BASE_DELAY * 2 ** (c - 1), RECONNECT_MAX_DELAY)
       // eslint-disable-next-line no-console
-      console.log(`[WS] ${channel} closed, reconnect in ${delay}ms (attempt #${c})`)
+      log.info(`${channel} closed, reconnect in ${delay}ms (attempt #${c})`)
       // v10 增: 清理心跳定时器
       if (_heartbeatTimer[channel]) {
         clearInterval(_heartbeatTimer[channel])
@@ -108,7 +118,7 @@ export function createWsManager(onMessage) {
 
     ws.onerror = (e) => {
       // eslint-disable-next-line no-console
-      console.warn(`[WS] ${channel} error`, e)
+      log.warn(`${channel} error`, e)
     }
 
     ws.onmessage = (e) => {
@@ -117,7 +127,7 @@ export function createWsManager(onMessage) {
         payload = JSON.parse(e.data)
       } catch (err) {
         // eslint-disable-next-line no-console
-        console.warn('[WS] bad payload', e.data, err)
+        log.warn('bad payload', e.data, err)
         return
       }
       // v10 增: ping/pong 双向心跳 (M-005)
@@ -133,7 +143,7 @@ export function createWsManager(onMessage) {
         return
       }
       // eslint-disable-next-line no-console
-      console.log(`[WS][${channel}]`, payload)
+      log.debug(`[${channel}]`, payload)
       lastEvent.value = payload
       // 业务分发由注入的回调处理（解耦 connection / dispatch）
       onMessage(payload)

@@ -20,6 +20,7 @@ from server.db import db_session
 from server.services.strategy import repository as repo
 from server.services.strategy.engine import StrategyEngine
 from server.services.strategy.indicators import IndicatorParams
+from server.ws.manager import ws_manager  # change ws-quote-fanout: 让前端 /ws/quote_update 也能收到 tick
 
 log = logging.getLogger(__name__)
 
@@ -180,6 +181,14 @@ class QuoteConsumer:
         self._latest_price[stock_code] = tick.get("last_price", 0.0)
         self._last_tick_ts = time.time()
         self._tick_count += 1
+        # change ws-quote-fanout: 先把 tick 推给前端 ws subscribers，再 fanout 给 strategy engine
+        #   - 走 ws_manager['quote_update']（ws/manager.py: active_connections['quote_update']）
+        #   - 即使没有活跃 subscription，broadcast 内部自检后立刻返回（不抛错）
+        #   - 这样前端 quote_update channel 收到原始 tick，前端 ws_heartbeat 就能直接消费
+        try:
+            await ws_manager.broadcast("quote_update", {"type": "quote", "channel": "quote_update", "data": tick})
+        except Exception:
+            log.exception("ws quote broadcast failed (non-fatal)")
         if engine is None:
             return  # 非活跃订阅的标的 → 静默丢弃
         # 查 position_vol（v1 简化为 DB 查）
