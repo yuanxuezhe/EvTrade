@@ -50,6 +50,11 @@ logging.basicConfig(
     format="%(message)s",
 )
 
+# REQ-LOG-006 增: 同步挂 file handler, 日志落地 logs/server-YYYYMMDD.log
+#   保留 7 天; console handler 不动 (uvicorn 容器仍能看到 stderr)
+from server.utils import setup_file_logging  # noqa: E402  (依赖上面的 basicConfig)
+_log_dir = setup_file_logging()
+
 # v10 增: 禁用 uvicorn 原生 access log
 #   重复打印 '127.0.0.1:NNNN - "GET /api/x HTTP/1.1" 200 OK' 格式
 #   已被 RequestLoggingMiddleware 的 [front<-svc] 替代
