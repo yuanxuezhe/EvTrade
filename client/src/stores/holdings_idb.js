@@ -14,7 +14,7 @@
  *   - value = 单行 OrderOut / TradeOut (JSON 深拷贝, 不与 Pinia 共享引用)
  *   - ws push 增量 = O(1) idbPut（不再读全量 / 写全量）
  *   - 跨日清理由 loadXxxForDate / clearDate 内部按 prefix 扫描（IDB 无原生 prefix scan）
- *   - 写失败一律 console.warn，**不抛**（critical path 不被 IDB 卡住）
+ *   - 写失败一律 log.warn，**不抛**（critical path 不被 IDB 卡住）
  *
  * v12 → v13 schema 迁移:
  *   - v12 key = trd_date, value = array（不兼容 v13 复合 key 维度）
@@ -41,6 +41,9 @@
  *   - 跨日清理走 idbGetAllKeys 扫描 + filter
  */
 import { openDB, idbGet, idbPut, idbDelete, idbGetAllKeys } from '../utils/idb'
+import { makeLogger } from '../utils/logger'
+
+const log = makeLogger('IDB')
 
 const DB_NAME = 'holdings-cache'
 const DB_VERSION = 3
@@ -138,7 +141,7 @@ async function _ensure() {
   try {
     return await initIDB()
   } catch (e) {
-    console.warn('[IDB] init failed:', e?.message || e)
+    log.warn('init failed:', e?.message || e)
     return null
   }
 }
@@ -162,7 +165,7 @@ async function _loadByDate(storeName, trdDate) {
     // 过滤 null (防御性: 极端竞态下 key 存在但 value 缺失)
     return rows.filter(Boolean)
   } catch (e) {
-    console.warn(`[IDB] _loadByDate(${storeName}, ${trdDate}) failed:`, e?.message || e)
+    log.warn(`_loadByDate(${storeName}, ${trdDate}) failed:`, e?.message || e)
     return null
   }
 }
@@ -178,7 +181,7 @@ async function _clearByDate(storeName, trdDate) {
     const dayKeys = allKeys.filter((k) => _isKeyOfDate(k, trdDate))
     await Promise.all(dayKeys.map((k) => idbDelete(db, storeName, k)))
   } catch (e) {
-    console.warn(`[IDB] _clearByDate(${storeName}, ${trdDate}) failed:`, e?.message || e)
+    log.warn(`_clearByDate(${storeName}, ${trdDate}) failed:`, e?.message || e)
   }
 }
 
@@ -202,7 +205,7 @@ export function saveOrder(order) {
     if (!db) return
     return idbPut(db, STORE_ORDERS, _orderKey(order), _clone(order))
   }).catch((e) => {
-    console.warn('[IDB] saveOrder failed:', _orderKey(order), e?.message || e)
+    log.warn('saveOrder failed:', _orderKey(order), e?.message || e)
   })
 }
 
@@ -229,7 +232,7 @@ export function saveTrade(trade) {
     if (!db) return
     return idbPut(db, STORE_TRADES, _tradeKey(trade), _clone(trade))
   }).catch((e) => {
-    console.warn('[IDB] saveTrade failed:', _tradeKey(trade), e?.message || e)
+    log.warn('saveTrade failed:', _tradeKey(trade), e?.message || e)
   })
 }
 

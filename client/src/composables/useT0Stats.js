@@ -17,6 +17,9 @@
  */
 
 import { t0StatsApi } from '../api/t0_stats'
+import { makeLogger } from '../utils/logger'
+
+const log = makeLogger('useT0Stats')
 
 const TTL_MS = 30_000
 
@@ -43,7 +46,7 @@ async function getStats(code, force = false) {
     _cache.set(code, { data, ts: Date.now() })
     return data
   } catch (e) {
-    console.warn(`[useT0Stats] getStats failed for ${code}:`, e)
+    log.warn(`getStats failed for ${code}:`, e)
     // 错码: 不写缓存 (下次 fetch 仍 miss), 也不 throw (调用方期望 best-effort)
     return null
   }

@@ -21,6 +21,9 @@ import { useQuoteStore } from './quote'
 import { useHoldingsStore } from './holdings'
 import { useStrategyStore } from './strategy'
 import { STATUS_LABEL } from '../utils/format'
+import { makeLogger } from '../utils/logger'
+
+const log = makeLogger('ws')
 
 /**
  * payload 入口（ws_heartbeat 的 onmessage 调用）
@@ -57,7 +60,7 @@ function _onQuote(row) {
 function _onOrderCfm(row) {
   // 后端重组包后，row 已是 OrderOut 格式（order_no/status/stock_code 等）
   if (!row || !row.order_no) {
-    console.warn('[ws._onOrderCfm] 缺 order_no, 跳过:', row)
+    log.warn('_onOrderCfm 缺 order_no, 跳过:', row)
     return
   }
 
@@ -69,7 +72,7 @@ function _onOrderCfm(row) {
     const holdings = useHoldingsStore()
     finalStatus = holdings.applyOrderPush(row, 'update')
   } catch (e) {
-    console.error('[ws._onOrderCfm] applyOrderPush failed:', e)
+    log.error('_onOrderCfm applyOrderPush failed:', e)
   }
 
   if (finalStatus != null) {
@@ -80,7 +83,7 @@ function _onOrderCfm(row) {
 function _onTradeCfm(row) {
   // 后端重组包后，row 已是 TradeOut 格式（trade_id/volume/price 等）
   if (!row || !row.trade_id) {
-    console.warn('[ws._onTradeCfm] 缺 trade_id, 跳过:', row)
+    log.warn('_onTradeCfm 缺 trade_id, 跳过:', row)
     return
   }
 
@@ -88,7 +91,7 @@ function _onTradeCfm(row) {
     const holdings = useHoldingsStore()
     holdings.applyTradePush(row)
   } catch (e) {
-    console.error('[ws._onTradeCfm] applyTradePush failed:', e)
+    log.error('_onTradeCfm applyTradePush failed:', e)
   }
 
   const dir = String(row.order_type) === '24' ? '卖' : '买'
@@ -128,7 +131,7 @@ function _notifyOrder(code, status, row) {
  */
 function _onStrategyUpdate(row) {
   if (!row || row.strategy_id == null) {
-    console.warn('[ws._onStrategyUpdate] 缺 strategy_id, 跳过:', row)
+    log.warn('_onStrategyUpdate 缺 strategy_id, 跳过:', row)
     return
   }
   try {
@@ -151,7 +154,7 @@ function _onStrategyUpdate(row) {
     }
     store.appendAudit(row.strategy_id, trdDate, audit)
   } catch (e) {
-    console.error('[ws._onStrategyUpdate] failed:', e)
+    log.error('_onStrategyUpdate failed:', e)
   }
 }
 

@@ -6,6 +6,10 @@
  *
  * 调用者：holdings.js 内部 createLogger(loadHistory ref) → { log, clearHistory }
  */
+import { makeLogger } from '../utils/logger'
+
+const _log = makeLogger('holdings')
+
 export const MAX_HISTORY = 200
 
 /**
@@ -32,11 +36,11 @@ export function createLogger(loadHistory) {
     if (loadHistory.value.length > MAX_HISTORY) {
       loadHistory.value.length = MAX_HISTORY
     }
-    // 同时写一份到 console 便于调试
-    const tagStr = `[holdings.${source}/${tag}] ${message}`
-    if (level === 'err') console.error(tagStr, detail || '')
-    else if (level === 'warn') console.warn(tagStr, detail || '')
-    else console.log(tagStr, detail || '')
+    // 同时写一份到 logger 便于扫描 (UI 流水本身仍走 loadHistory ref)
+    const tagStr = `${source}/${tag} ${message}`
+    if (level === 'err') _log.error(tagStr, detail || '')
+    else if (level === 'warn') _log.warn(tagStr, detail || '')
+    else _log.info(tagStr, detail || '')
     return entry
   }
 

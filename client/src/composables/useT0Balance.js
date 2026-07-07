@@ -9,6 +9,9 @@ import {
   calcInsufficientCash as _calcInsufficientCash,
   calcInsufficientPosition as _calcInsufficientPosition,
 } from '../lib/t0-calc'
+import { makeLogger } from '../utils/logger'
+
+const log = makeLogger('useT0Balance')
 
 /**
  * T0 配平计算 composable
@@ -187,7 +190,7 @@ export function useT0Balance(stockCodeRef) {
       exposureList.value = data.positions || []
       exposureTotals.value = data.totals || null
     } catch (e) {
-      console.warn('[useT0Balance] loadExposure failed:', e)
+      log.warn('loadExposure failed:', e)
       exposureList.value = []
       exposureTotals.value = null
       if (typeof onError === 'function') onError(e)
@@ -204,7 +207,7 @@ export function useT0Balance(stockCodeRef) {
     try {
       aggregate.value = await t0StatsApi.getAggregate({ userDef, days })
     } catch (e) {
-      console.warn('[useT0Balance] loadAggregate failed:', e)
+      log.warn('loadAggregate failed:', e)
       aggregate.value = null
       if (typeof onError === 'function') onError(e)
     } finally {

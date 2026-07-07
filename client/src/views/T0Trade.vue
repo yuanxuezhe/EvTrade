@@ -393,6 +393,9 @@ import { t0StatsApi } from '../api/t0_stats'
 import { formatNumber, formatPrice, formatAmount } from '../utils/format'
 import { useT0ChartGeometry, useT0DrawerChartGeometry } from '../composables/useT0ChartGeometry'
 import { useT0OrderSubmit } from '../composables/useT0OrderSubmit'
+import { makeLogger } from '../utils/logger'
+
+const log = makeLogger('T0Trade')
 
 const holdingsStore = useHoldingsStore()
 const orderStore = useOrderStore()
@@ -420,8 +423,8 @@ function onOpenDrawer(row) {
   drawerVisible.value = true
   drawerLoading.value = true
   Promise.all([
-    t0StatsApi.get(code).catch((e) => { console.warn('drawer t0 stats failed', e); return null }),
-    t0StatsApi.getHistory(code, drawerDays.value).catch((e) => { console.warn('drawer t0 history failed', e); return null }),
+    t0StatsApi.get(code).catch((e) => { log.warn('drawer t0 stats failed', e); return null }),
+    t0StatsApi.getHistory(code, drawerDays.value).catch((e) => { log.warn('drawer t0 history failed', e); return null }),
   ]).then(([stats, hist]) => {
     if (stats) drawerStats.value = stats
     drawerHistory.value = hist
@@ -451,7 +454,7 @@ watch(drawerVisible, async (v) => {
       const agg = await t0StatsApi.getAggregate({ userDef: 'T0', days: 90 })
       drawerAggregate.value = (agg?.by_stock || []).find(s => s.stock_code === stockCode.value) || agg
     } catch (e) {
-      console.warn('drawer aggregate failed', e)
+      log.warn('drawer aggregate failed', e)
     }
   }
 })
@@ -607,7 +610,7 @@ async function loadT0History() {
   try {
     historyData.value = await t0StatsApi.getHistory(stockCode.value, historyDays.value)
   } catch (e) {
-    console.warn('load t0 history failed', e)
+    log.warn('load t0 history failed', e)
     historyData.value = null
   }
 }
@@ -641,7 +644,7 @@ async function ensureHistory30d(code) {
     }
     history30dMap.value = { ...history30dMap.value, [code]: pts }
   } catch (e) {
-    console.warn(`history30d failed for ${code}`, e)
+    log.warn(`history30d failed for ${code}`, e)
     history30dMap.value = { ...history30dMap.value, [code]: [] }
   }
 }
