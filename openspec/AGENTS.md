@@ -105,6 +105,31 @@ mv openspec/changes/<name> openspec/changes/archive/<date>-<name>
 - **order_no**：8 位数字（DB 序列表原子 UPSERT），当 order_remark 透传
 - **测试**：`pytest hq/` 18/18；`pytest server/test_*.py` 75/75 通过
 
+## Commit 规范（v6）
+
+**按功能维度拆 commit**——每个 commit 应对应**一个独立功能/模块/目的**，不要把无关改动混在一起：
+
+| 场景 | 拆 commit 方式 |
+|---|---|
+| 一个 change（如 v18 T0Task）含数据库迁移 + ORM + service + API + 前端 | 按层拆：migration / orm / service / api / frontend，每层 1 commit |
+| 一个 bug fix 跨多文件 | 先 fix + 验证 1 commit，再 test 改进另 1 commit |
+| 文档与代码同改 | 文档单独 1 commit（`docs(...)`），代码按功能另 1 commit |
+| lint 清理 | 整个批次 1 commit（`chore(lint): ruff --fix 66 个 F401`）—— 一个**单一目的**仍是单一 commit |
+| 多模型试水 | 验证脚本 1 commit + 配置改动 1 commit + 文档 1 commit |
+
+**反模式**（避免）：
+- ❌ "今天所有改动 1 个 mega commit"（无法 revert 单个功能）
+- ❌ "1 commit 改 N 个不相关模块"（diff 难 review）
+- ❌ "1 commit 修 bug + 加新功能 + 改 docs"（3 件事纠缠）
+
+**例外**：lint auto-fix / 格式整理可以批量 1 commit，因为它们是**单一目的**（清理），不是多目的混合。
+
+**commit 前必做**：
+1. `git diff --stat` 看改动范围是否单一功能
+2. `git log -1` 校验上一个 commit hash（防 AI 误报，git-safety skill）
+3. commit message 用单行 `-m`（heredoc 在 AI 工具中会 timeout，memory 拍板）
+4. **不自动 push**——除非用户明确拍板
+
 ## 当前活跃 change
 
 | Change | 状态 | 解决什么 |
