@@ -24,6 +24,7 @@ class PlaceOrderRequest(BaseModel):
     price: float
     volume: int
     t0_coefficient: float = 1.0
+    task_id: Optional[int] = None  # v18: 关联 t0_tasks.id (None = 游离单)
 
 
 class OrderOut(BaseModel):
@@ -45,6 +46,7 @@ class OrderOut(BaseModel):
     status_msg: str
     order_time: str
     raw_id: Optional[str] = None  # v13 NEW: cancel-row 写 = 原 order_no；普通行 None
+    task_id: Optional[int] = None  # v18 NEW: 关联 t0_tasks.id (None = 游离单)
 
 
 class PlaceOrderResponse(BaseModel):
@@ -91,4 +93,5 @@ def _to_order_out(o):
         status=o.status,
         status_msg=o.status_msg, order_time=o.order_time,
         raw_id=o.raw_id,  # v13 NEW: cancel-row 透传；普通行为 None
+        task_id=o.task_id,  # v18 NEW: 透传到前端 task 视图
     )

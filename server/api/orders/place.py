@@ -62,6 +62,22 @@ def register_place(router):
         fee_cfg = get_fee_config()
         gross, net = calc_net_amount(req.price, adjusted, fee_cfg, direction)
 
+        # 3.5 v18: 若带 task_id, 验证 task 归属 + active (避免跨用户误绑定)
+        if req.task_id is not None:
+            from server.models.orm import T0Task  # late import 避免循环
+            task = db.query(T0Task).filter_by(id=req.task_id).first()
+            if not task or task.user_id != user.id or task.status != "active":
+                raise HTTPException(
+                    status_code=400,
+                    detail={"code": "INVALID_TASK", "msg": f"task_id={req.task_id} 不存在/非本人/非 active"}
+                )
+            if task.stock_code != req.stock_code:
+                raise HTTPException(
+                    status_code=400,
+                    detail={"code": "TASK_STOCK_MISMATCH",
+                            "msg": f"task 的 stock_code={task.stock_code} 与下单 {req.stock_code} 不符"}
+                )
+
         # 4. INSERT status=48（待报）
         order_no = next_order_no(db)
         order = Order(
@@ -73,6 +89,7 @@ def register_place(router):
             traded_volume=0, traded_amount=0.0, avg_price=0.0,
             status="48", status_msg="待报",
             order_time=format_ts(tz='local'),  # v10: "YYYY-MM-DD HH:MM:SS.fff"
+            task_id=req.task_id,  # v18: 关联做T任务 (None = 游离单)
         )
         db.add(order)
         db.commit()
@@ -130,6 +147,7 @@ def register_place(router):
                 "status_msg": order.status_msg,
                 "volume": order.volume,
                 "traded_volume": order.traded_volume,
+                "task_id": order.task_id,  # v18 NEW: 前端 holdings 推送守门用
             })
         except Exception as e:
             log.warning("WS push failed: %s", e)
