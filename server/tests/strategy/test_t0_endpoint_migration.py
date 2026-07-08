@@ -21,7 +21,7 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 
 from server.db import Base, engine, init_db, SessionLocal
-from server.models.orm import Order, Trade, SysStatus
+from server.models.orm import Order, Trade
 from server.models.user import User
 from server.auth.security import hash_password, create_access_token
 from server.services.strategy import repository as strat_repo

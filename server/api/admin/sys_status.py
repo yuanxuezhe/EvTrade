@@ -22,15 +22,14 @@ v5 改动：
 - 字段 current_date → trd_date
 - 复合主键 → trd_date 单 PK（无 id）
 """
-from datetime import datetime, timedelta
 from fastapi import APIRouter, HTTPException, Depends
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 from typing import Optional, List
 from sqlalchemy.orm import Session
 from sqlalchemy import desc
 
 from server.db import get_db
-from server.models.orm import SysStatus, ReconcileReport
+from server.models.orm import SysStatus
 from server.models.user import User
 from server.services.reconcile import do_reconcile
 from server.services.guards import require_admin

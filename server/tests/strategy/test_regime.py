@@ -6,7 +6,6 @@ test_regime.py — Regime 匹配 + 冷却单测（task 5）
   required 缺一 / exclude 命中 / disabled / 无候选）
 - apply_cooldown 4 种分支（首次 / 同 regime / 冷却内 / 冷却外）
 """
-import pytest
 
 
 # ─────────────── Helpers ───────────────
@@ -134,5 +133,5 @@ def test_apply_cooldown_no_history_allows():
 
 
 def test_smoke_imports():
-    from server.services.strategy.regime import match_regime, apply_cooldown, COOLDOWN_SECONDS
+    from server.services.strategy.regime import COOLDOWN_SECONDS
     assert COOLDOWN_SECONDS == 300

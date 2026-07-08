@@ -15,10 +15,9 @@ t0_tasks.py — T0Task 业务逻辑层 (REQ-TRADE-013 ~ 015 + 017)
 - 持仓/资产前置校验走 REQ-TRADE-010 同款 409 Conflict
 """
 from datetime import datetime
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 
 from sqlalchemy.orm import Session
-from sqlalchemy import func, and_, or_
 
 from server.models.orm import Asset, Order, Position, T0Task, Trade
 from server.services.t0.core import get_fee_config, round_to_lot

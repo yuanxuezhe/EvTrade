@@ -22,10 +22,8 @@ import asyncio
 import logging
 from typing import Any, Dict, Optional
 
-import aio_pika
-from aio_pika import ExchangeType, Message
 
-from msgpacket import MsgPacket, MSG_TYPE_REQUEST, MSG_TYPE_PUSH
+from msgpacket import MsgPacket, MSG_TYPE_REQUEST
 
 from server.config import settings
 from server.infra.mq import MessageQueueClient

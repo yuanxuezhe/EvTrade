@@ -16,7 +16,6 @@ from fastapi import Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from server.auth.deps import get_current_user
-from server.enums.trading import PriceType
 from server.db import get_db
 from server.models.orm import Order, SysStatus
 from server.models.user import User

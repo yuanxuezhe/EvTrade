@@ -17,7 +17,7 @@ from typing import Optional
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from server.models.orm import Order, OrderNoSeq, SysStatus
+from server.models.orm import Order, SysStatus
 
 
 # ================================================================

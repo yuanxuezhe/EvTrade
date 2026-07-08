@@ -8,8 +8,6 @@ test_models.py — Strategy 4 张 ORM 单测
 - cascade delete：删 Strategy → Regime/Grid/Audit 全部级联
 - JSON 字段 round-trip：set_required_flags(['ma_bullish']) → get_required_flags() == ['ma_bullish']
 """
-import json
-import pytest
 
 
 def test_strategy_table_exists_and_has_type():
@@ -37,7 +35,7 @@ def test_order_has_user_def_index():
 
 def test_strategy_relationships_and_cascade():
     """Strategy ↔ Regime ↔ Grid 三层 relationship + cascade 配置正确"""
-    from server.services.strategy.models import Strategy, StrategyRegime, StrategyGrid
+    from server.services.strategy.models import Strategy, StrategyRegime
     s_rel = Strategy.__mapper__.relationships
     assert "regimes" in s_rel
     # SQLAlchemy 1.4 CascadeOptions 用 save-update / delete / delete-orphan 等字符串属性

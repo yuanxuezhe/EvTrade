@@ -14,7 +14,7 @@ strategy — 纯函数指标层（change strategy_trade task 3）
 - Python 3.6.8 兼容：Optional[T] / Tuple[T, T, T] typing，不用 | / dict[] PEP 604/585 语法
 """
 from collections import deque
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Optional, Tuple, List, Sequence
 import math
 

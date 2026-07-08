@@ -258,7 +258,7 @@ async def test_engine_sell_before_buy_in_actions(db, mock_ord_stk, mock_ws_broad
 async def test_engine_smoke_imports():
     """sanity: import 不报错"""
     from server.services.strategy.engine import (
-        StrategyEngine, EvaluateResult, STRATEGY_WS_CHANNEL,
+        EvaluateResult, STRATEGY_WS_CHANNEL,
     )
     assert STRATEGY_WS_CHANNEL == "strategy_update"
     assert EvaluateResult(strategy_id=1).strategy_id == 1

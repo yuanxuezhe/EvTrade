@@ -16,8 +16,7 @@ t0.py — T0 一键买卖 + 配平系数 + 费率
 - slippage         默认 0.001（滑点，备用）
 - 真实已实现盈亏算法见 services.t0.aggregate_api.calc_realized_pnl
 """
-from decimal import Decimal, ROUND_DOWN, ROUND_UP
-from typing import Optional, Tuple
+from typing import Tuple
 
 from server.db import db_session
 from server.models.orm import FeeConfig

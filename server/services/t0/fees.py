@@ -7,9 +7,7 @@ t0_fees.py — T0 费率与精度工具
 - 共享常量: 失败单状态 / 买卖方向码
 """
 from decimal import Decimal, ROUND_HALF_UP
-from typing import Tuple
 
-from server.models.orm import FeeConfig
 
 
 # 失败单状态：废单不计入

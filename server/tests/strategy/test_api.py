@@ -12,7 +12,6 @@ test_api.py — strategy REST API 单测（task 9）
 """
 import sys
 import os
-from datetime import datetime
 
 import pytest
 from fastapi.testclient import TestClient
@@ -23,7 +22,6 @@ from dataclasses import replace
 
 from server.db import Base, engine, init_db, SessionLocal
 from server.config import settings
-from server.models.orm import Order, Trade
 from server.models.user import User
 from server.auth.security import hash_password, create_access_token
 from server.services.strategy import repository as strat_repo

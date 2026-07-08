@@ -10,7 +10,7 @@ time.py — 时间工具集（v10 rpc-field-alignment-ts-unify）
 Push helpers 和 ORM 模型共用此模块。
 """
 from datetime import datetime, timezone
-from typing import Any, Optional
+from typing import Optional
 
 
 def _utcnow():

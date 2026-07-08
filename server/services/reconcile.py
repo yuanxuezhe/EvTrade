@@ -22,7 +22,6 @@ from datetime import datetime, timezone
 from typing import Dict, Any, List
 from sqlalchemy.orm import Session
 
-from server.db import SessionLocal
 from server.rpc.client import qry_positions, qry_asset
 from server.models.orm import (
     Position, Asset, SysStatus, ReconcileConfig, ReconcileReport,

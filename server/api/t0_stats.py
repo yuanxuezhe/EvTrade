@@ -22,7 +22,6 @@ from collections import defaultdict
 from datetime import datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
-from sqlalchemy import func
 from pydantic import BaseModel
 from typing import List, Optional
 

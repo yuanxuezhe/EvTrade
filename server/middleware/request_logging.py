@@ -24,7 +24,6 @@ from typing import List
 
 from fastapi import Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.types import ASGIApp
 
 from server.utils.logflow import (
     DIR_FRONT_TO_SVC,

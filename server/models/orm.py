@@ -24,8 +24,7 @@ change add-manual-adjust-and-history-pages (v12):
   - Asset / Position 的 synced_from 支持 'manual' 标记（admin 调平）
 """
 from sqlalchemy import (
-    Column, Integer, String, Float, Text, DateTime, Boolean,
-    CheckConstraint, Index, UniqueConstraint, Time,
+    Column, Integer, String, Float, Text, DateTime, CheckConstraint, Index, Time,
 )
 from server.db import Base
 from server.utils.time import _utcnow

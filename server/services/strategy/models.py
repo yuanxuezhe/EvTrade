@@ -16,7 +16,7 @@ JSON 字段（required_flags / exclude_flags / flags_active / action_payload）�
 """
 from sqlalchemy import (
     Column, Integer, String, Float, Text, DateTime, Boolean,
-    Index, UniqueConstraint, CheckConstraint, ForeignKey,
+    Index, ForeignKey,
 )
 from sqlalchemy.orm import relationship
 

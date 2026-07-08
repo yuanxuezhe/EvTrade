@@ -1,8 +1,6 @@
 from fastapi import WebSocket
 from typing import Dict, Set, Optional
-import json
 
-from server.auth.security import decode_token
 # v10 增: WS 广播日志 (server-interaction-logging REQ-LOG-003)
 #   顶层 import 走 lazy (在 broadcast 函数内), 避免触发 logflow 的循环链
 #   实际上 ws.manager 不在循环链上, 但保持一致风格

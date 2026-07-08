@@ -7,7 +7,6 @@ test_grid.py — 网格决策 + 底仓保护单测（task 5）
 - plan_clear：全卖
 - evaluate_grids：sell 优先 / clear_position 插入首位 / disabled 跳过
 """
-import pytest
 
 
 # ─────────────── Helpers ───────────────
@@ -243,7 +242,7 @@ def test_evaluate_grids_keeps_reject_actions_for_audit():
 
 def test_smoke_imports():
     from server.services.strategy.grid import (
-        GridAction, plan_buy, plan_sell, plan_clear, evaluate_grids, LOT_SIZE,
+        GridAction, LOT_SIZE,
     )
     assert LOT_SIZE == 100
     assert GridAction.__dataclass_params__.frozen is True

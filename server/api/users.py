@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from server.db import get_db
 from server.models.user import User
 from server.auth.security import hash_password
-from server.auth.deps import require_admin, get_current_user
+from server.auth.deps import require_admin
 
 router = APIRouter()
 

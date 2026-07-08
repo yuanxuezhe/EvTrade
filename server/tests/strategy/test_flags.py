@@ -15,7 +15,6 @@ test_flags.py — 9-flag 注册表 + detect_flags 单测（task 4）
 - macd_cross 短 buffer 不触发
 - detect_flags 返 Set[str]
 """
-import pytest
 
 
 # ─────────────── Registry / Definitions ───────────────

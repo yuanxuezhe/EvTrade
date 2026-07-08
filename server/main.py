@@ -19,7 +19,6 @@ import os
 from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
 
-from server.db import SessionLocal
 from server.auth.deps import get_current_user
 from server.api import positions, holdings, orders, trades, asset, auth as auth_api, users as users_api
 from server.api import clock, fee_config

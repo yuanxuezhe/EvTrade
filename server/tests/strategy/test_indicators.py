@@ -224,7 +224,6 @@ def test_vol_avg_nan_returns_none():
 def test_smoke_imports():
     from server.services.strategy.indicators import (
         TickBuffer, IndicatorParams,
-        compute_ma, compute_rsi, compute_macd, compute_vol_avg,
     )
     assert TickBuffer is not None
     assert IndicatorParams.standard().macd_fast == 12
