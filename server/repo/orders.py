@@ -44,19 +44,29 @@ def next_order_no(db: Session) -> str:
     注意：调用方不需要再 commit (函数已 commit)。
     """
     # 步 1: 兜底初始化 (id=1 不存在时插入 last_value=10000000)
-    db.execute(text("""
-        INSERT OR IGNORE INTO order_no_seq (id, last_value, updated_at)
-        VALUES (1, 10000000, CURRENT_TIMESTAMP)
-    """))
+    # v18 修复 MySQL 兼容: (a) `last_value` 是 MySQL 8.0 保留字必须反引号包裹
+    #                       (b) `INSERT OR IGNORE` 是 sqlite 方言，MySQL 是 `INSERT IGNORE`
+    bind = db.get_bind()
+    is_mysql = bind.dialect.name == "mysql"
+    if is_mysql:
+        db.execute(text("""
+            INSERT IGNORE INTO order_no_seq (`id`, `last_value`, `updated_at`)
+            VALUES (1, 10000000, CURRENT_TIMESTAMP)
+        """))
+    else:
+        db.execute(text("""
+            INSERT OR IGNORE INTO order_no_seq (`id`, `last_value`, `updated_at`)
+            VALUES (1, 10000000, CURRENT_TIMESTAMP)
+        """))
     # 步 2: 自增
     db.execute(text("""
         UPDATE order_no_seq
-        SET last_value = last_value + 1, updated_at = CURRENT_TIMESTAMP
-        WHERE id = 1
+        SET `last_value` = `last_value` + 1, `updated_at` = CURRENT_TIMESTAMP
+        WHERE `id` = 1
     """))
     # 步 3: 读出
     val = db.execute(text(
-        "SELECT last_value FROM order_no_seq WHERE id = 1"
+        "SELECT `last_value` FROM order_no_seq WHERE `id` = 1"
     )).scalar()
     if val is None:
         raise RuntimeError("order_no_seq 读取失败")
