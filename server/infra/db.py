@@ -137,9 +137,11 @@ def init_db():
     from server.services.strategy import models as strategy_models  # noqa: F401
     from sqlalchemy import text
 
-    # 用 admin URL 创建 engine（与业务 engine 隔离 — admin engine 不写 pool）
+    # v20: admin engine 重新计算 pool_kwargs (不重用模块级 _engine_kwargs)
+    # 之前复用 _engine_kwargs 在 SQLite fallback 场景会把 check_same_thread 传给 MySQL
+    # admin engine (pymysql 不识别该参数 → TypeError)
     admin_url = os.environ.get("EVTRADE_DB_ADMIN_URL", DATABASE_URL)
-    admin_engine = create_engine(admin_url, **_engine_kwargs)
+    admin_engine = create_engine(admin_url, **_pool_kwargs(admin_url))
 
     Base.metadata.create_all(bind=admin_engine)
 
