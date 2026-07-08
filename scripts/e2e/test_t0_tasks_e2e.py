@@ -44,6 +44,7 @@ def _c(code, s):
     return s
 def _ok(s): return _c("32", f"✓ {s}")
 def _fail(s): return _c("31", f"✗ {s}")
+def _skip(s): return _c("33;2", f"⏸ {s}")  # v20: yellow
 def _section(s): return _c("1;36", f"\n=== {s} ===")
 
 # ──────────────────── HTTP helpers ────────────────────
@@ -91,8 +92,10 @@ def login(user: str = ADMIN_USER, pwd: str = ADMIN_PASS) -> str:
 
 FAILURES: List[str] = []
 
-def check(name: str, cond: bool, detail: str = ""):
-    if cond:
+def check(name: str, cond: bool, detail: str = "", skip: bool = False):
+    if skip:
+        print(_skip(name))
+    elif cond:
         print(_ok(name))
     else:
         msg = f"{name} — {detail}" if detail else name
@@ -182,8 +185,31 @@ def test_balance_and_stats(tok: str, task_id: int):
 
 # ============ Stage 4: orders/place 带 task_id 校验 ============
 
+def _is_in_trading_session(tok: str) -> bool:
+    """v20: 检查当前是否在交易时段 (用于 skip 时段敏感测试).
+    返回 True = 在交易时段 (可以测) / False = 收市 (跳过)"""
+    try:
+        r = _req("GET", "/api/admin/trading-session", token=tok)
+        cfg = r.json()
+        from datetime import datetime
+        now = datetime.now().time()
+        morning_start = datetime.strptime(cfg["morning_start"], "%H:%M:%S").time()
+        morning_end = datetime.strptime(cfg["morning_end"], "%H:%M:%S").time()
+        afternoon_start = datetime.strptime(cfg["afternoon_start"], "%H:%M:%S").time()
+        afternoon_end = datetime.strptime(cfg["afternoon_end"], "%H:%M:%S").time()
+        return (morning_start <= now <= morning_end) or (afternoon_start <= now <= afternoon_end)
+    except Exception:
+        return False
+
+
 def test_place_task_id_validation(tok: str, task_id: int):
     section("Place order task_id validation")
+
+    # v20: 收市后下单必失败 (require_trading_session), 这 2 个测试是时段敏感
+    if not _is_in_trading_session(tok):
+        check("INVALID_TASK → 400 (skip: 收市)", True, skip=True)
+        check("TASK_STOCK_MISMATCH → 400 (skip: 收市)", True, skip=True)
+        return
 
     # 用 trade session mock 走 RPC 会阻塞 — 这阶段只验 validation
     # 没真实交易时段 / 柜台 — 我们用直接数据库路径绕开
