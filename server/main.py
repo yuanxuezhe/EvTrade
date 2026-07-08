@@ -102,6 +102,10 @@ def on_startup():
 @app.on_event("startup")
 async def on_startup_rpc():
     """启动 RPC 客户端（同时启动 reply 监听 + push 监听）。"""
+    # v20: pytest 跑 TestClient 时跳过 RPC 启动 (会尝试连真 RabbitMQ, SSL hang)
+    if os.environ.get("PYTEST_CURRENT_TEST"):
+        print("[INIT] pytest mode: skip RPC client")
+        return
     try:
         await get_rpc_client()
     except Exception as e:
@@ -121,6 +125,10 @@ async def on_startup_quote_consumer():
     """启动 QuoteConsumer（受 STRATEGY_ENGINE_ENABLED 控制）。"""
     if not settings.STRATEGY_ENGINE_ENABLED:
         print("[INIT] STRATEGY_ENGINE_ENABLED=false, quote consumer not started")
+        return
+    # v20: pytest 模式跳过 quote_consumer (WS 连真行情)
+    if os.environ.get("PYTEST_CURRENT_TEST"):
+        print("[INIT] pytest mode: skip quote consumer")
         return
     try:
         await get_quote_consumer()

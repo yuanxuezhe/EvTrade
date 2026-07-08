@@ -38,12 +38,35 @@ class _FakeQuoteConsumer:
         pass
 
 
-@pytest.fixture(autouse=True)
-def fresh_db():
+@pytest.fixture(scope="module", autouse=True)
+def module_init_db():
+    # v20: 每个 module 跑一次 init_db (确保所有表存在 + admin seed)
+    # 解决 fixture drop_all 后 init_db 漏 import 导致表缺失/用户丢的问题
     Base.metadata.drop_all(bind=engine)
     init_db()
     yield
     SessionLocal().close()
+
+
+@pytest.fixture(autouse=True)
+def fresh_db():
+    # v20: 只清测试相关表的数据 (保留 users + sys_status)
+    # 避免 drop_all + init_db 漏 import 问题
+    from server.db import SessionLocal as _SL
+    KEEP_TABLES = {"users", "sys_status", "trading_session", "fee_config",
+                   "reconcile_config", "reconcile_report", "quote_snapshots",
+                   "order_no_seq", "strategy_audit"}
+    for tbl in reversed(Base.metadata.sorted_tables):
+        if tbl.name in KEEP_TABLES:
+            continue
+        try:
+            _SL().execute(tbl.delete())
+            _SL().commit()
+        except Exception:
+            _SL().rollback()
+    _SL().close()
+    yield
+    _SL().close()
 
 
 @pytest.fixture
