@@ -17,7 +17,6 @@ import time
 from typing import Dict, Optional
 
 from server.db import db_session
-from server.services.strategy import repository as repo
 from server.services.strategy.engine import StrategyEngine
 from server.services.strategy.indicators import IndicatorParams
 from server.ws.manager import ws_manager  # change ws-quote-fanout: 让前端 /ws/quote_update 也能收到 tick
@@ -217,7 +216,6 @@ class QuoteConsumer:
         try:
             with db_session() as db:
                 # list_strategies 不带 status 过滤，先全查，再筛 active
-                all_strats = repo.list_strategies(db, user_id=None) if False else None
                 # 用 SQLAlchemy 直接查更清晰
                 from server.services.strategy.models import Strategy
                 strats = db.query(Strategy).filter(Strategy.status == "active").all()
