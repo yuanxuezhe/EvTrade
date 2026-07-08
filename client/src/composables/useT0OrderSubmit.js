@@ -22,7 +22,7 @@ import { ElMessage } from 'element-plus'
 import { formatPrice } from '../utils/format'
 
 export function useT0OrderSubmit({ stockCode, priceType, balanceCoeff, submitting, orderStore, onAfterSuccess }) {
-  async function submitOrder({ orderType, volume, price }) {
+  async function submitOrder({ orderType, volume, price, taskId = null }) {
     submitting.value = true
     try {
       const priceTypeCode = priceType.value === 'market' ? 44
@@ -38,6 +38,7 @@ export function useT0OrderSubmit({ stockCode, priceType, balanceCoeff, submittin
         volume: volume,
         t0_coefficient: balanceCoeff.value,
         user_def: 'T0',  // T0 页面下单调标记
+        ...(taskId ? { task_id: taskId } : {}),  // v18: 选定的 task 写回 (向后兼容 = null)
       })
       if (res) {
         const dir = orderType === '23' ? '买' : '卖'

@@ -29,6 +29,30 @@
 
     <!-- quota frame: 5 个账户级 metric pill (change-quota-frame) -->
     <div class="quota-frame">
+      <!-- v18: T0 任务快速选择器 (按当前选中 stock_code 自动过滤) -->
+      <el-tooltip content="选择/取消当前做T归属的 task；新建请用下方按钮" placement="top">
+        <el-select
+          v-model="selectedTaskId"
+          placeholder="归属 task (可选)"
+          clearable
+          size="small"
+          filterable
+          class="t0-task-quick-select"
+          @clear="selectedTaskId = null"
+          no-data-text="暂无活跃 task，请新建"
+        >
+          <el-option
+            v-for="t in filteredActiveTasks"
+            :key="t.id"
+            :value="t.id"
+            :label="`#${t.id} ${t.stock_code} (base+target=${t.base_volume + t.target_volume})`"
+          />
+        </el-select>
+      </el-tooltip>
+      <el-button size="small" link type="primary" @click="onManageTasks">
+        管理任务
+      </el-button>
+      <span class="qs-divider">|</span>
       <div class="qf-pill" data-pill="cashAvail">
         <span class="qf-label">现金余量</span>
         <span class="qf-value text-mono">¥{{ formatAmount(quotaAggregate.cashAvail) }}</span>
@@ -365,6 +389,33 @@
         </footer>
       </div>
     </el-drawer>
+
+    <!-- v18: T0Task 管理抽屉 -->
+    <el-drawer v-model="tasksDrawerVisible" title="T0 任务管理" size="70%" direction="rtl"
+      :close-on-click-modal="false">
+      <T0TaskList
+        :visible="tasksDrawerVisible"
+        embedding="drawer"
+        @detail="onOpenTaskDetail"
+        @balance="onBalanceTask"
+        @close="onCloseTask"
+        @create="createDialogVisible = true"
+      />
+    </el-drawer>
+
+    <!-- v18: T0Task 单任务详情抽屉 -->
+    <el-drawer v-model="tasksDetailVisible" :title="`task #${viewingTaskId} 详情`" size="55%" direction="rtl"
+      :close-on-click-modal="false">
+      <T0TaskDetail v-if="tasksDetailVisible" :task-id="viewingTaskId" embedding="drawer" />
+    </el-drawer>
+
+    <!-- v18: T0Task 创建弹窗 -->
+    <T0TaskCreateDialog
+      v-model="createDialogVisible"
+      :loading="createDialogLoading"
+      :default-stock-code="stockCode"
+      @submit="onCreateTaskSubmit"
+    />
   </div>
 </template>
 
@@ -390,6 +441,12 @@ import { useT0Keybindings } from '../composables/useT0Keybindings'
 import { useT0Quota, quotaLevel } from '../composables/useT0Quota'
 import { useUiStore } from '../stores/ui'
 import { t0StatsApi } from '../api/t0_stats'
+// v18 change t0-task-management: 集成 T0Task 快速选择器 + 管理面板抽屉
+import { useT0TasksStore } from '../stores/t0_tasks'
+import T0TaskList from '../components/trade/T0TaskList.vue'
+import T0TaskDetail from '../components/trade/T0TaskDetail.vue'
+import T0TaskCreateDialog from '../components/trade/T0TaskCreateDialog.vue'
+import { t0TasksApi } from '../api/t0_tasks'
 import { formatNumber, formatPrice, formatAmount } from '../utils/format'
 import { useT0ChartGeometry, useT0DrawerChartGeometry } from '../composables/useT0ChartGeometry'
 import { useT0OrderSubmit } from '../composables/useT0OrderSubmit'
@@ -402,6 +459,8 @@ const orderStore = useOrderStore()
 const quoteStore = useQuoteStore()
 const assetStore = useAssetStore()
 const uiStore = useUiStore()
+// v18 change t0-task-management: T0Task 缓存 store（便于按 stock_code 自动过滤下拉）
+const t0TasksStore = useT0TasksStore()
 const { positions } = storeToRefs(holdingsStore)
 const { asset: assetData } = storeToRefs(assetStore)
 
@@ -409,6 +468,73 @@ const { asset: assetData } = storeToRefs(assetStore)
 const stockCode = ref(null)
 const submitting = ref(false)
 const refreshing = ref(false)
+
+// v18: T0Task 快速选择器 + 管理抽屉
+const selectedTaskId = ref(null)            // 当前下单归属 task；null = 不归属
+const tasksDrawerVisible = ref(false)      // 管理面板抽屉
+const tasksDetailVisible = ref(false)      // 单 task 详情抽屉
+const viewingTaskId = ref(null)            // 详情查看中的 task
+const createDialogVisible = ref(false)     // 新建 task 弹窗
+const createDialogLoading = ref(false)
+
+// 按当前选中 stock_code 自动过滤活跃 task
+const filteredActiveTasks = computed(() => {
+  const all = t0TasksStore.activeTasks || []
+  if (!stockCode.value) return all
+  return all.filter((t) => t.stock_code === stockCode.value)
+})
+// 选中行变化时，如果当前 task 不再适用, 清空
+watch([stockCode, filteredActiveTasks], ([code, list]) => {
+  if (selectedTaskId.value && !list.find((t) => t.id === selectedTaskId.value)) {
+    // 当前 task 不在过滤列表 — 自动清空 (stock_code 不匹配 或 task 不再 active)
+    selectedTaskId.value = null
+  }
+})
+
+async function onManageTasks() {
+  tasksDrawerVisible.value = true
+  // 每次打开都拉一次最新（保证对账/查看最新统计）
+  await t0TasksStore.loadTasks()
+}
+
+function onOpenTaskDetail(taskId) {
+  viewingTaskId.value = taskId
+  tasksDetailVisible.value = true
+}
+
+// 接住子组件的 balance/close 事件 → 调对应 store action
+async function onBalanceTask(taskId) {
+  try {
+    const r = await t0TasksStore.balanceTask(taskId)
+    const dir = r.action === 'BUY' ? '买入' : r.action === 'SELL' ? '卖出' : '无需操作'
+    ElMessage.info(`task #${taskId} 配平建议：${dir} ${r.volume} 股 — ${r.reason}`)
+  } catch (e) { /* ElMessage 已被拦截器弹 */ }
+}
+async function onCloseTask(taskId) {
+  if (!confirm(`确认一键平仓 task #${taskId} 到 base_volume？将生成平仓委托`)) return
+  try {
+    const r = await t0TasksStore.closeTask(taskId)
+    ElMessage.success(`task #${taskId} 已平仓：${r.action} ${r.volume} 股`)
+    await t0TasksStore.loadTasks()  // 刷新概览
+  } catch (e) {}
+}
+
+async function onCreateTaskSubmit(form) {
+  createDialogLoading.value = true
+  try {
+    const t = await t0TasksStore.createTask(form)
+    if (t && t.id) {
+      ElMessage.success(`task #${t.id} 创建成功，自动选中`)
+      // 自动选中新创建的 task（如果 stock_code 匹配当前选中）
+      if (t.stock_code === stockCode.value) {
+        selectedTaskId.value = t.id
+      }
+    }
+    createDialogVisible.value = false
+  } finally {
+    createDialogLoading.value = false
+  }
+}
 
 // ---- 抽屉控制 (保持原有功能) ----
 const drawerVisible = ref(false)
@@ -658,7 +784,7 @@ const { submitOrder } = useT0OrderSubmit({
   onAfterSuccess: () => loadAllT0Stats(),
 })
 
-// ---- M-008 v3: 行内快捷买卖 ----
+// ---- M-008 v3: 行内快捷买卖 (v18: 把 selectedTaskId 透传给下单) ----
 function onQuickBuy(row) {
   if (isBuyDisabled(row)) return ElMessage.warning(`${row.stock_code} 持仓为 0, 无法按比例买`)
   const r = buildQuickOrder(row, 'buy', quickPct.value, quickPriceType.value)
@@ -666,7 +792,7 @@ function onQuickBuy(row) {
   ElMessageBox.confirm(
     `${row.stock_code} 买 ${r.qty} 股 (${r.label})`,
     '一键买入', { confirmButtonText: '确认买入', cancelButtonText: '取消', type: 'info' }
-  ).then(() => submitOrder({ orderType: '23', volume: r.qty, price: r.price }))
+  ).then(() => submitOrder({ orderType: '23', volume: r.qty, price: r.price, taskId: selectedTaskId.value }))
     .catch(() => {})
 }
 function onQuickSell(row) {
@@ -675,7 +801,7 @@ function onQuickSell(row) {
   ElMessageBox.confirm(
     `${row.stock_code} 卖 ${r.qty} 股 (${r.label})`,
     '一键卖出', { confirmButtonText: '确认卖出', cancelButtonText: '取消', type: 'warning' }
-  ).then(() => submitOrder({ orderType: '24', volume: r.qty, price: r.price }))
+  ).then(() => submitOrder({ orderType: '24', volume: r.qty, price: r.price, taskId: selectedTaskId.value }))
     .catch(() => {})
 }
 function onQuickBalance(row) {
@@ -684,10 +810,14 @@ function onQuickBalance(row) {
   const r = buildQuickOrder(row, bal.side, 100, quickPriceType.value)
   if (r.error) return ElMessage.warning(r.error)
   r.qty = bal.qty
+  // 配平操作强烈建议绑定 task (否则无法正确归类), 给提示
+  if (!selectedTaskId.value) {
+    ElMessage.warning('未选 task，配平操作不会被归类。建议先在上方选 task。')
+  }
   ElMessageBox.confirm(
     `${row.stock_code} ${bal.side === 'buy' ? '买入' : '卖出'} ${bal.qty} 股 配平 (净额归零)`,
     '一键配平', { confirmButtonText: '确认配平', cancelButtonText: '取消', type: 'info' }
-  ).then(() => submitOrder({ orderType: bal.side === 'buy' ? '23' : '24', volume: bal.qty, price: r.price }))
+  ).then(() => submitOrder({ orderType: bal.side === 'buy' ? '23' : '24', volume: bal.qty, price: r.price, taskId: selectedTaskId.value }))
     .catch(() => {})
 }
 
@@ -713,6 +843,8 @@ function onEscapeKey(e) {
 // ---- 初始化 ----
 onMounted(async () => {
   await loadAllT0Stats()
+  // v18: 加载 task 列表（用于头部下拉 + 管理面板）
+  t0TasksStore.loadTasks().catch(() => {})
   // 默认选中第一个持仓
   if (!stockCode.value && holdingsPositions.value.length > 0) {
     stockCode.value = holdingsPositions.value[0].stock_code
