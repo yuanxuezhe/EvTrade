@@ -130,7 +130,7 @@ def update_user(
         _validate_role(payload.role)
         # Prevent demoting the last admin
         if user.role == "admin" and payload.role != "admin":
-            admin_count = db.query(User).filter(User.role == "admin", User.is_active == True).count()
+            admin_count = db.query(User).filter(User.role == "admin", User.is_active).count()
             if admin_count <= 1:
                 raise HTTPException(status_code=400, detail="必须至少保留一个管理员")
         user.role = payload.role
@@ -144,7 +144,7 @@ def update_user(
         if user.id == admin.id and not payload.is_active:
             raise HTTPException(status_code=400, detail="不能禁用当前登录账号")
         if user.role == "admin" and not payload.is_active:
-            admin_count = db.query(User).filter(User.role == "admin", User.is_active == True).count()
+            admin_count = db.query(User).filter(User.role == "admin", User.is_active).count()
             if admin_count <= 1:
                 raise HTTPException(status_code=400, detail="必须至少保留一个启用的管理员")
         user.is_active = payload.is_active

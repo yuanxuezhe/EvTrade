@@ -67,7 +67,7 @@ def main():
         try:
             with biz_engine.begin() as conn:
                 if not column_exists(conn, "orders", "raw_id"):
-                    print(f"[WARN] column exists via admin but NOT via business URL — check permissions")
+                    print("[WARN] column exists via admin but NOT via business URL — check permissions")
                     sys.exit(2)
                 print("[VERIFY] column visible via business URL ✓")
         finally:
