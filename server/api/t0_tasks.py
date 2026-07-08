@@ -117,7 +117,13 @@ class TaskStatsOut(BaseModel):
     task: dict
     summary: dict
     daily: List[dict]
-    by_stock: List[dict]
+
+
+class GlobalStatsResponse(BaseModel):
+    """v18: 全局 stats (admin only) - 跨用户/跨 task 聚合"""
+    summary: dict        # {active_task_count, closed_task_count, total_realized_pnl, ...}
+    by_stock: List[dict] # [{stock_code, realized_pnl, net_volume, task_count}]
+    daily: List[dict]    # [{trd_date, realized_pnl, commission, stamp_tax}]
 
 
 # ──────── Helpers ────────
@@ -204,6 +210,37 @@ async def get_overview(
         db, user_id=user.id, is_admin=_user_is_admin(user),
     )
     return OverviewResponse(**o)
+
+
+@router.get("/stats", response_model=GlobalStatsResponse)
+async def get_global_stats(
+    user: User = Depends(require_admin),  # v18: 全局 stats 仅 admin 可见
+    db: Session = Depends(get_db),
+):
+    """全局 stats (all users + 跨期). admin only.
+
+    必放在 '/{task_id}' 前 — FastAPI 路由按声明顺序匹配, 否则会被吃成 task_id='stats'。
+
+    daily 字段: 跨 task 跨日明细聚合成本高 (N×M) — v18 暂留空 list,
+    v19 可补 SQL GROUP BY trd_date 优化。
+    """
+    o = t0_tasks_service.list_overview(db, user_id=user.id, is_admin=True)
+    bs = t0_tasks_service.list_overview_by_stock(db, user_id=user.id, is_admin=True)
+    return GlobalStatsResponse(
+        summary={
+            'active_task_count': o['active_task_count'],
+            'closed_task_count': o['closed_task_count'],
+            'archived_task_count': o['archived_task_count'],
+            'total_realized_pnl': o['total_realized_pnl'],
+            'total_unrealized_pnl': o['total_unrealized_pnl'],
+            'total_commission': o['total_commission'],
+            'total_stamp_tax': o['total_stamp_tax'],
+            'avg_win_rate': o['avg_win_rate'],
+            'total_trading_days': o['total_trading_days'],
+        },
+        by_stock=bs,
+        daily=[],  # 跨 task 跨日聚合 v19 补
+    )
 
 
 @router.get("/by-stock", response_model=List[ByStockOut])

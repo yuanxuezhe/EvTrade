@@ -168,14 +168,16 @@ def update_task(
 
 
 def delete_task(db: Session, task_id: int, user_id: int, is_admin: bool = False) -> bool:
-    """删除 task. 仅 archived 状态可删; 同时 set orders.task_id = NULL."""
+    """删除 task. active/closed 可删 (误建可立即删); archived 视为长期记录不允许硬删.
+    同时 set orders.task_id = NULL.
+    """
     t = db.query(T0Task).filter(T0Task.id == task_id).first()
     if not t:
         return False
     if not is_admin and t.user_id != user_id:
         return False
-    if t.status != 'archived':
-        raise ValueError(f"仅 archived 状态可删, 当前 {t.status}")
+    if t.status == 'archived':
+        raise ValueError(f"archived 状态不允许硬删 (请保留做长期记录), 当前 {t.status}")
 
     # 关联 orders.task_id 置 NULL (保留审计)
     db.query(Order).filter(Order.task_id == task_id).update({"task_id": None})
