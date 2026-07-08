@@ -25,6 +25,7 @@ from server.api import positions, holdings, orders, trades, asset, auth as auth_
 from server.api import clock, fee_config
 from server.api import system as system_api  # v8: 系统级查询（active-day）
 from server.api import t0_stats, t0_aggregate
+from server.api import t0_tasks  # v18 change t0-task-management
 from server.api import strategy as strategy_api  # change strategy_trade task 9
 from server.api.admin import sys_status as admin_sys_status, reconcile as admin_reconcile, session as admin_session
 from server.middleware.request_logging import RequestLoggingMiddleware
@@ -149,6 +150,7 @@ app.include_router(holdings.router, prefix="/api/holdings", tags=["holdings"], d
 app.include_router(orders.router, prefix="/api/orders", tags=["orders"], dependencies=_AUTH)
 app.include_router(t0_stats.router, prefix="/api/orders", tags=["t0-stats"], dependencies=_AUTH)
 app.include_router(t0_aggregate.router, prefix="/api/orders", tags=["t0-aggregate"], dependencies=_AUTH)
+app.include_router(t0_tasks.router, prefix="/api/t0-tasks", tags=["t0-tasks"], dependencies=_AUTH)  # v18
 app.include_router(trades.router, prefix="/api/trades", tags=["trades"], dependencies=_AUTH)
 app.include_router(asset.router, prefix="/api/asset", tags=["asset"], dependencies=_AUTH)
 app.include_router(fee_config.router, prefix="/api/fee-config", tags=["fee-config"], dependencies=_AUTH)
