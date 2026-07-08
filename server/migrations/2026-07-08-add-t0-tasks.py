@@ -124,6 +124,23 @@ def main():
             # ─── Step 4: 加 orders.task_id 索引 (幂等) ───
             _create_index_safe(conn, admin_engine, is_mysql, "orders", "ix_orders_task_id", "task_id")
 
+            # ─── Step 5: 补 t0_tasks.updated_at 列 (幂等, v18 fix) ───
+            # 原 commit 2 migration 漏了 updated_at, 但 spec §12 状态流转要求有
+            if column_exists(admin_engine, "t0_tasks", "updated_at"):
+                print("[SKIP] t0_tasks.updated_at already exists")
+            else:
+                if is_mysql:
+                    conn.execute(text(
+                        "ALTER TABLE t0_tasks ADD COLUMN updated_at DATETIME "
+                        "NOT NULL DEFAULT CURRENT_TIMESTAMP"
+                    ))
+                else:
+                    conn.execute(text(
+                        "ALTER TABLE t0_tasks ADD COLUMN updated_at DATETIME "
+                        "NOT NULL DEFAULT CURRENT_TIMESTAMP"
+                    ))
+                print("[OK] added column t0_tasks.updated_at (DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP)")
+
         # ─── Step 5: 用业务 URL 验证 ───
         biz_engine = create_engine(DATABASE_URL, future=True)
         try:

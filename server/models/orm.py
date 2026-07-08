@@ -385,4 +385,5 @@ class T0Task(Base):
     note = Column(String(255), nullable=True)
     created_trd_date = Column(String(8), nullable=False)
     created_at = Column(DateTime, nullable=False, default=_utcnow)
+    updated_at = Column(DateTime, nullable=False, default=_utcnow, onupdate=_utcnow)  # v18: status 流转时自动更新
     closed_at = Column(DateTime, nullable=True)
