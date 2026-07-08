@@ -32,17 +32,17 @@
       <div class="ovr-pill" data-pill="total-realized">
         <span class="ovr-label">整体已实现</span>
         <span class="ovr-value text-mono" :class="overviewClass">
-          ¥{{ formatAmount(overview.overall.realized_pnl || 0) }}
+          ¥{{ formatAmount(overview.total_realized_pnl || 0) }}
         </span>
       </div>
       <div class="ovr-pill" data-pill="active-count">
         <span class="ovr-label">活跃 task</span>
-        <span class="ovr-value text-mono">{{ overview.overall.active_count ?? tasks.length }}</span>
+        <span class="ovr-value text-mono">{{ overview.active_task_count ?? tasks.length }}</span>
       </div>
       <div class="ovr-pill" data-pill="win-rate">
         <span class="ovr-label">胜率</span>
         <span class="ovr-value text-mono">
-          {{ ((overview.overall.win_rate || 0) * 100).toFixed(1) }}%
+          {{ ((overview.avg_win_rate || 0) * 100).toFixed(1) }}%
         </span>
       </div>
     </div>
@@ -128,14 +128,15 @@ const emit = defineEmits(['create', 'balance', 'close', 'select'])
 const store = useT0TasksStore()
 const loading = computed(() => store.loading)
 const tasks = computed(() => store.tasks)
-const overview = computed(() => store.overviewData || { overall: {}, by_stock: [] })
+// 后端 OverviewResponse 字段是扁平 total_realized_pnl/active_task_count/avg_win_rate (v18)
+const overview = computed(() => store.overviewData || {})
 
 const filteredTasks = computed(() => {
   if (!props.statusFilter) return tasks.value
   return tasks.value.filter((t) => t.status === props.statusFilter)
 })
 
-const overviewClass = computed(() => pnlClass(overview.value.overall.realized_pnl || 0))
+const overviewClass = computed(() => pnlClass(overview.value.total_realized_pnl || 0))
 
 onMounted(() => {
   if (store.tasks.length === 0) store.loadTasks()

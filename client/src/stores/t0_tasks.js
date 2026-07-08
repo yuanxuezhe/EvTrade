@@ -23,8 +23,8 @@ export const useT0TasksStore = defineStore('t0_tasks', () => {
   const tasks = ref([])
   /** @type {import('vue').Ref<Record<number, Object>>} task by id */
   const tasksById = ref({})
-  /** @type {import('vue').Ref<Array>} overall overview {overall, by_stock} */
-  const overviewData = ref({ overall: {}, by_stock: [] })
+  /** @type {import('vue').Ref<Object>} 后端 OverviewResponse 扁平字段 (total_realized_pnl/active_task_count/avg_win_rate/...) */
+  const overviewData = ref({})
 
   // ---- 运行时状态 -------------------------------------------------------
   const loading = ref(false)
@@ -65,7 +65,7 @@ export const useT0TasksStore = defineStore('t0_tasks', () => {
       const m = {}
       for (const t of tasks.value) m[t.id] = t
       tasksById.value = m
-      overviewData.value = overview || { overall: {}, by_stock: [] }
+      overviewData.value = overview || {}
       lastUpdated.value = Date.now()
     } catch (e) {
       error.value = e?.msg || e?.message || '加载 task 列表失败'
@@ -136,7 +136,7 @@ export const useT0TasksStore = defineStore('t0_tasks', () => {
   function clearCache() {
     tasks.value = []
     tasksById.value = {}
-    overviewData.value = { overall: {}, by_stock: [] }
+    overviewData.value = {}
     lastUpdated.value = 0
   }
 
