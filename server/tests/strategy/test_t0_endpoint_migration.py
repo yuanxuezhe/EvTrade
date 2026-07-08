@@ -161,8 +161,8 @@ def test_apply_user_def_filter_with_db_unions_manual_and_strategy():
     try:
         s = _mk_strategy(db, "600519.SH", "t0")
         _mk_strategy(db, "600519.SH", "general")  # 不应计入
-        o1 = _mk_order(db, "O1", "T0")
-        o2 = _mk_order(db, "O2", str(s.id))
+        _mk_order(db, "O1", "T0")
+        _mk_order(db, "O2", str(s.id))
         _mk_order(db, "O3", "99")  # 普通单，不应计入
         _mk_trade(db, "T1", "O1")
         _mk_trade(db, "T2", "O2")

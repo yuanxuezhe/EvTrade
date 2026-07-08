@@ -17,10 +17,10 @@ Mock 策略：
 """
 import pytest
 
-# pytest-asyncio 0.16 不识别 asyncio_mode=auto；显式标记整个模块 async
 pytestmark = pytest.mark.asyncio
 
-from server.services.strategy import repository as repo
+# 业务 import 必须在 pytestmark 后 (pytest 约定, pytest-asyncio 0.16 不识别 asyncio_mode=auto)
+from server.services.strategy import repository as repo  # noqa: E402  (pytestmark 强制)
 
 
 # ─────────────── Fixtures ───────────────
@@ -137,7 +137,7 @@ async def test_engine_buy_grid_trigger_places_order(db, mock_ord_stk, mock_ws_br
     eng = StrategyEngine(strategy_id=s.id, stock_code=s.stock_code)
 
     tick = {"last_price": 9.5, "volume": 100}  # ≤ 10.0 触发
-    result = await eng.evaluate_tick(
+    await eng.evaluate_tick(
         tick, position_vol=0, base_volume=100,
         prev_close=None, now_ts=1000.0, trd_date="20260705",
     )
@@ -169,7 +169,7 @@ async def test_engine_sell_floor_protected_no_order(db, mock_ord_stk, mock_ws_br
 
     tick = {"last_price": 11.0, "volume": 100}  # ≥ 10.0 触发
     # 持仓 100 / 底仓 100 → available=0 → 拒触发
-    result = await eng.evaluate_tick(
+    await eng.evaluate_tick(
         tick, position_vol=100, base_volume=100,
         prev_close=None, now_ts=1000.0, trd_date="20260705",
     )
@@ -188,7 +188,7 @@ async def test_engine_clear_position_dumps_all(db, mock_ord_stk, mock_ws_broadca
     eng = StrategyEngine(strategy_id=s.id, stock_code=s.stock_code)
 
     tick = {"last_price": 10.0, "volume": 100}
-    result = await eng.evaluate_tick(
+    await eng.evaluate_tick(
         tick, position_vol=150, base_volume=100,
         prev_close=None, now_ts=1000.0, trd_date="20260705",
     )
@@ -206,7 +206,7 @@ async def test_engine_regime_cooldown_blocks_switch(db, mock_ord_stk, mock_ws_br
     db.commit()
     # 创建两个 regime
     r1 = repo.create_regime(db, s.id, name="R1", priority=10, required_flags=["ma_bullish"])
-    r2 = repo.create_regime(db, s.id, name="R2", priority=20, required_flags=["ma_bullish"])
+    repo.create_regime(db, s.id, name="R2", priority=20, required_flags=["ma_bullish"])
     db.commit()
 
     eng = StrategyEngine(strategy_id=s.id, stock_code=s.stock_code)
@@ -244,7 +244,7 @@ async def test_engine_sell_before_buy_in_actions(db, mock_ord_stk, mock_ws_broad
     eng = StrategyEngine(strategy_id=s.id, stock_code=s.stock_code)
 
     tick = {"last_price": 10.0, "volume": 100}  # 同时满足买卖触发
-    result = await eng.evaluate_tick(
+    await eng.evaluate_tick(
         tick, position_vol=500, base_volume=100,  # 持仓 500/底仓 100，sell 可卖 400
         prev_close=None, now_ts=1000.0, trd_date="20260705",
     )
