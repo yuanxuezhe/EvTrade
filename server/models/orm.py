@@ -62,6 +62,12 @@ class Order(Base):
       cancel-row 写入时存 = 原 order_no；普通 strategy 委托 raw_id 永远为 NULL
       与 user_def="CANCEL:{orig.order_no}" 共存（结构化冗余，便于 JOIN 过滤）
       不加 NOT NULL DEFAULT — 旧 orders 数据无破坏（NULL fallback）
+    v18 NEW schema 改动（t0-task-management）:
+    - 加 task_id 字段（Integer，nullable=True）
+      关联 t0_tasks.id (REQ-TRADE-013)；NULL 表示无显式 task 关联
+      与 user_def='T0' 共存：有 task 的单同时写 user_def='T0' AND task_id=<id>；
+      无 task 的旧 T0 单保持 user_def='T0' AND task_id=NULL（向后兼容 REQ-TRADE-006）
+      加 ix_orders_task_id 索引（task 维度聚合 + balance 配平查询）
     """
     __tablename__ = "orders"
     __table_args__ = (
@@ -69,6 +75,7 @@ class Order(Base):
         Index("ix_orders_order_id", "order_id"),
         Index("ix_orders_stock", "stock_code"),
         Index("ix_orders_user_def", "user_def"),  # change strategy_trade: 支撑策略关联查询
+        Index("ix_orders_task_id", "task_id"),    # change t0-task-management: REQ-TRADE-013 task 维度聚合
     )
 
     trd_date = Column(String(8), primary_key=True, nullable=False)  # 交易日
@@ -89,6 +96,7 @@ class Order(Base):
     status_msg = Column(String(255), nullable=False, default="")
     order_time = Column(String(23), nullable=False, default="")  # v10: "YYYY-MM-DD HH:MM:SS.fff"
     raw_id = Column(String(8), nullable=True)  # v13 NEW: cancel-row 写 = 原 order_no；普通行 NULL
+    task_id = Column(Integer, nullable=True)    # v18 NEW: 关联 t0_tasks.id；NULL = 无显式 task
     created_at = Column(DateTime, nullable=False, default=_utcnow)
     updated_at = Column(
         DateTime, nullable=False, default=_utcnow, onupdate=_utcnow
@@ -342,3 +350,39 @@ class OrderNoSeq(Base):
     id = Column(Integer, primary_key=True, default=1)
     last_value = Column(Integer, nullable=False, default=10000000)  # 8 位起
     updated_at = Column(DateTime, nullable=False, default=_utcnow, onupdate=_utcnow)
+
+
+# ─────────────── T0 任务表 ───────────────
+
+class T0Task(Base):
+    """T0 做 T 任务实体（v18 change t0-task-management）
+
+    📖 详见 `openspec/specs/data-model/spec.md` §12
+    REQ-TRADE-013: 一等公民实体，区别于 Order.user_def='T0' 的隐式标签。
+    一份 task = 一只券 + 一个底仓 + 一个目标开仓量 + 一个生命周期。
+
+    字段语义:
+    - base_volume: 底仓量（"保留部分底仓"语义）；配平目标 = base_volume + target_volume
+    - target_volume: 目标开仓量（区别于现仓位的净增量；可为负数表示净减仓目标）
+    - coefficient: 配平系数（沿用 REQ-TRADE-005 语义）
+    - status: 生命周期 active / closed / archived
+    - created_trd_date: 业务字段（创建时所属交易日），不用 created_at 倒推
+    """
+    __tablename__ = "t0_tasks"
+    __table_args__ = (
+        Index("ix_t0_tasks_stock_code", "stock_code"),
+        Index("ix_t0_tasks_status_created", "status", "created_at"),
+        Index("ix_t0_tasks_user_status", "user_id", "status"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, nullable=False)                # owner; 与 users 表不强制 FK
+    stock_code = Column(String(16), nullable=False)          # 带 .SH/.SZ 后缀
+    base_volume = Column(Integer, nullable=False, default=0)
+    target_volume = Column(Integer, nullable=False, default=0)
+    coefficient = Column(Float, nullable=False, default=1.0)
+    status = Column(String(16), nullable=False, default="active")  # active / closed / archived
+    note = Column(String(255), nullable=True)
+    created_trd_date = Column(String(8), nullable=False)
+    created_at = Column(DateTime, nullable=False, default=_utcnow)
+    closed_at = Column(DateTime, nullable=True)
