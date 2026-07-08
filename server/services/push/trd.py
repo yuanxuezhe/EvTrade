@@ -23,7 +23,8 @@ from sqlalchemy.orm import Session
 
 from server.models.orm import Order, Trade
 from server.repo.orders import _get_active_trd_date, _infer_order_status, _status_msg
-from server.services.push.helpers import _float, _int, _str, _utcnow, parse_broker_ts, _order_to_out_dict, _trade_to_out_dict
+from server.services.push.helpers import _float, _int, _str, _order_to_out_dict, _trade_to_out_dict
+from server.utils.time import _utcnow, parse_broker_ts  # bugfix: were wrongly imported from helpers (never existed there)
 
 
 def handle_trd_cfm(db: Session, row: Dict[str, Any], ts: str) -> Optional[Dict[str, Any]]:

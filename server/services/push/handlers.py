@@ -22,7 +22,8 @@ from server.repo.orders import (
     _infer_order_status,
     _status_msg,
 )
-from server.services.push.helpers import _float, _int, _str, _utcnow
+from server.services.push.helpers import _float, _int, _str
+from server.utils.time import _utcnow  # bugfix: was wrongly imported from helpers (never existed there)
 from server.services.push.ord import handle_ord_cfm
 from server.services.push.trd import handle_trd_cfm
 
