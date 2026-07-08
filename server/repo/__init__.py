@@ -28,10 +28,9 @@ from server.repo.orders import (
     next_order_no,
     reset_to,
 )
-# 设计文档约定：对外暴露 infer_order_status（无下划线）作为 repo 层顶层符号
-infer_order_status = _infer_order_status
-
 from server.repo.system import TradingClock
+
+infer_order_status = _infer_order_status  # public alias per design doc
 
 __all__ = [
     "ORDER_STATUS",

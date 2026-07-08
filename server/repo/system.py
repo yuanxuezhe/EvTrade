@@ -33,7 +33,8 @@ class TradingClock:
                     morning_start=time(9, 15), morning_end=time(11, 30),
                     afternoon_start=time(13, 0), afternoon_end=time(15, 0),
                 )
-                db.add(row); db.commit()
+                db.add(row)
+                db.commit()
                 db.refresh(row)
             cls._session = row
             # 半天判断

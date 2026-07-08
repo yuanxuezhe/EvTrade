@@ -37,7 +37,6 @@ from .transport import (
 )
 from server.ws.manager import ws_manager  # noqa: F401  (facade re-export for tests patch('rpc.client.ws_manager', ...))
 from server.rpc.parsers_push import _iter_push_rows  # 新名
-_parse_push_rows = _iter_push_rows  # alias: 旧名 _parse_push_rows → 新位置 parsers_push._iter_push_rows
 from server.rpc.parsers_common import (
     _empty,
     _iter_rows,
@@ -66,6 +65,9 @@ from server.rpc.handlers import (
     qry_positions,
     qry_trades,
 )
+
+# Back-compat alias: 旧名 _parse_push_rows → 新位置 parsers_push._iter_push_rows
+_parse_push_rows = _iter_push_rows
 
 __all__ = [
     # transport
