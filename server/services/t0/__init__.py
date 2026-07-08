@@ -9,10 +9,10 @@
 # 兼容 from services.t0 import get_fee_config, calc_t0_volume, ...
 # 这些会触发 ORM 注册（与测试的旧路径兼容）
 from server.services.t0.core import (
-    get_fee_config,
-    round_to_lot,
-    calc_t0_volume,
-    calc_commission,
-    calc_net_amount,
-    LOT_SIZE,
+    get_fee_config as get_fee_config,
+    round_to_lot as round_to_lot,
+    calc_t0_volume as calc_t0_volume,
+    calc_commission as calc_commission,
+    calc_net_amount as calc_net_amount,
+    LOT_SIZE as LOT_SIZE,
 )
