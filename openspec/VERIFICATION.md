@@ -36,6 +36,61 @@
 - **subagent 冷启动**：从零读 spec + 代码 + git log，**不会**被"我刚写的肯定对"带偏
 - **成本**：每次 ~30-60 秒（subagent 读文件 + 写报告），但捕获的 bug 价值远高于此
 
+## 长任务识别与工具选择
+
+> **核心原则**: 根据任务时长挑工具,不要让"短任务工具"做"长任务活"。
+
+### 任务分类 (按预估时长)
+
+| 类别 | 时长范围 | 适用工具 | 例子 |
+|---|---|---|---|
+| **短任务** | < 1 分钟 | 主对话直接执行 | `git log`, `cat`, `grep`, 简单 `curl` |
+| **中任务** | 1-10 分钟 | `delegate_task` (同步等结果) | 验证 subagent, 单文件 read, 中等 e2e |
+| **长任务** | 10-30 分钟 | `delegate_task` (同步, 看上下文) | 大型 e2e 套件, 跨多文件 read |
+| **超长任务** | > 30 分钟 | `background=true` + `notify_on_complete` | 模型训练, 完整 CI, 大数据迁移 |
+
+### 为什么这样分?
+
+- **短任务直接做**: 无工具调用成本, 1 步到位
+- **中任务用 `delegate_task`**: v18 验收实测 ~6.5 分钟 (386 秒) subagent 正常返回, **远没到 `gateway_timeout: 1800` 上限**
+- **长任务仍可用 `delegate_task`**: Hermes 当前配置下, 30 分钟内的同步 subagent 都安全
+- **超长任务必须 `background=true`**: 因为 `gateway_timeout: 1800` (30 分钟) 是硬上限
+
+### 长任务下"假死"误判
+
+如果用户报告"任务卡住",**先验证 3 件事再下结论**:
+
+1. **检查 `gateway_timeout_warning: 900` (15 分钟)**: 如果任务已跑 15 分钟, 系统**会**发警告 (不是 kill) — 这就是"假死"假象
+2. **检查 `gateway_notify_interval: 180`**: 每 3 分钟会发 heartbeat, 看通知频率
+3. **检查 `gateway_auto_continue_freshness: 3600`**: 1 小时内上下文可"续命", 但**不会**自动继续
+
+**真正会被杀的边界**:
+- `gateway_timeout: 1800` (30 分钟) — 同步 subagent 硬上限
+- `inactivity_timeout: 120` — **只对 `browser_*` 工具生效**, 不影响 subagent
+
+### 实战选择表
+
+| 场景 | 推荐工具 | 理由 |
+|---|---|---|
+| 跑 13 个 e2e 断言 (v18 验收) | `delegate_task` | 386 秒实测成功 |
+| 跑 100+ 个 e2e 套件 | `background=true` + `notify_on_complete` | 预估 > 30 分钟 |
+| git log + 列 commit | 主对话 `terminal()` | 1 步, 无工具调用 |
+| 读 10 个文件交叉对比 | `delegate_task` subagent | 中等耗时, 隔离上下文 |
+| 部署到生产 | `background=true` + `notify_on_complete` | 不可预期, 必须后台 |
+| 训练 ML 模型 | **不通过本工具**, 用 cron + dedicated worker | 跨小时级, 用专门的 cron job |
+
+### 决策树
+
+```
+任务预估 < 1 分钟? 
+  ├─ Yes → 主对话直接做
+  └─ No → 预估 < 30 分钟?
+              ├─ Yes → delegate_task (同步)
+              └─ No → 预估 < 数小时?
+                          ├─ Yes → background=true + notify_on_complete
+                          └─ No  → 用 cron / dedicated worker
+```
+
 ## Checklist 6 大项
 
 详见 `openspec/verify-template.md`：
