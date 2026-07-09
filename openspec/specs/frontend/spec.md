@@ -1133,6 +1133,31 @@ The system SHALL 让 `client/src/components/QuotePanel.vue` 中
 - **THEN** MUST 包装为 AuditRecord 推入 `store.auditCache[5][trd_date]`
 - **AND** 缺 strategy_id MUST 静默丢弃
 
+### REQ-FE-510: OrderForm 价格类型单行布局 (2026-07-09 重构, 与 T0 一致)
+
+The system SHALL render `client/src/components/OrderForm.vue` 的价格类型选择器为单行 inline radio-button,与 T0Trade 页面的「价格档」视觉风格一致。
+
+#### Scenario: 桌面端 4 个选项排在一行
+
+- **GIVEN** 用户在 Trade.vue 打开 OrderForm,视口宽度 ≥ 1024px
+- **WHEN** 渲染价格类型选择器
+- **THEN** 4 个选项(限价 / 最新价 / 挂单价 / 市价)以 `el-radio-button` 单行排布
+- **AND** 选中态、悬停态沿用 Element Plus 默认 button 样式,无需自定义 grid
+
+#### Scenario: 窄屏自动换行降级
+
+- **GIVEN** 用户在窄屏(视口 < 720px)打开 OrderForm
+- **WHEN** 4 个 default-size 按钮宽度超过容器
+- **THEN** 沿用 `el-radio-group` 默认 `flex-wrap: wrap`,自动换行(可能 2 行)
+- **AND** 不影响选中/提交逻辑
+
+#### Scenario: 数据绑定不变
+
+- **GIVEN** `v-model="form.price_type"` 与 `form.price_type` 联动委托价格 input 的 `disabled` / `placeholder` / `PriceType.LIMIT` 校验
+- **WHEN** 用户切换价格类型
+- **THEN** 委托价格 input 的禁用条件与 placeholder 保持原行为
+- **AND** 后端 API 调用不变 (`{price_type: 11|5|14|44}`)
+
 ### REMOVED Requirements
 
 #### Requirement: QuotePanel 双击价格带入（v15 之前行为）
@@ -1171,3 +1196,12 @@ The system SHALL 让 `client/src/components/QuotePanel.vue` 中
 - 删 `client/src/views/T0Trade.vue` 中 `<svg.mini-sparkline>` 150x30 SVG + `sparklinePoints` / `sparklinePath` / `sparklineLast` / `loadSparkline` 4 函数
 - 副行 30 天改为 `<el-popover trigger="hover">` reference "¥{last} ↑/↓" + content D-1..D-30 倒序
 - CSS `@media (max-width: 768px) .sub-popover { display: none }`
+
+#### Requirement: OrderForm 价格类型 2×2 grid 布局 (2026-07-09 重构前设计, 已废弃)
+
+**Reason**: Trade 页价格档采用 2×2 grid (`.price-type-grid` + `el-radio` with `border`), 视觉占用一整行 + 4 个 grid cell, 与 T0Trade 单行 inline radio-button 风格不一致; 4 个选项挤在网格里 label 显得小气, 不如单行按钮紧凑。
+
+**Migration**:
+- 改 `client/src/components/OrderForm.vue` 第 38-51 行 template: `el-radio-group + el-radio(border) + class="price-type-grid"` → `el-radio-group + el-radio-button(size="default")`
+- 删 `client/src/components/OrderForm.vue` 第 364-386 行 `.price-type-grid` / `:deep(.price-type-grid .el-radio*)` 死 CSS
+- 数据流不变 (`v-model="form.price_type"` + `PriceType.LIMIT` 校验逻辑不动); 后端协议不变 (`{price_type: 11|5|14|44}`)
