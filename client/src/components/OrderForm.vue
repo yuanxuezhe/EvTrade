@@ -35,18 +35,16 @@
           </el-input>
         </el-form-item>
 
-        <!-- 价格类型：独立全宽 2×2 radio 网格 (v14 trade-board-beautiful r2: 替换 el-segmented 避免 ellipsis 截断) -->
+        <!-- 价格类型：单行 inline radio-button (与 T0Trade 价格档风格一致;2026-07-09 单行化重构, v15 替换 2×2 grid 避免占满整行) -->
         <el-form-item label="价格类型" class="row-tight">
-          <el-radio-group v-model="form.price_type" class="price-type-grid">
-            <el-radio
+          <el-radio-group v-model="form.price_type" size="default">
+            <el-radio-button
               v-for="opt in priceTypeOptions"
               :key="opt.value"
               :value="opt.value"
-              border
-              size="default"
             >
               {{ opt.label }}
-            </el-radio>
+            </el-radio-button>
           </el-radio-group>
         </el-form-item>
 
@@ -361,27 +359,5 @@ function handleReset() {
   font-size: 13px;
 }
 
-/* v14 trade-board-beautiful r2: 价格类型 2×2 radio 网格, 替换原 el-segmented 避免 ellipsis 截断 */
-.price-type-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: var(--space-2);
-  width: 100%;
-}
-
-/* el-radio 默认有 right margin 多余空间, grid 子项需 reset */
-:deep(.price-type-grid .el-radio) {
-  margin-right: 0;
-  width: 100%;
-}
-
-:deep(.price-type-grid .el-radio__wrapper) {
-  /* 让 border 样式 radio 撑满 grid cell (默认 inline-flex 受限于 label 宽度) */
-  display: flex;
-  width: 100%;
-  box-sizing: border-box;
-  justify-content: center;
-  padding-left: var(--space-2);
-  padding-right: var(--space-2);
-}
+/* v15 trade-pricetype-inline: 价格类型 radio-button 单行布局,沿用 el-radio-group 默认样式,不需 grid 重置 */
 </style>
