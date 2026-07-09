@@ -185,5 +185,22 @@ export function createWsManager(onMessage) {
     connected.value = false
   }
 
-  return { connect, disconnect, connected, lastEvent }
+  /**
+   * 2026-07-09 quote-snapshot-subscribe: 给指定 channel 发业务消息
+   *   - 用于 quote_store.subscribe() → 调 ws.send({type:'subscribe', stock_codes:[...]})
+   *   - 默认 channel = 'quote_update'
+   *   - 静默失败 (socket 未就绪 / 关闭): 返 false
+   */
+  function sendToChannel(channel, payload) {
+    const ws = _sockets[channel]
+    if (!ws || ws.readyState !== WebSocket.OPEN) return false
+    try {
+      ws.send(JSON.stringify(payload))
+      return true
+    } catch (_) {
+      return false
+    }
+  }
+
+  return { connect, disconnect, connected, lastEvent, sendToChannel }
 }

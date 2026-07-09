@@ -107,7 +107,7 @@
 </template>
 
 <script setup>
-import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Search, Refresh, Download } from '@element-plus/icons-vue'
 import { api } from '../api'
@@ -119,6 +119,11 @@ import { useHoldingsStore } from '../stores/holdings'
  * 持仓数据来源：holdings store（App 启动时已 bootstrap）
  * 行情来源：quote store（由 holdings store 白名单控制 — 仅持仓代码入）
  * 实时市值/盈亏/收益率：holdings store 的 computed
+ *
+ * 2026-07-09 quote-snapshot-subscribe:
+ *   - 持仓 code 列表变化时, 自动 subscribe/unsubscribe 行情
+ *   - watch positionCodes.value → diff → quoteStore.subscribe(new) / unsubscribe(removed)
+ *   - 页面卸载时 unsubscribe 全部（避免幽灵订阅）
  */
 
 // 从 holdings store 读 positions — 用 computed proxy
@@ -266,10 +271,40 @@ onMounted(() => {
     holdingsStore.bootstrap()
   }
   startQuoteTick()
+  // 2026-07-09 quote-snapshot-subscribe: 持仓 codes 变化时自动调订阅
+  _lastSubscribedCodes = new Set(holdingsStore.positionCodes || [])
+  if (_lastSubscribedCodes.size > 0) {
+    quoteStore.subscribe(Array.from(_lastSubscribedCodes))
+  }
 })
+
+// 2026-07-09 quote-snapshot-subscribe: 持仓 code 列表 diff → 增量订阅
+let _lastSubscribedCodes = new Set()
+watch(
+  () => holdingsStore.positionCodes,
+  (newCodes, oldCodes) => {
+    const newSet = new Set(newCodes || [])
+    const oldSet = new Set(oldCodes || _lastSubscribedCodes)
+    const toAdd = [...newSet].filter(c => !oldSet.has(c))
+    const toRemove = [...oldSet].filter(c => !newSet.has(c))
+    if (toAdd.length > 0) {
+      quoteStore.subscribe(toAdd)
+    }
+    if (toRemove.length > 0) {
+      quoteStore.unsubscribe(toRemove)
+    }
+    _lastSubscribedCodes = newSet
+  },
+  { flush: 'post' }  // 等 DOM 更新后跑，避免和 holdings computed 抢资源
+)
 
 onBeforeUnmount(() => {
   stopQuoteTick()
+  // 2026-07-09 quote-snapshot-subscribe: 页面卸载时取消本页面持有的订阅
+  if (_lastSubscribedCodes.size > 0) {
+    quoteStore.unsubscribe(Array.from(_lastSubscribedCodes))
+    _lastSubscribedCodes = new Set()
+  }
 })
 </script>
 

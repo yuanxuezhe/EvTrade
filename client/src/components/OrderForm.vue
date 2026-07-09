@@ -124,7 +124,8 @@ const props = defineProps({
   defaultStockCode: { type: String, default: '' }
 })
 
-const emit = defineEmits(['apply-quote-price', 'update:stockCode'])
+// 2026-07-09: emit 名改 kebab-case, 与父组件 Trade.vue @update:stock-code 对应
+const emit = defineEmits(['apply-quote-price', 'update:stock-code'])
 
 const submitting = ref(false)
 
@@ -171,8 +172,8 @@ function formatVolume(v) {
 
 function onStockCodeChange() {
   form.stock_code = form.stock_code.toUpperCase().trim()
-  // 通知父组件（Trade.vue）：行情面板要切换到这只票
-  emit('update:stockCode', form.stock_code)
+  // 2026-07-09: emit 名改 kebab-case, 与父组件 Trade.vue @update:stock-code 对应
+  emit('update:stock-code', form.stock_code)
 }
 
 async function handleSubmit() {

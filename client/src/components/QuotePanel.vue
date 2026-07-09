@@ -127,7 +127,7 @@
 </template>
 
 <script setup>
-import { computed, onBeforeUnmount, ref } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useQuoteStore, FIELD } from '../stores/quote'
 
 const props = defineProps({
@@ -138,6 +138,45 @@ const emit = defineEmits(['apply-price'])
 
 const quoteStore = useQuoteStore()
 const F = FIELD
+
+// 2026-07-09 quote-snapshot-subscribe:
+//   - 监听 props.stockCode 变化, 当用户输入新代码 (debounce 300ms) 自动调订阅
+//   - 面板卸载时, 取消本面板持有的订阅 (避免幽灵订阅占 ws_manager)
+//   - 注意: 持仓页/Trade 页可能同时订阅同一 code,
+//     subscribedSet 用 Set 自动去重, unsubscribe 也只是减引用计数, 不影响其他消费者
+let _currentCode = ''
+let _debounceTimer = null
+let _subscribed = false  // 本组件是否真的订阅过 (避免卸载时误 cancel 未订阅的)
+watch(
+  () => props.stockCode,
+  (newCode) => {
+    if (_debounceTimer) { clearTimeout(_debounceTimer); _debounceTimer = null }
+    const c = (newCode || '').toUpperCase().trim()
+    if (!c) {
+      // 清空时立即取消订阅
+      if (_subscribed && _currentCode) {
+        quoteStore.unsubscribe([_currentCode])
+        _subscribed = false
+      }
+      _currentCode = ''
+      return
+    }
+    // 300ms debounce: 用户连续输 "000001.SZ" 时, 避免对每个字符都发订阅请求
+    _debounceTimer = setTimeout(() => {
+      // 切换 code: 取消旧的 (如果之前订过)
+      if (_subscribed && _currentCode && _currentCode !== c) {
+        quoteStore.unsubscribe([_currentCode])
+      }
+      // 订新的 (如果未订过)
+      if (!_subscribed || _currentCode !== c) {
+        quoteStore.subscribe([c])
+        _subscribed = true
+      }
+      _currentCode = c
+    }, 300)
+  },
+  { immediate: true }  // 首次挂载如果已有 code, 立即订
+)
 
 const tick = ref(0)
 let timer = null
@@ -287,7 +326,15 @@ function emitApply(v) {
   emit('apply-price', n)
 }
 
-onBeforeUnmount(() => stopTick())
+onBeforeUnmount(() => {
+  stopTick()
+  // 2026-07-09 quote-snapshot-subscribe: 面板卸载, 取消本组件订阅
+  if (_debounceTimer) { clearTimeout(_debounceTimer); _debounceTimer = null }
+  if (_subscribed && _currentCode) {
+    quoteStore.unsubscribe([_currentCode])
+    _subscribed = false
+  }
+})
 startTick()
 </script>
 

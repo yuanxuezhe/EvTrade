@@ -34,12 +34,14 @@ import { dispatchPayload } from './ws_dispatch'
 
 export const useWsStore = defineStore('ws', () => {
   // ws_heartbeat 持有连接 + 心跳, 业务分发通过 onMessage 回调注入
-  const { connect, disconnect, connected, lastEvent } = createWsManager(dispatchPayload)
+  // 2026-07-09 quote-snapshot-subscribe: 暴露 sendToChannel（quoteStore.subscribe 用）
+  const { connect, disconnect, connected, lastEvent, sendToChannel } = createWsManager(dispatchPayload)
 
   return {
     connected,
     lastEvent,
     connect,
-    disconnect
+    disconnect,
+    sendToChannel,
   }
 })

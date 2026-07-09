@@ -20,6 +20,7 @@ import { ElNotification } from 'element-plus'
 import { useQuoteStore } from './quote'
 import { useHoldingsStore } from './holdings'
 import { useStrategyStore } from './strategy'
+import { useWsStore } from './ws'
 import { STATUS_LABEL } from '../utils/format'
 import { makeLogger } from '../utils/logger'
 
@@ -35,6 +36,55 @@ export function dispatchPayload(payload) {
   else if (t === 'trd_cfm') _onTradeCfm(payload.data)
   else if (t === 'quote') _onQuote(payload.data)
   else if (t === 'strategy_update') _onStrategyUpdate(payload.data)
+  // 2026-07-09 quote-snapshot-subscribe
+  else if (t === 'subscribe_ack') _onSubscribeAck(payload.data)
+  else if (t === 'unsubscribe_ack') _onUnsubscribeAck(payload.data)
+}
+
+/**
+ * 2026-07-09 quote-snapshot-subscribe: 发 subscribe 协议到后端 ws /ws/quote_update
+ *   - 走 wsStore.sendToChannel('quote_update', {type:'subscribe', stock_codes:[...]})
+ *   - 失败静默 (socket 未就绪, 业务由 REST 兜底)
+ *   - 供 quoteStore.subscribe() 调（动态 import）
+ */
+export function subscribe(codes) {
+  if (!Array.isArray(codes) || codes.length === 0) return false
+  try {
+    const wsStore = useWsStore()
+    return wsStore.sendToChannel('quote_update', { type: 'subscribe', stock_codes: codes })
+  } catch (e) {
+    log.warn('ws subscribe failed:', e?.message)
+    return false
+  }
+}
+
+export function unsubscribe(codes) {
+  if (!Array.isArray(codes) || codes.length === 0) return false
+  try {
+    const wsStore = useWsStore()
+    return wsStore.sendToChannel('quote_update', { type: 'unsubscribe', stock_codes: codes })
+  } catch (e) {
+    log.warn('ws unsubscribe failed:', e?.message)
+    return false
+  }
+}
+
+function _onSubscribeAck(data) {
+  if (!data) return
+  if (data.code !== 0) {
+    log.warn('subscribe_ack 失败:', data.msg, 'codes:', data.stock_codes)
+    return
+  }
+  const quoteStore = useQuoteStore()
+  if (data.snapshots && Object.keys(data.snapshots).length > 0) {
+    quoteStore.applySnapshots(data.snapshots)
+  }
+  log.debug('subscribe_ack ok, codes:', data.stock_codes, 'snapshots:', Object.keys(data.snapshots || {}).length)
+}
+
+function _onUnsubscribeAck(data) {
+  if (!data) return
+  log.debug('unsubscribe_ack ok, removed:', data.stock_codes)
 }
 
 function _onQuote(row) {
