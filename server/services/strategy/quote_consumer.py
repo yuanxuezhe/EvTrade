@@ -8,7 +8,12 @@ strategy — quote_consumer 后端 WS 客户端（change strategy_trade task 7�
 📌 60s 无 tick → warn log（不主动重连，连接是活的）
 📌 30s 心跳：log 活跃 engine 数 + 累计 tick 数
 📌 Singleton 模式（仿 RPClient）：module-level _quote_consumer + get/close 函数
-📌 STRATEGY_ENGINE_ENABLED=false 时 quote_consumer 不启动（main.py 守门）
+📌 2026-07-09 quote-always-on：启动由 main.py 无条件触发（与 STRATEGY_ENGINE_ENABLED 解耦）
+📌 2026-07-09 quote-snapshot-subscribe：
+    - _parse_tick 解全 31 字段 (data.fields 数组)，填 snapshot dict 23 数据列
+    - _fanout_tick 加 _save_snapshot 持久化（repo/quote_snapshots.upsert）
+    - ws broadcast 的 data 保留原 fields[] + last_price（前端 quote store 不变）
+    - health log 加 snapshots_saved 计数
 """
 import asyncio
 import json
@@ -51,6 +56,9 @@ class QuoteConsumer:
         self._ws = None
         self._last_tick_ts: Optional[float] = None
         self._tick_count: int = 0
+        # 2026-07-09 quote-snapshot-subscribe: 持久化计数
+        self._snapshot_count: int = 0
+        self._snapshot_err_count: int = 0
 
     # ── 生命周期 ──
 
@@ -135,8 +143,8 @@ class QuoteConsumer:
             now = time.time()
             engines = len(self._engines)
             log.info(
-                "[quote_consumer health] engines=%d ticks_total=%d last_tick_age=%.1fs",
-                engines, self._tick_count,
+                "[quote_consumer health] engines=%d ticks_total=%d snapshots_saved=%d snapshot_errs=%d last_tick_age=%.1fs",
+                engines, self._tick_count, self._snapshot_count, self._snapshot_err_count,
                 (now - self._last_tick_ts) if self._last_tick_ts else -1.0,
             )
             if self._last_tick_ts and (now - self._last_tick_ts) > self.NO_TICK_WARN:
@@ -149,12 +157,25 @@ class QuoteConsumer:
 
     @staticmethod
     def _parse_tick(raw: str) -> Optional[dict]:
-        """解析 hqserver JSON payload → {stock_code, last_price, volume}
+        """解析 hqserver JSON payload → {stock_code, last_price, snapshot{23 字段}, fields[], body}
 
         📌 hqserver 消息格式（hq/hqserver.py:159-169）：
            {"type":"quote","channel":"quote_update",
             "data":{"stock_code":"600519.SH","last_price":1820.5,"fields":[...],"body":"..."}}
+        📌 fields 数组 31 字段索引（QMT publisher format_quote + hqserver 透传）：
+           [0]  stock_code
+           [1]  datetime (yyyyMMddHHmmss.sss)
+           [2]  last_price
+           [3]  open_price / [4] high_price / [5] low_price / [6] prev_close
+           [7]  volume / [8] amount
+           [9]  openInt (持仓量) / [10] transactionNum (成交笔数)
+           [11..15] ask1_price..ask5_price (卖价递增)
+           [16..20] bid1_price..bid5_price (买价递减)
+           [21..25] ask1_vol..ask5_vol / [26..30] bid1_vol..bid5_vol
         📌 解析失败 / 非 quote_update 类型 → 返 None（静默忽略）
+        📌 2026-07-09 quote-snapshot-subscribe:
+           - 解全 31 字段 → snapshot dict（23 数据列，映射 ORM QuoteSnapshot）
+           - 保留原 fields[] + body 给前端 ws broadcast（quote store 直接用）
         """
         try:
             msg = json.loads(raw)
@@ -167,25 +188,75 @@ class QuoteConsumer:
         last_price = data.get("last_price")
         if not stock_code or last_price is None:
             return None
-        # 注：volume 字段当前 hqserver 不直接提供（fields 里包含原始 gbk 字段）
+
+        # 取 fields（hqserver raw 31 字段）
+        fields = data.get("fields") or []
+        body = data.get("body") or ""
+
+        # ──── 解 snapshot（23 数据列，缺字段给 0） ────
+        def f(idx):
+            try:
+                return float(fields[idx]) if len(fields) > idx and fields[idx] else 0.0
+            except (ValueError, TypeError):
+                return 0.0
+
+        def iv(idx):
+            """volume / *_vol 取整数"""
+            try:
+                return int(float(fields[idx])) if len(fields) > idx and fields[idx] else 0
+            except (ValueError, TypeError):
+                return 0
+
+        snapshot = {
+            "stock_code": stock_code,
+            "last_price": float(last_price),
+            "open_price": f(3),
+            "high_price": f(4),
+            "low_price": f(5),
+            "prev_close": f(6),
+            "volume": iv(7),
+            "amount": f(8),
+            "ask1_price": f(11), "ask1_vol": iv(21),
+            "ask2_price": f(12), "ask2_vol": iv(22),
+            "ask3_price": f(13), "ask3_vol": iv(23),
+            "ask4_price": f(14), "ask4_vol": iv(24),
+            "ask5_price": f(15), "ask5_vol": iv(25),
+            "bid1_price": f(16), "bid1_vol": iv(26),
+            "bid2_price": f(17), "bid2_vol": iv(27),
+            "bid3_price": f(18), "bid3_vol": iv(28),
+            "bid4_price": f(19), "bid4_vol": iv(29),
+            "bid5_price": f(20), "bid5_vol": iv(30),
+        }
+
         return {
             "stock_code": stock_code,
             "last_price": float(last_price),
+            "snapshot": snapshot,    # 23 字段 dict → _save_snapshot 持久化
+            "fields": fields,        # 原 31 字段 → 前端 quote store 用
+            "body": body,            # 原 GBK 字符串 → 前端 quote store 用
         }
 
     async def _fanout_tick(self, tick: dict) -> None:
-        """按 stock_code 找 engine，await evaluate_tick"""
+        """按 stock_code 找 engine，await evaluate_tick + 持久化 snapshot"""
         stock_code = tick.get("stock_code")
+        snapshot = tick.get("snapshot") or {}
         engine = self._engines.get(stock_code)
         self._latest_price[stock_code] = tick.get("last_price", 0.0)
         self._last_tick_ts = time.time()
         self._tick_count += 1
-        # change ws-quote-fanout: 先把 tick 推给前端 ws subscribers，再 fanout 给 strategy engine
-        #   - 走 ws_manager['quote_update']（ws/manager.py: active_connections['quote_update']）
-        #   - 即使没有活跃 subscription，broadcast 内部自检后立刻返回（不抛错）
-        #   - 这样前端 quote_update channel 收到原始 tick，前端 ws_heartbeat 就能直接消费
+
+        # 2026-07-09 quote-snapshot-subscribe: 先持久化 snapshot（不影响广播路径）
+        await self._save_snapshot(snapshot)
+
+        # 2026-07-09 quote-snapshot-subscribe:
+        #   - 优先用 broadcast_to_stock(code, ...) 只推订阅者
+        #   - 零订阅者时 fallback 到 broadcast() 兼容老前端（无 subscribe 协议也能收）
+        #   - 这样前端 Step 6-8 集成订阅前, 老行为不破坏；集成后自动按订阅过滤
+        delivered = 0
         try:
-            await ws_manager.broadcast("quote_update", {"type": "quote", "channel": "quote_update", "data": tick})
+            delivered = await ws_manager.broadcast_to_stock(stock_code, {"type": "quote", "channel": "quote_update", "data": tick})
+            if delivered == 0:
+                await ws_manager.broadcast("quote_update", {"type": "quote", "channel": "quote_update", "data": tick})
         except Exception:
             log.exception("ws quote broadcast failed (non-fatal)")
         if engine is None:
@@ -205,6 +276,48 @@ class QuoteConsumer:
             )
         except Exception as e:
             log.exception("evaluate_tick failed: stock=%s err=%s", stock_code, e)
+
+    # ── Snapshot 持久化 ──
+
+    @staticmethod
+    async def _save_snapshot(snapshot: dict) -> None:
+        """持久化到 quote_snapshots 表（latest-only UPSERT，跨方言）。
+
+        📌 2026-07-09 quote-snapshot-subscribe:
+           - 同步阻塞式 ORM 操作包到 to_thread（quote_consumer 跑在 asyncio 事件循环）
+           - SQLAlchemy session 默认 sync API，会阻塞事件循环
+           - SQLite 单写线程 → 用 to_thread 隔离避免阻塞其他 ws 心跳
+        📌 upsert 失败 → 计数 + log，不抛（不影响 tick 流）
+        """
+        if not snapshot or not snapshot.get("stock_code"):
+            return
+        from server.repo.quote_snapshots import upsert as _repo_upsert
+
+        def _do_upsert():
+            try:
+                with db_session() as db:
+                    _repo_upsert(db, snapshot)
+                    db.commit()
+                # 成功后递增计数（绕过线程隔离直接走实例属性）
+                return ("ok", None)
+            except Exception as e:
+                return ("err", str(e))
+
+        try:
+            status, msg = await asyncio.to_thread(_do_upsert)
+            if status == "ok":
+                # 安全递增计数（实例属性，asyncio 协程内）
+                inst = _active_consumer()
+                if inst is not None:
+                    inst._snapshot_count += 1
+            else:
+                inst = _active_consumer()
+                if inst is not None:
+                    inst._snapshot_err_count += 1
+                log.warning("quote_snapshot upsert failed: stock=%s err=%s",
+                            snapshot.get("stock_code"), msg)
+        except Exception:
+            log.exception("quote_snapshot save unexpected error")
 
     # ── 引擎加载 ──
 
@@ -321,6 +434,16 @@ class QuoteConsumer:
 
 
 # ─────────────── Module-level singleton（仿 RPClient 模式） ───────────────
+
+
+def _active_consumer() -> Optional["QuoteConsumer"]:
+    """获取当前活跃 singleton 实例（_save_snapshot 在 to_thread 中拿不到 self）
+
+    📌 2026-07-09 quote-snapshot-subscribe:
+       - to_thread 内无法捕获 self（asyncio 协程跨线程安全）
+       - 提供 module-level getter 让 _save_snapshot 找到当前 consumer 累加计数
+    """
+    return _quote_consumer
 
 
 _quote_consumer: Optional[QuoteConsumer] = None

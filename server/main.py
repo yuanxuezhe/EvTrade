@@ -26,6 +26,7 @@ from server.api import system as system_api  # v8: 系统级查询（active-day�
 from server.api import t0_stats, t0_aggregate
 from server.api import t0_tasks  # v18 change t0-task-management
 from server.api import strategy as strategy_api  # change strategy_trade task 9
+from server.api import quote as quote_api  # 2026-07-09 quote-snapshot-subscribe
 from server.api.admin import sys_status as admin_sys_status, reconcile as admin_reconcile, session as admin_session
 from server.middleware.request_logging import RequestLoggingMiddleware
 from server.rpc.client import get_rpc_client, close_rpc_client
@@ -122,11 +123,12 @@ async def on_shutdown_rpc():
 
 @app.on_event("startup")
 async def on_startup_quote_consumer():
-    """启动 QuoteConsumer（受 STRATEGY_ENGINE_ENABLED 控制）。"""
-    if not settings.STRATEGY_ENGINE_ENABLED:
-        print("[INIT] STRATEGY_ENGINE_ENABLED=false, quote consumer not started")
-        return
-    # v20: pytest 模式跳过 quote_consumer (WS 连真行情)
+    """启动 QuoteConsumer（2026-07-09 quote-always-on: 无条件启动，与策略引擎解耦）。
+
+    📌 行情 7×24 必需：Holdings/Positions/Trade 等所有页面的最新价/市值推送都靠 QuoteConsumer,
+       与 STRATEGY_ENGINE_ENABLED 无关。
+    📌 pytest 模式仍跳过（避免 WS 连真行情污染测试）。
+    """
     if os.environ.get("PYTEST_CURRENT_TEST"):
         print("[INIT] pytest mode: skip quote consumer")
         return
@@ -164,6 +166,7 @@ app.include_router(fee_config.router, prefix="/api/fee-config", tags=["fee-confi
 app.include_router(system_api.router, prefix="/api/system", tags=["system"], dependencies=_AUTH)  # v8
 # strategy REST（change strategy_trade task 9）— 端点内部 _require_engine_enabled 灰度门
 app.include_router(strategy_api.router, dependencies=_AUTH)
+app.include_router(quote_api.router, prefix="/api/quote", tags=["quote"], dependencies=_AUTH)  # 2026-07-09
 
 
 # ---- Admin routes (login required, role checked by handler) ----------------
