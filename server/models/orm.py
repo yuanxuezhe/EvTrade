@@ -25,6 +25,7 @@ change add-manual-adjust-and-history-pages (v12):
 """
 from sqlalchemy import (
     Column, Integer, String, Float, Text, DateTime, CheckConstraint, Index, Time,
+    UniqueConstraint,
 )
 from server.db import Base
 from server.utils.time import _utcnow
@@ -296,10 +297,16 @@ class QuoteSnapshot(Base):
     """行情快照
 
     📖 详见 `openspec/specs/data-model/spec.md` §4
+
+    2026-07-09 quote-snapshot-subscribe: latest-only 模型（每 stock_code 1 行）。
+      - 字段名规范化: open→open_price / high→high_price / low→low_price（语义清楚）
+      - volume 是 Integer（手/股数，非金额）
+      - 加 stock_code UniqueConstraint + 应用层 INSERT...ON CONFLICT/UPDATE UPSERT
     """
     __tablename__ = "quote_snapshots"
     __table_args__ = (
         Index("ix_quote_stock_ts", "stock_code", "ts"),
+        UniqueConstraint("stock_code", name="uq_quote_snapshots_stock_code"),
     )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
