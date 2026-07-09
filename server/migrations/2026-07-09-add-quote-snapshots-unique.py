@@ -18,6 +18,15 @@
 """
 import os
 import sys
+# 2026-07-10 fix: migration 脚本直接读 os.environ，与 infra/db.py 同问题
+# 这里也 load_dotenv(server/.env) 拿到正确的 EVTRADE_DB_URL。
+try:
+    from dotenv import load_dotenv
+    _ENV_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".env")
+    if os.path.exists(_ENV_PATH):
+        load_dotenv(_ENV_PATH, override=False)
+except ImportError:
+    pass
 from sqlalchemy import create_engine, text, inspect
 from sqlalchemy.engine import Engine
 

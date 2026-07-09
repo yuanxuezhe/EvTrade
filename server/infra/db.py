@@ -13,6 +13,18 @@ import os
 import logging
 from contextlib import contextmanager
 
+# 2026-07-10 fix: server.config 才会 load_dotenv(server/.env)，但 infra/db.py
+# 不依赖 config (legacy 兼容),导致模块级 os.environ.get('EVTRADE_DB_URL')
+# 永远拿不到 .env 里的值 → fallback SQLite。
+# 这里自行 load_dotenv 一次（idempotent, 与 config.load_dotenv override=False 不冲突）。
+try:
+    from dotenv import load_dotenv
+    _ENV_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".env")
+    if os.path.exists(_ENV_PATH):
+        load_dotenv(_ENV_PATH, override=False)
+except ImportError:
+    pass
+
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker, declarative_base, Session
 from sqlalchemy.engine import Engine
