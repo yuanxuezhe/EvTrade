@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { reactive, computed } from 'vue'
-import { api } from '../api'  // 走项目的 axios 实例, 自动带 Bearer JWT (api/index.js:17-24)
+import { http } from '../api'  // axios 实例 + Bearer interceptor (api/index.js:12-24)
 
 /**
  * 行情缓存 + 订阅管理（v15 2026-07-09 quote-snapshot-subscribe）
@@ -118,8 +118,8 @@ export const useQuoteStore = defineStore('quote', () => {
     newCodes.forEach(c => subscribedSet.add(c))
     // 1) REST 拉最新
     try {
-      // 2026-07-09 fix: 用 api.post 走项目 axios 实例, 自动带 Bearer token (之前用 axios.post 401)
-      const { data } = await api.post('/api/quote/snapshots', { stock_codes: newCodes })
+      // 2026-07-09 fix: api 是业务方法对象(无 .post), 必须用 http (axios 实例) 走 Bearer interceptor
+      const { data } = await http.post('/quote/snapshots', { stock_codes: newCodes })
       if (data && data.snapshots) {
         applySnapshots(data.snapshots)
       }
