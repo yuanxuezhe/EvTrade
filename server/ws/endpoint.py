@@ -94,6 +94,7 @@ def register_ws_endpoint(app: FastAPI):
                 # 2026-07-09 quote-snapshot-subscribe: 订阅协议
                 if msg_type == "subscribe" and channel == "quote_update":
                     codes_raw = parsed.get("stock_codes") or []
+                    print(f"[ws-subscribe] received codes={codes_raw}", flush=True)
                     if not isinstance(codes_raw, list):
                         await websocket.send_json({
                             "type": "subscribe_ack", "code": 400, "msg": "stock_codes must be list",
@@ -103,6 +104,9 @@ def register_ws_endpoint(app: FastAPI):
                         continue
                     try:
                         accepted = ws_manager.subscribe(websocket, codes_raw)
+                        # 2026-07-09 quick verify: 把 subscribe 事件持久化到专属 log,便于外部观察前端是否触发
+                        with open('/tmp/ws_subscribes.log', 'a') as _f:
+                            _f.write(f"[subscribe] ts={int(__import__('time').time())} remote={websocket.client[0] if websocket.client else '?'} accepted={sorted(accepted)} sub_total={len(ws_manager.subscription_index)} active={len(ws_manager.active_connections.get('quote_update', set()))}\n")
                     except ValueError as e:
                         await websocket.send_json({
                             "type": "subscribe_ack", "code": 429, "msg": str(e),

@@ -260,7 +260,9 @@ async def main() -> None:
     log.info(f"已启动 {NUM_WORKERS} 个并发处理 worker，内部缓冲区最大限制={MAX_QUEUE_SIZE}")
 
     # ---- 启动 WebSocket 服务 ----
-    ws_server = await serve(_ws_handler, WS_HOST, WS_PORT)
+    # 2026-07-09 fix: 加 ping_interval=15 + ping_timeout=60 (客户端也是这两个值)
+    #   ping_interval=20/ping_timeout=20 默认值在 tick 短暂停顿时被误判断连(1011)
+    ws_server = await serve(_ws_handler, WS_HOST, WS_PORT, ping_interval=15, ping_timeout=60)
     log.info(f"WebSocket 服务已成功监听: ws://{WS_HOST}:{WS_PORT}")
 
     # ---- 注册信号处理 ----

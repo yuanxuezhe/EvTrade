@@ -110,7 +110,9 @@ class QuoteConsumer:
         delay = self.RECONNECT_INITIAL
         while not self._stop.is_set():
             try:
-                self._ws = await connect(self.url, ping_interval=20, ping_timeout=20)
+                # 2026-07-09 fix: ping_interval=15s 主动 ping, ping_timeout=60s 给足行情低谷容错
+                # 之前 ping_interval=20, ping_timeout=20 在 tick 短暂停顿时被误判断连(1011)
+                self._ws = await connect(self.url, ping_interval=15, ping_timeout=60)
                 log.info("quote_consumer connected: %s", self.url)
                 return
             except Exception as e:
@@ -248,15 +250,11 @@ class QuoteConsumer:
         # 2026-07-09 quote-snapshot-subscribe: 先持久化 snapshot（不影响广播路径）
         await self._save_snapshot(snapshot)
 
-        # 2026-07-09 quote-snapshot-subscribe:
-        #   - 优先用 broadcast_to_stock(code, ...) 只推订阅者
-        #   - 零订阅者时 fallback 到 broadcast() 兼容老前端（无 subscribe 协议也能收）
-        #   - 这样前端 Step 6-8 集成订阅前, 老行为不破坏；集成后自动按订阅过滤
+        # 2026-07-09 quote-snapshot-subscribe: 按 stock_code 严格过滤
+        #    严格走 broadcast_to_stock 推订阅者，不再 fallback 兼容老前端
         delivered = 0
         try:
             delivered = await ws_manager.broadcast_to_stock(stock_code, {"type": "quote", "channel": "quote_update", "data": tick})
-            if delivered == 0:
-                await ws_manager.broadcast("quote_update", {"type": "quote", "channel": "quote_update", "data": tick})
         except Exception:
             log.exception("ws quote broadcast failed (non-fatal)")
         if engine is None:
