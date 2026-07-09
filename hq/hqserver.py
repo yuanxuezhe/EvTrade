@@ -10,6 +10,13 @@ EvQuota 行情并发消费 + WebSocket 直推路由器（高性能稳定版）
         ↓ N 个固定 worker 协程           CPU 受控
   (a) quota.broadcast.exchange (Topic, routing_key=stock_code)  ← 兼容旧版订阅
   (b) 内置 WebSocket 服务 :8765                               ← 前端直连
+
+2026-07-09 quote-batch-split: QMT publisher 改为 \n 合并多条 tick 为单 RabbitMQ 消息发送
+  (见 scripts/qmt_publisher.py:on_quote + format_quote: body = "\n".join(batch_lines))
+  本服务消费时按 \n 拆分为逐行 tick 单独处理:
+    - RabbitMQ routing_key = stock_code（每行单独 publish）
+    - WebSocket 每条 tick 一帧 {"type":"quote","data":{"stock_code":"...",...}}
+  HQ_DEBUG=1 时每个 tick 在日志打印一行（生产环境关闭）。
 """
 
 import asyncio
@@ -47,6 +54,14 @@ def _env_int(key: str, default: int) -> int:
         return default
 
 
+def _env_bool(key: str, default: bool = False) -> bool:
+    """解析 "1"/"true"/"yes"/"on" 为 True（不区分大小写）；其它返 default。"""
+    v = os.environ.get(key)
+    if v is None or v == "":
+        return default
+    return v.strip().lower() in ("1", "true", "yes", "on")
+
+
 # ---- RabbitMQ ----
 RABBITMQ_URL = _env("HQ_RABBITMQ_URL", "amqp://192.168.10.2:5672/")
 EXCHANGE_NAME = _env("HQ_EXCHANGE_NAME", "quota.exchange")           # 上游 broker publish 入口（服务器现存为 False）
@@ -57,6 +72,11 @@ BROADCAST_EXCHANGE = _env("HQ_BROADCAST_EXCHANGE", "quota.broadcast.exchange")  
 NUM_WORKERS = _env_int("HQ_NUM_WORKERS", 4)          # 严格限制并发处理的 Worker 数量，防止吃满单核 CPU
 MAX_QUEUE_SIZE = _env_int("HQ_MAX_QUEUE_SIZE", 5000) # 内部缓冲区大小，防止内存暴涨
 PREFETCH_COUNT = _env_int("HQ_PREFETCH_COUNT", 16)   # aio-pika 消费者单次预取消息数（保持 NUM_WORKERS*4 量级即可）
+
+# ---- Debug ----
+# 2026-07-09 quote-batch-split: 启动 debug 模式时，每个 tick 在日志打印一行（按标的）。
+#   生产环境必须关闭（量级 ~数千/秒）。
+HQ_DEBUG = _env_bool("HQ_DEBUG", False)
 
 # ---- WebSocket ----
 WS_HOST = _env("HQ_WS_HOST", "0.0.0.0")
@@ -125,50 +145,79 @@ task_queue: asyncio.Queue = asyncio.Queue(maxsize=MAX_QUEUE_SIZE)
 
 
 async def quota_worker(worker_id: int, broadcast_exchange: aio_pika.Exchange) -> None:
-    """固定的 Worker 协程，从内部队列取任务处理。"""
+    """固定的 Worker 协程，从内部队列取任务处理。
+
+    2026-07-09 quote-batch-split: QMT publisher 用 \\n 合并多条 tick 为单 RabbitMQ 消息,
+    本 worker 入队前先按 \\n 拆分为逐行 tick，对每行单独:
+      - publish 到 quota.broadcast.exchange（routing_key = stock_code，兼容旧版 Topic 订阅）
+      - 推一帧 WebSocket {"type":"quote", ...}
+      - HQ_DEBUG=1 时日志一行
+    """
     publish_func = broadcast_exchange.publish
+    log.debug(f"[Worker-{worker_id}] 启动 (HQ_DEBUG={HQ_DEBUG})")
 
     while True:
         raw_body = await task_queue.get()
         try:
-            # 字节层切 stock_code
-            stock_code_bytes = raw_body.split(b"|", 1)[0]
-            try:
-                stock_code = stock_code_bytes.decode("gbk")
-            except Exception:
-                stock_code = stock_code_bytes.decode("utf-8", errors="replace")
+            # ---- 2026-07-09 quote-batch-split: 按 \\n 拆分为多 tick ----
+            #   QMT publisher (scripts/qmt_publisher.py:on_quote) 用 "\n".join(batch_lines)
+            #   合并多条 tick 到一条 RabbitMQ 消息；这里必须先 split 再处理
+            for tick_bytes in raw_body.split(b"\n"):
+                if not tick_bytes:
+                    continue  # 跳过空行（多 tick 合并的尾随分隔符）
 
-            # ---- (a) RabbitMQ 广播（兼容旧版 Topic）----
-            await publish_func(
-                aio_pika.Message(body=raw_body, delivery_mode=1),
-                routing_key=stock_code,
-            )
-
-            # ---- (b) WebSocket 直推（前端）----
-            try:
-                body_text = raw_body.decode("gbk", errors="replace")
-            except Exception:
-                body_text = raw_body.decode("utf-8", errors="replace")
-            
-            fields = body_text.split("|")
-            last_price = None
-            if len(fields) >= 3:
+                # 字节层切 stock_code（每行首字段为 stock_code）
+                stock_code_bytes = tick_bytes.split(b"|", 1)[0]
                 try:
-                    last_price = float(fields[2])
-                except (ValueError, TypeError):
-                    pass
-                    
-            ws_payload = {
-                "type": "quote",
-                "channel": "quote_update",
-                "data": {
-                    "stock_code": stock_code,
-                    "last_price": last_price,
-                    "fields": fields,
-                    "body": body_text,
-                },
-            }
-            await _broadcast_ws(ws_payload)
+                    stock_code = stock_code_bytes.decode("gbk")
+                except Exception:
+                    stock_code = stock_code_bytes.decode("utf-8", errors="replace")
+
+                # ---- (a) RabbitMQ 广播（兼容旧版 Topic）----
+                #   每条 tick 单独 publish，routing_key = stock_code
+                #   这样下游按 stock_code 订阅 Topic 的消费者可以正确接收
+                await publish_func(
+                    aio_pika.Message(body=tick_bytes, delivery_mode=1),
+                    routing_key=stock_code,
+                )
+
+                # ---- (b) WebSocket 直推（前端）----
+                try:
+                    body_text = tick_bytes.decode("gbk", errors="replace")
+                except Exception:
+                    body_text = tick_bytes.decode("utf-8", errors="replace")
+
+                fields = body_text.split("|")
+                last_price = None
+                if len(fields) >= 3:
+                    try:
+                        last_price = float(fields[2])
+                    except (ValueError, TypeError):
+                        pass
+
+                ws_payload = {
+                    "type": "quote",
+                    "channel": "quote_update",
+                    "data": {
+                        "stock_code": stock_code,
+                        "last_price": last_price,
+                        "fields": fields,
+                        "body": body_text,
+                    },
+                }
+                await _broadcast_ws(ws_payload)
+
+                # ---- (c) Debug 模式：每个 tick 日志一行 ----
+                if HQ_DEBUG:
+                    # 控制单行长度（fields[1..N] 截断），避免日志爆炸
+                    preview_fields = fields[:31] if len(fields) > 31 else fields
+                    log.info(
+                        "[TICK] %s fields=%d last=%s fields_preview=%s",
+                        stock_code,
+                        len(fields),
+                        last_price,
+                        preview_fields,
+                    )
 
         except Exception as e:
             log.exception(f"[Worker-{worker_id} 错误]: {e}")
