@@ -24,7 +24,11 @@ from typing import Dict, Optional
 from server.db import db_session
 from server.services.strategy.engine import StrategyEngine
 from server.services.strategy.indicators import IndicatorParams
+from server.cache.quote_cache import get_quote_cache as _get_quote_cache  # 2026-07-10 quote-cache
 from server.ws.manager import ws_manager  # change ws-quote-fanout: 让前端 /ws/quote_update 也能收到 tick
+
+# 2026-07-10 quote-cache: 模块级 cache 单例
+quote_cache = _get_quote_cache()
 
 log = logging.getLogger(__name__)
 
@@ -239,7 +243,12 @@ class QuoteConsumer:
         }
 
     async def _fanout_tick(self, tick: dict) -> None:
-        """按 stock_code 找 engine，await evaluate_tick + 持久化 snapshot"""
+        """按 stock_code 找 engine，写 cache + 推 ws + evaluate_tick。
+
+        2026-07-10 quote-cache: 之前 await self._save_snapshot(snapshot) 把整个 tick 流
+        锁死在 MySQL UPSERT 速率上（实测 ~6/s），导致 ~99% tick 积压。改为
+        cache.set(snapshot) 内存 O(1) 写入，持久化由后台 periodic flush task 负责。
+        """
         stock_code = tick.get("stock_code")
         snapshot = tick.get("snapshot") or {}
         engine = self._engines.get(stock_code)
@@ -247,8 +256,10 @@ class QuoteConsumer:
         self._last_tick_ts = time.time()
         self._tick_count += 1
 
-        # 2026-07-09 quote-snapshot-subscribe: 先持久化 snapshot（不影响广播路径）
-        await self._save_snapshot(snapshot)
+        # 2026-07-10 quote-cache: 写内存 cache (O(1) dict set + dirty mark)
+        #    不再 await MySQL UPSERT，持久化由 periodic flush task 负责
+        if snapshot and snapshot.get("stock_code"):
+            quote_cache.set(snapshot)
 
         # 2026-07-09 quote-snapshot-subscribe: 按 stock_code 严格过滤
         #    严格走 broadcast_to_stock 推订阅者，不再 fallback 兼容老前端
