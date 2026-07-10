@@ -195,35 +195,47 @@ function refreshWsUrl() {
 ['baseUrl', 'jwtToken'].forEach(id => $(id).addEventListener('input', refreshWsUrl));
 refreshWsUrl();
 
-// ── 登录 ──
 async function login() {
-  const base = $('baseUrl').value.trim();
+  const base = $('baseUrl').value.trim().replace(/\/$/, '');
   const username = $('username').value.trim();
   const password = $('password').value;
   const url = `${base}/api/auth/login`;
   log('INFO', `POST ${url} (form-data)`);
-  const body = new URLSearchParams({ username, password });
+  // FastAPI OAuth2PasswordRequestForm 走 application/x-www-form-urlencoded
+  const formBody = new URLSearchParams({ username, password });
   try {
     const res = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body,
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: formBody,
+      mode: "cors",
+      credentials: "omit",
     });
+    const text = await res.text();
     if (!res.ok) {
-      const text = await res.text();
       log('ERR', `login failed: HTTP ${res.status} ${text.slice(0, 200)}`);
+      // 详细错误诊断
+      if (res.status === 0) log('ERR', '可能是 CORS 跨域拦截, 检查后端 EVTRADE_CORS_ORIGINS');
+      if (res.status === 401) log('ERR', '用户名或密码错误');
+      if (res.status === 422) log('ERR', '请求参数错误, 确保 username/password 非空');
       return;
     }
-    const j = await res.json();
+    let j;
+    try { j = JSON.parse(text); } catch { log('ERR', `login response 非 JSON: ${text.slice(0,200)}`); return; }
     if (!j.access_token) {
-      log('ERR', `login response missing access_token: ${JSON.stringify(j).slice(0, 200)}`);
+      log('ERR', `login response 缺 access_token: ${JSON.stringify(j).slice(0, 200)}`);
       return;
     }
     $('jwtToken').value = j.access_token;
     refreshWsUrl();
     log('OK', `login OK (user=${j.user?.username || '?'}, role=${j.user?.role || '?'}, expires_in=${j.expires_in}s)`);
+    log('INFO', 'JWT 已填入, 现在可以点 "连接 WS"');
   } catch (e) {
     log('ERR', `login exception: ${e.message}`);
+    log('HINT', '浏览器从 file:// 跨协议请求 https 被 CORS 拦截是常见原因');
+    log('HINT', '解决方法 1: 后端 EVTRADE_CORS_ORIGINS 加上 file:// 或 null');
+    log('HINT', '解决方法 2: 用本地 HTTP server 服务 demo (e.g. python -m http.server)');
+    log('HINT', '解决方法 3: 跳过登录, 直接用 "用 admin JWT" 按钮 (已预填永久 token)');
   }
 }
 $('btnLogin').addEventListener('click', login);
@@ -323,12 +335,15 @@ function handleMessage(msg) {
   }
   if (msg.type === 'quote' && msg.data) {
     stats.ticks++;
-    const code = msg.data.stock_code || '?';
+    // ⚠️ 后端 tick payload 结构: data.last_price (顶层) + data.snapshot.* (22 字段快照)
+    //    demo 取值时优先 data.snapshot (完整), fallback 到 data 顶层
+    const snap = msg.data.snapshot || msg.data;
+    const code = snap.stock_code || '?';
     if (!stats.codes.has(code)) stats.codes.set(code, { count: 0, last: 0, firstTs: new Date().toLocaleTimeString('zh-CN', {hour12:false}) });
     const e = stats.codes.get(code);
     e.count++;
-    e.last = msg.data.last_price;
-    log('TICK', `${code} last=${msg.data.last_price?.toFixed(3)} bid1=${msg.data.bid1_price?.toFixed(3)} ask1=${msg.data.ask1_price?.toFixed(3)} vol=${msg.data.volume}`);
+    e.last = snap.last_price;
+    log('TICK', `${code} last=${(snap.last_price || 0).toFixed(3)} bid1=${(snap.bid1_price || 0).toFixed(3)} ask1=${(snap.ask1_price || 0).toFixed(3)} vol=${snap.volume}`);
     $('statTicks').textContent = stats.ticks;
     $('statCodes').textContent = stats.codes.size;
     renderTable();
