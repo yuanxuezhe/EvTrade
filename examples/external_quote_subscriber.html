@@ -88,8 +88,8 @@
     <input type="text" id="username" value="quota" style="max-width:160px;" />
     <label style="min-width:auto;">密码</label>
     <input type="password" id="password" value="quota" style="max-width:160px;" />
-    <button id="btnLogin" class="secondary">登录拿 JWT</button>
-    <button id="btnLoginAdmin" class="secondary" title="用你提供的 admin JWT">用 admin JWT</button>
+    <button type="button" id="btnLogin" class="secondary">登录拿 JWT</button>
+    <button type="button" id="btnLoginAdmin" class="secondary" title="用你提供的 admin JWT">用 admin JWT</button>
   </div>
   <div class="row">
     <label>JWT Token</label>
@@ -101,8 +101,8 @@
     <input type="text" id="wsUrl" readonly style="background:#181818; color:#888;" />
   </div>
   <div class="row">
-    <button id="btnConnect" style="background:#1e6e3a;">连接 WS</button>
-    <button id="btnDisconnect" class="danger" disabled>断开</button>
+    <button type="button" id="btnConnect" style="background:#1e6e3a;">连接 WS</button>
+    <button type="button" id="btnDisconnect" class="danger" disabled>断开</button>
     <span id="status" class="status disconnected">未连接</span>
   </div>
 </div>
@@ -116,21 +116,33 @@
     <label><input type="radio" name="mode" value="none" /> 零订阅(验证静默丢弃)</label>
   </div>
   <div class="row">
-    <label>股票代码</label>
-    <input type="text" id="codes" value="000001.SH, 000006.SZ, 600519.SH, 000333.SZ, 000892.SZ" />
+    <label>股票代码 / pattern
+      <span style="color:#888; font-size:12px; margin-left:8px;">
+        📌 支持: <code>'000001.SZ'</code> 精确 / <code>'SZ'</code> 市场 / <code>'000001'</code> 数字前缀 / <code>''</code> 全市场 (空字符串)
+      </span>
+    </label>
+    <input type="text" id="codes" placeholder="'SZ' '000001.SZ' '000001' '' 多元素逗号分隔"
+           value="000001.SH, 000006.SZ, 600519.SH, 000333.SZ, 000892.SZ" />
   </div>
   <div class="row">
-    <label>预设列表</label>
+    <label>预设 pattern
+      <span style="color:#888; font-size:12px; margin-left:8px;">
+        一键验证 quote-pattern-subscribe (2026-07-10) 五种匹配规则
+      </span>
+    </label>
     <div class="preset-btns">
-      <button data-preset="000001.SH,000006.SZ,000892.SZ,000503.SZ">活跃 SZ</button>
-      <button data-preset="600519.SH,601318.SH,600036.SH,000858.SZ">蓝筹 SH</button>
-      <button data-preset="000001.SH,000001.SZ,000002.SH,000002.SZ,000003.SH,000003.SZ,000004.SH,000004.SZ,000005.SH,000006.SH,000006.SZ,000007.SH,000007.SZ,000008.SH,000009.SH,000009.SZ">15 个演示</button>
-      <button data-preset="">清空</button>
+      <button type="button" data-preset="000006.SZ,000892.SZ" title="精确 2 个代码">精确 2</button>
+      <button type="button" data-preset="SZ" title="深圳市场全部">SZ 市场</button>
+      <button type="button" data-preset="SH,SZ" title="沪深两市全部">SH+SZ 双市</button>
+      <button type="button" data-preset="" title="空字符串 = 全市场 tick">'' 全市场</button>
+      <button type="button" data-preset="000001" title="数字前缀 (SH+SZ 双边)">000001 前缀</button>
+      <button type="button" data-preset="000001.SZ,600519.SH" title="混合: 1 精确 + 1 精确 (snapshot 立即返)">混合精确</button>
+      <button type="button" data-preset="000001.SZ,SZ," title="混合: 精确 + 市场 + 空 (has_wildcard=true)">混合 wildcard</button>
     </div>
   </div>
   <div class="row">
-    <button id="btnSubscribe" disabled style="background:#0e639c;">发送 subscribe</button>
-    <button id="btnUnsubscribeAll" class="secondary" disabled>取消全部订阅</button>
+    <button type="button" id="btnSubscribe" disabled style="background:#0e639c;">发送 subscribe</button>
+    <button type="button" id="btnUnsubscribeAll" class="secondary" disabled>取消全部订阅</button>
   </div>
 </div>
 
@@ -150,7 +162,7 @@
   <h2>4. 实时日志</h2>
   <div id="log"></div>
   <div style="margin-top:6px;">
-    <button class="secondary" id="btnClearLog" style="font-size:12px; padding:4px 10px;">清空日志</button>
+    <button type="button" class="secondary" id="btnClearLog" style="font-size:12px; padding:4px 10px;">清空日志</button>
   </div>
 </div>
 
@@ -330,7 +342,19 @@ function handleMessage(msg) {
   }
   if (msg.type === 'subscribe_ack') {
     const sn = Object.keys(msg.snapshots || {}).length;
-    log('OK', `subscribe_ack: ack=${msg.stock_codes?.length || 0} codes, snapshots=${sn}, msg="${msg.msg || ''}"`);
+    // 2026-07-10 quote-pattern-subscribe: 新增 has_wildcard + snapshot_count 字段
+    const hasWc = msg.has_wildcard === true;
+    const wcMark = hasWc ? '✅' : '❌';
+    const wcNote = hasWc
+      ? ' (含宽泛 pattern, 后续 tick 自动推)'
+      : ' (仅精确 pattern, snapshot 即为最终视图)';
+    const sc = msg.snapshot_count !== undefined ? msg.snapshot_count : sn;
+    log('OK', `subscribe_ack: patterns=${msg.stock_codes?.length || 0}, snapshots=${sn}/${sc}, has_wildcard=${wcMark}${wcNote}`);
+    log('INFO', `  patterns accepted: ${JSON.stringify(msg.stock_codes)}`);
+    if (hasWc) {
+      // 提示用户: 当前订阅匹配哪些 code
+      log('INFO', `  💡 宽泛 pattern 会让 tick 自动推, 例如 'SZ' 会匹配所有 .SZ 结尾的代码`);
+    }
     return;
   }
   if (msg.type === 'quote' && msg.data) {
@@ -377,11 +401,14 @@ function renderSamples() {
 function getSelectedMode() {
   return document.querySelector('input[name=mode]:checked').value;
 }
+// 解析 codes 框: 支持 '' 保留 (2026-07-10 quote-pattern-subscribe)
+//   - '' (空字符串) 保留: 全市场 pattern
+//   - 其他空字符串丢弃
 function getCodes() {
   const m = getSelectedMode();
   if (m === 'none') return [];
-  if (m === 'all') return $('codes').value.split(',').map(s => s.trim()).filter(Boolean);
-  return $('codes').value.split(',').map(s => s.trim()).filter(Boolean);
+  // split + trim 后保留所有元素, '' 是合法 pattern (不能过滤)
+  return $('codes').value.split(',').map(s => s.trim());
 }
 
 function sendSubscribe() {
