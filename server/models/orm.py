@@ -360,6 +360,39 @@ class OrderNoSeq(Base):
 
 # ─────────────── T0 任务表 ───────────────
 
+class Stock(Base):
+    """股票基础信息表（v21 change stock-info-crawler, 2026-07-10）
+
+    📖 详见 `openspec/specs/data-model/spec.md` §13 (stocks)
+
+    字段来源:东方财富 API 抓取,管理员通过 /admin/sync 手动触发同步。
+    - stock_code 是 PK (与 quote_snapshots 一致,带 .SH/.SZ 后缀)
+    - 13 个业务字段(基础信息 + 公司简介)
+    - 2 个索引(industry / market 用于筛选)
+    - updated_at 自动 ON UPDATE,用于增量 upsert 的"7 天内跳过"逻辑
+    """
+    __tablename__ = "stocks"
+    __table_args__ = (
+        Index("ix_stocks_industry", "industry"),
+        Index("ix_stocks_market", "market"),
+    )
+
+    stock_code = Column(String(16), primary_key=True, nullable=False)  # 000001.SZ
+    stock_name = Column(String(64), nullable=False, default="")
+    industry = Column(String(64), nullable=True)
+    sector = Column(String(64), nullable=True)
+    market = Column(String(8), nullable=True)            # SZ / SH / BJ
+    list_date = Column(DateTime, nullable=True)
+    total_share = Column(Integer, nullable=False, default=0)        # 总股本(股)
+    float_share = Column(Integer, nullable=False, default=0)        # 流通股本(股)
+    market_cap = Column(Float, nullable=False, default=0.0)         # 总市值(元)
+    pe_ratio = Column(Float, nullable=True)                          # 滚动 PE
+    pb_ratio = Column(Float, nullable=True)                          # PB
+    intro = Column(Text, nullable=True)                              # 公司简介
+    created_at = Column(DateTime, nullable=False, default=_utcnow)
+    updated_at = Column(DateTime, nullable=False, default=_utcnow, onupdate=_utcnow)
+
+
 class T0Task(Base):
     """T0 做 T 任务实体（v18 change t0-task-management）
 
