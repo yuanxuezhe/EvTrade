@@ -66,7 +66,7 @@ def _env_bool(key: str, default: bool = False) -> bool:
 RABBITMQ_URL = _env("HQ_RABBITMQ_URL", "amqp://192.168.10.2:5672/")
 EXCHANGE_NAME = _env("HQ_EXCHANGE_NAME", "quota.exchange")           # 上游 broker publish 入口（服务器现存为 False）
 SOURCE_QUEUE = _env("HQ_SOURCE_QUEUE", "EvQuota")                    # 上游固定的基础行情队列名（服务器现存为 True）
-BROADCAST_EXCHANGE = _env("HQ_BROADCAST_EXCHANGE", "quota.broadcast.exchange")  # 内部转发用
+BROADCAST_EXCHANGE = _env("HQ_BROADCAST_EXCHANGE", "quota.broadcast.exchange")  # DEPRECATED 2026-07-10: 无 binding 转发 99.3% 消息丢弃,保留以备回滚
 
 # ---- 并发与缓冲 ----
 NUM_WORKERS = _env_int("HQ_NUM_WORKERS", 4)          # 严格限制并发处理的 Worker 数量，防止吃满单核 CPU
@@ -144,17 +144,16 @@ async def _ws_handler(websocket: WebSocketServerProtocol):
 task_queue: asyncio.Queue = asyncio.Queue(maxsize=MAX_QUEUE_SIZE)
 
 
-async def quota_worker(worker_id: int, broadcast_exchange: aio_pika.Exchange) -> None:
+async def quota_worker(worker_id: int) -> None:
     """固定的 Worker 协程，从内部队列取任务处理。
 
     2026-07-09 quote-batch-split: QMT publisher 用 \\n 合并多条 tick 为单 RabbitMQ 消息,
     本 worker 入队前先按 \\n 拆分为逐行 tick，对每行单独:
-      - publish 到 quota.broadcast.exchange（routing_key = stock_code，兼容旧版 Topic 订阅）
-      - 推一帧 WebSocket {"type":"quote", ...}
+      - 推一帧 WebSocket {"type":"quote", ...}（前端 ws 推送）
       - HQ_DEBUG=1 时日志一行
+
+    2026-07-10: 删除 RabbitMQ 重发块（quota.broadcast.exchange 无 binding, 99.3% 消息丢弃）
     """
-    publish_func = broadcast_exchange.publish
-    log.debug(f"[Worker-{worker_id}] 启动 (HQ_DEBUG={HQ_DEBUG})")
 
     while True:
         raw_body = await task_queue.get()
@@ -173,15 +172,8 @@ async def quota_worker(worker_id: int, broadcast_exchange: aio_pika.Exchange) ->
                 except Exception:
                     stock_code = stock_code_bytes.decode("utf-8", errors="replace")
 
-                # ---- (a) RabbitMQ 广播（兼容旧版 Topic）----
-                #   每条 tick 单独 publish，routing_key = stock_code
-                #   这样下游按 stock_code 订阅 Topic 的消费者可以正确接收
-                await publish_func(
-                    aio_pika.Message(body=tick_bytes, delivery_mode=1),
-                    routing_key=stock_code,
-                )
-
                 # ---- (b) WebSocket 直推（前端）----
+                #   2026-07-10: 删 RabbitMQ 重发块（quota.broadcast.exchange 无 binding, 99.3% 丢弃）
                 try:
                     body_text = tick_bytes.decode("gbk", errors="replace")
                 except Exception:
@@ -246,15 +238,11 @@ async def main() -> None:
     await source_queue.bind(source_exchange, routing_key="")
     log.info(f"成功绑定上游交换机 {EXCHANGE_NAME!r}(Durable:False) 到基础行情队列 {SOURCE_QUEUE!r}(Durable:True)")
 
-    # 4. 声明下游 Topic 广播交换机
-    broadcast_exchange = await channel.declare_exchange(
-        BROADCAST_EXCHANGE, type=aio_pika.ExchangeType.TOPIC, durable=True
-    )
-    log.info(f"已建立下游 Topic 广播交换机: {BROADCAST_EXCHANGE!r}")
+    # 2026-07-10: 删下游 Topic 广播交换机（quota.broadcast.exchange 无 binding, 99.3% 消息丢弃）
 
     # ---- 启动 worker 池 ----
     workers = [
-        asyncio.ensure_future(quota_worker(i, broadcast_exchange))
+        asyncio.ensure_future(quota_worker(i))
         for i in range(NUM_WORKERS)
     ]
     log.info(f"已启动 {NUM_WORKERS} 个并发处理 worker，内部缓冲区最大限制={MAX_QUEUE_SIZE}")
