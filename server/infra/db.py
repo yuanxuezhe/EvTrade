@@ -1,11 +1,11 @@
 """
-infra/db.py — SQLAlchemy 数据库基类层（v14 从 SQLite 迁移到 MySQL/pymysql）
+infra/db.py — SQLAlchemy 数据库基类层（v14 从 SQLite 迁移到 MySQL/pymysql，v20 强制 MySQL-only）
 
 职责：封装 MySQL + SQLAlchemy 1.4 细节，对上层暴露 Session/Base/上下文管理器。
 
-URL 优先级（REQ-CFG-009）：
+URL 优先级（REQ-CFG-009 v20 永久标准）：
   1. EVTRADE_DB_URL 显式 → 用
-  2. 否则 fallback 到 SQLite（供开发分支零依赖跑）
+  2. 否则 **RuntimeError**（永久禁用 SQLite fallback，运维必须 .env 配齐 MySQL URL）
 
 依赖：仅 stdlib + sqlalchemy + pymysql + cryptography + server.models（注册 ORM 元数据）。
 """
@@ -31,28 +31,30 @@ from sqlalchemy.engine import Engine
 
 log = logging.getLogger(__name__)
 
-# ─────────────── URL 解析 ───────────────
-# 优先 EVTRADE_DB_URL，回退 SQLite 本地
-_DEFAULT_SQLITE_URL = "sqlite:///./evtrade.db"
+# ─────────────── URL 解析（v20 MySQL-only 永久标准） ───────────────
+# 永久禁用 SQLite fallback：未设 EVTRADE_DB_URL 直接 RuntimeError。
+# 历史背景：v14 引入 MySQL/pymysql 默认 URL 但保留 sqlite:///./evtrade.db 作 dev fallback；
+# v20 起下线 fallback，本项目只允许 MySQL/pymysql。
+try:
+    DATABASE_URL = os.environ["EVTRADE_DB_URL"]
+except KeyError:
+    raise RuntimeError(
+        "[infra.db] EVTRADE_DB_URL is required (v20 MySQL-only permanent standard). "
+        "Set it in server/.env, e.g. mysql+pymysql://EvTrade:p%40ssw0rd@127.0.0.1:33066/evtrade?charset=utf8mb4"
+    )
+if not DATABASE_URL.startswith("mysql"):
+    raise RuntimeError(
+        f"[infra.db] Only MySQL is supported (v20 permanent standard). "
+        f"Got URL: {DATABASE_URL[:80]!r}. SQLite has been permanently disabled."
+    )
 
-DATABASE_URL = os.environ.get("EVTRADE_DB_URL", _DEFAULT_SQLITE_URL)
-
-# legacy 兼容常量（v13 之前 sqlite-only 时代 facade 在 server/db.py re-export）
-# 新代码勿用 — 走 DATABASE_URL 即可
+# BASE_DIR 保留以兼容 import
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))  # server/infra/
-DB_PATH = (
-    DATABASE_URL.replace("sqlite:///", "", 1)
-    if DATABASE_URL.startswith("sqlite:///")
-    else None
-)
 
-# ─────────────── Pool 配置（req-CFG-009）──
+# ─────────────── Pool 配置（v20 MySQL-only）──
 def _pool_kwargs(url: str) -> dict:
-    """按 driver 返回 pool_kwargs. SQLite 用 StaticPool, MySQL 用常规 pool."""
-    if url.startswith("sqlite"):
-        # SQLite 多线程同进程需要 check_same_thread=False
-        return {"connect_args": {"check_same_thread": False}}
-    # MySQL / 其他关系型 DB
+    """v20 只支持 MySQL，返回固定 pool_kwargs。"""
+    assert url.startswith("mysql"), f"_pool_kwargs called with non-MySQL URL: {url[:80]}"
     size = int(os.environ.get("EVTRADE_DB_POOL_SIZE", "5"))
     ofl = int(os.environ.get("EVTRADE_DB_MAX_OVERFLOW", "10"))
     rec = int(os.environ.get("EVTRADE_DB_POOL_RECYCLE", "1800"))
@@ -73,25 +75,24 @@ _engine_kwargs.update(_pool_kwargs(DATABASE_URL))
 
 engine = create_engine(DATABASE_URL, **_engine_kwargs)
 
-log.info("[infra.db] engine ready: driver=%s pool=%s",
-         engine.dialect.name,
-         "sqlite-fallback" if DATABASE_URL.startswith("sqlite") else "MySQL pool")
+# 启动时 dialect 断言（双重保险）
+assert engine.dialect.name == "mysql", (
+    f"[infra.db] FATAL: engine dialect is {engine.dialect.name!r}, "
+    "expected 'mysql'. v20 MySQL-only standard violated."
+)
+
+log.info("[infra.db] engine ready: driver=mysql pool_size=%d max_overflow=%d",
+         _engine_kwargs["pool_size"], _engine_kwargs["max_overflow"])
 
 
-# ─────────────── SQLite FK enforcement（向后兼容）──
-# SQLite 默认关闭外键约束（PRAGMA foreign_keys=OFF），导致 ForeignKey(ondelete="CASCADE")
-# 在 DB 层不生效。MySQL/InnoDB 自动 enforce FK，无需 PRAGMA。
-# 此 hook 仅在 SQLite 连接上触发，MySQL skip。
+# ─────────────── MySQL connect hook（v20 起无 SQLite 兼容逻辑）──
+# 原 v14 时期有 _set_sqlite_pragma hook 仅在 SQLite 连接上启用 PRAGMA foreign_keys=ON。
+# v20 起 SQLite 永久禁用，整个 hook 删除 — MySQL/InnoDB 自动 enforce FK，无需 PRAGMA。
+# 保留一个 no-op event listener 占位以兼容未来 MySQL session-level init（如 SET time_zone）。
 @event.listens_for(Engine, "connect")
-def _set_sqlite_pragma(dbapi_connection, connection_record):
-    """Driver-aware connect hook: 只 SQLite 启用 PRAGMA foreign_keys=ON."""
-    if not DATABASE_URL.startswith("sqlite"):
-        return
-    cursor = dbapi_connection.cursor()
-    try:
-        cursor.execute("PRAGMA foreign_keys=ON")
-    finally:
-        cursor.close()
+def _on_connect(dbapi_connection, connection_record):
+    """v20 MySQL-only: no-op placeholder, MySQL/InnoDB handles FK enforce natively."""
+    pass
 
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)

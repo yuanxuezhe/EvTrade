@@ -3,13 +3,12 @@
 
 变更：
 1. 给 quote_snapshots.stock_code 加 UNIQUE 约束（latest-only 模型：每 stock_code 1 行）
-   - SQLite: CREATE UNIQUE INDEX uq_quote_snapshots_stock_code ON quote_snapshots(stock_code)
-   - MySQL : ALTER TABLE quote_snapshots ADD UNIQUE KEY uq_quote_snapshots_stock_code (stock_code)
+   - MySQL : CREATE UNIQUE INDEX uq_quote_snapshots_stock_code ON quote_snapshots(stock_code)
 2. 注：QuoteSnapshot ORM 已同步加 UniqueConstraint("stock_code", name="uq_quote_snapshots_stock_code")
    (server/models/orm.py:301-303)，新建库 init_db 会自动建。
 
 幂等性：
-- 索引/约束存在探测（INFORMATION_SCHEMA.STATISTICS / sqlite_master）
+- 索引/约束存在探测（INFORMATION_SCHEMA.STATISTICS）
 - 已存在则 skip
 
 执行：
@@ -30,11 +29,25 @@ except ImportError:
 from sqlalchemy import create_engine, text, inspect
 from sqlalchemy.engine import Engine
 
-# ─────────────── URL 解析（同 2026-07-08 migration） ───────────────
-DEFAULT_URL = "sqlite:///./evtrade.db"
-DATABASE_URL = os.environ.get("EVTRADE_DB_URL", DEFAULT_URL)
-# ALTER TABLE 需要 DDL；优先 ADMIN_URL，回退业务 URL
+# ─────────────── URL 解析（v20 MySQL-only 永久标准 强制 EVTRADE_DB_URL） ───────────────
+# REQ-CFG-009 v20: SQLite fallback 永久下线；migration 脚本同样要求显式 EVTRADE_DB_URL。
+try:
+    DATABASE_URL = os.environ["EVTRADE_DB_URL"]
+except KeyError:
+    raise RuntimeError(
+        "EVTRADE_DB_URL is required (v20 MySQL-only permanent standard). "
+        "Set it in server/.env, e.g. mysql+pymysql://EvTrade:p%40ssw0rd@127.0.0.1:33066/evtrade?charset=utf8mb4"
+    )
+if not DATABASE_URL.startswith("mysql"):
+    raise RuntimeError(
+        f"[migration] Only MySQL is supported (v20 permanent standard). Got: {DATABASE_URL[:80]!r}"
+    )
 ADMIN_URL = os.environ.get("EVTRADE_DB_ADMIN_URL", DATABASE_URL)
+if not ADMIN_URL.startswith("mysql"):
+    raise RuntimeError(
+        f"EVTRADE_DB_ADMIN_URL must be a MySQL URL. Got: {ADMIN_URL[:80]!r}"
+    )
+
 
 IDX_NAME = "uq_quote_snapshots_stock_code"
 TABLE_NAME = "quote_snapshots"
@@ -42,7 +55,7 @@ TABLE_NAME = "quote_snapshots"
 
 def _engine_dialect_name(engine: Engine) -> str:
     with engine.connect() as conn:
-        return conn.dialect.name  # 'mysql' / 'sqlite' / ...
+        return conn.dialect.name  # 'mysql' (v20 永久标准唯一合法值)
 
 
 def table_exists(engine: Engine, table: str) -> bool:
@@ -57,10 +70,8 @@ def index_exists(engine: Engine, table: str, index_name: str) -> bool:
 
 def main():
     admin_engine = create_engine(ADMIN_URL, future=True)
-    dialect = _engine_dialect_name(admin_engine)
-    is_mysql = dialect == "mysql"
 
-    print(f"[INFO] dialect={dialect} admin_url={ADMIN_URL.split('@')[-1]}")
+    print(f"[INFO] dialect=mysql admin_url={ADMIN_URL.split('@')[-1]}")
 
     try:
         with admin_engine.begin() as conn:
@@ -74,17 +85,11 @@ def main():
                 print(f"[SKIP] {IDX_NAME} on {TABLE_NAME} already exists")
                 return
 
-            # ─── Step 3: 建唯一索引 ───
-            if is_mysql:
-                # MySQL 8 同样不支持 CREATE UNIQUE INDEX IF NOT EXISTS，但前面已探测
-                conn.execute(text(
-                    f"CREATE UNIQUE INDEX {IDX_NAME} ON {TABLE_NAME}(stock_code)"
-                ))
-            else:
-                # SQLite 同样
-                conn.execute(text(
-                    f"CREATE UNIQUE INDEX {IDX_NAME} ON {TABLE_NAME}(stock_code)"
-                ))
+            # ─── Step 3: 建唯一索引（v20 MySQL-only） ───
+            # MySQL 8 不支持 CREATE UNIQUE INDEX IF NOT EXISTS，但 INFORMATION_SCHEMA 已探测过
+            conn.execute(text(
+                f"CREATE UNIQUE INDEX {IDX_NAME} ON {TABLE_NAME}(stock_code)"
+            ))
             print(f"[OK] created unique index {IDX_NAME} on {TABLE_NAME}(stock_code)")
 
         # ─── Step 4: 用业务 URL 验证可见 ───

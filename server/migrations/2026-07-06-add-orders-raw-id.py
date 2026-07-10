@@ -7,7 +7,7 @@
 - 旧 orders 数据无破坏（NULL fallback）
 
 幂等性：先查列是否存在，存在则 skip。
-SQLite + MySQL 双 driver 兼容（SQLAlchemy 元数据探测）。
+v20 MySQL-only：INFORMATION_SCHEMA.COLUMNS 探测（SQLite 永久下线）。
 
 执行：
     # 默认用业务账号 (EVTRADE_DB_URL)；若需 DDL ALTER 设 EVTRADE_DB_ADMIN_URL
@@ -18,28 +18,40 @@ import sys
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
 
-# ─────────────── URL 解析（同 infra/db.py） ───────────────
-DEFAULT_URL = "sqlite:///./evtrade.db"
-DATABASE_URL = os.environ.get("EVTRADE_DB_URL", DEFAULT_URL)
+# ─────────────── URL 解析（v20 MySQL-only 永久标准 强制 EVTRADE_DB_URL） ───────────────
+# REQ-CFG-009 v20: SQLite fallback 永久下线；migration 脚本同样要求显式 EVTRADE_DB_URL。
+# 没设 → KeyError，运维必须先 .env 配齐 URL。
+try:
+    DATABASE_URL = os.environ["EVTRADE_DB_URL"]
+except KeyError:
+    raise RuntimeError(
+        "EVTRADE_DB_URL is required (v20 MySQL-only permanent standard). "
+        "Set it in server/.env, e.g. mysql+pymysql://EvTrade:p%40ssw0rd@127.0.0.1:33066/evtrade?charset=utf8mb4"
+    )
+if not DATABASE_URL.startswith("mysql"):
+    raise RuntimeError(
+        f"[migration] Only MySQL is supported (v20 permanent standard). Got: {DATABASE_URL[:80]!r}. "
+        "SQLite has been permanently disabled."
+    )
 # ALTER TABLE 需要 DDL；优先 ADMIN_URL，回退业务 URL
 ADMIN_URL = os.environ.get("EVTRADE_DB_ADMIN_URL", DATABASE_URL)
+if not ADMIN_URL.startswith("mysql"):
+    raise RuntimeError(
+        f"EVTRADE_DB_ADMIN_URL must be a MySQL URL. Got: {ADMIN_URL[:80]!r}"
+    )
 
 
 def column_exists(conn: "Engine.connect()", table: str, column: str) -> bool:
-    """跨 driver 探测 列是否存在."""
-    if conn.dialect.name == "mysql":
-        row = conn.execute(text("""
-            SELECT 1
-            FROM INFORMATION_SCHEMA.COLUMNS
-            WHERE TABLE_SCHEMA = DATABASE()
-              AND TABLE_NAME   = :t
-              AND COLUMN_NAME  = :c
-            LIMIT 1
-        """), {"t": table, "c": column}).first()
-        return row is not None
-    # SQLite + 其它
-    rows = conn.execute(text(f"PRAGMA table_info({table})")).fetchall()
-    return any(r[1] == column for r in rows)
+    """MySQL INFORMATION_SCHEMA 探测 列是否存在."""
+    row = conn.execute(text("""
+        SELECT 1
+        FROM INFORMATION_SCHEMA.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME   = :t
+          AND COLUMN_NAME  = :c
+        LIMIT 1
+    """), {"t": table, "c": column}).first()
+    return row is not None
 
 
 def main():
@@ -51,14 +63,8 @@ def main():
                 print("[SKIP] orders.raw_id already exists, no migration needed")
                 return
 
-            # 第二步：ALTER TABLE ADD COLUMN
-            # MySQL: ADD COLUMN 不支持 IF NOT EXISTS，需先探测
-            # SQLite: ALTER TABLE ADD COLUMN 也不支持 IF NOT EXISTS
-            # 上面 column_exists 已把"存在"排除，直接执行
-            if conn.dialect.name == "mysql":
-                conn.execute(text("ALTER TABLE orders ADD COLUMN raw_id VARCHAR(8) NULL"))
-            else:
-                conn.execute(text("ALTER TABLE orders ADD COLUMN raw_id VARCHAR(8)"))
+            # 第二步：ALTER TABLE ADD COLUMN（MySQL 不支持 IF NOT EXISTS，已探测过）
+            conn.execute(text("ALTER TABLE orders ADD COLUMN raw_id VARCHAR(8) NULL"))
 
         print("[OK] Added column orders.raw_id (VARCHAR(8), nullable)")
 

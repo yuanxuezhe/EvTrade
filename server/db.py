@@ -1,11 +1,11 @@
 """
-server/db.py — 顶层 re-export 兼容垫片（v13 改造）
+server/db.py — 顶层 re-export 兼容垫片（v13 改造，v20 移除 DB_PATH）
 
 实际实现已迁至 `server.infra.db`，本文件保留 facade 以兼容既有 import 路径。
+v20 起 DB_PATH 移除（SQLite 永久禁用）。
 """
 from server.infra.db import (  # noqa: F401
     BASE_DIR,
-    DB_PATH,
     DATABASE_URL,
     engine,
     SessionLocal,

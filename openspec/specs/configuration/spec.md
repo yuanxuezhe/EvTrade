@@ -88,25 +88,29 @@ EvTrade 部署在 Windows（开发/QMT 柜台）+ Linux（前后端服务），�
   - 与 `HQ_WS_HOST` / `HQ_WS_PORT` 组合（`ws://{HQ_WS_HOST}:{HQ_WS_PORT}`）语义一致；用 URL 形式便于部署时切换网络拓扑
   - QuoteConsumer 默认 `ws://127.0.0.1:8765`（与 hqserver 同机）；跨机部署时需显式覆盖
 
-### REQ-CFG-009: MySQL 数据库连接（v14 sqlite → mysql 迁移）
+### REQ-CFG-009: MySQL 数据库连接（v14 sqlite → mysql 迁移，v20 强制 MySQL-only 永久标准）
 
 | Key | 默认 | 说明 |
 |---|---|---|
-| `EVTRADE_DB_URL` | `mysql+pymysql://EvTrade:p%40ssw0rd@127.0.0.1:33066/evtrade?charset=utf8mb4` | SQLAlchemy URL（driver=pymysql 纯 Python，跨平台零编译）|
+| `EVTRADE_DB_URL` | **无默认；必须显式设置** | SQLAlchemy URL（driver=pymysql 纯 Python，跨平台零编译）。**未设置或非 MySQL → 进程拒绝启动（RuntimeError）** |
 | `EVTRADE_DB_ADMIN_URL` | 留空 | **DDL-only URL**（init_db 建表 / 一次性 migration 用）。生产部署完成后建议从 env 删除避免误用 |
-| `EVTRADE_DB_POOL_SIZE` | `5` | MySQL pool size（SQLite StaticPool 忽略）|
+| `EVTRADE_DB_POOL_SIZE` | `5` | MySQL pool size |
 | `EVTRADE_DB_MAX_OVERFLOW` | `10` | 超额连接上限 |
-| `EVTRADE_DB_POOL_RECYCLE` | `1800` | 连接回收秒数（防止 MySQL 8 wait_timeout 主动断开）|
-| `EVTRADE_DB_POOL_PRE_PING` | `true` | 断连自动重连（防 wait_timeout 后 stale connection）|
+| `EVTRADE_DB_POOL_RECYCLE` | `1800` | 连接回收秒数（防止 MySQL 8 wait_timeout 主动断开） |
+| `EVTRADE_DB_POOL_PRE_PING` | `true` | 断连自动重连（防 wait_timeout 后 stale connection） |
 
-- **driver 优先级**：pymysql（纯 Python）— 已写进 `requirements.txt` + 已装到 host Python 3.13
-- **URL 优先级**：`EVTRADE_DB_URL` env → fallback `sqlite:///./evtrade.db`（保留 dev fallback）
+- **driver 唯一**：pymysql（纯 Python）— 已写进 `requirements.txt` + 已装到 host Python 3.13
+- **v20 强制 MySQL-only 永久标准**：
+  - `EVTRADE_DB_URL` **未设置** → `infra/db.py` 启动时 `os.environ["EVTRADE_DB_URL"]` 抛 `KeyError` → 包装为 `RuntimeError`
+  - `EVTRADE_DB_URL` **非 MySQL**（如 `sqlite:///...`）→ `infra/db.py` 启动时 `assert db.bind.dialect.name == "mysql"` 抛 `RuntimeError`，明确文案 `"[infra.db] Only MySQL is supported (v20 permanent standard). SQLite has been permanently disabled."`
+  - migration 脚本同样强制：`os.environ["EVTRADE_DB_URL"]` + `assert startswith("mysql")`（`server/migrations/2026-07-{06,08,09}-*.py`）
+  - 仓库存量 SQLite fallback 代码（`_DEFAULT_SQLITE_URL` / `is_mysql` 双 driver 分支 / SQLite PRAGMA hook / SQLite list-of-dict 占位符）**全部删除**
 - **密码特殊符号 URL encode**：`@` → `%40`、`#` → `%23`
 - **字符集**：服务端 `utf8mb4` / 排序规则 `utf8mb4_unicode_ci`（连接参数 `charset=utf8mb4`）
 - **存储引擎**：InnoDB（MySQL 8.0 默认；事务 + FK + 行锁全支持）
-- **池配置 driver-aware**：SQLite 走 `StaticPool + check_same_thread=False`，MySQL 走 `QueuePool + pool_size/max_overflow/recycle/pre_ping`
-- **PRAGMA foreign_keys 走 driver-aware connect hook**：仅 SQLite 启用，MySQL 默认 enforce
-- **legacy 兼容常量**：`BASE_DIR` / `DB_PATH` 保留在 `infra/db.py`，`server/db.py` facade 不动（42 处 import 路径不变）
+- **池配置**：MySQL 走 `QueuePool + pool_size/max_overflow/recycle/pre_ping`
+- **legacy 兼容常量**：`BASE_DIR` 保留在 `infra/db.py` 供 `migrations/` 用，`DB_PATH` **永久下线**（`server/db.py` facade 移除该 re-export）
+- **历史工具**：`server/migrations/sqlite-to-mysql-migrate.py` 保留（一次性历史工具，不参与日常启动）
 
 ### REQ-CFG-010: 双用户最小权限（v14 MySQL 安全姿态）
 

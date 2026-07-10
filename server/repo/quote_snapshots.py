@@ -8,8 +8,7 @@ repo/quote_snapshots.py — quote_snapshots 表仓库（2026-07-09 完整实现�
    - volume / bid*_vol / ask*_vol (Integer，手/股数)
    - bid1_price .. bid5_price (Float, 买价 1=最高买 .. 5=最低买)
    - ask1_price .. ask5_price (Float, 卖价 1=最低卖 .. 5=最高卖)
-📌 跨方言 UPSERT：
-   - SQLite: INSERT ... ON CONFLICT (stock_code) DO UPDATE SET ...
+📌 跨方言 UPSERT（v20 MySQL-only 永久标准）:
    - MySQL : INSERT ... ON DUPLICATE KEY UPDATE ...
 📌 表已加 UNIQUE 约束：migration 2026-07-09-add-quote-snapshots-unique.py
 📌 应用层调用点：server.services.strategy.quote_consumer._save_snapshot
@@ -44,7 +43,7 @@ _SNAPSHOT_COLUMNS: List[str] = [
 
 
 def _is_mysql(db: Session) -> bool:
-    """探测底层 dialect（orders.py:50 同款）"""
+    """探测底层 dialect（orders.py:50 同款）— v20 MySQL-only 标准下恒为 True，保留以兼容历史调用."""
     return db.get_bind().dialect.name == "mysql"
 
 
@@ -62,10 +61,10 @@ def _coerce_value(col: str, v) -> object:
 
 
 def upsert(db: Session, snapshot: Dict) -> None:
-    """写入或覆盖一行 snapshot（latest-only）。
+    """写入或覆盖一行 snapshot（latest-only，v20 MySQL-only）。
 
     snapshot 字段：stock_code + 23 数据字段（可选 ts）
-    跨方言 UPSERT：SQLite ON CONFLICT / MySQL ON DUPLICATE KEY UPDATE
+    MySQL ON DUPLICATE KEY UPDATE 兜底成 UPDATE（依赖 UNIQUE 索引）
 
     📌 设计权衡：
     - latest-only 模型 → 不增加历史行
@@ -91,23 +90,13 @@ def upsert(db: Session, snapshot: Dict) -> None:
     cols.append("ts")
     placeholders.append("CURRENT_TIMESTAMP")
 
-    if _is_mysql(db):
-        # MySQL: INSERT ... ON DUPLICATE KEY UPDATE
-        # 注：MySQL 不支持 ON CONFLICT 语法
-        update_clause = ", ".join([f"{c}=CURRENT_TIMESTAMP" if c == "ts" else f"{c}=:{c}" for c in cols if c != "stock_code"])
-        sql = (
-            f"INSERT INTO quote_snapshots ({', '.join(cols)}) "
-            f"VALUES ({', '.join(placeholders)}) "
-            f"ON DUPLICATE KEY UPDATE {update_clause}"
-        )
-    else:
-        # SQLite: INSERT ... ON CONFLICT (stock_code) DO UPDATE SET ...
-        update_clause = ", ".join([f"{c}=CURRENT_TIMESTAMP" if c == "ts" else f"{c}=excluded.{c}" for c in cols if c != "stock_code"])
-        sql = (
-            f"INSERT INTO quote_snapshots ({', '.join(cols)}) "
-            f"VALUES ({', '.join(placeholders)}) "
-            f"ON CONFLICT (stock_code) DO UPDATE SET {update_clause}"
-        )
+    # v20 MySQL-only: 单条 UPSERT 走 SQLAlchemy text() + named params（:name）
+    update_clause = ", ".join([f"{c}=CURRENT_TIMESTAMP" if c == "ts" else f"{c}=:{c}" for c in cols if c != "stock_code"])
+    sql = (
+        f"INSERT INTO quote_snapshots ({', '.join(cols)}) "
+        f"VALUES ({', '.join(placeholders)}) "
+        f"ON DUPLICATE KEY UPDATE {update_clause}"
+    )
 
     params = dict(zip(cols, vals))
     try:
@@ -117,13 +106,14 @@ def upsert(db: Session, snapshot: Dict) -> None:
         raise
 
 
-def _build_batch_sql(db: Session, cols: List[str]) -> str:
-    """构造批量 UPSERT SQL（MySQL 用 %s，SQLite 用 :name）。
+def _build_batch_sql(cols: List[str]) -> str:
+    """构造 MySQL 批量 UPSERT SQL（v20 MySQL-only 永久标准）。
 
-    📌 2026-07-10 batch-flush：quote_cache_flusher 一次 flush N 条 snapshot,
-       用 cursor.executemany 一次提交 N 行 INSERT ... ON DUPLICATE KEY UPDATE。
-       ts 由 SQL 字符串直接写 CURRENT_TIMESTAMP（migration schema ts 列无 DEFAULT，
-       pymysql literal bind 会把字符串当参数处理 → 必须把 ts 列排除在占位符外）。
+    📌 2026-07-10 batch-flush + v20 MySQL-only：
+       - 占位符走 `%s`（pymysql cursor.executemany tuple-of-tuple）
+       - ts 由 SQL 字符串直接写 CURRENT_TIMESTAMP（migration schema ts 列无 DEFAULT，
+         不能用占位符参数化）
+       - 同 stock_code 重复 → ON DUPLICATE KEY UPDATE 兜底（依赖 UNIQUE 索引）
 
     性能收益（pymysql cursor.executemany vs 单条 cursor.execute loop, 2026-07-10 实测）:
       - loop N=100:               239 rows/s (单 commit)
@@ -131,45 +121,27 @@ def _build_batch_sql(db: Session, cols: List[str]) -> str:
       - executemany N=200:        666 rows/s   (2.8x)
       - executemany N=500:        944 rows/s   (4.0x)
       - executemany N=1000:     1,120 rows/s   (4.7x)
-
-    ⚠️ 双 driver 策略：
-       - MySQL: 走 raw pymysql cursor（占位符 `%s`）
-       - SQLite: 走 SQLAlchemy text()（占位符 `:name`）
-       同一个函数同时生产两种 SQL，按 _is_mysql() 选。
     """
     cols_no_ts = [c for c in cols if c != "ts"]
     n_cols = len(cols_no_ts)
     insert_cols_clause = ",".join(cols_no_ts) + ",ts"
-
-    if _is_mysql(db):
-        # MySQL raw pymysql cursor 走 %s
-        placeholders = ",".join(["%s"] * n_cols)
-        values_clause = f"{placeholders},CURRENT_TIMESTAMP"
-        update_parts = ",".join([f"{c}=VALUES({c})" for c in cols_no_ts if c != "stock_code"]) + ",ts=CURRENT_TIMESTAMP"
-        sql = (
-            f"INSERT INTO quote_snapshots ({insert_cols_clause}) "
-            f"VALUES ({values_clause}) "
-            f"ON DUPLICATE KEY UPDATE {update_parts}"
-        )
-    else:
-        # SQLite SQLAlchemy text() 走 :name
-        placeholders = ",".join([f":{c}" for c in cols_no_ts])
-        values_clause = f"{placeholders},CURRENT_TIMESTAMP"
-        # SQLite excluded.{col} 在 ON CONFLICT 中可用，但 ts 列不在 INSERT 占位符中
-        update_parts = ",".join([f"{c}=excluded.{c}" for c in cols_no_ts if c != "stock_code"]) + ",ts=CURRENT_TIMESTAMP"
-        sql = (
-            f"INSERT INTO quote_snapshots ({insert_cols_clause}) "
-            f"VALUES ({values_clause}) "
-            f"ON CONFLICT (stock_code) DO UPDATE SET {update_parts}"
-        )
-    return sql
+    placeholders = ",".join(["%s"] * n_cols)
+    values_clause = f"{placeholders},CURRENT_TIMESTAMP"
+    update_parts = (
+        ",".join([f"{c}=VALUES({c})" for c in cols_no_ts if c != "stock_code"])
+        + ",ts=CURRENT_TIMESTAMP"
+    )
+    return (
+        f"INSERT INTO quote_snapshots ({insert_cols_clause}) "
+        f"VALUES ({values_clause}) "
+        f"ON DUPLICATE KEY UPDATE {update_parts}"
+    )
 
 
 def upsert_batch(db: Session, snapshots: List[Dict]) -> int:
-    """批量 UPSERT 多个 snapshot（latest-only）。
+    """批量 UPSERT 多个 snapshot（latest-only，v20 MySQL-only）。
 
-    📌 2026-07-10 batch-flush：MySQL 走 raw pymysql cursor.executemany，
-       SQLite 走 SQLAlchemy text() executemany。
+    📌 2026-07-10 batch-flush：MySQL 走 raw pymysql cursor.executemany。
 
     性能数据（pymysql raw cursor.executemany, MySQL, 2026-07-10 实测）:
       - 单条 cursor.execute(N=100):   239 rows/s
@@ -183,56 +155,33 @@ def upsert_batch(db: Session, snapshots: List[Dict]) -> int:
     - 任何一行无 stock_code → 跳过
     - 整批失败 → 回退到逐条 upsert()（让单条失败不影响其他）
 
-    ⚠️ 参数构造因 dialect 而异：
-       - MySQL tuple-of-tuple（一行一个 tuple）
-       - SQLite list-of-dict（一行一个 dict，键是列名）
+    📌 v20 MySQL-only：参数构造走 tuple-of-tuple 对齐 %s placeholders
     """
     if not snapshots:
         return 0
     cols = ["stock_code"] + list(_SNAPSHOT_COLUMNS)  # 不含 ts
-    sql = _build_batch_sql(db, cols + ["ts"])  # _build_batch_sql 内部会剔 ts
-    is_mysql = _is_mysql(db)
+    sql = _build_batch_sql(cols + ["ts"])  # _build_batch_sql 内部会剔 ts
 
-    if is_mysql:
-        # MySQL: tuple-of-tuple 对齐 %s placeholders
-        rows = []
-        for snap in snapshots:
-            code = snap.get("stock_code")
-            if not code:
-                continue
-            row: list = [code]
-            for col in _SNAPSHOT_COLUMNS:
-                row.append(_coerce_value(col, snap.get(col)))
-            rows.append(tuple(row))
-    else:
-        # SQLite: list-of-dict 对齐 :name placeholders
-        rows = []
-        for snap in snapshots:
-            code = snap.get("stock_code")
-            if not code:
-                continue
-            row: Dict[str, object] = {"stock_code": code}
-            for col in _SNAPSHOT_COLUMNS:
-                row[col] = _coerce_value(col, snap.get(col))
-            rows.append(row)
+    # MySQL: tuple-of-tuple 对齐 %s placeholders
+    rows = []
+    for snap in snapshots:
+        code = snap.get("stock_code")
+        if not code:
+            continue
+        row: list = [code]
+        for col in _SNAPSHOT_COLUMNS:
+            row.append(_coerce_value(col, snap.get(col)))
+        rows.append(tuple(row))
     if not rows:
         return 0
 
     try:
-        # 📌 双路径策略：
-        #   - MySQL: 走 raw pymysql cursor.executemany（SQLAlchemy text + dict-of-dict
-        #     在 MySQL dialect 上有 `%(name)s` named tuple style 冲突）
-        #   - SQLite: SQLAlchemy text + list-of-dict executemany 工作正常（:name 风格）
-        if is_mysql:
-            db_conn = db.connection()
-            raw_conn = db_conn.connection.driver_connection  # pymysql.connections.Connection
-            with raw_conn.cursor() as raw_cursor:
-                raw_cursor.executemany(sql, rows)
-            db.commit()
-        else:
-            from sqlalchemy import text
-            db.execute(text(sql), rows)
-            db.commit()
+        # MySQL: 走 raw pymysql cursor.executemany（绕过 SQLAlchemy dialect 编译）
+        db_conn = db.connection()
+        raw_conn = db_conn.connection.driver_connection  # pymysql.connections.Connection
+        with raw_conn.cursor() as raw_cursor:
+            raw_cursor.executemany(sql, rows)
+        db.commit()
         return len(rows)
     except Exception as e:
         # 整批失败 → 回退到逐条 upsert()（已有 commit）
