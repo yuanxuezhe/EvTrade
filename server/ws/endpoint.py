@@ -27,10 +27,14 @@ from server.auth.security import decode_token
 from server.db import SessionLocal
 from server.ws.manager import ws_manager, match_pattern
 from server.repo.quote_snapshots import get_latest_multi as repo_get_latest_multi, to_dict as repo_to_dict
+from server.models.user import User as UserModel  # 2026-07-10 sync_update admin 鉴权
 
 
 WS_HEARTBEAT_INTERVAL = 30  # 秒：服务端主动 ping 间隔
 WS_CLIENT_TIMEOUT = 60      # 秒：上次消息到现在的最大间隔（= 2 × heartbeat）
+
+# 2026-07-10 sync_update 频道鉴权:admin role required
+WS_CHANNELS_REQUIRE_ADMIN = {"sync_update"}
 
 
 def register_ws_endpoint(app: FastAPI):
@@ -42,7 +46,7 @@ def register_ws_endpoint(app: FastAPI):
 
     @app.websocket("/ws/{channel}")
     async def websocket_endpoint(websocket: WebSocket, channel: str):
-        """前端订阅推送。channel ∈ order_update | trade_update | quote_update | strategy_update。
+        """前端订阅推送。channel ∈ order_update | trade_update | quote_update | strategy_update | sync_update。
 
         通过 query param ?token=JWT 认证；无 token 则拒绝连接。
 
@@ -51,11 +55,29 @@ def register_ws_endpoint(app: FastAPI):
           - quote_update 频道也启服务端主动 ping（之前因"走 hqserver"误跳）
           - 业务消息处理：subscribe / unsubscribe
           - subscribe_ack 立即从 quote_snapshots 读最新快照（最新一条 22 字段）
+        v21 增（2026-07-10 stock-info-crawler）：
+          - sync_update 频道（admin only）
+          - 鉴权校验 role=admin（其他 channel 不变）
         """
         token = websocket.query_params.get("token")
-        if not token or not decode_token(token):
+        if not token:
             await websocket.close(code=4001, reason="Unauthorized")
             return
+        user = decode_token(token)
+        if not user:
+            await websocket.close(code=4001, reason="Invalid token")
+            return
+        # 2026-07-10 sync_update admin 鉴权
+        if channel in WS_CHANNELS_REQUIRE_ADMIN:
+            # 从 DB 查 role(避免 JWT 缓存了旧 role)
+            db = SessionLocal()
+            try:
+                user_row = db.query(UserModel).filter_by(id=int(user.get("id") or user.get("sub", 0))).first()
+                if not user_row or user_row.role != "admin":
+                    await websocket.close(code=4003, reason="Admin required")
+                    return
+            finally:
+                db.close()
         await ws_manager.connect(websocket, channel)
 
         last_recv = asyncio.get_event_loop().time()

@@ -27,6 +27,8 @@ from server.api import t0_stats, t0_aggregate
 from server.api import t0_tasks  # v18 change t0-task-management
 from server.api import strategy as strategy_api  # change strategy_trade task 9
 from server.api import quote as quote_api  # 2026-07-09 quote-snapshot-subscribe
+from server.api import stocks as stocks_api  # v21 stock-info-crawler
+from server.api import sync as sync_api  # v21 stock-info-crawler
 from server.api.admin import sys_status as admin_sys_status, reconcile as admin_reconcile, session as admin_session
 from server.middleware.request_logging import RequestLoggingMiddleware
 from server.rpc.client import get_rpc_client, close_rpc_client
@@ -203,6 +205,10 @@ app.include_router(system_api.router, prefix="/api/system", tags=["system"], dep
 # strategy REST（change strategy_trade task 9）— 端点内部 _require_engine_enabled 灰度门
 app.include_router(strategy_api.router, dependencies=_AUTH)
 app.include_router(quote_api.router, prefix="/api/quote", tags=["quote"], dependencies=_AUTH)  # 2026-07-09
+# 2026-07-10 v21 stock-info-crawler: stocks 查询 + sync 管理
+app.include_router(stocks_api.router, prefix="/api/stocks", tags=["stocks"], dependencies=_AUTH)
+# 2026-07-10 v21 stock-info-crawler: sync 管理 (admin only,内联守卫避免 _AUTH_ADMIN 未定义)
+app.include_router(sync_api.router, prefix="/api/sync", tags=["sync"], dependencies=[Depends(get_current_user)])
 
 
 # ---- Admin routes (login required, role checked by handler) ----------------
