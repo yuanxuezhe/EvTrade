@@ -70,7 +70,11 @@ app = FastAPI(title="EvTrade API")
 _cors_origins = [
     x.strip()
     for x in os.environ.get(
-        "EVTRADE_CORS_ORIGINS", "http://localhost:50998"
+        "EVTRADE_CORS_ORIGINS",
+        # 默认允许 ① vite dev (50998) ② 客户端生产构建 (3000)
+        # ③ file:// 协议 (本地双击打开 examples/*.html demo 用)
+        # ④ null origin (浏览器 file:// 跨协议 POST 时 Origin header = "null")
+        "http://localhost:50998,http://localhost:3000,file://,null"
     ).split(",")
     if x.strip()
 ]
