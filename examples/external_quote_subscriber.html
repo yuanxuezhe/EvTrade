@@ -1,0 +1,405 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>EvTrade 行情订阅 Demo (HTML/JS)</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", sans-serif;
+    background: #1a1a1a;
+    color: #e6e6e6;
+    margin: 0;
+    padding: 20px;
+    max-width: 1200px;
+    margin: 0 auto;
+  }
+  h1 { color: #4ec9b0; margin: 0 0 8px 0; font-size: 22px; }
+  h2 { color: #4ec9b0; margin: 20px 0 8px 0; font-size: 16px; border-bottom: 1px solid #333; padding-bottom: 4px; }
+  .section { background: #252526; padding: 14px; border-radius: 6px; margin-bottom: 14px; }
+  .row { display: flex; gap: 10px; align-items: center; margin-bottom: 8px; flex-wrap: wrap; }
+  label { color: #9cdcfe; font-size: 13px; min-width: 110px; }
+  input[type=text], input[type=password] {
+    background: #1e1e1e; color: #d4d4d4; border: 1px solid #3c3c3c;
+    padding: 6px 10px; border-radius: 4px; font-family: Consolas, monospace;
+    flex: 1; min-width: 200px; font-size: 13px;
+  }
+  input:focus { outline: none; border-color: #4ec9b0; }
+  button {
+    background: #0e639c; color: white; border: none;
+    padding: 7px 14px; border-radius: 4px; cursor: pointer;
+    font-size: 13px; transition: background 0.15s;
+  }
+  button:hover { background: #1177bb; }
+  button:disabled { background: #3c3c3c; cursor: not-allowed; opacity: 0.5; }
+  button.danger { background: #a1260d; }
+  button.danger:hover { background: #c52d12; }
+  button.secondary { background: #3c3c3c; }
+  button.secondary:hover { background: #505050; }
+  .status { padding: 4px 10px; border-radius: 4px; font-size: 12px; font-weight: bold; }
+  .status.connected { background: #1e6e3a; color: white; }
+  .status.disconnected { background: #5a1d1d; color: white; }
+  .status.connecting { background: #6e5e1e; color: white; }
+  #log {
+    background: #0c0c0c; border: 1px solid #333; border-radius: 4px;
+    padding: 10px; height: 380px; overflow-y: auto;
+    font-family: Consolas, monospace; font-size: 12px; line-height: 1.5;
+  }
+  .log-info { color: #9cdcfe; }
+  .log-ok { color: #4ec9b0; }
+  .log-warn { color: #dcdcaa; }
+  .log-err { color: #f48771; }
+  .log-tick { color: #c586c0; }
+  .log-time { color: #6a6a6a; }
+  table { border-collapse: collapse; width: 100%; margin-top: 10px; font-size: 13px; }
+  th, td { border: 1px solid #3c3c3c; padding: 6px 10px; text-align: left; }
+  th { background: #2d2d30; color: #4ec9b0; font-weight: 600; }
+  td { color: #d4d4d4; font-family: Consolas, monospace; }
+  .preset-btns { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 4px; }
+  .preset-btns button { padding: 4px 10px; font-size: 12px; background: #3c3c3c; }
+  .preset-btns button:hover { background: #505050; }
+  .checkbox-row { display: flex; gap: 16px; align-items: center; margin-bottom: 8px; }
+  .checkbox-row label { display: flex; align-items: center; gap: 6px; min-width: auto; color: #d4d4d4; }
+  .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; margin-top: 8px; }
+  .stat-box { background: #1e1e1e; padding: 10px; border-radius: 4px; border-left: 3px solid #4ec9b0; }
+  .stat-label { color: #888; font-size: 11px; text-transform: uppercase; }
+  .stat-value { color: #4ec9b0; font-size: 20px; font-weight: bold; margin-top: 2px; }
+  details { margin-top: 10px; }
+  summary { cursor: pointer; color: #9cdcfe; font-size: 13px; }
+  pre { background: #0c0c0c; padding: 8px; border-radius: 4px; font-size: 11px; overflow-x: auto; max-height: 200px; overflow-y: auto; }
+</style>
+</head>
+<body>
+
+<h1>📈 EvTrade 行情订阅 Demo</h1>
+<div style="color:#888; font-size:12px; margin-bottom:14px;">
+  单 HTML 文件 · WSS 直连 · 支持登录/按代码订阅/全量模式/零订阅验证 · quota/quota viewer 账号
+</div>
+
+<!-- ────────── 连接配置 ────────── -->
+<div class="section">
+  <h2>1. 连接配置</h2>
+  <div class="row">
+    <label>Base URL</label>
+    <input type="text" id="baseUrl" value="https://evtrade.ngx.evdata.top:50443" />
+  </div>
+  <div class="row">
+    <label>用户名</label>
+    <input type="text" id="username" value="quota" style="max-width:160px;" />
+    <label style="min-width:auto;">密码</label>
+    <input type="password" id="password" value="quota" style="max-width:160px;" />
+    <button id="btnLogin" class="secondary">登录拿 JWT</button>
+    <button id="btnLoginAdmin" class="secondary" title="用你提供的 admin JWT">用 admin JWT</button>
+  </div>
+  <div class="row">
+    <label>JWT Token</label>
+    <input type="text" id="jwtToken"
+      value="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxIiwicm9sZSI6ImFkbWluIiwiaWF0IjoxNzgzNjY1MTYwLCJleHAiOjE3ODM3NTE1NjB9.qELmp7GVMVIgiHEcnL4A-w5BVWF958WWG0KC7fem57U" />
+  </div>
+  <div class="row">
+    <label>WS URL</label>
+    <input type="text" id="wsUrl" readonly style="background:#181818; color:#888;" />
+  </div>
+  <div class="row">
+    <button id="btnConnect" style="background:#1e6e3a;">连接 WS</button>
+    <button id="btnDisconnect" class="danger" disabled>断开</button>
+    <span id="status" class="status disconnected">未连接</span>
+  </div>
+</div>
+
+<!-- ────────── 订阅模式 ────────── -->
+<div class="section">
+  <h2>2. 订阅模式</h2>
+  <div class="checkbox-row">
+    <label><input type="radio" name="mode" value="specific" checked /> 按证券代码订阅</label>
+    <label><input type="radio" name="mode" value="all" /> 全量订阅(默认演示列表)</label>
+    <label><input type="radio" name="mode" value="none" /> 零订阅(验证静默丢弃)</label>
+  </div>
+  <div class="row">
+    <label>股票代码</label>
+    <input type="text" id="codes" value="000001.SH, 000006.SZ, 600519.SH, 000333.SZ, 000892.SZ" />
+  </div>
+  <div class="row">
+    <label>预设列表</label>
+    <div class="preset-btns">
+      <button data-preset="000001.SH,000006.SZ,000892.SZ,000503.SZ">活跃 SZ</button>
+      <button data-preset="600519.SH,601318.SH,600036.SH,000858.SZ">蓝筹 SH</button>
+      <button data-preset="000001.SH,000001.SZ,000002.SH,000002.SZ,000003.SH,000003.SZ,000004.SH,000004.SZ,000005.SH,000006.SH,000006.SZ,000007.SH,000007.SZ,000008.SH,000009.SH,000009.SZ">15 个演示</button>
+      <button data-preset="">清空</button>
+    </div>
+  </div>
+  <div class="row">
+    <button id="btnSubscribe" disabled style="background:#0e639c;">发送 subscribe</button>
+    <button id="btnUnsubscribeAll" class="secondary" disabled>取消全部订阅</button>
+  </div>
+</div>
+
+<!-- ────────── 统计 + 日志 ────────── -->
+<div class="section">
+  <h2>3. 实时统计</h2>
+  <div class="stats-grid">
+    <div class="stat-box"><div class="stat-label">连接状态</div><div class="stat-value" id="statState">—</div></div>
+    <div class="stat-box"><div class="stat-label">tick 总数</div><div class="stat-value" id="statTicks">0</div></div>
+    <div class="stat-box"><div class="stat-label">活跃标的</div><div class="stat-value" id="statCodes">0</div></div>
+    <div class="stat-box"><div class="stat-label">server ping</div><div class="stat-value" id="statPings">0</div></div>
+  </div>
+  <div id="ticksTable"></div>
+</div>
+
+<div class="section">
+  <h2>4. 实时日志</h2>
+  <div id="log"></div>
+  <div style="margin-top:6px;">
+    <button class="secondary" id="btnClearLog" style="font-size:12px; padding:4px 10px;">清空日志</button>
+  </div>
+</div>
+
+<!-- ────────── 原始消息样本 ────────── -->
+<div class="section">
+  <h2>5. 原始消息样本 (前 5 条)</h2>
+  <div id="samples"><span style="color:#666;">(尚无消息)</span></div>
+</div>
+
+<script>
+// ════════════════════════════════════════════════════════════
+// EvTrade 行情订阅 Demo — 主逻辑
+// ════════════════════════════════════════════════════════════
+
+const $ = (id) => document.getElementById(id);
+const log = (level, msg) => {
+  const colors = { INFO: 'log-info', OK: 'log-ok', WARN: 'log-warn', ERR: 'log-err', TICK: 'log-tick' };
+  const div = document.createElement('div');
+  const ts = new Date().toLocaleTimeString('zh-CN', { hour12: false });
+  div.innerHTML = `<span class="log-time">[${ts}]</span> <span class="${colors[level] || ''}">[${level}]</span> ${msg}`;
+  $('log').appendChild(div);
+  $('log').scrollTop = $('log').scrollHeight;
+};
+
+// ── 状态 ──
+let ws = null;
+let state = 'disconnected'; // disconnected / connecting / connected
+const stats = {
+  ticks: 0,
+  codes: new Map(), // code → {count, last, firstTs}
+  pings: 0,
+  samples: [],
+};
+
+// ── WS URL 推导 ──
+function refreshWsUrl() {
+  const base = $('baseUrl').value.trim().replace(/\/$/, '');
+  const token = $('jwtToken').value.trim();
+  const wsBase = base.replace(/^http/, 'ws').replace(/^https/, 'wss');
+  $('wsUrl').value = `${wsBase}/ws/quote_update?token=${encodeURIComponent(token)}`;
+}
+['baseUrl', 'jwtToken'].forEach(id => $(id).addEventListener('input', refreshWsUrl));
+refreshWsUrl();
+
+// ── 登录 ──
+async function login() {
+  const base = $('baseUrl').value.trim();
+  const username = $('username').value.trim();
+  const password = $('password').value;
+  const url = `${base}/api/auth/login`;
+  log('INFO', `POST ${url} (form-data)`);
+  const body = new URLSearchParams({ username, password });
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body,
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      log('ERR', `login failed: HTTP ${res.status} ${text.slice(0, 200)}`);
+      return;
+    }
+    const j = await res.json();
+    if (!j.access_token) {
+      log('ERR', `login response missing access_token: ${JSON.stringify(j).slice(0, 200)}`);
+      return;
+    }
+    $('jwtToken').value = j.access_token;
+    refreshWsUrl();
+    log('OK', `login OK (user=${j.user?.username || '?'}, role=${j.user?.role || '?'}, expires_in=${j.expires_in}s)`);
+  } catch (e) {
+    log('ERR', `login exception: ${e.message}`);
+  }
+}
+$('btnLogin').addEventListener('click', login);
+
+$('btnLoginAdmin').addEventListener('click', () => {
+  $('jwtToken').value = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxIiwicm9sZSI6ImFkbWluIiwiaWF0IjoxNzgzNjY1MTYwLCJleHAiOjE3ODM3NTE1NjB9.qELmp7GVMVIgiHEcnL4A-w5BVWF958WWG0KC7fem57U';
+  refreshWsUrl();
+  log('INFO', 'use admin JWT (from input)');
+});
+
+// ── 预设按钮 ──
+document.querySelectorAll('[data-preset]').forEach(btn => {
+  btn.addEventListener('click', () => {
+    $('codes').value = btn.getAttribute('data-preset');
+  });
+});
+
+// ── 模式切换 ──
+document.querySelectorAll('input[name=mode]').forEach(r => {
+  r.addEventListener('change', () => {
+    const m = document.querySelector('input[name=mode]:checked').value;
+    if (m === 'all') $('codes').value = '000001.SH, 000006.SZ, 600519.SH, 000333.SZ, 000892.SZ';
+    if (m === 'none') $('codes').value = '';
+  });
+});
+
+// ── 连接 / 断开 ──
+function setState(s) {
+  state = s;
+  $('status').textContent = ({disconnected:'未连接', connecting:'连接中...', connected:'已连接'})[s];
+  $('status').className = `status ${s}`;
+  $('statState').textContent = s;
+  $('btnConnect').disabled = (s !== 'disconnected');
+  $('btnDisconnect').disabled = (s !== 'connected');
+  $('btnSubscribe').disabled = (s !== 'connected');
+  $('btnUnsubscribeAll').disabled = (s !== 'connected');
+}
+
+function connect() {
+  if (ws) { log('WARN', '已有连接,先断开'); return; }
+  const url = $('wsUrl').value.trim();
+  if (!url) { log('ERR', 'WS URL 为空,请先登录或填 JWT'); return; }
+  setState('connecting');
+  log('INFO', `connecting to ${url.replace(/token=.*/, 'token=***')}`);
+  try {
+    ws = new WebSocket(url);
+  } catch (e) {
+    log('ERR', `WebSocket 构造失败: ${e.message}`);
+    setState('disconnected');
+    return;
+  }
+  ws.onopen = () => {
+    log('OK', 'WS connected');
+    setState('connected');
+  };
+  ws.onmessage = (ev) => {
+    let msg;
+    try { msg = JSON.parse(ev.data); } catch { return; }
+    handleMessage(msg);
+  };
+  // 服务端发送的应用层 ping (60s 一次) 必须回 pong, 否则 60s 后会被踢
+  ws.onping = (ev) => { try { ws.pong(ev.data); } catch {} };
+  ws.onerror = (e) => log('ERR', `WS error: ${e.message || JSON.stringify(e)}`);
+  ws.onclose = (e) => {
+    log('WARN', `WS closed: code=${e.code} reason=${e.reason}`);
+    ws = null;
+    setState('disconnected');
+  };
+}
+
+function disconnect() {
+  if (ws) { ws.close(); }
+}
+
+$('btnConnect').addEventListener('click', connect);
+$('btnDisconnect').addEventListener('click', disconnect);
+
+// ── 消息处理 ──
+function handleMessage(msg) {
+  // 样本
+  if (stats.samples.length < 5) {
+    stats.samples.push(msg);
+    renderSamples();
+  }
+  if (msg.type === 'ping') {
+    stats.pings++;
+    $('statPings').textContent = stats.pings;
+    // ⚠️ 服务端发的是应用层 ping (JSON), 不是 WS protocol ping。
+    //    必须主动回 {"type":"pong"} 才能让服务端更新 last_recv, 否则 60s 后被踢。
+    try { ws.send(JSON.stringify({ type: 'pong', ts: Date.now() / 1000 })); } catch {}
+    return;
+  }
+  if (msg.type === 'subscribe_ack') {
+    const sn = Object.keys(msg.snapshots || {}).length;
+    log('OK', `subscribe_ack: ack=${msg.stock_codes?.length || 0} codes, snapshots=${sn}, msg="${msg.msg || ''}"`);
+    return;
+  }
+  if (msg.type === 'quote' && msg.data) {
+    stats.ticks++;
+    const code = msg.data.stock_code || '?';
+    if (!stats.codes.has(code)) stats.codes.set(code, { count: 0, last: 0, firstTs: new Date().toLocaleTimeString('zh-CN', {hour12:false}) });
+    const e = stats.codes.get(code);
+    e.count++;
+    e.last = msg.data.last_price;
+    log('TICK', `${code} last=${msg.data.last_price?.toFixed(3)} bid1=${msg.data.bid1_price?.toFixed(3)} ask1=${msg.data.ask1_price?.toFixed(3)} vol=${msg.data.volume}`);
+    $('statTicks').textContent = stats.ticks;
+    $('statCodes').textContent = stats.codes.size;
+    renderTable();
+    return;
+  }
+  log('INFO', `recv msg.type=${msg.type}: ${JSON.stringify(msg).slice(0, 200)}`);
+}
+
+// ── 表格 ──
+function renderTable() {
+  if (stats.codes.size === 0) { $('ticksTable').innerHTML = ''; return; }
+  const sorted = [...stats.codes.entries()].sort((a, b) => b[1].count - a[1].count);
+  let html = '<table><thead><tr><th>stock_code</th><th>ticks</th><th>last px</th><th>first ts</th></tr></thead><tbody>';
+  for (const [code, e] of sorted) {
+    html += `<tr><td>${code}</td><td>${e.count}</td><td>${(e.last || 0).toFixed(3)}</td><td>${e.firstTs}</td></tr>`;
+  }
+  html += '</tbody></table>';
+  $('ticksTable').innerHTML = html;
+}
+
+function renderSamples() {
+  if (stats.samples.length === 0) { $('samples').innerHTML = '<span style="color:#666;">(尚无消息)</span>'; return; }
+  let html = '';
+  for (const m of stats.samples) {
+    html += `<div><b style="color:#9cdcfe;">${m.type}</b> <pre style="display:inline; margin:0;">${JSON.stringify(m).slice(0, 280)}${JSON.stringify(m).length > 280 ? '...' : ''}</pre></div>`;
+  }
+  $('samples').innerHTML = html;
+}
+
+// ── 订阅 / 退订 ──
+function getSelectedMode() {
+  return document.querySelector('input[name=mode]:checked').value;
+}
+function getCodes() {
+  const m = getSelectedMode();
+  if (m === 'none') return [];
+  if (m === 'all') return $('codes').value.split(',').map(s => s.trim()).filter(Boolean);
+  return $('codes').value.split(',').map(s => s.trim()).filter(Boolean);
+}
+
+function sendSubscribe() {
+  if (!ws || ws.readyState !== 1) { log('ERR', 'WS 未连接'); return; }
+  const codes = getCodes();
+  const msg = { type: 'subscribe', stock_codes: codes };
+  log('INFO', `send subscribe: ${JSON.stringify(msg)}`);
+  ws.send(JSON.stringify(msg));
+}
+
+function unsubscribeAll() {
+  if (!ws || ws.readyState !== 1) { log('ERR', 'WS 未连接'); return; }
+  const codes = [...stats.codes.keys()];
+  if (codes.length === 0) { log('INFO', '没有当前订阅的代码可退订'); return; }
+  const msg = { type: 'unsubscribe', stock_codes: codes };
+  log('INFO', `send unsubscribe: ${JSON.stringify(msg)}`);
+  ws.send(JSON.stringify(msg));
+}
+
+$('btnSubscribe').addEventListener('click', sendSubscribe);
+$('btnUnsubscribeAll').addEventListener('click', unsubscribeAll);
+
+// ── 清日志 ──
+$('btnClearLog').addEventListener('click', () => { $('log').innerHTML = ''; });
+
+// ── 启动 ──
+setState('disconnected');
+log('INFO', 'Demo 已加载。操作步骤:');
+log('INFO', '  1. (可选) 点 "登录拿 JWT" 拿 quota 账号 JWT,或直接用默认 admin JWT');
+log('INFO', '  2. 点 "连接 WS" 建立连接');
+log('INFO', '  3. 选模式 + 点 "发送 subscribe"');
+log('INFO', '  4. 实时日志 + 统计 + tick 表会刷新');
+log('INFO', '提示: "零订阅"模式可验证后端严格按订阅过滤,即使后端收到 tick 也不会推送');
+</script>
+</body>
+</html>
