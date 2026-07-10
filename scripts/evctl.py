@@ -719,7 +719,31 @@ def parse_args(argv):
 def restart_all(services=None):
     stop_all(services)
     time.sleep(1)
+    # 2026-07-10: 重启前清旧日志, 避免历史日志干扰分析
+    _cleanup_logs_before_restart()
     return start_all(services)
+
+
+def _cleanup_logs_before_restart():
+    """清空 server/logs/*.log 和 /tmp/evtrade_*.log (backup by default)"""
+    log_dir = os.path.join(PROJECT_ROOT, 'server', 'logs')
+    if os.path.isdir(log_dir):
+        for name in os.listdir(log_dir):
+            if name.endswith('.log') or name.endswith('.jsonl'):
+                fpath = os.path.join(log_dir, name)
+                try:
+                    os.truncate(fpath, 0)
+                except OSError:
+                    pass
+    # Hermes-managed nohup logs in /tmp
+    import glob
+    for pattern in ['/tmp/backend*.log', '/tmp/mock_ticker.log',
+                    '/tmp/hqserver*.log', '/tmp/ws_subscribes.log']:
+        for fpath in glob.glob(pattern):
+            try:
+                os.truncate(fpath, 0)
+            except OSError:
+                pass
 
 
 def main():
