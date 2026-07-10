@@ -35,7 +35,7 @@ def get_reconcile_config(db: Session) -> ReconcileConfig:
     """获取对账配置（单行）"""
     cfg = db.query(ReconcileConfig).first()
     if not cfg:
-        cfg = ReconcileConfig(auto_reconcile=False, updated_by='init')
+        cfg = ReconcileConfig(auto_reconcile=False, updated_by=None)
         db.add(cfg)
         db.commit()
         db.refresh(cfg)

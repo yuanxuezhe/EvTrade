@@ -56,7 +56,7 @@ class ReconcileReportSummary(BaseModel):
 async def get_config(db: Session = Depends(get_db), _=Depends(require_admin)):
     cfg = db.query(ReconcileConfig).first()
     if not cfg:
-        cfg = ReconcileConfig(auto_reconcile=False, updated_by='init')
+        cfg = ReconcileConfig(auto_reconcile=False, updated_by=None)
         db.add(cfg)
         db.commit()
         db.refresh(cfg)
@@ -85,7 +85,7 @@ async def update_config(
         cfg.auto_reconcile = 1 if req.auto_reconcile else 0
     if req.auto_use_broker_data is not None:
         cfg.auto_use_broker_data = 1 if req.auto_use_broker_data else 0
-    cfg.updated_by = str(admin_user.id)
+    cfg.updated_by = admin_user.id
     cfg.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
     db.commit()
     db.refresh(cfg)
