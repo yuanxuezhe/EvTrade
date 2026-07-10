@@ -11,6 +11,33 @@ from typing import Dict, Set, Optional, Iterable
 #   - broadcast() 兼容老 channel-level 推送（legacy 兜底）
 #   - broadcast_to_stock(stock_code, message) 只推订阅者；零订阅者时返回 False（兼容策略）
 #   - get_subscribers_count(stock_code) 用于 health log / metrics
+#
+# 2026-07-10 quote-pattern-subscribe:
+#   - 订阅条件统一走 "子串匹配": pattern in stock_code
+#   - pattern = ''  → 任意代码（空字符串是所有字符串的子串，永远 True）
+#   - pattern = 'SZ' → 包含 'SZ' 的代码（000001.SZ / 600000.SZ 全部 SZ 市场）
+#   - pattern = 'SH' → 包含 'SH' 的代码
+#   - pattern = '000001' → 包含 '000001' 的代码（SH/SZ 双边）
+#   - pattern = '000001.SZ' → 完整子串匹配
+#   - 数据结构升级: subscription_index 由 Dict[code, Set[ws]] 改为 Dict[pattern, Set[ws]]
+#     （pattern 不再展开为具体 stock_code, 节省内存 + 支持灵活匹配）
+
+
+def match_pattern(stock_code: str, pattern: str) -> bool:
+    """2026-07-10 quote-pattern-subscribe: 子串匹配规则
+
+    设计原则: 一行规则统一所有 case
+      - 空字符串 pattern = '' 永远匹配 (空串是任何字符串的子串)
+      - pattern 是 stock_code 的子串即匹配
+
+    例子:
+      match_pattern('000001.SZ', '')         → True  (空匹配)
+      match_pattern('000001.SZ', 'SZ')       → True  (SZ ⊂ 000001.SZ)
+      match_pattern('600000.SH', 'SZ')       → False (SH 不含 SZ)
+      match_pattern('000001.SZ', '000001')   → True  (000001 ⊂ 000001.SZ)
+      match_pattern('000001.SH', '000001.SZ') → False (完整子串不包含)
+    """
+    return pattern in stock_code
 
 
 class WSManager:
@@ -29,8 +56,10 @@ class WSManager:
         }
         # 2026-07-09 quote-snapshot-subscribe:
         #   stock_code -> Set[WebSocket]：倒排索引（订阅了此 code 的 ws 集合）
+        # 2026-07-10 quote-pattern-subscribe: 改为 pattern -> Set[ws]
+        #   pattern 可以是: 具体 stock_code ('000001.SZ') / 市场 ('SZ') / 片段 ('000001') / '' (全市场)
         self.subscription_index: Dict[str, Set[WebSocket]] = {}
-        #   WebSocket -> Set[stock_code]：正向索引（此 ws 订阅的所有 code，clear 时用）
+        #   WebSocket -> Set[stock_code]：正向索引（此 ws 订阅的所有 pattern，clear 时用）
         self.subscriber_index: Dict[WebSocket, Set[str]] = {}
 
     async def connect(self, websocket: WebSocket, channel: str, token: Optional[str] = None):
@@ -47,72 +76,90 @@ class WSManager:
 
     # ─────────────── 订阅管理（2026-07-09 新增） ───────────────
 
-    def subscribe(self, websocket: WebSocket, stock_codes: Iterable[str]) -> Set[str]:
-        """订阅一组 stock_codes，返回成功订阅的集合（去重 + 上限检查）
+    def subscribe(self, websocket: WebSocket, patterns: Iterable[str]) -> Set[str]:
+        """订阅一组 patterns（2026-07-10 升级: pattern 化），返回成功订阅的集合
 
-        - 超过 MAX_SUBSCRIPTIONS_PER_WS → 抛 ValueError（前端应分批）
-        - 已订阅 code → 静默忽略（幂等）
+        pattern 规则（统一走子串匹配）:
+          - ''     → 全市场（空字符串是任何字符串的子串）
+          - 'SZ'   → 所有 SZ 市场代码
+          - 'SH'   → 所有 SH 市场代码
+          - '000001' → 包含 000001 的代码（SH/SZ 双边）
+          - '000001.SZ' → 完整子串匹配
+
+        边界:
+          - 超过 MAX_SUBSCRIPTIONS_PER_WS → 抛 ValueError（前端应分批）
+          - 已订阅 pattern → 静默忽略（幂等）
+          - None / 非字符串元素 → 跳过
         """
-        codes = set()
-        for c in stock_codes:
-            if isinstance(c, str) and c.strip():
-                codes.add(c.strip())
-        if not codes:
+        pats = set()
+        for p in patterns:
+            if isinstance(p, str):
+                # 允许空字符串（=全市场）；只 strip 保留 pattern 原样
+                pats.add(p.strip() if p else "")
+        if not pats:
             return set()
-        # 上限检查
+        # 上限检查（注意: 全市场 pattern '' 也算 1 个订阅位）
         existing = self.subscriber_index.get(websocket, set())
-        new_total = len(existing) + len(codes - existing)
+        new_total = len(existing) + len(pats - existing)
         if new_total > self.MAX_SUBSCRIPTIONS_PER_WS:
             raise ValueError(
                 f"max subscriptions per ws = {self.MAX_SUBSCRIPTIONS_PER_WS}, "
-                f"existing={len(existing)}, new={len(codes)}"
+                f"existing={len(existing)}, new={len(pats)}"
             )
-        # 双向索引
-        self.subscriber_index.setdefault(websocket, set()).update(codes)
-        for c in codes:
-            self.subscription_index.setdefault(c, set()).add(websocket)
-        return codes
+        # 双向索引 (key 现在是 pattern, 不再是 stock_code)
+        self.subscriber_index.setdefault(websocket, set()).update(pats)
+        for p in pats:
+            self.subscription_index.setdefault(p, set()).add(websocket)
+        return pats
 
-    def unsubscribe(self, websocket: WebSocket, stock_codes: Iterable[str]) -> Set[str]:
-        """取消订阅一组 stock_codes，返回成功取消的集合"""
-        codes = set()
-        for c in stock_codes:
-            if isinstance(c, str) and c.strip():
-                codes.add(c.strip())
-        if not codes:
+    def unsubscribe(self, websocket: WebSocket, patterns: Iterable[str]) -> Set[str]:
+        """取消订阅一组 patterns（2026-07-10 升级），返回成功取消的集合"""
+        pats = set()
+        for p in patterns:
+            if isinstance(p, str):
+                pats.add(p.strip() if p else "")
+        if not pats:
             return set()
         removed = set()
         sub = self.subscriber_index.get(websocket)
         if sub:
-            for c in codes & sub:
-                sub.discard(c)
-                removed.add(c)
+            for p in pats & sub:
+                sub.discard(p)
+                removed.add(p)
                 # 倒排索引清理
-                sock_set = self.subscription_index.get(c)
+                sock_set = self.subscription_index.get(p)
                 if sock_set is not None:
                     sock_set.discard(websocket)
                     if not sock_set:
-                        del self.subscription_index[c]
+                        del self.subscription_index[p]
         return removed
 
     def clear_ws(self, websocket: WebSocket) -> None:
-        """ws 断开时调用：清理该 ws 所有订阅"""
-        codes = self.subscriber_index.pop(websocket, None)
-        if not codes:
+        """ws 断开时调用：清理该 ws 所有 pattern 订阅"""
+        pats = self.subscriber_index.pop(websocket, None)
+        if not pats:
             return
-        for c in codes:
-            sock_set = self.subscription_index.get(c)
+        for p in pats:
+            sock_set = self.subscription_index.get(p)
             if sock_set is not None:
                 sock_set.discard(websocket)
                 if not sock_set:
-                    del self.subscription_index[c]
+                    del self.subscription_index[p]
 
     def get_subscribers(self, stock_code: str) -> Set[WebSocket]:
-        """查 stock_code 的当前订阅者集合"""
-        return self.subscription_index.get(stock_code, set())
+        """查 stock_code 的当前订阅者集合（2026-07-10 升级: 遍历 pattern）
 
-    def get_subscribed_codes(self, websocket: WebSocket) -> Set[str]:
-        """查 ws 的当前订阅集合"""
+        遍历所有 pattern, 对每个 pattern 跑 match_pattern(code, pattern),
+        命中则合并该 pattern 对应的 ws 集合
+        """
+        result: Set[WebSocket] = set()
+        for pattern, ws_set in self.subscription_index.items():
+            if match_pattern(stock_code, pattern):
+                result.update(ws_set)
+        return result
+
+    def get_subscribed_patterns(self, websocket: WebSocket) -> Set[str]:
+        """查 ws 的当前订阅 pattern 集合（2026-07-10 重命名: 之前叫 get_subscribed_codes）"""
         return set(self.subscriber_index.get(websocket, set()))
 
     # ─────────────── 广播（兼容老路径 + 新路径） ───────────────

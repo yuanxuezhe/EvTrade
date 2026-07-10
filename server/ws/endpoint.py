@@ -25,7 +25,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 
 from server.auth.security import decode_token
 from server.db import SessionLocal
-from server.ws.manager import ws_manager
+from server.ws.manager import ws_manager, match_pattern
 from server.repo.quote_snapshots import get_latest_multi as repo_get_latest_multi, to_dict as repo_to_dict
 
 
@@ -92,6 +92,8 @@ def register_ws_endpoint(app: FastAPI):
                     await websocket.send_json({"type": "pong", "ts": parsed.get("ts")})
                     continue
                 # 2026-07-09 quote-snapshot-subscribe: 订阅协议
+                # 2026-07-10 quote-pattern-subscribe: 升级支持 pattern (子串匹配)
+                #   - '000001.SZ' 精确 / 'SZ' 市场 / '' 全市场 都走同一规则
                 if msg_type == "subscribe" and channel == "quote_update":
                     codes_raw = parsed.get("stock_codes") or []
                     print(f"[ws-subscribe] received codes={codes_raw}", flush=True)
@@ -114,19 +116,35 @@ def register_ws_endpoint(app: FastAPI):
                             "snapshots": {},
                         })
                         continue
-                    # 立即返当前最新快照（quote_snapshots 表读 latest）
+                    # 立即返当前最新快照
+                    # 2026-07-10 升级: 只对 "精确 stock_code pattern" 查 DB 拿 snapshot
+                    #   'SZ' / 'SH' / '000001' / '' 都是 pattern, 不能直接当 stock_code 查 DB
+                    #   这些 pattern 的 snapshot 通过后续 tick 推送 (无需 ack 立即返)
+                    #   "精确" 定义: 含 '.' 且长度 >= 6 (如 '000001.SZ' / '600000.SH')
+                    exact_patterns = []
+                    has_wildcard = False
+                    for p in accepted:
+                        if "." in p and len(p) >= 6:
+                            exact_patterns.append(p)
+                        else:
+                            has_wildcard = True
                     snapshots = {}
-                    if accepted:
+                    matched_count = 0
+                    if exact_patterns:
                         db = SessionLocal()
                         try:
-                            rows = repo_get_latest_multi(db, list(accepted))
+                            rows = repo_get_latest_multi(db, exact_patterns)
                             snapshots = {c: repo_to_dict(s) for c, s in rows.items()}
+                            matched_count = len(snapshots)
                         finally:
                             db.close()
                     await websocket.send_json({
                         "type": "subscribe_ack", "code": 0, "msg": "",
                         "stock_codes": sorted(accepted),
                         "snapshots": snapshots,
+                        # 2026-07-10 新增: 让前端知道是否有宽泛 pattern (后面会持续推 tick)
+                        "has_wildcard": has_wildcard,
+                        "snapshot_count": matched_count,
                     })
                     continue
                 if msg_type == "unsubscribe" and channel == "quote_update":
