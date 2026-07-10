@@ -20,6 +20,7 @@ import { ElNotification } from 'element-plus'
 import { useQuoteStore } from './quote'
 import { useHoldingsStore } from './holdings'
 import { useStrategyStore } from './strategy'
+import { useSyncStore } from './sync'  // v21 stock-info-crawler
 import { useWsStore } from './ws'
 import { STATUS_LABEL } from '../utils/format'
 import { makeLogger } from '../utils/logger'
@@ -39,6 +40,13 @@ export function dispatchPayload(payload) {
   // 2026-07-09 quote-snapshot-subscribe
   else if (t === 'subscribe_ack') _onSubscribeAck(payload.data)
   else if (t === 'unsubscribe_ack') _onUnsubscribeAck(payload.data)
+  // v21 stock-info-crawler: sync_update 频道 (sync_started/progress/completed/failed/stopped/stock_synced)
+  else if (t === 'sync_started') _onSyncStarted(payload.data)
+  else if (t === 'sync_progress') _onSyncProgress(payload.data)
+  else if (t === 'sync_completed') _onSyncCompleted(payload.data)
+  else if (t === 'sync_failed') _onSyncFailed(payload.data)
+  else if (t === 'sync_stopped') _onSyncStopped(payload.data)
+  else if (t === 'stock_synced') _onStockSynced(payload.data)
 }
 
 /**
@@ -211,4 +219,57 @@ function _onStrategyUpdate(row) {
 function _todayYYYYMMDD() {
   const d = new Date()
   return `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`
+}
+
+// ============================================================
+// v21 stock-info-crawler: sync_update 频道路由（仅路由到 sync store，不抛异常）
+// 后端 sync manager 推送: sync_started / sync_progress / sync_completed
+//                       / sync_failed / sync_stopped / stock_synced
+// ============================================================
+
+function _onSyncStarted(data) {
+  if (!data) return
+  try { useSyncStore().onSyncStarted(data) }
+  catch (e) { log.warn('_onSyncStarted:', e?.message) }
+}
+function _onSyncProgress(data) {
+  if (!data) return
+  try { useSyncStore().onSyncProgress(data) }
+  catch (e) { log.warn('_onSyncProgress:', e?.message) }
+}
+function _onSyncCompleted(data) {
+  if (!data) return
+  try { useSyncStore().onSyncCompleted(data) }
+  catch (e) { log.warn('_onSyncCompleted:', e?.message) }
+}
+function _onSyncFailed(data) {
+  if (!data) return
+  try { useSyncStore().onSyncFailed(data) }
+  catch (e) { log.warn('_onSyncFailed:', e?.message) }
+}
+function _onSyncStopped(data) {
+  if (!data) return
+  try { useSyncStore().onSyncStopped(data) }
+  catch (e) { log.warn('_onSyncStopped:', e?.message) }
+}
+function _onStockSynced(data) {
+  if (!data) return
+  try { useSyncStore().onStockSynced(data) }
+  catch (e) { log.warn('_onStockSynced:', e?.message) }
+}
+
+/**
+ * 订阅 sync_update WS 频道（前端 /admin/sync 页面 mount 时调用）
+ * 返回一个 unsubscribe 函数（页面 unmount 时调用）
+ *
+ * 注：sync_update 不需要 client 主动 subscribe 协议——只要连上 /ws/sync_update 就推
+ *     所以这里只是包装一层，方便组件 onBeforeUnmount 调用
+ */
+export function subscribeSync() {
+  // 目前 sync_update 是 server-push（无 ack 协议），直接标记已连接
+  // 未来若加 client-filter 再扩展 sendToChannel 调用
+  return () => {
+    try { useSyncStore().setWsConnected(false) }
+    catch { /* store 已销毁 */ }
+  }
 }
