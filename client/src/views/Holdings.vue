@@ -60,7 +60,7 @@
             <span v-else class="text-muted">—</span>
           </template>
         </el-table-column>
-        <el-table-column label="浮动市值" align="right" width="140" :key="'mv' + quoteTick">
+        <el-table-column label="市值" align="right" width="140" :key="'mv' + quoteTick">
           <template #default="{ row }">
             <span v-if="getMarketValue(row) != null" class="text-mono">
               {{ formatMoney(getMarketValue(row)) }}
@@ -184,12 +184,15 @@ function profitClass(v) {
 }
 
 function priceClass(row) {
-  const cost = Number(row.cost_price) || 0
+  // 2026-07-10: 按"最新价 vs 昨收价"着色（中国市场红涨绿跌）
   const price = getLastPrice(row.stock_code)
-  if (price == null || cost === 0) return ''
-  if (price > cost) return 'text-up'
-  if (price < cost) return 'text-down'
-  return 'text-flat'
+  if (price == null) return ''
+  const q = quoteStore.byCode.get(row.stock_code)
+  const prev = q?.prev_close != null ? Number(q.prev_close) : null
+  if (prev == null || prev === 0) return ''
+  if (price > prev) return 'text-up'    // 红
+  if (price < prev) return 'text-down'  // 绿
+  return 'text-flat'                    // 黑
 }
 
 function formatMoneyExact(v) {
@@ -235,7 +238,7 @@ function resetFilters() {
 function exportCSV() {
   const header = [
     '股票代码', '期初持仓', '持仓量', '可用', '成本价',
-    '最新价', '浮动市值', '浮动盈亏', '收益率'
+    '最新价', '市值', '浮动盈亏', '收益率'
   ]
   const rows = filteredPositions.value.map((p) => {
     const price = getLastPrice(p.stock_code)

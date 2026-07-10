@@ -164,6 +164,7 @@ h1, h2, h3, h4, h5, h6 {
    ============================================================ */
 .text-up { color: var(--color-up) !important; }
 .text-down { color: var(--color-down) !important; }
+.text-flat { color: var(--text-primary) !important; }
 .text-mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
 .text-secondary { color: var(--text-secondary); }
 
