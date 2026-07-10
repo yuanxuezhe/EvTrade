@@ -76,6 +76,42 @@ QMT 柜台通过 FANOUT exchange `quota.exchange` 推送行情快照。
 - **THEN** MUST 调 `engine.evaluate_tick(tick)`
 - **AND** 非活跃 stock 的 tick MUST 丢弃（仍记录 `_latest_price`）
 
+### REQ-QUOTE-006: WS 订阅 pattern 化（quote-pattern-subscribe 2026-07-10）
+
+- **数据结构**：`subscription_index` 由 `Dict[stock_code, Set[ws]]` 升级为 `Dict[pattern, Set[ws]]`
+- **匹配规则**：服务端用 `match_pattern(stock_code, pattern) = (pattern in stock_code)` 一行规则统一所有 case
+  - `''` → 全市场（空字符串是任何字符串的子串，永远 True）
+  - `'SZ'` / `'SH'` → 该后缀市场的全部代码
+  - `'000001'` → 包含 `000001` 的代码（SH/SZ 双边都覆盖）
+  - `'000001.SZ'` → 精确匹配该代码
+- **协议**：客户端仍发 `{type:"subscribe", stock_codes:[patterns...]}`
+- **subscribe_ack 增强**：
+  - 精确 pattern（`含'.'` 且 `len>=6`，如 `'000001.SZ'`）→ 从 DB 读 snapshot 立即返回 + `has_wildcard=false`
+  - 宽泛 pattern（`'SZ'`/`'SH'`/`'000001'`/`''`）→ `snapshots={}` + `has_wildcard=true`，后续 tick 通过子串匹配自动推送
+- **倒排匹配**：tick 推送时遍历所有 pattern, 子串匹配命中即合并该 ws 集合
+- **向后兼容**：精确 stock_code 模式（`'000001.SZ'`）仍按原 REQ-QUOTE-005 行为（订阅即收）
+
+#### Scenario: 全市场 pattern 匹配所有 tick
+
+- **GIVEN** 客户端订阅 `{stock_codes: [""]}`
+- **WHEN** 后端收到任意 tick
+- **THEN** MUST 推送给该客户端（空 pattern 永远匹配）
+
+#### Scenario: 市场 pattern 只匹配该市场
+
+- **GIVEN** 客户端订阅 `{stock_codes: ["SZ"]}`
+- **WHEN** 后端收到 tick `stock_code=600000.SH`
+- **THEN** MUST NOT 推送给该客户端
+- **WHEN** 后端收到 tick `stock_code=000001.SZ`
+- **THEN** MUST 推送给该客户端
+
+#### Scenario: pattern 化后 subscribe_ack 行为分流
+
+- **GIVEN** 客户端订阅 `{stock_codes: ["000001.SZ", "SZ", ""]}`
+- **THEN** subscribe_ack MUST 包含 `snapshots["000001.SZ"]`（精确部分）
+- **AND** MUST 设置 `has_wildcard=true`（有宽泛 pattern）
+- **AND** 后续 tick 推送中所有这三个 pattern 都生效
+
 ## Scenarios
 
 ### S-QUOTE-001: 正常行情推送
