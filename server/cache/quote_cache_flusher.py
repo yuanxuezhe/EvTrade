@@ -48,7 +48,8 @@ async def _flush_once() -> None:
             with db_session() as db:
                 for code, snap in snapshots.items():
                     try:
-                        quote_repo.upsert(db, code, snap)
+                        # 📌 2026-07-10: upsert(db, snapshot) 两参签名,stock_code 在 snapshot dict 内
+                        quote_repo.upsert(db, snap)
                     except SQLAlchemyError as e:
                         failed_codes.add(code)
                         log.warning("flush upsert failed for %s: %s", code, e)

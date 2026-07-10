@@ -138,12 +138,44 @@ async def on_startup_quote_consumer():
         print(f"[INIT] quote consumer failed to start: {e}")
 
 
+# 2026-07-10 quote-cache: 启动后台 periodic flush task
+from server.cache.quote_cache_flusher import start_quote_cache_flusher  # noqa: E402
+
+_quote_cache_flusher_task = None  # type: ignore[var-annotated]
+
+
+@app.on_event("startup")
+async def on_startup_quote_cache_flusher():
+    """启动内存 quote_cache → MySQL 的周期 flush 后台 task。
+
+    📌 2026-07-10 quote-cache：tick 走 cache.set() 不再 await MySQL，
+       持久化由本 task 每 60s（可配）批量回写。
+    """
+    global _quote_cache_flusher_task
+    if os.environ.get("PYTEST_CURRENT_TEST"):
+        print("[INIT] pytest mode: skip quote cache flusher")
+        return
+    try:
+        _quote_cache_flusher_task = start_quote_cache_flusher()
+    except Exception as e:
+        print(f"[INIT] quote cache flusher failed to start: {e}")
+
+
 @app.on_event("shutdown")
 async def on_shutdown_quote_consumer():
     try:
         await close_quote_consumer()
     except Exception as e:
         print(f"[SHUTDOWN] quote consumer close error: {e}")
+
+    # 2026-07-10 quote-cache: 停止 periodic flush task（task 内部 finally 会做最后 flush）
+    global _quote_cache_flusher_task
+    if _quote_cache_flusher_task is not None and not _quote_cache_flusher_task.done():
+        _quote_cache_flusher_task.cancel()
+        try:
+            await _quote_cache_flusher_task
+        except Exception as e:
+            print(f"[SHUTDOWN] quote cache flusher cancel: {e}")
 
 
 # ---- Public routes ------------------------------------------------------

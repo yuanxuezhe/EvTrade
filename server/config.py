@@ -105,6 +105,13 @@ class Settings:
     # hqserver WS 地址（hq/hqserver.py 默认监听 8765）
     HQ_WS_URL: str = _env("HQ_WS_URL", "ws://127.0.0.1:8765")
 
+    # ---- Quote cache（2026-07-10 quote-cache） ----
+    # 内存 cache 周期性 flush 到 MySQL 的间隔（秒）。默认 60s，最小 5s。
+    # 进程崩溃时最多丢失这段时间内的 snapshot。
+    QUOTE_CACHE_FLUSH_INTERVAL: int = max(_env_int("QUOTE_CACHE_FLUSH_INTERVAL", 60), 5)
+    # dirty 数量达到此阈值时也立即触发 flush（与定时器并列）
+    QUOTE_CACHE_FLUSH_DIRTY_THRESHOLD: int = max(_env_int("QUOTE_CACHE_FLUSH_DIRTY_THRESHOLD", 100), 1)
+
 
 settings = Settings()
 
