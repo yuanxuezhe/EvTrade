@@ -25,6 +25,7 @@ change add-manual-adjust-and-history-pages (v12):
 """
 from sqlalchemy import (
     Column, Integer, String, Float, Text, DateTime, CheckConstraint, Index, Time,
+    Boolean,
     UniqueConstraint,
 )
 from server.db import Base
@@ -361,34 +362,28 @@ class OrderNoSeq(Base):
 # ─────────────── T0 任务表 ───────────────
 
 class Stock(Base):
-    """股票基础信息表（v21 change stock-info-crawler, 2026-07-10）
+    """股票基础信息表（v23 change slim-stocks-table, 2026-07-12）
 
     📖 详见 `openspec/specs/data-model/spec.md` §13 (stocks)
 
-    字段来源:东方财富 API 抓取,管理员通过 /admin/sync 手动触发同步。
-    - stock_code 是 PK (与 quote_snapshots 一致,带 .SH/.SZ 后缀)
-    - 13 个业务字段(基础信息 + 公司简介)
-    - 2 个索引(industry / market 用于筛选)
+    字段精简（v21→v23）：删除 9 个未被消费的字段（industry/market/list_date/
+    total_share/float_share/market_cap/pe_ratio/pb_ratio/intro），新增 3 个业务
+    字段（is_t0_able/min_buy_qty/trade_unit）用于 admin 配置回转标志与买卖粒度。
+
+    - stock_code 是 PK（与 quote_snapshots 一致,带 .SH/.SZ 后缀）
+    - 6 个业务字段(基础信息 + 交易粒度)
+    - 0 个字段索引(sector 暂未加索引,数据量小可走全表扫)
     - updated_at 自动 ON UPDATE,用于增量 upsert 的"7 天内跳过"逻辑
+    - 历史 14 字段数据已备份至 stocks_legacy 表
     """
     __tablename__ = "stocks"
-    __table_args__ = (
-        Index("ix_stocks_industry", "industry"),
-        Index("ix_stocks_market", "market"),
-    )
 
     stock_code = Column(String(16), primary_key=True, nullable=False)  # 000001.SZ
     stock_name = Column(String(64), nullable=False, default="")
-    industry = Column(String(64), nullable=True)
-    sector = Column(String(64), nullable=True)
-    market = Column(String(8), nullable=True)            # SZ / SH / BJ
-    list_date = Column(DateTime, nullable=True)
-    total_share = Column(Integer, nullable=False, default=0)        # 总股本(股)
-    float_share = Column(Integer, nullable=False, default=0)        # 流通股本(股)
-    market_cap = Column(Float, nullable=False, default=0.0)         # 总市值(元)
-    pe_ratio = Column(Float, nullable=True)                          # 滚动 PE
-    pb_ratio = Column(Float, nullable=True)                          # PB
-    intro = Column(Text, nullable=True)                              # 公司简介
+    sector = Column(String(64), nullable=True)                # 板块(申万二级)
+    is_t0_able = Column(Boolean, nullable=False, default=False)  # 是否支持 T+0 回转
+    min_buy_qty = Column(Integer, nullable=False, default=100)  # 最小买入数量(A 股默认 100)
+    trade_unit = Column(Integer, nullable=False, default=1)      # 买卖单位
     created_at = Column(DateTime, nullable=False, default=_utcnow)
     updated_at = Column(DateTime, nullable=False, default=_utcnow, onupdate=_utcnow)
 
