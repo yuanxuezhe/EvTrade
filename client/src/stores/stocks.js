@@ -3,15 +3,19 @@ import { reactive, ref } from 'vue'
 import { stocksApi } from '../api'
 
 /**
- * 股票基础信息 store (v22 stock-info-editor)
+ * 股票基础信息 store (v23 slim-stocks-table)
  *
  * 数据源：
- *   1. REST GET /api/stocks              列表缓存
+ *   1. REST GET /api/stocks              列表缓存(v23 6 字段精简)
  *   2. REST GET /api/stocks/{code}       详情(弹窗编辑时拉)
- *   3. REST PATCH /api/stocks/{code}     admin 编辑
+ *   3. REST PATCH /api/stocks/{code}     admin 编辑(5 字段白名单)
  *
  * 与 sync store 的区别：stocks 数据来自爬虫入仓的快照,
  * admin 编辑后只更新本地缓存对应行,不触发任何 WS push（v22 范围最小化）。
+ *
+ * 字段精简历史：
+ *   v22 (2026-07-10) stock-info-editor: 11 字段编辑
+ *   v23 (2026-07-12) slim-stocks-table: 5 字段编辑(白名单)
  */
 export const useStocksStore = defineStore('stocks', () => {
   // 列表（按 stock_code 排序）
@@ -27,7 +31,7 @@ export const useStocksStore = defineStore('stocks', () => {
 
   /**
    * 拉列表（覆盖本地缓存）
-   * @param {Object} params { industry?, market?, limit? }
+   * @param {Object} params { sector?, limit? }
    */
   async function fetchList(params = {}) {
     loading.value = true
@@ -51,16 +55,10 @@ export const useStocksStore = defineStore('stocks', () => {
     Object.keys(editForm).forEach((k) => delete editForm[k])
     Object.assign(editForm, {
       stock_name: data.stock_name || '',
-      industry: data.industry || '',
       sector: data.sector || '',
-      market: data.market || '',
-      list_date: data.list_date || '',
-      total_share: data.total_share ?? 0,
-      float_share: data.float_share ?? 0,
-      market_cap: data.market_cap ?? 0,
-      pe_ratio: data.pe_ratio ?? null,
-      pb_ratio: data.pb_ratio ?? null,
-      intro: data.intro || ''
+      is_t0_able: data.is_t0_able ?? false,
+      min_buy_qty: data.min_buy_qty ?? 100,
+      trade_unit: data.trade_unit ?? 1
     })
     return true
   }

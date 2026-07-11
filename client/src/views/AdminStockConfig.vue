@@ -1,9 +1,13 @@
 <!--
   AdminStockConfig.vue — 证券信息设置 (admin-only)
-  v22 stock-info-editor
-  - 查询:stocks 表列表(支持搜索 + 行业/市场筛选)
+  v23 slim-stocks-table
+  - 查询:stocks 表列表(支持搜索 + 板块筛选)
   - 修改:点行 → 编辑弹窗 → PATCH /api/stocks/{code}
   - 同步配置相关(cron/源/批量)在 /admin/sync 页面,本页面不涉及
+
+  字段精简历史:
+    v22: 11 字段编辑(行业/市场/上市日期/总股本/流通股本/总市值/PE/PB/简介 等)
+    v23: 5 字段编辑(名称/板块/回转标志/最小买入数量/买卖单位)
 -->
 <template>
   <div class="admin-stock-config fade-in-up">
@@ -13,7 +17,7 @@
         <div class="panel-header">
           <div>
             <h3 class="panel-title">证券信息</h3>
-            <p class="panel-sub">查询与编辑 stocks 表（v22 stock-info-editor）</p>
+            <p class="panel-sub">查询与编辑 stocks 表（v23 slim-stocks-table，6 字段精简版）</p>
           </div>
           <el-button :icon="Refresh" :loading="store.loading" @click="onRefresh">
             刷新
@@ -32,29 +36,28 @@
             @clear="onRefresh"
           />
           <el-select
-            v-model="filters.industry"
-            placeholder="行业"
+            v-model="filters.sector"
+            placeholder="板块"
             clearable
-            style="width: 160px"
+            style="width: 200px"
             @change="onRefresh"
           >
             <el-option
-              v-for="i in industryOptions"
-              :key="i"
-              :label="i"
-              :value="i"
+              v-for="s in sectorOptions"
+              :key="s"
+              :label="s"
+              :value="s"
             />
           </el-select>
           <el-select
-            v-model="filters.market"
-            placeholder="市场"
+            v-model="filters.is_t0_able"
+            placeholder="回转标志"
             clearable
-            style="width: 120px"
+            style="width: 140px"
             @change="onRefresh"
           >
-            <el-option label="沪市 SH" value="SH" />
-            <el-option label="深市 SZ" value="SZ" />
-            <el-option label="北交所 BJ" value="BJ" />
+            <el-option label="支持 T+0" :value="true" />
+            <el-option label="不支持 T+0" :value="false" />
           </el-select>
         </div>
 
@@ -70,17 +73,21 @@
         >
           <el-table-column prop="stock_code" label="代码" min-width="110" />
           <el-table-column prop="stock_name" label="名称" min-width="110" />
-          <el-table-column prop="market" label="市场" width="80" />
-          <el-table-column prop="industry" label="行业" min-width="140" show-overflow-tooltip />
-          <el-table-column prop="sector" label="板块" min-width="120" show-overflow-tooltip />
-          <el-table-column prop="list_date" label="上市日期" width="120">
+          <el-table-column prop="sector" label="板块" min-width="140" show-overflow-tooltip />
+          <el-table-column label="回转标志" width="100" align="center">
             <template #default="{ row }">
-              <span class="text-mono">{{ formatDate(row.list_date) }}</span>
+              <el-tag v-if="row.is_t0_able" type="success" size="small">T+0</el-tag>
+              <el-tag v-else type="info" size="small">T+1</el-tag>
             </template>
           </el-table-column>
-          <el-table-column label="总市值" width="120" align="right">
+          <el-table-column prop="min_buy_qty" label="最小买入数量" width="110" align="right">
             <template #default="{ row }">
-              <span class="text-mono">{{ formatCap(row.market_cap) }}</span>
+              <span class="text-mono">{{ row.min_buy_qty ?? 100 }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column prop="trade_unit" label="买卖单位" width="100" align="right">
+            <template #default="{ row }">
+              <span class="text-mono">{{ row.trade_unit ?? 1 }}</span>
             </template>
           </el-table-column>
           <el-table-column label="操作" width="80" fixed="right">
@@ -108,7 +115,7 @@
     <el-dialog
       v-model="dialogVisible"
       title="编辑证券信息"
-      width="640px"
+      width="560px"
       :close-on-click-modal="false"
       @closed="onDialogClosed"
     >
@@ -116,74 +123,36 @@
         <span class="text-mono">{{ store.editingCode }}</span>
       </div>
 
-      <el-form :model="store.editForm" label-width="100px" v-loading="store.editLoading">
+      <el-form :model="store.editForm" label-width="110px" v-loading="store.editLoading">
         <el-form-item label="名称">
           <el-input v-model="store.editForm.stock_name" maxlength="64" show-word-limit />
         </el-form-item>
-        <el-form-item label="行业">
-          <el-input v-model="store.editForm.industry" maxlength="64" />
-        </el-form-item>
         <el-form-item label="板块">
-          <el-input v-model="store.editForm.sector" maxlength="64" />
+          <el-input v-model="store.editForm.sector" maxlength="64" placeholder="如：银行-国有大型银行" />
         </el-form-item>
-        <el-form-item label="市场">
-          <el-select v-model="store.editForm.market" placeholder="选择市场" style="width: 100%">
-            <el-option label="沪市 SH" value="SH" />
-            <el-option label="深市 SZ" value="SZ" />
-            <el-option label="北交所 BJ" value="BJ" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="上市日期">
-          <el-input
-            v-model="store.editForm.list_date"
-            placeholder="YYYY-MM-DD 或 ISO datetime"
+        <el-form-item label="回转标志">
+          <el-switch
+            v-model="store.editForm.is_t0_able"
+            active-text="T+0"
+            inactive-text="T+1"
+            inline-prompt
+            style="--el-switch-on-color: #13ce66; --el-switch-off-color: #ff4949"
           />
         </el-form-item>
-        <el-form-item label="总股本">
+        <el-form-item label="最小买入数量">
           <el-input-number
-            v-model="store.editForm.total_share"
-            :min="0"
-            :step="10000"
+            v-model="store.editForm.min_buy_qty"
+            :min="1"
+            :step="100"
             style="width: 100%"
           />
         </el-form-item>
-        <el-form-item label="流通股本">
+        <el-form-item label="买卖单位">
           <el-input-number
-            v-model="store.editForm.float_share"
-            :min="0"
-            :step="10000"
+            v-model="store.editForm.trade_unit"
+            :min="1"
+            :step="1"
             style="width: 100%"
-          />
-        </el-form-item>
-        <el-form-item label="总市值">
-          <el-input-number
-            v-model="store.editForm.market_cap"
-            :min="0"
-            :precision="2"
-            style="width: 100%"
-          />
-        </el-form-item>
-        <el-form-item label="市盈率">
-          <el-input-number
-            v-model="store.editForm.pe_ratio"
-            :precision="4"
-            style="width: 100%"
-          />
-        </el-form-item>
-        <el-form-item label="市净率">
-          <el-input-number
-            v-model="store.editForm.pb_ratio"
-            :precision="4"
-            style="width: 100%"
-          />
-        </el-form-item>
-        <el-form-item label="公司简介">
-          <el-input
-            v-model="store.editForm.intro"
-            type="textarea"
-            :rows="4"
-            maxlength="2000"
-            show-word-limit
           />
         </el-form-item>
       </el-form>
@@ -207,27 +176,27 @@ import { useStocksStore } from '../stores/stocks'
 const store = useStocksStore()
 
 // 筛选
-const filters = reactive({ keyword: '', industry: '', market: '' })
+const filters = reactive({ keyword: '', sector: '', is_t0_able: null })
 
 // 分页
 const page = ref(1)
 const pageSize = ref(20)
 
-// 行业下拉（从当前列表里抽）
-const industryOptions = computed(() => {
+// 板块下拉（从当前列表里抽）
+const sectorOptions = computed(() => {
   const set = new Set()
   for (const s of store.list) {
-    if (s.industry) set.add(s.industry)
+    if (s.sector) set.add(s.sector)
   }
   return [...set].sort()
 })
 
-// 客户端搜索 + 行业/市场过滤（后端只支持 industry/market 精确匹配）
+// 客户端搜索 + 板块/回转标志过滤（后端只支持 sector 精确匹配）
 const filteredRows = computed(() => {
   const kw = filters.keyword.trim().toLowerCase()
   return store.list.filter((s) => {
-    if (filters.industry && s.industry !== filters.industry) return false
-    if (filters.market && s.market !== filters.market) return false
+    if (filters.sector && s.sector !== filters.sector) return false
+    if (filters.is_t0_able !== null && Boolean(s.is_t0_able) !== filters.is_t0_able) return false
     if (kw) {
       const blob = `${s.stock_code || ''} ${s.stock_name || ''}`.toLowerCase()
       if (!blob.includes(kw)) return false
@@ -266,21 +235,6 @@ function onDialogClosed() {
 
 async function onRefresh() {
   await store.fetchList({ limit: 1000 })
-}
-
-// 格式化
-function formatDate(s) {
-  if (!s) return '—'
-  // 后端返 ISO 字符串,只取前 10 位日期部分
-  return String(s).slice(0, 10)
-}
-function formatCap(v) {
-  if (v == null) return '—'
-  const n = Number(v)
-  if (Number.isNaN(n)) return '—'
-  if (n >= 1e8) return `${(n / 1e8).toFixed(2)} 亿`
-  if (n >= 1e4) return `${(n / 1e4).toFixed(2)} 万`
-  return n.toFixed(2)
 }
 
 onMounted(onRefresh)
