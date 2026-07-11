@@ -60,6 +60,41 @@ def get_by_code(db: Session, stock_code: str) -> Optional[Stock]:
     return db.query(Stock).filter_by(stock_code=stock_code).first()
 
 
+# v22 stock-info-editor: admin 显式编辑 stocks 行
+# 允许覆盖的字段白名单（stock_code 是 PK,created_at/updated_at 由 DB 维护,不允许外部改）
+_ADMIN_EDITABLE_FIELDS = (
+    'stock_name', 'industry', 'sector', 'market',
+    'list_date', 'total_share', 'float_share',
+    'market_cap', 'pe_ratio', 'pb_ratio', 'intro',
+)
+
+
+def update_by_admin(db: Session, stock_code: str, data: Dict) -> Optional[Stock]:
+    """admin 显式编辑 stocks 表(REQ-STOCK-003)
+
+    与 upsert 的区别:
+    - upsert 是爬虫自动入仓,7 天阈值跳过
+    - update_by_admin 是 admin 手动改,无阈值,白名单字段全覆盖
+
+    Args:
+        db: SQLAlchemy Session
+        stock_code: PK
+        data: dict,只接受白名单内字段
+
+    Returns:
+        更新后的 Stock ORM 对象,或 None(stock_code 不存在)
+    """
+    existing = db.query(Stock).filter_by(stock_code=stock_code).first()
+    if existing is None:
+        return None
+    for k, v in data.items():
+        if k in _ADMIN_EDITABLE_FIELDS and hasattr(existing, k):
+            setattr(existing, k, v)
+    db.commit()
+    db.refresh(existing)
+    return existing
+
+
 def list_by_industry(db: Session, industry: str) -> List[Stock]:
     return db.query(Stock).filter_by(industry=industry).order_by(Stock.stock_code).all()
 
