@@ -555,39 +555,48 @@ class T0Task(Base):
 - **THEN** `services/t0/tasks.py::aggregate_task_stats(task_id)` 仍可访问（不报 FK 错）
 - **AND** `aggregate_by_stock(..., user_def='T0')` 兼容 NULL（保持现状）
 
-### §13. `stocks` — 股票基础信息表（v21 stock-info-crawler）
+### §13. `stocks` — 股票基础信息表（v23 slim-stocks-table）
 
-**业务定位**:股票基础信息(行业/市值/PE/PB/公司简介)。从东方财富 API 抓取,管理员通过 `/admin/sync` 手动触发同步,前端在 Holdings/Trade/Sync 页面消费。
+**业务定位**:股票核心信息(代码/名称/板块) + 交易粒度配置(回转标志/最小买入数量/买卖单位)。从东方财富 API 抓取基础信息,admin 通过 `/admin/stock-config` 编辑交易粒度。前端在 `/admin/stock-config` 页面消费。
 
 **PK**: `stock_code VARCHAR(16)`(带 `.SH/.SZ` 后缀,与 `quote_snapshots` 一致)
+
+**字段精简历史**:
+- v21 (2026-07-10) stock-info-crawler: 14 个业务字段(基础信息 + 公司简介)
+- **v23 (2026-07-12) slim-stocks-table: 6 个业务字段**(代码/名称/板块 + 3 个交易粒度),9 字段已删除,历史数据保留在 `stocks_legacy` 表
 
 | 字段 | 类型 | 可空 | 默认 | 说明 |
 |---|---|---|---|---|
 | `stock_code` | VARCHAR(16) | NO | — | 股票代码(PK,如 `000001.SZ`) |
-| `stock_name` | VARCHAR(64) | NO | `""` | 股票名(如 `平安银行`) |
-| `industry` | VARCHAR(64) | YES | NULL | 行业(如 `银行`) |
-| `sector` | VARCHAR(64) | YES | NULL | 板块(如 `金融`) |
-| `market` | VARCHAR(8) | YES | NULL | 市场 `SZ`/`SH`/`BJ` |
-| `list_date` | DATETIME | YES | NULL | 上市日期 |
-| `total_share` | BIGINT | NO | `0` | 总股本(股) |
-| `float_share` | BIGINT | NO | `0` | 流通股本(股) |
-| `market_cap` | DECIMAL(18,2) | NO | `0.00` | 总市值(元) |
-| `pe_ratio` | DECIMAL(10,4) | YES | NULL | 滚动 PE |
-| `pb_ratio` | DECIMAL(10,4) | YES | NULL | PB |
-| `intro` | TEXT | YES | NULL | 公司简介 |
+| `stock_name` | VARCHAR(64) | NO | "" | 股票名(如 `平安银行`) |
+| `sector` | VARCHAR(64) | YES | NULL | 板块(申万二级,如 `银行-国有大型银行`) |
+| `is_t0_able` | TINYINT(1) | NO | `0` | 回转标志 (FALSE=T+1 / TRUE=T+0) |
+| `min_buy_qty` | INT | NO | `100` | 最小买入数量(A 股默认 100 股) |
+| `trade_unit` | INT | NO | `1` | 买卖单位(序号无业务意义,默认 1) |
 | `created_at` | DATETIME | NO | `CURRENT_TIMESTAMP` | 创建时间 |
 | `updated_at` | DATETIME | NO | `CURRENT_TIMESTAMP` | 更新时间(自动 ON UPDATE) |
 
-**索引**:
-- `ix_stocks_industry` on `industry` — 行业筛选
-- `ix_stocks_market` on `market` — 市场筛选
+**已删除字段**(v21 → v23):
+- ~~`industry`~~ 行业 — 前端未消费
+- ~~`market`~~ 市场 — 从 `stock_code` 后缀派生
+- ~~`list_date`~~ 上市日期 — UI 未展示
+- ~~`total_share` / `float_share`~~ 股本 — UI 未展示
+- ~~`market_cap` / `pe_ratio` / `pb_ratio`~~ 估值 — UI 未展示
+- ~~`intro`~~ 公司简介 — UI 未展示
+
+**索引**:无(`sector` 暂未加索引,数据量小走全表扫)
 
 **upsert 策略**(REQ-STOCK-002):
 - 已存在 + `updated_at > NOW() - 7 DAY` → 跳过(`skipped`)
-- 已存在 + `updated_at <= NOW() - 7 DAY` → 覆盖业务字段(`updated`)
+- 已存在 + `updated_at <= NOW() - 7 DAY` → 覆盖 crawler 写入的字段(`updated`)
 - 不存在 → INSERT(`inserted`)
+- crawler 入仓字段:stock_name + sector
+- admin 编辑字段:stock_name + sector + is_t0_able + min_buy_qty + trade_unit
 
-**DDL 幂等**:`CREATE TABLE IF NOT EXISTS stocks` 重复跑安全。
+**DDL 幂等**:`CREATE TABLE IF NOT EXISTS stocks` 重复
+跑安全;`ALTER TABLE stocks ADD/DROP COLUMN` 通过 INFORMATION_SCHEMA 探测后执行(v23 迁移脚本策略)。
+
+**历史数据保留**:stocks_legacy 表存 14 字段完整快照,v23 迁移时一次性 CREATE TABLE AS SELECT 拷贝,不再被业务代码访问(仅供紧急查询/审计)。
 
 #### Scenario: 增量 upsert - 7 天内跳过
 
@@ -599,10 +608,19 @@ class T0Task(Base):
 
 - **GIVEN** stocks 表已有 `stock_code='000001.SZ'` 行,`updated_at` = 8 天前
 - **WHEN** `repo.stocks.upsert(db, '000001.SZ', new_data)`
-- **THEN** 返 `'updated'`,所有业务字段被覆盖,`updated_at` 自动刷新
+- **THEN** 返 `'updated'`,crawler 字段(stock_name + sector)被覆盖,`updated_at` 自动刷新
+- **AND** `is_t0_able` / `min_buy_qty` / `trade_unit` **不**被覆盖(仅 admin 编辑入口可改)
 
 #### Scenario: 增量 upsert - 新行插入
 
 - **GIVEN** stocks 表无 `stock_code='999999.SZ'` 行
 - **WHEN** `repo.stocks.upsert(db, '999999.SZ', new_data)`
-- **THEN** 返 `'inserted'`,新行写入,`created_at` 和 `updated_at` 自动设当前时间
+- **THEN** 返 `'inserted'`,新行写入,`is_t0_able=0` / `min_buy_qty=100` / `trade_unit=1` 取默认值,`created_at` 和 `updated_at` 自动设当前时间
+
+#### Scenario: admin 编辑 stocks 字段白名单
+
+- **GIVEN** admin 调用 `PATCH /api/stocks/{code}` with body `{stock_name, sector, is_t0_able, min_buy_qty, trade_unit}`
+- **WHEN** 请求处理
+- **THEN** 5 字段全部可被覆盖(其他字段如 `industry` 返 422 拒绝)
+- **AND** 返回更新后的完整 stock 对象(6 字段)
+

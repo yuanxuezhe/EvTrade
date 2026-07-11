@@ -13,16 +13,17 @@ EvTrade 当前缺股票基础信息(行业/市值/PE/PB/公司简介)。本 capa
 
 数据流:Admin 点击 "开始同步" → 后台爬虫 → 增量 upsert MySQL → WS 推送前端更新缓存。
 
-## REQ-STOCK-001: 股票基础信息表
+## REQ-STOCK-001: 股票基础信息表（v23 slim-stocks-table）
 
 **Given** EvTrade 需要股票基础信息  
 **When** 设计 stocks 表  
 **Then** 必须满足:
 
 - 表名 `stocks`,PK `stock_code VARCHAR(16)`(带 `.SH/.SZ` 后缀)
-- 字段定义详见 `data-model/spec.md` §13
-- 2 个索引:ix_stocks_industry / ix_stocks_market
+- 字段定义详见 `data-model/spec.md` §13(v23 6 业务字段 + 2 审计字段)
+- 0 个字段索引(v23 移除 ix_stocks_industry / ix_stocks_market,数据量小走全表扫)
 - DDL 幂等(`CREATE TABLE IF NOT EXISTS`)
+- 历史 14 字段完整数据保留在 `stocks_legacy` 表
 
 **And** ORM `server/models/orm.py:Stock` 必须与 spec 同构
 
@@ -33,13 +34,29 @@ EvTrade 当前缺股票基础信息(行业/市值/PE/PB/公司简介)。本 capa
 **Then** 必须满足:
 
 - **7 天内不重复更新**:`updated_at > NOW() - 7 DAY` → 跳过(返 `skipped`)
-- **7 天外覆盖**:`updated_at <= NOW() - 7 DAY` → UPDATE 所有业务字段(返 `updated`)
+- **7 天外覆盖**:`updated_at <= NOW() - 7 DAY` → UPDATE crawler 入仓字段(返 `updated`)
 - **新行插入**:不存在 → INSERT(返 `inserted`)
 - 应用层走 `repo.stocks.upsert(db, stock_code, data)` 单一入口
+- **v23 重要约束**:crawler 入仓仅写 `stock_name` + `sector`,不会覆盖 `is_t0_able` / `min_buy_qty` / `trade_unit`(admin 专属字段)
 
-**Rationale**:减少不必要的写库,降低东方财富 API 调用频率。
+**Rationale**:减少不必要的写库,降低东方财富 API 调用频率;admin 手动配置的 3 个交易粒度字段不会被爬虫循环覆盖。
 
-## REQ-STOCK-003: 同步任务生命周期
+## REQ-STOCK-003: admin 编辑 stocks 字段（v23 字段同步）
+
+**Given** admin 用户需要修改单只股票字段  
+**When** 调用 `PATCH /api/stocks/{stock_code}`  
+**Then** 必须满足:
+
+- 鉴权:`require_admin` 守卫(role=admin)
+- 白名单字段(5 字段):`stock_name` / `sector` / `is_t0_able` / `min_buy_qty` / `trade_unit`
+- 任何非白名单字段(如 `industry`)返 422
+- 空 body(无字段需要更新)返 400
+- `stock_code` 不存在返 404
+- 成功返回更新后的完整 stock 对象(6 字段)
+- 应用层走 `repo.stocks.update_by_admin(db, stock_code, data)` 单一入口
+- 不发 WS push(v22 范围最小化原则)
+
+## REQ-STOCK-004: 同步任务生命周期（保持不变）
 
 **Given** admin 用户触发股票同步  
 **When** 调用 `POST /api/sync/stocks`  
@@ -50,16 +67,29 @@ EvTrade 当前缺股票基础信息(行业/市值/PE/PB/公司简介)。本 capa
 - 启动后立即返 202 Accepted + `{job_id}`
 - 后台 task 异步执行,不影响 API 响应时间
 - 同步期间每 1 秒推 WS `stock_sync_progress` 消息
-- 每只股票 upsert 成功后推 WS `stock_synced` 消息(含完整数据)
+- 每只股票 upsert 成功后推 WS `stock_synced` 消息(v23 仅 3 字段,见 REQ-STOCK-005)
 - `DELETE /api/sync/stocks` 发送停止信号,task 优雅退出(完成当前只后停)
 - `GET /api/sync/stocks/status` 返当前 task 状态(state/counters/elapsed)
 
 **Task 单例**:`server.services.sync.manager` 维护 `current_task: SyncTask`,后启动覆盖前一个(警告)。
 
-## REQ-STOCK-004: 同步进度推送协议(WS /ws/sync_update)
+## REQ-STOCK-005: 同步进度推送协议 + 数据源契约（v23 字段同步）
 
 **Channel**: `/ws/sync_update`(admin only,独立于 `/ws/quote_update`)  
 **Auth**: query param `?token=JWT`,要求 `role=admin`(否则 close 4003)
+
+**数据源契约**:
+
+- 端点: `https://emweb.securities.eastmoney.com/PC_HSF10/CompanySurvey/PageAjax?code={market}{code}`(如 `SZ000001`)
+- 字段映射(v23 精简):
+  - `SECURITY_NAME_ABBR` → `stock_name`
+  - `INDUSTRYCSRC2` → `sector`(申万二级,完整保留如 `银行-国有大型银行`)
+  - `SECUCODE` → `stock_code`(由 caller 传入)
+- **v23 不再爬**:`INDUSTRYCSRC1` / `TRADE_MARKET` / `ORG_PROFILE` / `REG_CAPITAL` 等 9 字段
+- User-Agent:`Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36`
+- 单线程 + sleep 0.5s/只(防反爬)
+- 单只失败 → 跳过 + 计入 failed 计数 + 日志记录,不影响后续
+- 超时:单只 HTTP 请求 10s(防卡死)
 
 **Server → Client 消息**:
 
@@ -68,7 +98,7 @@ EvTrade 当前缺股票基础信息(行业/市值/PE/PB/公司简介)。本 capa
 {
   "type": "stock_sync_progress",
   "job_id": "uuid-v4",
-  "state": "running",          // running | done | stopped | failed
+  "state": "running",
   "total": 5400,
   "processed": 1234,
   "inserted": 800,
@@ -82,22 +112,14 @@ EvTrade 当前缺股票基础信息(行业/市值/PE/PB/公司简介)。本 capa
   "ts": 1720611893.123
 }
 
-// 单只股票同步完成(upsert 成功后立即推)
+// 单只股票同步完成(v23 仅 3 字段,精简前 6 字段)
 {
   "type": "stock_synced",
   "stock_code": "000123.SZ",
   "data": {
+    "stock_code": "000123.SZ",
     "stock_name": "平安银行",
-    "industry": "银行",
-    "sector": "金融",
-    "market": "SZ",
-    "list_date": "1991-04-03T00:00:00",
-    "total_share": 19405918198,
-    "float_share": 19405751065,
-    "market_cap": 102345678901.0,
-    "pe_ratio": 5.23,
-    "pb_ratio": 0.56,
-    "intro": "平安银行股份有限公司..."
+    "sector": "银行-国有大型银行"
   },
   "ts": 1720611893.456
 }
@@ -117,22 +139,12 @@ EvTrade 当前缺股票基础信息(行业/市值/PE/PB/公司简介)。本 capa
 - **THEN** 服务端向 `/ws/sync_update` 所有连接广播 `stock_sync_progress` 消息
 - **AND** 消息内 counters 字段反映当前真实状态
 
-## REQ-STOCK-005: 东方财富数据源适配
+#### Scenario: v23 stock_synced payload 字段裁剪
 
-**Given** 同步任务从东方财富抓股票信息  
-**When** crawler 拉取数据  
-**Then** 必须满足:
-
-- 数据源 URL:
-  - 基本信息:`https://push2.eastmoney.com/api/qt/stock/get?secid={market_id}.{code}&fields=...`
-  - 公司简介:`https://emweb.eastmoney.com/PC_HSF10/CompanySurvey/CompanySurveyAjax?code={code}`
-- market_id 映射:SZ=0 / SH=1(简化处理,BJ 暂不支持)
-- User-Agent:`Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36`
-- 单线程 + sleep 0.5s/只(防反爬)
-- 单只失败 → 跳过 + 计入 failed 计数 + 日志记录,不影响后续
-- 超时:单只 HTTP 请求 10s(防卡死)
-
-**Adapter 入口**:`server/crawler/sources/eastmoney.py::fetch_base_info(stock_code) -> dict`
+- **GIVEN** 同步任务 upsert 单只股票成功
+- **WHEN** runner 推 `stock_synced` 消息
+- **THEN** `data` 字段仅含 `stock_code` / `stock_name` / `sector`(3 字段)
+- **AND** 不含 `industry` / `market` / `intro` 等 v21 字段(已删除)
 
 ## Non-Functional Requirements
 
@@ -140,6 +152,7 @@ EvTrade 当前缺股票基础信息(行业/市值/PE/PB/公司简介)。本 capa
 - **NFR-STOCK-002**:WS 推送延迟 ≤ 1s(从 upsert 成功到前端收到)
 - **NFR-STOCK-003**:内存 task dict 单例,服务重启不持久化(接受丢失)
 - **NFR-STOCK-004**:前端页面 admin role 守卫,viewer/trader 看不到
+- **NFR-STOCK-005 (v23)**:单只 HTTP 请求 10s 超时,失败计入 failed 不阻塞后续
 
 ## Out of Scope (Future)
 
@@ -148,3 +161,4 @@ EvTrade 当前缺股票基础信息(行业/市值/PE/PB/公司简介)。本 capa
 - 概念板块 / 题材概念
 - 资讯新闻爬取
 - cron daily 增量刷新
+- ~~行业(industry)/市场(market)/上市日期/估值/简介 等展示性字段~~ (v23 已下线)
