@@ -1,10 +1,10 @@
 """
-api/stocks.py — 股票基础信息查询 REST 端点 (v21 stock-info-crawler)
+api/stocks.py — 股票基础信息查询 REST 端点 (v23 slim-stocks-table)
 
 端点:
-- GET   /api/stocks                  列表(支持 ?industry= 筛选)
+- GET   /api/stocks                  列表(支持 ?sector= 筛选)
 - GET   /api/stocks/{stock_code}     按代码查详情
-- PATCH /api/stocks/{stock_code}     admin 编辑 stocks 行 (v22 stock-info-editor)
+- PATCH /api/stocks/{stock_code}     admin 编辑 stocks 行 (v22 stock-info-editor, v23 字段同步)
 
 鉴权:
 - GET: _AUTH (任意登录用户)
@@ -25,13 +25,12 @@ router = APIRouter()
 
 
 @router.get("")
-async def list_stocks(industry: Optional[str] = None, market: Optional[str] = None,
+async def list_stocks(sector: Optional[str] = None,
                        limit: int = 100, db=Depends(get_db)):
     """列出 stocks 表内容
 
     Args:
-        industry: 行业筛选(可选)
-        market: 市场筛选 SZ/SH(可选)
+        sector: 板块筛选(可选)
         limit: 上限(默认 100)
 
     Returns:
@@ -39,10 +38,8 @@ async def list_stocks(industry: Optional[str] = None, market: Optional[str] = No
     """
     from server.models.orm import Stock
     q = db.query(Stock)
-    if industry:
-        q = q.filter(Stock.industry == industry)
-    if market:
-        q = q.filter(Stock.market == market)
+    if sector:
+        q = q.filter(Stock.sector == sector)
     q = q.order_by(Stock.stock_code).limit(limit)
     return {
         "code": 0,
@@ -66,25 +63,21 @@ async def get_stock(stock_code: str, db=Depends(get_db)):
 
 
 # ============================================================
-# v22 stock-info-editor: PATCH /api/stocks/{stock_code} (admin only)
+# v22 stock-info-editor → v23 slim-stocks-table 字段同步
 # ============================================================
 
 class StockUpdateRequest(BaseModel):
-    """admin 编辑 stocks 行的可编辑字段白名单
+    """admin 编辑 stocks 行的可编辑字段白名单(v23 5 字段精简版)
 
     所有字段可选 — 前端可能只改其中几个,Pydantic 默认 None。
+    6 字段中 stock_code 是 PK(created_at/updated_at 由 DB 维护,不可改)
+    → 实际可编辑 5 字段: stock_name/sector/is_t0_able/min_buy_qty/trade_unit
     """
     stock_name: Optional[str] = Field(None, max_length=64)
-    industry: Optional[str] = Field(None, max_length=64)
     sector: Optional[str] = Field(None, max_length=64)
-    market: Optional[str] = Field(None, max_length=8)
-    list_date: Optional[datetime] = None
-    total_share: Optional[int] = Field(None, ge=0)
-    float_share: Optional[int] = Field(None, ge=0)
-    market_cap: Optional[float] = Field(None, ge=0)
-    pe_ratio: Optional[float] = None
-    pb_ratio: Optional[float] = None
-    intro: Optional[str] = None
+    is_t0_able: Optional[bool] = None
+    min_buy_qty: Optional[int] = Field(None, ge=1)
+    trade_unit: Optional[int] = Field(None, ge=1)
 
 
 @router.patch("/{stock_code}", dependencies=[Depends(require_admin)])

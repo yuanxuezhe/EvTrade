@@ -1,9 +1,9 @@
 """
-crawler/runner.py — 同步循环主控 (v21 stock-info-crawler)
+crawler/runner.py — 同步循环主控 (v23 slim-stocks-table)
 
 职责:
 - 遍历 all_codes 列表
-- 调 eastmoney.fetch_all() 拉取单只股票信息
+- 调 eastmoney.fetch_base_info() 拉取单只股票信息(v23 仅 3 字段)
 - 调 repo.stocks.upsert() 增量入库
 - 通过 progress_callback 推送进度(由 sync_manager 注入 WS broadcast)
 
@@ -111,16 +111,15 @@ async def run(
         # 单只同步完成后单独推 stock_synced(让前端立即更新缓存)
         if action in ("inserted", "updated") and data is not None:
             # data 是 dict,直接构造 WS payload (避免再开 session 读 ORM)
+            # v23 字段精简: WS payload 仅含 crawler 实际写入的字段
+            #   (stock_code/stock_name/sector),不广播 admin 专属字段
             progress_callback({
                 "type": "stock_synced",  # 区分 progress 消息
                 "stock_code": stock_code,
                 "data": {
                     "stock_code": stock_code,
                     "stock_name": data.get("stock_name", ""),
-                    "industry": data.get("industry", ""),
                     "sector": data.get("sector", ""),
-                    "market": data.get("market", ""),
-                    "intro": data.get("intro", ""),
                 },
             })
 
