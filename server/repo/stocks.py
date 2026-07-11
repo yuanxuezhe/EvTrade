@@ -1,13 +1,19 @@
 """
-repo/stocks.py — 股票基础信息 CRUD (v21 stock-info-crawler)
+repo/stocks.py — 股票基础信息 CRUD (v23 slim-stocks-table)
 
 职责:
-- upsert:增量更新(7 天内跳过)
+- upsert:增量更新(7 天内跳过),crawler 自动入仓用
 - get_by_code:按代码查(前端展示用)
-- list_by_industry:按行业筛选(前端选股用)
 - list_all:全表(同步任务遍历用)
 - list_codes:仅返回 stock_code 列表(轻量)
+- update_by_admin:admin 手动编辑 stocks 字段(白名单)
 - to_dict:ORM → dict(WS 推送用)
+- to_dict_from_data:raw dict (来自 crawler) → 标准 dict (WS 推送用)
+
+字段精简历史:
+- v21 (2026-07-10) stock-info-crawler: 14 个业务字段(基础信息 + 公司简介)
+- v23 (2026-07-12) slim-stocks-table: 6 个业务字段(基础信息 + 交易粒度)
+  历史 14 字段数据保留在 stocks_legacy 表
 """
 from datetime import datetime, timedelta
 from typing import List, Optional, Dict
@@ -27,7 +33,7 @@ def upsert(db: Session, stock_code: str, data: Dict) -> str:
     Args:
         db: SQLAlchemy Session
         stock_code: '000001.SZ'
-        data: dict 含 stock_name/industry/sector/market/intro/...
+        data: dict 含 stock_name/sector(其余字段白名单过滤)
               (data 里若有 stock_code 会被剔除,以参数 stock_code 为准)
 
     Returns:
@@ -60,12 +66,12 @@ def get_by_code(db: Session, stock_code: str) -> Optional[Stock]:
     return db.query(Stock).filter_by(stock_code=stock_code).first()
 
 
-# v22 stock-info-editor: admin 显式编辑 stocks 行
-# 允许覆盖的字段白名单（stock_code 是 PK,created_at/updated_at 由 DB 维护,不允许外部改）
+# v23 slim-stocks-table: admin 显式编辑 stocks 行
+# 允许覆盖的字段白名单（stock_code 是 PK,created_at/updated_at 由 DB 维护）
+# 6 字段:stock_name/sector/is_t0_able/min_buy_qty/trade_unit
 _ADMIN_EDITABLE_FIELDS = (
-    'stock_name', 'industry', 'sector', 'market',
-    'list_date', 'total_share', 'float_share',
-    'market_cap', 'pe_ratio', 'pb_ratio', 'intro',
+    'stock_name', 'sector',
+    'is_t0_able', 'min_buy_qty', 'trade_unit',
 )
 
 
@@ -95,10 +101,6 @@ def update_by_admin(db: Session, stock_code: str, data: Dict) -> Optional[Stock]
     return existing
 
 
-def list_by_industry(db: Session, industry: str) -> List[Stock]:
-    return db.query(Stock).filter_by(industry=industry).order_by(Stock.stock_code).all()
-
-
 def list_all(db: Session, limit: Optional[int] = None) -> List[Stock]:
     q = db.query(Stock).order_by(Stock.stock_code)
     if limit:
@@ -113,39 +115,27 @@ def list_codes(db: Session) -> List[str]:
 
 
 def to_dict(stock: Stock) -> Dict:
-    """ORM → dict(WS 推送前端用)"""
+    """ORM → dict(WS 推送前端用, v23 字段精简)"""
     return {
         'stock_code': stock.stock_code,
         'stock_name': stock.stock_name or '',
-        'industry': stock.industry,
         'sector': stock.sector,
-        'market': stock.market,
-        'list_date': stock.list_date.isoformat() if stock.list_date else None,
-        'total_share': stock.total_share,
-        'float_share': stock.float_share,
-        'market_cap': float(stock.market_cap or 0.0),
-        'pe_ratio': float(stock.pe_ratio) if stock.pe_ratio is not None else None,
-        'pb_ratio': float(stock.pb_ratio) if stock.pb_ratio is not None else None,
-        'intro': stock.intro or '',
+        'is_t0_able': bool(stock.is_t0_able),
+        'min_buy_qty': stock.min_buy_qty,
+        'trade_unit': stock.trade_unit,
     }
 
 
 def to_dict_from_data(stock_code: str, data: Dict) -> Dict:
-    """raw dict (来自 crawler) → 标准 dict (WS 推送用)
+    """raw dict (来自 crawler) → 标准 dict (WS 推送用, v23 字段精简)
 
     用于 upsert 成功后立即推 stock_synced,无需再读 DB
     """
     return {
         'stock_code': stock_code,
         'stock_name': data.get('stock_name', ''),
-        'industry': data.get('industry'),
         'sector': data.get('sector'),
-        'market': data.get('market'),
-        'list_date': data.get('list_date'),
-        'total_share': data.get('total_share', 0),
-        'float_share': data.get('float_share', 0),
-        'market_cap': float(data.get('market_cap') or 0.0),
-        'pe_ratio': data.get('pe_ratio'),
-        'pb_ratio': data.get('pb_ratio'),
-        'intro': data.get('intro') or '',
+        'is_t0_able': bool(data.get('is_t0_able', False)),
+        'min_buy_qty': int(data.get('min_buy_qty', 100)),
+        'trade_unit': int(data.get('trade_unit', 1)),
     }
