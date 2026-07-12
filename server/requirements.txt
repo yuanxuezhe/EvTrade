@@ -13,3 +13,5 @@ websockets>=9.0,<11.0
 # change sqlite-to-mysql (2026-07-08): MySQL 8.0 driver
 pymysql>=1.1.0,<2.0.0
 cryptography>=42.0.0  # pymysql caching_sha2_password 需要
+# change stocks-cache-and-short-name (v25): 拼音首字母库
+pypinyin>=0.50.0,<1.0.0
