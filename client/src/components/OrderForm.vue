@@ -23,16 +23,13 @@
     <div class="form-body">
       <el-form :model="form" label-position="top" size="default">
         <el-form-item label="股票代码" class="row-tight">
-          <el-input
+          <!-- v26: StockCodeAutocomplete 通用组件 (cache 跨页面共享) -->
+          <StockCodeAutocomplete
             v-model="form.stock_code"
-            placeholder="如 000001.SZ"
-            clearable
-            @change="onStockCodeChange"
-          >
-            <template #prefix>
-              <el-icon><Search /></el-icon>
-            </template>
-          </el-input>
+            placeholder="输入代码 / 名称 / 首字母"
+            @select="onAutocompleteSelect"
+            @update:model-value="onStockCodeChange"
+          />
         </el-form-item>
 
         <!-- 价格类型：单行 inline radio-button (与 T0Trade 价格档风格一致;2026-07-09 单行化重构, v15 替换 2×2 grid 避免占满整行) -->
@@ -115,9 +112,10 @@
 <script setup>
 import { computed, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Search, Top, Bottom } from '@element-plus/icons-vue'
+import { Top, Bottom } from '@element-plus/icons-vue'
 import { formatMoney } from '../utils/format'
 import { PriceType, priceTypeOptions, OrderType } from '../constants/priceType'
+import StockCodeAutocomplete from './StockCodeAutocomplete.vue'
 
 const props = defineProps({
   onSubmit: { type: Function, required: true },
@@ -125,7 +123,8 @@ const props = defineProps({
 })
 
 // 2026-07-09: emit 名改 kebab-case, 与父组件 Trade.vue @update:stock-code 对应
-const emit = defineEmits(['apply-quote-price', 'update:stock-code'])
+// v26: StockCodeAutocomplete 选中候选时 emit select(stock), OrderForm 触发行情拉取
+const emit = defineEmits(['apply-quote-price', 'update:stock-code', 'stock-selected'])
 
 const submitting = ref(false)
 
@@ -170,10 +169,17 @@ function formatVolume(v) {
   return v >= 10000 ? `${v / 10000}万` : String(v)
 }
 
-function onStockCodeChange() {
-  form.stock_code = form.stock_code.toUpperCase().trim()
+function onStockCodeChange(val) {
+  // v26: 由 StockCodeAutocomplete 的 update:modelValue 触发,可能是手动输入也可能是候选选中
+  form.stock_code = (val || '').toUpperCase().trim()
   // 2026-07-09: emit 名改 kebab-case, 与父组件 Trade.vue @update:stock-code 对应
   emit('update:stock-code', form.stock_code)
+}
+
+function onAutocompleteSelect(stock) {
+  // v26: StockCodeAutocomplete 选中真实存在的 stock 时触发
+  // 转发给父组件 (Trade.vue 可触发行情预拉取)
+  emit('stock-selected', stock)
 }
 
 async function handleSubmit() {

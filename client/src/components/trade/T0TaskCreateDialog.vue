@@ -1,24 +1,24 @@
 <!--
-  T0TaskCreateDialog.vue — 新建 T0Task 弹窗（v18 change t0-task-management）
+  T0TaskCreateDialog.vue — 新建 T0Task 弹窗（v18 change t0-task-management, v26 universalize-stockcode-autocomplete）
 
   Props:
     visible   (Boolean) — 双向绑定显示状态
     loading   (Boolean) — 提交 loading（外层 store 操作）
-    stockOptions (Array<{code, name}>) — 可选股票列表（从 holdings 取）
+    defaultStockCode (String) — 默认股票代码 (v26 新增, 从父组件当前 stockCode 带入)
 
   Emits:
     update:visible — 关闭弹窗
     submit(form)   — 用户点击创建（外层调 store.createTask）
 
   字段：
-    - stock_code      必填，从下拉选
+    - stock_code      必填, v26 起走 StockCodeAutocomplete (cache 全市场 5529)
     - base_volume     底仓（默认 0，可空 — 让仓位变化完全在 target_volume 层）
     - target_volume   目标开仓量（必填；可负表示净减仓）
     - coefficient     配平系数（默认 1.0，沿用 v13 REQ-TRADE-005 语义）
     - note            备注（可选）
 
   注意：
-    - stockOptions 中按 code + name 展示（持仓股优先）
+    - v26 删除 stockOptions prop（v18 旧设计，从 holdings 取持仓股优先显示），改用全市场 cache
     - 校验：stock_code 必选、target_volume 必填且为整数
 -->
 <template>
@@ -39,19 +39,12 @@
       size="default"
     >
       <el-form-item label="股票代码" prop="stock_code">
-        <el-select
+        <!-- v26: StockCodeAutocomplete 通用组件 (cache 全市场 5529 跨页面共享) -->
+        <StockCodeAutocomplete
           v-model="form.stock_code"
-          placeholder="选择股票"
-          filterable
-          style="width: 100%"
-        >
-          <el-option
-            v-for="o in stockOptions"
-            :key="o.code"
-            :value="o.code"
-            :label="`${o.code} ${o.name || ''}`"
-          />
-        </el-select>
+          placeholder="输入代码 / 名称 / 首字母"
+          clearable
+        />
       </el-form-item>
 
       <el-form-item label="底仓量（保留部分底仓）" prop="base_volume">
@@ -105,11 +98,13 @@
 
 <script setup>
 import { ref, reactive, watch } from 'vue'
+import StockCodeAutocomplete from '../StockCodeAutocomplete.vue'
 
 const props = defineProps({
   visible: { type: Boolean, default: false },
   loading: { type: Boolean, default: false },
-  stockOptions: { type: Array, default: () => [] },
+  // v26 新增: 从父组件带入默认股票代码 (替代 v18 的 stockOptions 持仓股优先)
+  defaultStockCode: { type: String, default: '' }
 })
 const emit = defineEmits(['update:visible', 'submit'])
 
@@ -117,7 +112,7 @@ const formRef = ref(null)
 
 // 表单初始值
 const initialForm = () => ({
-  stock_code: '',
+  stock_code: props.defaultStockCode || '',
   base_volume: 0,
   target_volume: 0,
   coefficient: 1.0,

@@ -19,10 +19,12 @@
       :disabled="disabled"
     >
       <el-form-item label="股票代码" prop="stock_code">
-        <el-input
+        <!-- v26: StockCodeAutocomplete 通用组件 (cache 全市场 5529 跨页面共享) -->
+        <StockCodeAutocomplete
           v-model="form.stock_code"
-          placeholder="如 600519.SH / 000001.SZ"
+          placeholder="输入代码 / 名称 / 首字母"
           clearable
+          :disabled="disabled"
           data-el="stock-code-input"
         />
       </el-form-item>
@@ -83,6 +85,7 @@
 <script setup>
 import { computed, watch } from 'vue'
 import { TYPE_LABEL } from './composables/useStrategy'
+import StockCodeAutocomplete from '../../components/StockCodeAutocomplete.vue'
 
 const props = defineProps({
   modelValue: { type: Object, required: true },
