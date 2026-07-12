@@ -1158,6 +1158,57 @@ The system SHALL render `client/src/components/OrderForm.vue` 的价格类型选
 - **THEN** 委托价格 input 的禁用条件与 placeholder 保持原行为
 - **AND** 后端 API 调用不变 (`{price_type: 11|5|14|44}`)
 
+### REQ-FE-520: StockCodeAutocomplete 左右拆分两半（v27 重构, 2026-07-13）
+
+The system SHALL render `client/src/components/StockCodeAutocomplete.vue` 为左右两个独立区域:
+- **左半 (50%)**: `el-autocomplete` 股票代码输入 + 候选下拉 (可编辑, 支持 stock_code / stock_name / short_name 检索)
+- **右半 (50%)**: `disabled el-input` 证券名称展示 (只读, 不可手动改)
+
+证券名称 SHALL 通过 `watch(() => props.modelValue, ...)` 监听 modelValue 变化, 从 `useStocksStore().cache` 中匹配 `stock_code === newVal` 自动回填; 命中失败则清空 (强制用户重新选择有效股票代码, 满足 v25 用户硬性偏好)。
+
+#### Scenario: 选中候选后名称自动加载
+
+- **GIVEN** 用户在 Trade.vue / T0Trade / StrategyConfig / AdminStockConfig 任一页面
+- **WHEN** 在左半 autocomplete 输入 "600519" 并从候选下拉选中 "600519.SH 贵州茅台"
+- **THEN** 父组件 `modelValue` 同步为 `"600519.SH"` (纯 stock_code, 不含名称)
+- **AND** 右半 disabled input 自动显示 "贵州茅台" (来自 watch → cache 查找)
+
+#### Scenario: 修改代码 → 名称清空 → 强制重选
+
+- **GIVEN** 用户已选中 600519.SH, 右半显示"贵州茅台"
+- **WHEN** 用户点击左半 clear 图标 (X 按钮) 清空 modelValue, 或手动输入新代码"000001"
+- **THEN** 右半 disabled input MUST 清空 (displayName.value = '')
+- **AND** 当用户重新从候选下拉选中 "000001.SZ 平安银行" 后, 右半自动显示"平安银行"
+
+#### Scenario: modelValue 语义收紧 (v27)
+
+- **GIVEN** v26 之前 `modelValue` 可能是 "600519.SH 贵州茅台" (代码+名称拼接)
+- **WHEN** v27 重构完成
+- **THEN** `modelValue` MUST 仅为 stock_code 字符串 ("600519.SH" / "000001.SZ" 等)
+- **AND** OrderForm / T0TaskCreateDialog / StrategyConfig / AdminStockConfig 等调用方 MUST 通过 `@select="onAutocompleteSelect"` 回调从 `item.stock_name` 显式写 `form.stock_name`, 不依赖拼接字符串 split
+
+#### Scenario: 候选列表仍然显示代码+名称+拼音首字母
+
+- **GIVEN** v27 重构
+- **WHEN** autocomplete 候选下拉渲染
+- **THEN** 候选项 MUST 仍显示 "stock_code + stock_name [+ short_name]" 三段式 (sca-row 模板保留)
+- **AND** 右半 disabled input 不重复显示名称到候选列表里 (候选列表本身就是名称的载体)
+
+#### Scenario: 父组件 stock_name 数据流
+
+- **GIVEN** OrderForm.vue 通过 `<StockCodeAutocomplete v-model="form.stock_code">` 接入
+- **WHEN** 用户选中候选
+- **THEN** `form.stock_code = item.stock_code` (走 v-model 双向绑定)
+- **AND** `form.stock_name = item.stock_name` (走 @select 显式写入, OrderForm 不依赖 StockCodeAutocomplete 内部 displayName)
+- **AND** StockCodeAutocomplete 的右半 displayName 是 UI 展示态, 不作为业务数据源
+
+#### Scenario: 禁用 stockCodeAutocomplete 的 props.modelValue 不可写
+
+- **GIVEN** StockCodeAutocomplete 右半 el-input 设置 `disabled`
+- **WHEN** 用户尝试点击/编辑右半
+- **THEN** 浏览器 MUST 阻止编辑 (native disabled 属性)
+- **AND** 名称来源唯一 = watch → cache 查找; 不接受外部 prop 覆盖 (避免双源不一致)
+
 ### REMOVED Requirements
 
 #### Requirement: QuotePanel 双击价格带入（v15 之前行为）
