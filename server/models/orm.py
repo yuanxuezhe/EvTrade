@@ -375,6 +375,11 @@ class Stock(Base):
     - 0 个字段索引(sector 暂未加索引,数据量小可走全表扫)
     - updated_at 自动 ON UPDATE,用于增量 upsert 的"7 天内跳过"逻辑
     - 历史 14 字段数据已备份至 stocks_legacy 表
+    v25 schema 改动 (stocks-cache-and-short-name, 2026-07-12):
+    - 加 short_name 字段 (String(16), nullable=True)
+      拼音首字母简称(平安银行→PAYH),用于前端 autocomplete 首字母快速筛选
+      backfill 由 server/scripts/backfill_short_name.py 一次性灌入
+      用户后续"自己去维护",不再走自动同步(同步任务 v26 移除)
     """
     __tablename__ = "stocks"
 
@@ -384,6 +389,7 @@ class Stock(Base):
     is_t0_able = Column(Boolean, nullable=False, default=False)  # 是否支持 T+0 回转
     min_buy_qty = Column(Integer, nullable=False, default=100)  # 最小买入数量(A 股默认 100)
     trade_unit = Column(Integer, nullable=False, default=1)      # 买卖单位
+    short_name = Column(String(16), nullable=True)              # v25: 拼音首字母简称(平安银行→PAYH),admin 编辑/手动维护
     created_at = Column(DateTime, nullable=False, default=_utcnow)
     updated_at = Column(DateTime, nullable=False, default=_utcnow, onupdate=_utcnow)
 

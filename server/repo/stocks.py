@@ -67,11 +67,13 @@ def get_by_code(db: Session, stock_code: str) -> Optional[Stock]:
 
 
 # v23 slim-stocks-table: admin 显式编辑 stocks 行
+# v25 stocks-cache-and-short-name: +short_name (6 → 7 字段)
 # 允许覆盖的字段白名单（stock_code 是 PK,created_at/updated_at 由 DB 维护）
-# 6 字段:stock_name/sector/is_t0_able/min_buy_qty/trade_unit
+# 7 字段:stock_name/sector/is_t0_able/min_buy_qty/trade_unit/short_name
 _ADMIN_EDITABLE_FIELDS = (
     'stock_name', 'sector',
     'is_t0_able', 'min_buy_qty', 'trade_unit',
+    'short_name',
 )
 
 
@@ -115,7 +117,7 @@ def list_codes(db: Session) -> List[str]:
 
 
 def to_dict(stock: Stock) -> Dict:
-    """ORM → dict(WS 推送前端用, v23 字段精简)"""
+    """ORM → dict(WS 推送前端用, v23 字段精简, v25 加 short_name)"""
     return {
         'stock_code': stock.stock_code,
         'stock_name': stock.stock_name or '',
@@ -123,11 +125,12 @@ def to_dict(stock: Stock) -> Dict:
         'is_t0_able': bool(stock.is_t0_able),
         'min_buy_qty': stock.min_buy_qty,
         'trade_unit': stock.trade_unit,
+        'short_name': stock.short_name,
     }
 
 
 def to_dict_from_data(stock_code: str, data: Dict) -> Dict:
-    """raw dict (来自 crawler) → 标准 dict (WS 推送用, v23 字段精简)
+    """raw dict (来自 crawler) → 标准 dict (WS 推送用, v23 字段精简, v25 加 short_name)
 
     用于 upsert 成功后立即推 stock_synced,无需再读 DB
     """
@@ -138,4 +141,5 @@ def to_dict_from_data(stock_code: str, data: Dict) -> Dict:
         'is_t0_able': bool(data.get('is_t0_able', False)),
         'min_buy_qty': int(data.get('min_buy_qty', 100)),
         'trade_unit': int(data.get('trade_unit', 1)),
+        'short_name': data.get('short_name'),
     }
