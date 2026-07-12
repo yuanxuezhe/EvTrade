@@ -1,28 +1,34 @@
 <!--
-  StockCodeAutocomplete.vue — 股票代码/名称/拼音首字母 autocomplete 输入组件 (v25)
+  StockCodeAutocomplete.vue — 股票代码/名称/拼音首字母 autocomplete 输入组件 (v25/v26 通用)
 
-  数据源: useStocksStore.cache (全量 5529, 内存)
+  数据源: useStocksStore.cache (全量 5529, 内存, 跨页面共享)
   筛选: stock_code 前缀 OR stock_name 包含 OR short_name 前缀
   排序: code 前缀 (score=3) > short_name 前缀 (score=2) > name 包含 (score=1)
 
   Props:
     - modelValue (string): v-model stock_code
-    - placeholder (string): 占位符
-    - disabled (boolean): 是否禁用
+    - placeholder (string): 占位符,默认 "输入代码 / 名称 / 首字母"
+    - disabled (boolean): 是否禁用,默认 false
     - clearable (boolean): 可清空,默认 true
     - triggerOnFocus (boolean): focus 时立即展示所有 cache,默认 false
-    - size (string): 'default' | 'small' | 'large'
+    - size (string): 'default' | 'small' | 'large',透传 el-autocomplete
 
   Emits:
     - update:modelValue (string): 输入变化 (即使无候选)
-    - select (stock): 用户从候选中选中 (仅当选中真实存在的 stock)
+    - select (stock): 用户从候选中选中 (仅当选中真实存在的 stock),参数完整 stock 对象
     - blur (): 失焦
+
+  使用场景 (v26 通用化):
+    - Trade.vue (交易下单)
+    - T0Trade / TStrategy / AlgoStrategy (策略下单)
+    - AdminStockConfig 编辑弹窗 (admin)
 
   设计要点:
     - 无效输入(无候选)时不 emit select,只 emit update:modelValue
-    - 必须命中 cache 中真实存在的 stock_code 才允许确认
+    - 必须命中 cache 中真实存在的 stock_code 才允许确认 (v25 用户硬性偏好)
     - 候选列表显示 stock_code + stock_name [+ short_name]
-    - cache 未加载时(input 触发),自动触发 loadCache
+    - cache 未加载时 (input 触发),自动触发 loadCache (单例去重)
+    - cache 加载失败 → 静默降级,返回空候选,允许用户继续手动输入
 -->
 <template>
   <el-autocomplete

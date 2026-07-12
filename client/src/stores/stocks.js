@@ -5,22 +5,26 @@ import { stocksApi } from '../api'
 /**
  * 股票基础信息 store
  * v25 stocks-cache-and-short-name: 全量缓存 + 真分页 + autocomplete 筛选
+ * v26 (2026-07-12-universalize-stockcode-autocomplete): 多页面共用 cache
  *
  * 数据源：
- *   1. REST GET /api/stocks?page=N&page_size=100     循环拉全量 → cache (admin autocomplete 用)
+ *   1. REST GET /api/stocks?page=N&page_size=100     循环拉全量 → cache (autocomplete 用)
  *   2. REST GET /api/stocks?page=N&page_size=20      单页拉 → pageRows (表格分页)
  *   3. REST PATCH /api/stocks/{code}                admin 编辑 + 同步 cache + pageRows
  *
- * 缓存策略:
+ * 缓存策略 (v26):
  *   - cache: 全量 5529 内存缓存，刷新页面重拉 ~18s
- *   - pageRows: 当前页（后端分页）
- *   - total: 后端总数，用于 el-pagination
- *   - cacheLoaded: bool，cache 是否加载完成（autocomplete 用）
+ *   - cacheLoaded: bool，cache 是否加载完成
+ *   - 多个页面 (Trade / T0Trade / StrategyTrade / AdminStockConfig) 共享同一 cache
+ *     - App.vue onMounted 触发 loadCache()，进 Trade 页 0 等待
+ *     - StockCodeAutocomplete.ensureCache() 在输入时也兜底触发（防 cache 失效）
+ *     - loadCache() 内置 cacheLoading 防重入（v26 单例保证）
  *
  * 字段精简历史:
  *   v22 (2026-07-10) stock-info-editor: 11 字段编辑
  *   v23 (2026-07-12) slim-stocks-table: 5 字段编辑(白名单)
  *   v25 (2026-07-12) stocks-cache-and-short-name: +short_name, 6 字段编辑 + 全量缓存
+ *   v26 (2026-07-12) universalize-stockcode-autocomplete: cache 跨页面共享 + autocomplete 通用化
  */
 export const useStocksStore = defineStore('stocks', () => {
   // ==================== 状态 ====================
