@@ -130,6 +130,8 @@ const submitting = ref(false)
 
 const form = reactive({
   stock_code: props.defaultStockCode || '',
+  // v27: 证券名称, 由 StockCodeAutocomplete @select 回调写入 (UI 展示用, 不参与后端下单字段)
+  stock_name: '',
   // 柜台 order_type：股票 23=买入，24=卖出
   order_type: OrderType.BUY,
   // 柜台 price_type 数字：5=最新价 11=指定价 (限价) 14=对手价 44=市价 ...
@@ -170,14 +172,21 @@ function formatVolume(v) {
 }
 
 function onStockCodeChange(val) {
-  // v26: 由 StockCodeAutocomplete 的 update:modelValue 触发,可能是手动输入也可能是候选选中
-  form.stock_code = (val || '').toUpperCase().trim()
+  // v27: StockCodeAutocomplete 拆成左右两半后, modelValue 永远是纯 stock_code (600519.SH)
+  //   名称走 @select → onAutocompleteSelect 写到 form.stock_name
+  //   用户手动改代码时这里只更新 stock_code, 名称由控件内部 watch 清空
+  const raw = (val || '').trim()
+  form.stock_code = raw.toUpperCase()
   // 2026-07-09: emit 名改 kebab-case, 与父组件 Trade.vue @update:stock-code 对应
   emit('update:stock-code', form.stock_code)
 }
 
 function onAutocompleteSelect(stock) {
   // v26: StockCodeAutocomplete 选中真实存在的 stock 时触发
+  // v27: stock.stock_name 写到 form.stock_name (UI 展示, 不参与下单字段)
+  if (stock && stock.stock_name) {
+    form.stock_name = stock.stock_name
+  }
   // 转发给父组件 (Trade.vue 可触发行情预拉取)
   emit('stock-selected', stock)
 }

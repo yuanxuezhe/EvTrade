@@ -143,6 +143,7 @@
         <StockCodeAutocomplete
           v-model="editingCodeRef"
           @select="onStockSelected"
+          placeholder="搜索代码 / 名称 / 首字母"
           style="display: inline-block; width: 280px; margin-left: 8px"
         />
       </div>

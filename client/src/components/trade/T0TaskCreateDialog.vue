@@ -147,7 +147,8 @@ watch(() => props.visible, (v) => { if (v) onOpen() })
 function onSubmit() {
   formRef.value.validate((valid) => {
     if (!valid) return
-    // 提交外层 event（form 已经是 reactive 对象，外层拿 reactive 引用即可）
+    // v27 重构后 StockCodeAutocomplete modelValue 永远是纯 stock_code (600519.SH),
+    //   无需 split, 直接 spread form 给外层
     emit('submit', { ...form })
   })
 }

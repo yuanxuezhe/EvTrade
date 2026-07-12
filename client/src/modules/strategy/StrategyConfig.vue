@@ -116,6 +116,9 @@ watch(
   { immediate: true }
 )
 
+// v27 重构后 StockCodeAutocomplete modelValue 永远是纯 stock_code (600519.SH),
+//   删掉之前的 watch split 逻辑, 控件内部已自行保证
+
 const rules = {
   stock_code: [
     { required: true, message: '请输入股票代码', trigger: 'blur' },
