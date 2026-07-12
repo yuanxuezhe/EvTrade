@@ -56,7 +56,7 @@ EvTrade 当前缺股票基础信息(行业/市值/PE/PB/公司简介)。本 capa
 - 应用层走 `repo.stocks.update_by_admin(db, stock_code, data)` 单一入口
 - 不发 WS push(v22 范围最小化原则)
 
-## REQ-STOCK-004: 同步任务生命周期（保持不变）
+## REQ-STOCK-004: 同步任务生命周期（v24 全市场范围扩到沪深京 A 股）
 
 **Given** admin 用户触发股票同步  
 **When** 调用 `POST /api/sync/stocks`  
@@ -64,14 +64,24 @@ EvTrade 当前缺股票基础信息(行业/市值/PE/PB/公司简介)。本 capa
 
 - 鉴权:`_AUTH_ADMIN` 守卫(role=admin)
 - 重复 start → 返 409 conflict(已有任务在跑)
-- 启动后立即返 202 Accepted + `{job_id}`
+- 启动后立即返 202 Accepted + `{job_id, total: ~5529}`
+- **`total ~5529`(沪深京 A 股全市场,v24 sina_list.fetch_all_a_codes 拉取)
 - 后台 task 异步执行,不影响 API 响应时间
 - 同步期间每 1 秒推 WS `stock_sync_progress` 消息
 - 每只股票 upsert 成功后推 WS `stock_synced` 消息(v23 仅 3 字段,见 REQ-STOCK-005)
 - `DELETE /api/sync/stocks` 发送停止信号,task 优雅退出(完成当前只后停)
 - `GET /api/sync/stocks/status` 返当前 task 状态(state/counters/elapsed)
+- 首次同步预计耗时 ~60-90min(NFR-STOCK-001 v21 + 实测 ~0.83s/只)
 
 **Task 单例**:`server.services.sync.manager` 维护 `current_task: SyncTask`,后启动覆盖前一个(警告)。
+
+**数据源 (v24 新增)**:
+- 主源: `server.crawler.sources.sina_list.fetch_all_a_codes()` 拉沪深京 A 股全市场
+- 端点: 新浪 `vip.stock.finance.sina.com.cn` Market_Center.getHQNodeData?node=hs_a
+- 缓存: `data/all_a_codes.json` (TTL 24h),命中 <100ms / 失效 ~19s 重拉
+- 备援: `positions.stock_code` 表持仓代码(交易过的小盘股,可能不在 sina 当前列表)
+- 代码转换: `sh600519` → `600519.SH`, `bj920169` → `920169.BJ`
+- **失败 = 500**(禁止 silent fallback 到 builtin 20 只子集,违反用户硬性偏好 #6)
 
 ## REQ-STOCK-005: 同步进度推送协议 + 数据源契约（v23 字段同步）
 
