@@ -87,11 +87,16 @@ async def _get_all_stock_codes() -> List[str]:
     except Exception:
         position_codes = []
 
-    builtin = [
-        "000001.SZ", "000002.SZ", "000063.SZ", "000066.SZ", "000333.SZ",
-        "000651.SZ", "000858.SZ", "002415.SZ", "002594.SZ", "300750.SZ",
-        "600000.SH", "600036.SH", "600519.SH", "600887.SH", "601318.SH",
-        "601398.SH", "601857.SH", "601988.SH", "603259.SH", "688981.SH",
-    ]
-    all_codes = list(set(position_codes + builtin))
-    return sorted(all_codes)
+    # v24: 优先用 sina_list 拉沪深京 A 股全市场 (~5529 只) ,
+    #       合并 positions 表持仓代码 (交易过的小盘股兜底, 可能不在 sina 当前列表)
+    #       builtin 兜底列表被 sina 完整覆盖 (都是大盘股, sina 必有)
+    from server.crawler.sources.sina_list import fetch_all_a_codes
+    try:
+        sina_codes = fetch_all_a_codes(use_cache=True)
+    except RuntimeError as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"全市场代码拉取失败 (sina_list): {exc}",
+        )
+    merged = set(sina_codes) | set(position_codes)
+    return sorted(merged)
