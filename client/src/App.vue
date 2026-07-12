@@ -46,12 +46,14 @@ import { useUiStore } from './stores/ui'
 import { useAuthStore } from './stores/auth'
 import { useWsStore } from './stores/ws'
 import { useHoldingsStore } from './stores/holdings'
+import { useStocksStore } from './stores/stocks'
 
 const route = useRoute()
 const uiStore = useUiStore()
 const authStore = useAuthStore()
 const wsStore = useWsStore()
 const holdingsStore = useHoldingsStore()
+const stocksStore = useStocksStore()
 
 const isBlankLayout = computed(() => route.meta?.layout === 'blank')
 
@@ -75,6 +77,13 @@ onMounted(async () => {
   if (authStore.isAuthenticated) {
     // App 启动：拉取资金 + 持仓 + 委托 + 成交 缓存，启动 ws，启动实时市值 watcher
     holdingsStore.bootstrap()
+    // v26: 后台异步预加载 stocks 全量缓存 (~18s)
+    // - 不阻塞首屏渲染 (fire-and-forget)
+    // - 多个页面 (Trade / T0 / Strategy / Admin) 共享同一 cache
+    // - loadCache() 内置 cacheLoading 防重入，重复触发安全
+    stocksStore.loadCache().catch((e) => {
+      console.warn('[App.vue] stocksStore.loadCache 失败:', e?.message || e)
+    })
   }
 })
 
@@ -85,6 +94,10 @@ watch(
     if (yes) {
       holdingsStore._startWatchers()
       await holdingsStore.bootstrap()
+      // v26: 登录后立即预加载 stocks cache (用户登录后多半会去 Trade/T0/Strategy 下单)
+      stocksStore.loadCache().catch((e) => {
+        console.warn('[App.vue] stocksStore.loadCache 失败:', e?.message || e)
+      })
     } else {
       holdingsStore._stopWatchers()
       wsStore.disconnect()
