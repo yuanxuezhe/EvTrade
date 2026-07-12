@@ -72,12 +72,18 @@ class StockUpdateRequest(BaseModel):
     所有字段可选 — 前端可能只改其中几个,Pydantic 默认 None。
     6 字段中 stock_code 是 PK(created_at/updated_at 由 DB 维护,不可改)
     → 实际可编辑 5 字段: stock_name/sector/is_t0_able/min_buy_qty/trade_unit
+
+    v23 严格白名单:`extra=forbid` 让 industry/market/intro 等 9 旧字段
+    在 Pydantic 层即抛 422(防 repo._ADMIN_EDITABLE_FIELDS 静默 drop 漏改)
     """
     stock_name: Optional[str] = Field(None, max_length=64)
     sector: Optional[str] = Field(None, max_length=64)
     is_t0_able: Optional[bool] = None
     min_buy_qty: Optional[int] = Field(None, ge=1)
     trade_unit: Optional[int] = Field(None, ge=1)
+
+    class Config:
+        extra = "forbid"
 
 
 @router.patch("/{stock_code}", dependencies=[Depends(require_admin)])
@@ -89,7 +95,7 @@ async def update_stock(stock_code: str, body: StockUpdateRequest, db=Depends(get
         404: stock_code 不存在
         400: body 为空(无字段需要更新)
     """
-    payload = body.model_dump(exclude_none=True)
+    payload = body.dict(exclude_none=True)
     if not payload:
         raise HTTPException(status_code=400, detail="no fields to update")
     updated = stocks_repo.update_by_admin(db, stock_code, payload)
