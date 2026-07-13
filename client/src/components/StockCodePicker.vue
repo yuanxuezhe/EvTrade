@@ -12,12 +12,17 @@
     - 父组件使用方式兼容 v27: v-model="stock_code" + @select="(s)=>{stock_name = s.stock_name}"
 
   Props:
-    - modelValue  (string)  : v-model stock_code (only "600519.SH", 不含名称)
-    - placeholder (string)  : 输入框占位符
-    - disabled    (boolean) : 是否禁用
-    - clearable   (boolean) : 可清空
-    - size        (string)  : 'default' | 'small' | 'large'
-    - tagType     (string)  : el-tag type (success/info/warning/danger/primary), 默认 primary
+    - modelValue   (string)        : v-model stock_code (only "600519.SH", 不含名称)
+    - placeholder  (string)        : 输入框占位符
+    - disabled     (boolean)       : 是否禁用
+    - clearable    (boolean)       : 可清空
+    - size         (string)        : 'default' | 'small' | 'large'
+    - tagType      (string)        : el-tag type (success/info/warning/danger/primary), 默认 primary
+    - width        (string|number) : 组件整体宽度, 默认 '100%' (如 '420px' / 420), 与委托价同行宽
+    - inputRatio   (number)        : 左(代码)占比权重, 默认 1
+    - nameRatio    (number)        : 右(名称)占比权重, 默认 1
+                                      → 默认 50/50 平分; inputRatio=2,nameRatio=1 → 66.7%/33.3%
+                                      (归一化百分比, 不要求两值相加==某数)
 
   Emits:
     - update:modelValue (string)   : stock_code 变化 (只在 selectedStock 有效时 emit 非空)
@@ -31,8 +36,8 @@
     - AdminStockConfig   : 同上
 -->
 <template>
-    <div class="scp-wrapper">
-        <!-- 左: 代码输入 (el-autocomplete, 50% 宽) -->
+    <div class="scp-wrapper" :style="wrapperStyle">
+        <!-- 左: 代码输入 (el-autocomplete, 宽度由 flex-basis 控制) -->
         <el-autocomplete
             v-model="inputText"
             :placeholder="placeholder || '输入代码 / 名称 / 首字母'"
@@ -43,6 +48,7 @@
             :fetch-suggestions="querySearch"
             value-key="stock_code"
             class="scp-code-input"
+            :style="codeInputStyle"
             @select="onSelectItem"
             @blur="onBlur"
         >
@@ -57,8 +63,8 @@
             </template>
         </el-autocomplete>
 
-        <!-- 右: 名称展示 (el-tag, 只读, 50% 宽) -->
-        <div class="scp-tag-box">
+        <!-- 右: 名称展示 (el-tag, 只读, 宽度由 flex-basis 控制) -->
+        <div class="scp-tag-box" :style="tagBoxStyle">
             <el-tag
                 v-if="selectedStock"
                 :type="tagType"
@@ -74,7 +80,7 @@
 </template>
 
 <script setup>
-import { ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useStocksStore } from '../stores/stocks'
 
 const props = defineProps({
@@ -85,6 +91,11 @@ const props = defineProps({
     triggerOnFocus: { type: Boolean, default: false },
     size: { type: String, default: 'default' },
     tagType: { type: String, default: 'primary' },
+    // v28-2: 容器整体宽度 (支持 '100%' / '420px' / 420 数字), 默认 '100%' 与 OrderForm 委托价/数量同行宽
+    width: { type: [String, Number], default: '100%' },
+    // v28-2: 左右占比 (相对比例, 自动归一化为百分比), 默认 50/50 (即"55开"理解为"50:50 平分")
+    inputRatio: { type: Number, default: 1 },
+    nameRatio: { type: Number, default: 1 },
 })
 
 const emit = defineEmits(['update:modelValue', 'select', 'blur'])
@@ -96,6 +107,34 @@ const inputText = ref(props.modelValue || '')        // 输入框值 (含用户�
 const selectedStock = ref(null)                      // 已选 stock 对象 (唯一可信源, 决定 v-model)
 // 默认占位符 (可由 props.placeholder 覆盖)
 const namePlaceholder = '请选择股票'
+
+/**
+ * v28-2 宽度/占比计算:
+ *   - wrapperStyle.width: props.width 数字→px, 字符串→原样
+ *   - inputBasisPercent / nameBasisPercent: 归一化后百分比 (分配 flex-basis)
+ *   - 保证 inputRatio:nameRatio=0 也安全 (输入框 0%,名称 100% 会撑爆,所以加 max(1, ...) 兜底)
+ */
+const wrapperStyle = computed(() => {
+    const w = typeof props.width === 'number' ? `${props.width}px` : props.width
+    return { width: w }
+})
+
+const inputBasisPercent = computed(() => {
+    const total = Math.max(0.0001, props.inputRatio + props.nameRatio)
+    return (props.inputRatio / total) * 100
+})
+
+const codeInputStyle = computed(() => ({
+    flex: `0 0 calc(${inputBasisPercent.value}% - 4px)`,  // 4px = gap 一半
+    width: `calc(${inputBasisPercent.value}% - 4px)`,
+    minWidth: 0,
+}))
+
+const tagBoxStyle = computed(() => ({
+    flex: `0 0 calc(${100 - inputBasisPercent.value}% - 4px)`,
+    width: `calc(${100 - inputBasisPercent.value}% - 4px)`,
+    minWidth: 0,
+}))
 
 // 缓存 loadCache promise (避免并发触发, 复用 v27 模式)
 let cacheLoadPromise = null
@@ -219,21 +258,22 @@ watch(
 <style scoped>
 .scp-wrapper {
     display: flex;
-    width: 100%;
     gap: 8px;
     align-items: center;
 }
 
 .scp-code-input {
-    flex: 1;
+    /* 宽度由 inline style (codeInputStyle) 控制, 这里只设 min-width 防 overflow */
     min-width: 0;
+    box-sizing: border-box;
 }
 
 .scp-tag-box {
-    flex: 1;
+    /* 宽度由 inline style (tagBoxStyle) 控制 */
     min-width: 0;
     display: flex;
     align-items: center;
+    box-sizing: border-box;
 }
 
 .scp-tag {
