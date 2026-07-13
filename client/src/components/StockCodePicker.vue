@@ -125,14 +125,14 @@ const inputBasisPercent = computed(() => {
 })
 
 const codeInputStyle = computed(() => ({
-    flex: `0 0 calc(${inputBasisPercent.value}% - 4px)`,  // 4px = gap 一半
-    width: `calc(${inputBasisPercent.value}% - 4px)`,
+    flex: `0 0 ${inputBasisPercent.value}%`,  // 贴一起后无需 - 4px, gap=0 时两边之和正好 100%
+    width: `${inputBasisPercent.value}%`,
     minWidth: 0,
 }))
 
 const tagBoxStyle = computed(() => ({
-    flex: `0 0 calc(${100 - inputBasisPercent.value}% - 4px)`,
-    width: `calc(${100 - inputBasisPercent.value}% - 4px)`,
+    flex: `0 0 ${100 - inputBasisPercent.value}%`,
+    width: `${100 - inputBasisPercent.value}%`,
     minWidth: 0,
 }))
 
@@ -277,13 +277,22 @@ watch(
 }
 
 /* v28-4: el-autocomplete 内部所有相关层都要清右半圆角,
-   element-plus 结构是 .el-input > .el-input__wrapper > .el-input__inner,
-   wrapper 已有 border-radius 50%, inner 还可能从 input.css 继承 圆角,
-   必须三处都覆盖, 才能呈现"两个直角"
+   element-plus 结构 .el-autocomplete > .el-input > .el-input__wrapper > .el-input__inner,
+   wrapper 已有 border-radius, inner 通常 border-radius: inherit,
+   必须多层覆盖, 才能呈现"两个直角"
 */
+.scp-code-input :deep(.el-autocomplete),
 .scp-code-input :deep(.el-input),
 .scp-code-input :deep(.el-input__wrapper),
 .scp-code-input :deep(.el-input__inner) {
+    border-top-right-radius: 0 !important;
+    border-bottom-right-radius: 0 !important;
+}
+
+/* v28-5: focus 状态 box-shadow 也会带 radius, 也得清 */
+.scp-code-input :deep(.el-input__wrapper.is-focus),
+.scp-code-input :deep(.el-input__wrapper:focus-within) {
+    box-shadow: 0 0 0 1px var(--el-color-primary, #409eff) inset !important;
     border-top-right-radius: 0 !important;
     border-bottom-right-radius: 0 !important;
 }
