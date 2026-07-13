@@ -276,10 +276,16 @@ watch(
     align-items: stretch;
 }
 
-/* v28-3: el-autocomplete 内部 el-input wrapper, 调成"左圆右直" */
-.scp-code-input :deep(.el-input__wrapper) {
-    border-top-right-radius: 0;
-    border-bottom-right-radius: 0;
+/* v28-4: el-autocomplete 内部所有相关层都要清右半圆角,
+   element-plus 结构是 .el-input > .el-input__wrapper > .el-input__inner,
+   wrapper 已有 border-radius 50%, inner 还可能从 input.css 继承 圆角,
+   必须三处都覆盖, 才能呈现"两个直角"
+*/
+.scp-code-input :deep(.el-input),
+.scp-code-input :deep(.el-input__wrapper),
+.scp-code-input :deep(.el-input__inner) {
+    border-top-right-radius: 0 !important;
+    border-bottom-right-radius: 0 !important;
 }
 
 .scp-tag-box {
