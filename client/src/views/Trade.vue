@@ -1,11 +1,15 @@
 <!--
-  Trade.vue — 交易下单页（v13 panel 嵌入重构）
+  Trade.vue — 交易下单页（v30 整体布局重构: 5 区参考图布局）
 
   主体 grid 2 列:
     - 左列: OrderForm 下单 + QuotePanel 行情 (flex 等分左列高度)
-    - 右列: TodayOrdersPanel + TodayTradesPanel (sticky 跟随滚动, flex 等分右列)
+      左列宽度 280px (约 22%, 适合窄列输入表单)
+    - 右列: HoldingsPanel (持仓, flex:2) + TodayOrdersPanel (今日委托, flex:1)
+      - 成交(当日) 状态在 TodayOrdersPanel 委托行内嵌 (成交量/状态列), 不再单独 panel
+      - 持仓占大头 (flex:2), 委托占小头 (flex:1), 比例近似 2:1
 
-  v13.2 修订: 删 .trade-quicklinks 行 (低价值入口移除, 改用 AppHeader 顶部刷新按钮)
+  历史:
+    v30 重构: 5 区布局 (下单/行情/持仓/委托/成交) → 4 区 (成交并入委托, 左列 22%)
   v13.1 修订: 左列子组件等分 (flex 链填满不留白)
   v13   修订: 委托 / 成交 从外链按钮改为右侧嵌入 mini panel
   v12   修订: 委托 / 成交 曾拆到 /today/orders /today/trades 独立路由 (v13 删除, 由 mini panel 承担)
@@ -28,10 +32,10 @@
         />
       </div>
 
-      <!-- 右侧: 委托 + 成交 mini panel 堆叠 -->
+      <!-- 右侧: 持仓 + 委托 mini panel 堆叠 (成交状态内嵌委托行) -->
       <div class="trade-panels-col">
+        <HoldingsPanel />
         <TodayOrdersPanel />
-        <TodayTradesPanel />
       </div>
     </div>
   </div>
@@ -42,7 +46,7 @@ import { computed, ref } from 'vue'
 import OrderForm from '../components/OrderForm.vue'
 import QuotePanel from '../components/QuotePanel.vue'
 import TodayOrdersPanel from '../components/trade/TodayOrdersPanel.vue'
-import TodayTradesPanel from '../components/trade/TodayTradesPanel.vue'
+import HoldingsPanel from '../components/trade/HoldingsPanel.vue'
 import { useOrderStore } from '../stores/order'
 import { useUiStore } from '../stores/ui'
 
@@ -102,7 +106,8 @@ function onApplyPrice(price) {
 
 .trade-grid {
   display: grid;
-  grid-template-columns: 480px 1fr;
+  /* v30: 左列 280px (≈22%, 适合窄列表单), 右列 1fr 吃剩 */
+  grid-template-columns: 280px 1fr;
   gap: var(--space-4);
   flex: 1;
   min-height: 0;
@@ -137,11 +142,15 @@ function onApplyPrice(price) {
   max-height: calc(100vh - 80px - var(--oplog-h, 44px));
 }
 
-/* 两个 panel 等分右列高度: 各占一半 (flex:1) */
-.trade-panels-col > * {
+/* v30: 持仓 (HoldingsPanel) 占大头 flex:2, 委托 (TodayOrdersPanel) 占小头 flex:1 */
+.trade-panels-col > *:first-child {
+  flex: 2 1 0;
+  min-height: 0;
+  overflow: hidden;
+}
+.trade-panels-col > *:last-child {
   flex: 1 1 0;
   min-height: 0;
-  /* 防止内部 .tp-body 的内部滚动 + el-table 自带 sticky 冲突 */
   overflow: hidden;
 }
 
