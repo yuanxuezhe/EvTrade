@@ -23,12 +23,14 @@
     <div class="form-body">
       <el-form :model="form" label-position="top" size="default">
         <el-form-item label="股票代码" class="row-tight">
-          <!-- v26: StockCodeAutocomplete 通用组件 (cache 跨页面共享) -->
-          <StockCodeAutocomplete
+          <!-- v28: StockCodePicker 强化'输入合法性'契约, blur 时未选自动清空 -->
+          <StockCodePicker
             v-model="form.stock_code"
             placeholder="输入代码 / 名称 / 首字母"
+            tag-type="primary"
             @select="onAutocompleteSelect"
             @update:model-value="onStockCodeChange"
+            @blur="onStockCodeBlur"
           />
         </el-form-item>
 
@@ -115,22 +117,20 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Top, Bottom } from '@element-plus/icons-vue'
 import { formatMoney } from '../utils/format'
 import { PriceType, priceTypeOptions, OrderType } from '../constants/priceType'
-import StockCodeAutocomplete from './StockCodeAutocomplete.vue'
+import StockCodePicker from './StockCodePicker.vue'
 
 const props = defineProps({
   onSubmit: { type: Function, required: true },
   defaultStockCode: { type: String, default: '' }
 })
 
-// 2026-07-09: emit 名改 kebab-case, 与父组件 Trade.vue @update:stock-code 对应
-// v26: StockCodeAutocomplete 选中候选时 emit select(stock), OrderForm 触发行情拉取
 const emit = defineEmits(['apply-quote-price', 'update:stock-code', 'stock-selected'])
 
 const submitting = ref(false)
 
 const form = reactive({
   stock_code: props.defaultStockCode || '',
-  // v27: 证券名称, 由 StockCodeAutocomplete @select 回调写入 (UI 展示用, 不参与后端下单字段)
+  // v28: 证券名称, 由 StockCodePicker @select 回调写入 (UI 展示用, 不参与后端下单字段)
   stock_name: '',
   // 柜台 order_type：股票 23=买入，24=卖出
   order_type: OrderType.BUY,
@@ -172,18 +172,27 @@ function formatVolume(v) {
 }
 
 function onStockCodeChange(val) {
-  // v27: StockCodeAutocomplete 拆成左右两半后, modelValue 永远是纯 stock_code (600519.SH)
-  //   名称走 @select → onAutocompleteSelect 写到 form.stock_name
-  //   用户手动改代码时这里只更新 stock_code, 名称由控件内部 watch 清空
+  // v28: StockCodePicker 已收紧 emit 语义, 此处 val 必然来自 onSelectItem 真正选中
+  //   若来自 blur 未选中, val = '' (前端也已清空 form.stock_code)
+  //   仅做 trim + uppercase 归一化, 然后转发给父组件
   const raw = (val || '').trim()
   form.stock_code = raw.toUpperCase()
   // 2026-07-09: emit 名改 kebab-case, 与父组件 Trade.vue @update:stock-code 对应
   emit('update:stock-code', form.stock_code)
 }
 
+function onStockCodeBlur() {
+  // v28: 控件失焦时若未真正选中已自动 emit('') 清空
+  //   这里只需把 form.stock_name 同步清掉 (UI 上下文, 避免残留陈旧名称)
+  if (!form.stock_code) {
+    form.stock_name = ''
+    emit('update:stock-code', '')
+  }
+}
+
 function onAutocompleteSelect(stock) {
-  // v26: StockCodeAutocomplete 选中真实存在的 stock 时触发
-  // v27: stock.stock_name 写到 form.stock_name (UI 展示, 不参与下单字段)
+  // v28: StockCodePicker 选中真实存在的 stock 时触发
+  //   stock.stock_name 写到 form.stock_name (UI 展示, 不参与下单字段)
   if (stock && stock.stock_name) {
     form.stock_name = stock.stock_name
   }
