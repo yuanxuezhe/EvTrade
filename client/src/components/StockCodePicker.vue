@@ -287,6 +287,16 @@ watch(
    wrapper 默认 box-shadow: inset 1px 模拟边框 (项目里 el-border-radius-base=8)
    必须多层覆盖, 才能呈现"两个直角"
 */
+/* v28-19: 强制 .el-input 从 inline-flex 改 flex, 消除 baseline 偏移
+   实测 v28-18: el-input display:inline-flex vertical-align:middle
+   inline-flex 在 block 父容器内 baseline 计算偏移约 1.30px, 导致 el-input__inner top=175.09
+   vs placeholder top=173.80
+   改成 flex 后 box top = parent top, 文字 top 也对齐
+*/
+.scp-code-autocomplete :deep(.el-input) {
+    display: flex !important;
+    vertical-align: top !important;
+}
 .scp-code-autocomplete :deep(.el-input),
 .scp-code-autocomplete :deep(.el-input__wrapper),
 .scp-code-autocomplete :deep(.el-input__inner) {
@@ -317,7 +327,7 @@ watch(
 .scp-tag-box {
     /* 宽度由 inline style (tagBoxStyle) 控制 */
     flex: 0 0 calc(50% + 1px);  /* v28-8: 多吃 1px 用来遮盖左 wrapper 的 inset shadow 1px, 衔接处无缝 */
-    margin-left: -1px;  /* v28-8: 把这 1px 抵消, 总宽不变, 但视觉上盖住左 wrapper 边缘 */
+    margin-left: -1px;  /* v28-8: 把这 1px 抵消, 总宽不变 */
     min-width: 0;
     box-sizing: border-box;
     display: flex;
@@ -329,8 +339,34 @@ watch(
     border-bottom-left-radius: 0 !important;
     border-top-right-radius: var(--el-border-radius-base, 8px) !important;
     border-bottom-right-radius: var(--el-border-radius-base, 8px) !important;
+    /* v28-17: 让 input 文字 baseline 与 placeholder 对齐
+   实测 v28-16: inner_top=175.09 placeholder_top=173.80 差 1.30px
+   原因: el-input__inner 默认 line-height: normal (~16px), 文字 baseline 在 input 元素内略下偏
+   placeholder line-height: 30px, 文字 baseline 在 30px 元素中部
+
+   修复: 强制 el-input__inner line-height: 30px (跟 placeholder 一致)
+*/
+.scp-code-autocomplete :deep(.el-input__inner) {
+    line-height: 30px !important;
+}
+
+/* v28-14: 修正垂直对齐 + box-shadow 重叠区颜色统一
+   实测 v28-13:
+     wrap_box_shadow: rgb(232, 237, 245) inset 1px (--border-light, 项目 main.css)
+     tag_box_shadow:  rgb(220, 223, 230) inset 1px (--el-input-border-color, element-plus 默认)
+     两色在 1px 重叠区形成"双线夹一缝"视觉
+
+   修复策略:
+   - font-size: 13px 跟 el-input__inner 一致 (避免字号 14px vs 13px 让文字偏上)
+   - padding/line-height 调整让 placeholder 文字 top 与 inner top 差 ≤ 0.5px
+   - box-shadow 改用项目 main.css 同色 --border-light (rgb(232,237,245)), 让两段 border 颜色一致
+   - 实际效果: 中间衔接 1px 重叠处视觉上只有一条线, 跟委托价/数量一致
+*/
     padding: 1px 11px;
-    height: var(--el-input-height, 32px);
+    height: 33px;  /* v28-18: 跟 .scp-code-input 等高 (el-autocomplete 内部 el-input 默认 33px 高) */
+    font-size: 13px !important;  /* v28-15: 强制 13px, 跟左 input 一致 */
+    line-height: 30px;
+    box-shadow: 0 0 0 1px rgb(232, 237, 245) inset !important;  /* v28-15: hard-code 同色, 避免 var(--border-light) 找不到 */
     background: var(--el-fill-color-light, #f5f7fa);
     color: var(--el-text-color-regular, #606266);
 }
@@ -352,7 +388,7 @@ watch(
 
 .scp-tag-placeholder {
     color: var(--el-text-color-placeholder, #a8abb2);
-    font-size: 14px;
+    font-size: 13px !important;  /* v28-16: 跟左 input 字号一致 (v28-15 写在父 .scp-tag-box 没生效, 14px 在此覆盖) */
     padding-left: 12px;
 }
 
@@ -395,6 +431,19 @@ watch(
 </style>
 
 <style>
+/* v28-20: UNSCOPED (此块必须 unscoped, 因为 .scp-code-autocomplete 是 <el-autocomplete> 组件元素,
+   Vue scoped 只给当前组件 root element 加 data-v, 子组件元素不带 data-v,
+   所以 scoped 选择器 .scp-code-autocomplete[data-v-xxx] .el-input 永远匹配不上)
+   specificity: (0,2,0) > element-plus .el-input (0,1,0)
+*/
+/* v28-19: 强制 .el-input 从 inline-flex 改 flex, 消除 baseline 偏移
+   实测: el-input display:inline-flex vertical-align:middle → baseline 偏移 1.30px
+   改 flex 后 el-input top 与父容器 top 一致, 文字 top 也对齐
+*/
+.scp-code-autocomplete .el-input {
+    display: flex !important;
+    vertical-align: top !important;
+}
 .scp-code-autocomplete .el-input__wrapper,
 .scp-code-autocomplete .el-input,
 .scp-code-autocomplete .el-input__inner {
