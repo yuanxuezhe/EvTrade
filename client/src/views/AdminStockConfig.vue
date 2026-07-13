@@ -4,7 +4,7 @@
 
   - 查询:stocks 表列表(后端分页 page/page_size/total,服务端筛选 sector/keyword/is_t0_able)
   - 修改:点行 → 编辑弹窗 → PATCH /api/stocks/{code}
-  - stock_code 输入:用 StockCodeAutocomplete 组件(三路筛选 code/name/short_name)
+  - stock_code 输入:用 StockCodePicker 组件(三路筛选 code/name/short_name, 代码+名称左右拼接)
   - PATCH 时 store 同时刷新 cache + pageRows
   - cache(全量)首次 onMounted 拉 ~18s,autocomplete 用
 
@@ -140,11 +140,13 @@
     >
       <div v-if="store.editingCode" class="dialog-subtitle">
         编辑：
-        <StockCodeAutocomplete
+        <!-- v29: 切到 StockCodePicker (代码 + 名称左右拼接, blur 时未选自动清空) -->
+        <StockCodePicker
           v-model="editingCodeRef"
           @select="onStockSelected"
           placeholder="搜索代码 / 名称 / 首字母"
-          style="display: inline-block; width: 280px; margin-left: 8px"
+          width="280px"
+          style="margin-left: 8px"
         />
       </div>
 
@@ -205,7 +207,7 @@ import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Search, Refresh } from '@element-plus/icons-vue'
 import { useStocksStore } from '../stores/stocks'
-import StockCodeAutocomplete from '../components/StockCodeAutocomplete.vue'
+import StockCodePicker from '../components/StockCodePicker.vue'
 
 const store = useStocksStore()
 

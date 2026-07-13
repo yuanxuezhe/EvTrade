@@ -19,8 +19,8 @@
       :disabled="disabled"
     >
       <el-form-item label="股票代码" prop="stock_code">
-        <!-- v26: StockCodeAutocomplete 通用组件 (cache 全市场 5529 跨页面共享) -->
-        <StockCodeAutocomplete
+        <!-- v29: 切到 StockCodePicker (代码 + 名称左右拼接, blur 时未选自动清空) -->
+        <StockCodePicker
           v-model="form.stock_code"
           placeholder="输入代码 / 名称 / 首字母"
           clearable
@@ -85,7 +85,7 @@
 <script setup>
 import { computed, watch } from 'vue'
 import { TYPE_LABEL } from './composables/useStrategy'
-import StockCodeAutocomplete from '../../components/StockCodeAutocomplete.vue'
+import StockCodePicker from '../../components/StockCodePicker.vue'
 
 const props = defineProps({
   modelValue: { type: Object, required: true },
@@ -116,7 +116,7 @@ watch(
   { immediate: true }
 )
 
-// v27 重构后 StockCodeAutocomplete modelValue 永远是纯 stock_code (600519.SH),
+// v29 重构后 StockCodePicker modelValue 永远是纯 stock_code (600519.SH),
 //   删掉之前的 watch split 逻辑, 控件内部已自行保证
 
 const rules = {

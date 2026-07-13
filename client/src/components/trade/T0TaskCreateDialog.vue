@@ -11,7 +11,7 @@
     submit(form)   — 用户点击创建（外层调 store.createTask）
 
   字段：
-    - stock_code      必填, v26 起走 StockCodeAutocomplete (cache 全市场 5529)
+    - stock_code      必填, v29 起走 StockCodePicker (代码 + 名称左右拼接, cache 全市场 5529)
     - base_volume     底仓（默认 0，可空 — 让仓位变化完全在 target_volume 层）
     - target_volume   目标开仓量（必填；可负表示净减仓）
     - coefficient     配平系数（默认 1.0，沿用 v13 REQ-TRADE-005 语义）
@@ -39,8 +39,8 @@
       size="default"
     >
       <el-form-item label="股票代码" prop="stock_code">
-        <!-- v26: StockCodeAutocomplete 通用组件 (cache 全市场 5529 跨页面共享) -->
-        <StockCodeAutocomplete
+        <!-- v29: 切到 StockCodePicker (代码 + 名称左右拼接, blur 时未选自动清空) -->
+        <StockCodePicker
           v-model="form.stock_code"
           placeholder="输入代码 / 名称 / 首字母"
           clearable
@@ -98,7 +98,7 @@
 
 <script setup>
 import { ref, reactive, watch } from 'vue'
-import StockCodeAutocomplete from '../StockCodeAutocomplete.vue'
+import StockCodePicker from '../StockCodePicker.vue'
 
 const props = defineProps({
   visible: { type: Boolean, default: false },
@@ -147,7 +147,7 @@ watch(() => props.visible, (v) => { if (v) onOpen() })
 function onSubmit() {
   formRef.value.validate((valid) => {
     if (!valid) return
-    // v27 重构后 StockCodeAutocomplete modelValue 永远是纯 stock_code (600519.SH),
+    // v29 重构后 StockCodePicker modelValue 永远是纯 stock_code (600519.SH),
     //   无需 split, 直接 spread form 给外层
     emit('submit', { ...form })
   })
