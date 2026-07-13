@@ -36,35 +36,34 @@
     - AdminStockConfig   : 同上
 -->
 <template>
+    <!-- v28-10: 回退 wrapper 包裹层结构; 用 unscoped <style> block + 加 :scp- 前缀避免污染 -->
     <div class="scp-wrapper" :style="wrapperStyle">
-        <!-- 左: 代码输入 (el-autocomplete, 宽度由 flex-basis 控制) -->
-        <el-autocomplete
-            v-model="inputText"
-            :placeholder="placeholder || '输入代码 / 名称 / 首字母'"
-            :disabled="disabled"
-            :clearable="clearable"
-            :size="size"
-            :trigger-on-focus="triggerOnFocus"
-            :fetch-suggestions="querySearch"
-            value-key="stock_code"
-            class="scp-code-input"
-            :style="codeInputStyle"
-            @select="onSelectItem"
-            @blur="onBlur"
-        >
-            <template #default="{ item }">
-                <div class="scp-row">
-                    <span class="scp-code text-mono">{{ item.stock_code }}</span>
-                    <span class="scp-name">{{ item.stock_name }}</span>
-                    <span v-if="item.short_name" class="scp-short">
-                        [{{ item.short_name }}]
-                    </span>
-                </div>
-            </template>
-        </el-autocomplete>
-
-        <!-- 右: 名称展示 (el-tag, 只读, 宽度由 flex-basis 控制) -->
-        <div class="scp-tag-box" :style="tagBoxStyle">
+        <div class="scp-code-input" :style="codeInputStyle">
+            <el-autocomplete
+                v-model="inputText"
+                :placeholder="placeholder || '输入代码 / 名称 / 首字母'"
+                :disabled="disabled"
+                :clearable="clearable"
+                :size="size"
+                :trigger-on-focus="triggerOnFocus"
+                :fetch-suggestions="querySearch"
+                value-key="stock_code"
+                class="scp-code-autocomplete"
+                @select="onSelectItem"
+                @blur="onBlur"
+            >
+                <template #default="{ item }">
+                    <div class="scp-row">
+                        <span class="scp-code text-mono">{{ item.stock_code }}</span>
+                        <span class="scp-name">{{ item.stock_name }}</span>
+                        <span v-if="item.short_name" class="scp-short">
+                            [{{ item.short_name }}]
+                        </span>
+                    </div>
+                </template>
+            </el-autocomplete>
+        </div>
+        <div class="scp-tag-box">
             <el-tag
                 v-if="selectedStock"
                 :type="tagType"
@@ -131,8 +130,8 @@ const codeInputStyle = computed(() => ({
 }))
 
 const tagBoxStyle = computed(() => ({
-    flex: `0 0 ${100 - inputBasisPercent.value}%`,
-    width: `${100 - inputBasisPercent.value}%`,
+    flex: `0 0 calc(${100 - inputBasisPercent.value}% + 1px)`,  // v28-8: 多吃 1px 抵消左 wrapper 的 inset shadow 1px
+    width: `calc(${100 - inputBasisPercent.value}% + 1px)`,     // 同时给 width 防 flex-basis 退化
     minWidth: 0,
 }))
 
@@ -270,46 +269,69 @@ watch(
 
 .scp-code-input {
     /* 宽度由 inline style (codeInputStyle) 控制 */
+    /* 这是包裹层 div, 拿 flex-basis, 不透传到内部 el-input */
     min-width: 0;
     box-sizing: border-box;
+    display: flex;  /* 让内 el-autocomplete 自适应 */
+}
+
+.scp-code-autocomplete {
+    /* el-autocomplete 自身撑满父容器 */
+    width: 100%;
     display: flex;
     align-items: stretch;
 }
 
-/* v28-4: el-autocomplete 内部所有相关层都要清右半圆角,
+/* v28-7: el-autocomplete 内部所有相关层都要清右半圆角,
    element-plus 结构 .el-autocomplete > .el-input > .el-input__wrapper > .el-input__inner,
-   wrapper 已有 border-radius, inner 通常 border-radius: inherit,
+   wrapper 默认 box-shadow: inset 1px 模拟边框 (项目里 el-border-radius-base=8)
    必须多层覆盖, 才能呈现"两个直角"
 */
-.scp-code-input :deep(.el-autocomplete),
-.scp-code-input :deep(.el-input),
-.scp-code-input :deep(.el-input__wrapper),
-.scp-code-input :deep(.el-input__inner) {
+.scp-code-autocomplete :deep(.el-input),
+.scp-code-autocomplete :deep(.el-input__wrapper),
+.scp-code-autocomplete :deep(.el-input__inner) {
     border-top-right-radius: 0 !important;
     border-bottom-right-radius: 0 !important;
 }
 
-/* v28-5: focus 状态 box-shadow 也会带 radius, 也得清 */
-.scp-code-input :deep(.el-input__wrapper.is-focus),
-.scp-code-input :deep(.el-input__wrapper:focus-within) {
-    box-shadow: 0 0 0 1px var(--el-color-primary, #409eff) inset !important;
+/* v28-7: 默认 + focus 状态 box-shadow 都吃透明, 让 el-input__wrapper 没有 inset border,
+   视觉上不会出现"双 1px 阴影线" */
+.scp-code-autocomplete :deep(.el-input__wrapper),
+.scp-code-autocomplete :deep(.el-input__wrapper.is-focus),
+.scp-code-autocomplete :deep(.el-input__wrapper:hover),
+.scp-code-autocomplete :deep(.el-input__wrapper:focus-within) {
+    box-shadow: 0 0 0 1px var(--el-input-border-color, #dcdfe6) inset, 0 0 0 0 transparent !important;
     border-top-right-radius: 0 !important;
     border-bottom-right-radius: 0 !important;
+}
+
+/* hover/focus 时用 primary 色 outline 而非 box-shadow, 避免线膨胀 */
+.scp-code-autocomplete :deep(.el-input__wrapper:hover) {
+    box-shadow: 0 0 0 1px var(--el-color-primary-light-5, #c0d4f7) inset !important;
+}
+.scp-code-autocomplete :deep(.el-input__wrapper:focus-within),
+.scp-code-autocomplete :deep(.el-input__wrapper.is-focus) {
+    box-shadow: 0 0 0 1px var(--el-color-primary, #409eff) inset !important;
 }
 
 .scp-tag-box {
     /* 宽度由 inline style (tagBoxStyle) 控制 */
+    flex: 0 0 calc(50% + 1px);  /* v28-8: 多吃 1px 用来遮盖左 wrapper 的 inset shadow 1px, 衔接处无缝 */
+    margin-left: -1px;  /* v28-8: 把这 1px 抵消, 总宽不变, 但视觉上盖住左 wrapper 边缘 */
     min-width: 0;
-    display: flex;
-    align-items: stretch;  /* 等高, 跟输入框对齐 */
     box-sizing: border-box;
-    border: 1px solid var(--el-border-color, #dcdfe6);
-    border-left: none;  /* 中间无缝 */
-    border-top-right-radius: var(--el-border-radius-base, 4px);
-    border-bottom-right-radius: var(--el-border-radius-base, 4px);
-    padding: 1px 11px;  /* 仿 el-input 内边距 */
+    display: flex;
+    align-items: stretch;
+    /* v28-8: 用 box-shadow inset 1px 模拟边框, 与 el-input__wrapper 同款, 让两段视觉是一个 input-group */
+    border: none;
+    box-shadow: 0 0 0 1px var(--el-input-border-color, #dcdfe6) inset !important;
+    border-top-left-radius: 0 !important;
+    border-bottom-left-radius: 0 !important;
+    border-top-right-radius: var(--el-border-radius-base, 8px) !important;
+    border-bottom-right-radius: var(--el-border-radius-base, 8px) !important;
+    padding: 1px 11px;
     height: var(--el-input-height, 32px);
-    background: var(--el-fill-color-light, #f5f7fa);  /* 微微区分"只读"区域 */
+    background: var(--el-fill-color-light, #f5f7fa);
     color: var(--el-text-color-regular, #606266);
 }
 
@@ -360,5 +382,35 @@ watch(
 
 .text-mono {
     font-family: var(--font-mono, 'JetBrains Mono', 'Consolas', monospace);
+}
+
+/* v28-10: UNSCOPED global block
+   scp-code-autocomplete 是 <el-autocomplete> 子组件内部元素,
+   Vue scoped 只给当前组件 root 加 data-v-xxx, 不会传给子组件元素,
+   所以 :deep() 编译后生成的 [data-v-xxx] .el-input__wrapper 无法 match.
+
+   解决方案: 用 unscoped <style> block + 以 .scp-code-autocomplete class 为命名空间,
+   项目内 99% 的 el-autocomplete 不会带这个 class, 不会污染全局
+*/
+</style>
+
+<style>
+.scp-code-autocomplete .el-input__wrapper,
+.scp-code-autocomplete .el-input,
+.scp-code-autocomplete .el-input__inner {
+    border-top-right-radius: 0 !important;
+    border-bottom-right-radius: 0 !important;
+}
+.scp-code-autocomplete .el-input__wrapper,
+.scp-code-autocomplete .el-input__wrapper.is-focus,
+.scp-code-autocomplete .el-input__wrapper:focus-within {
+    box-shadow: 0 0 0 1px var(--el-input-border-color, #dcdfe6) inset !important;
+}
+.scp-code-autocomplete .el-input__wrapper:hover {
+    box-shadow: 0 0 0 1px var(--el-color-primary-light-5, #c0d4f7) inset !important;
+}
+.scp-code-autocomplete .el-input__wrapper:focus-within,
+.scp-code-autocomplete .el-input__wrapper.is-focus {
+    box-shadow: 0 0 0 1px var(--el-color-primary, #409eff) inset !important;
 }
 </style>
