@@ -1,5 +1,5 @@
 <!--
-  HoldingsPanel.vue — 持仓 mini 面板 (v30 Trade.vue 5 区重构: 嵌入右栏 flex:2)
+  HoldingsPanel.vue — 持仓 mini 面板 (v30 Trade.vue 5 区重构: 嵌入右栏 flex:2; v31.1 字段补全 + 列宽调优)
 
   数据源: useHoldingsStore().positions (App.vue 启动时已 bootstrap)
   行情:   useQuoteStore() (持仓 codes 已自动 subscribe,见 holdings store)
@@ -11,9 +11,10 @@
     - 无 export 按钮 (完整导出走 /holdings 全页)
     - 保留: 实时行情 + 市值/盈亏/收益率计算 + 红涨绿跌配色
 
-  列 (7 列精简版,适合窄列 mini panel):
-    代码 / 名称 / 持仓量 / 可用 / 最新价 / 市值 / 浮动盈亏
-    (成本价 / 期初持仓 / 收益率折叠掉 — Trade 页快速看一眼用)
+  列 (v31.1 字段与 Holdings.vue 全页对齐, 共 10 列, 紧凑列宽:
+    代码 76 (fixed left) / 名称 64 / 期初 64 / 持仓 64 / 可用 64 / 成本 68 /
+    最新 68 / 市值 80 / 浮盈 90 / 收益 80 (fixed right) → 总宽 ~718
+    适配窄列右栏 (~856px viewport): 10 列全 fit, 横向滚动由 el-table 默认处理)
 -->
 <template>
   <div class="hp-shell content-card">
@@ -40,27 +41,38 @@
         class="tp-table"
         :key="quoteTick"
       >
-        <el-table-column prop="stock_code" label="代码" width="86">
+        <!-- v31.1: 10 列布局, 列宽压缩适应窄列 mini panel (目标总宽 ~720px fit 856 viewport) -->
+        <el-table-column prop="stock_code" label="代码" width="76" fixed="left">
           <template #default="{ row }">
             <span class="tp-stock-code">{{ row.stock_code }}</span>
           </template>
         </el-table-column>
-        <el-table-column prop="stock_name" label="名称" width="80" show-overflow-tooltip>
+        <el-table-column prop="stock_name" label="名称" width="64" show-overflow-tooltip>
           <template #default="{ row }">
             <span class="text-secondary">{{ row.stock_name || '—' }}</span>
           </template>
         </el-table-column>
-        <el-table-column prop="vol" label="持仓" align="right" width="72">
+        <el-table-column prop="last_vol" label="期初" align="right" width="64">
+          <template #default="{ row }">
+            <span class="text-mono">{{ formatNumber(row.last_vol) }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column prop="vol" label="持仓" align="right" width="64">
           <template #default="{ row }">
             <span class="text-mono">{{ formatNumber(row.vol) }}</span>
           </template>
         </el-table-column>
-        <el-table-column prop="avl_vol" label="可用" align="right" width="72">
+        <el-table-column prop="avl_vol" label="可用" align="right" width="64">
           <template #default="{ row }">
             <span class="text-mono">{{ formatNumber(row.avl_vol) }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="最新价" align="right" width="84">
+        <el-table-column prop="cost_price" label="成本" align="right" width="68">
+          <template #default="{ row }">
+            <span class="text-mono">{{ row.cost_price != null ? formatMoney(row.cost_price) : '—' }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="最新" align="right" width="68">
           <template #default="{ row }">
             <span
               v-if="getLastPrice(row.stock_code) != null"
@@ -72,7 +84,7 @@
             <span v-else class="text-muted">—</span>
           </template>
         </el-table-column>
-        <el-table-column label="市值" align="right" width="100">
+        <el-table-column label="市值" align="right" width="80">
           <template #default="{ row }">
             <span v-if="getMarketValue(row) != null" class="text-mono">
               {{ formatMoney(getMarketValue(row)) }}
@@ -80,11 +92,21 @@
             <span v-else class="text-muted">—</span>
           </template>
         </el-table-column>
-        <el-table-column label="浮动盈亏" align="right" width="100">
+        <el-table-column label="浮动盈亏" align="right" width="90">
           <template #default="{ row }">
             <template v-if="getProfit(row) != null">
               <span class="text-mono" :class="profitClass(getProfit(row))">
                 {{ formatMoney(getProfit(row)) }}
+              </span>
+            </template>
+            <span v-else class="text-muted">—</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="收益率" align="right" width="80" fixed="right">
+          <template #default="{ row }">
+            <template v-if="getReturnRate(row) != null">
+              <span class="text-mono" :class="profitClass(getReturnRate(row))">
+                {{ formatPercent(getReturnRate(row)) }}
               </span>
             </template>
             <span v-else class="text-muted">—</span>
@@ -165,6 +187,9 @@ function getMarketValue(row) {
 function getProfit(row) {
   return holdingsStore.getProfit(row)
 }
+function getReturnRate(row) {
+  return holdingsStore.getReturnRate ? holdingsStore.getReturnRate(row) : null
+}
 
 function profitClass(v) {
   if (v == null) return ''
@@ -187,6 +212,13 @@ function formatMoneyExact(v) {
   const n = Number(v)
   if (!Number.isFinite(n)) return '—'
   return String(n)
+}
+
+function formatPercent(v) {
+  const n = Number(v)
+  if (!Number.isFinite(n)) return '—'
+  const sign = n > 0 ? '+' : ''
+  return `${sign}${(n * 100).toFixed(2)}%`
 }
 
 onMounted(() => startTick())
