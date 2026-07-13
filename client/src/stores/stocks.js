@@ -17,7 +17,7 @@ import { stocksApi } from '../api'
  *   - cacheLoaded: bool，cache 是否加载完成
  *   - 多个页面 (Trade / T0Trade / StrategyTrade / AdminStockConfig) 共享同一 cache
  *     - App.vue onMounted 触发 loadCache()，进 Trade 页 0 等待
- *     - StockCodeAutocomplete.ensureCache() 在输入时也兜底触发（防 cache 失效）
+ *     - StockCodePicker.ensureCache() 在输入时也兜底触发（防 cache 失效）
  *     - loadCache() 内置 cacheLoading 防重入（v26 单例保证）
  *
  * 字段精简历史:
