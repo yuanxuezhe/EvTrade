@@ -256,29 +256,61 @@ watch(
 </script>
 
 <style scoped>
+/* v28-3: 输入框和名称框贴一起, 视觉对齐 el-input-number (与委托价/数量同行宽)
+   策略: 删 wrapper gap = 8px → 0; el-autocomplete / 名称框 都各自带 element-plus input 同款边框,
+         但 border-radius 一左一右, 形成"连续控件"
+*/
 .scp-wrapper {
     display: flex;
-    gap: 8px;
-    align-items: center;
+    gap: 0;  /* 贴一起 */
+    align-items: stretch;
+    width: 100%;
+    box-sizing: border-box;
 }
 
 .scp-code-input {
-    /* 宽度由 inline style (codeInputStyle) 控制, 这里只设 min-width 防 overflow */
+    /* 宽度由 inline style (codeInputStyle) 控制 */
     min-width: 0;
     box-sizing: border-box;
+    display: flex;
+    align-items: stretch;
+}
+
+/* v28-3: el-autocomplete 内部 el-input wrapper, 调成"左圆右直" */
+.scp-code-input :deep(.el-input__wrapper) {
+    border-top-right-radius: 0;
+    border-bottom-right-radius: 0;
 }
 
 .scp-tag-box {
     /* 宽度由 inline style (tagBoxStyle) 控制 */
     min-width: 0;
     display: flex;
-    align-items: center;
+    align-items: stretch;  /* 等高, 跟输入框对齐 */
     box-sizing: border-box;
+    border: 1px solid var(--el-border-color, #dcdfe6);
+    border-left: none;  /* 中间无缝 */
+    border-top-right-radius: var(--el-border-radius-base, 4px);
+    border-bottom-right-radius: var(--el-border-radius-base, 4px);
+    padding: 1px 11px;  /* 仿 el-input 内边距 */
+    height: var(--el-input-height, 32px);
+    background: var(--el-fill-color-light, #f5f7fa);  /* 微微区分"只读"区域 */
+    color: var(--el-text-color-regular, #606266);
 }
 
 .scp-tag {
     width: 100%;
+    border: none;
+    background: transparent !important;
+    height: 100%;
+    display: flex;
+    align-items: center;
     justify-content: center;
+}
+
+.scp-tag :deep(.el-tag__content) {
+    width: 100%;
+    text-align: center;
 }
 
 .scp-tag-placeholder {
