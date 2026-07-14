@@ -49,7 +49,7 @@
 </template>
 
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import OrderForm from '../components/OrderForm.vue'
 import QuotePanel from '../components/QuotePanel.vue'
 import TodayOrdersPanel from '../components/trade/TodayOrdersPanel.vue'
@@ -61,6 +61,35 @@ const orderStore = useOrderStore()
 const uiStore = useUiStore()
 const orderFormRef = ref(null)
 const quickStock = ref('')
+
+// v35: 滚动条按需显示 — 监听 .el-scrollbar__wrap 的 scrollWidth/clientWidth
+//   当 wrap.scrollWidth > clientWidth 时, 给父 .el-scrollbar 加 .has-scroll-x class
+//   main.css 只对 .has-scroll-x 强制显示水平滚动条 (修 v32 `display:block !important` 的副作用)
+let scrollXObserver = null
+
+function updateScrollXFlags() {
+  document.querySelectorAll('.el-table .el-scrollbar__wrap').forEach((wrap) => {
+    const sb = wrap.closest('.el-scrollbar')
+    if (!sb) return
+    // +1 容差: 浮点计算可能让 scrollWidth = clientWidth 但实际有 1px 溢出
+    if (wrap.scrollWidth > wrap.clientWidth + 1) sb.classList.add('has-scroll-x')
+    else sb.classList.remove('has-scroll-x')
+  })
+}
+
+onMounted(() => {
+  nextTick(() => {
+    updateScrollXFlags()
+    // ResizeObserver 监测 wrap 大小变化 (窗口缩放/列宽变化)
+    scrollXObserver = new ResizeObserver(() => updateScrollXFlags())
+    document.querySelectorAll('.el-table .el-scrollbar__wrap').forEach((w) => scrollXObserver.observe(w))
+  })
+})
+
+onBeforeUnmount(() => {
+  scrollXObserver?.disconnect()
+  scrollXObserver = null
+})
 
 // OperationLog 高度: 折叠 44px / 展开 320px
 //   通过 --oplog-h CSS var 注入 .trade-view

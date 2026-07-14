@@ -362,15 +362,16 @@ h1, h2, h3, h4, h5, h6 {
 .el-table {
   min-width: 100%;
 }
-/* v32: el-scrollbar 横向滚动条样式增强 (默认 thin + hover 才显示, 小屏时找不到) */
-.el-scrollbar__bar.is-horizontal {
+/* v35: 滚动条按需显示 — 仅当 wrap.scrollWidth > clientWidth (JS 加 .has-scroll-x class) 才强制显示.
+   之前 v32 的 `display: block !important` 副作用: 容器宽度够时仍显示 8px 灰色滚动条轨道 (用户反馈 v35) */
+.el-scrollbar.has-scroll-x .el-scrollbar__bar.is-horizontal {
   display: block !important;
   height: 8px !important;
   background: var(--bg-muted, #e5e7eb) !important;
   border-radius: 4px !important;
   opacity: 1 !important;
 }
-.el-scrollbar__bar.is-horizontal > div {
+.el-scrollbar.has-scroll-x .el-scrollbar__bar.is-horizontal > div {
   height: 100% !important;
   background: var(--accent, #3b82f6) !important;
   border-radius: 4px !important;
