@@ -82,7 +82,7 @@ const menuItems = computed(() => {
     { path: '/trade', label: '交易下单', icon: TrendCharts },
     // v13: 委托 / 成交入口改名为"历史委托" / "历史成交" (今日数据由 Trade.vue 内嵌 mini-panel 承担)
     { path: '/orders', label: '历史委托', icon: List },
-    { path: '/holdings', label: '持仓查询', icon: Files },
+    // v32: 删 /holdings 独立查询页菜单项 (持仓由 Trade.vue 右上 HoldingsPanel 承担)
     { path: '/trades', label: '历史成交', icon: Tickets },
     // 账户资金 / 个人资料 入口移到头部用户菜单, 不再放侧栏
     // 策略交易分组

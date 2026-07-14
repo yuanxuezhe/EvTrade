@@ -6,7 +6,7 @@ const Login = () => import('../views/Login.vue')
 const Dashboard = () => import('../views/Dashboard.vue')
 const Trade = () => import('../views/Trade.vue')
 const Asset = () => import('../views/Asset.vue')
-const Holdings = () => import('../views/Holdings.vue')
+// v32: 删 /holdings 独立查询页 (持仓由 Trade.vue 右上 HoldingsPanel 承担)
 // v13 trade-page-redesign-v2: 删除 TodayOrders/TodayTrades view（由 Trade.vue 内嵌 mini-panel 承担）
 //   HistoryOrders/Trades 走 HTTP 局部 state（不入 IDB）
 const HistoryOrders = () => import('../views/HistoryOrders.vue')
@@ -49,7 +49,9 @@ const routes = [
   // v13: 老 /today/* 书签兼容 redirect (跳到 history view)
   { path: '/today/orders', redirect: '/history/orders' },
   { path: '/today/trades', redirect: '/history/trades' },
-  { path: '/holdings', name: 'Holdings', component: Holdings, meta: { title: '持仓查询' } },
+  // v32: 删 /holdings 独立查询页路由 (持仓由 Trade.vue 右上 HoldingsPanel 承担)
+  //   保留 redirect 兼容旧书签
+  { path: '/holdings', redirect: '/trade' },
   // /to-management 旧路由 → redirect 到 /t0-trade (T0Trade.vue 真快速做T页面)
   { path: '/to-management', redirect: '/t0-trade' },
   { path: '/t-strategy', name: 'TStrategy', component: TStrategy, meta: { title: '策略做T' } },
