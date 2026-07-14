@@ -41,35 +41,37 @@
       <span class="qp-hero-pct">{{ changePctText }}</span>
     </div>
 
-    <!-- ③ 卖盘纵栈 (5→1) — 单击带价 -->
-    <div class="qp-stack qp-stack-ask">
-      <div
-        v-for="i in 5"
-        :key="`ask-${i}`"
-        class="qp-row qp-row-ask"
-        :class="{ 'is-disabled': !hasAsk(i) }"
-        :title="hasAsk(i) ? '点击带入委托价' : '无该档行情'"
-        @click="emitApply(getAskPrice(i))"
-      >
-        <span class="qp-rank">卖{{ 6 - i }}</span>
-        <span class="qp-price" :class="heroClass">{{ formatNum(getAskPrice(6 - i)) }}</span>
-        <span class="qp-vol">{{ formatBigNum(getAskVol(6 - i)) }}</span>
+    <!-- ③ + ④ 卖/买左右两列 (卖 1→5 在左从上到下, 买 1→5 在右从上到下) -->
+    <div class="qp-orderbook">
+      <!-- 左列: 卖盘 (1→5) -->
+      <div class="qp-stack qp-stack-ask">
+        <div
+          v-for="i in 5"
+          :key="`ask-${i}`"
+          class="qp-row qp-row-ask"
+          :class="{ 'is-disabled': !hasAsk(i) }"
+          :title="hasAsk(i) ? '点击带入委托价' : '无该档行情'"
+          @click="emitApply(getAskPrice(i))"
+        >
+          <span class="qp-rank">卖{{ i }}</span>
+          <span class="qp-price" :class="heroClass">{{ formatNum(getAskPrice(i)) }}</span>
+          <span class="qp-vol">{{ formatBigNum(getAskVol(i)) }}</span>
+        </div>
       </div>
-    </div>
-
-    <!-- ④ 买盘纵栈 (1→5) — 单击带价 -->
-    <div class="qp-stack qp-stack-bid">
-      <div
-        v-for="i in 5"
-        :key="`bid-${i}`"
-        class="qp-row qp-row-bid"
-        :class="{ 'is-disabled': !hasBid(i) }"
-        :title="hasBid(i) ? '点击带入委托价' : '无该档行情'"
-        @click="emitApply(getBidPrice(i))"
-      >
-        <span class="qp-rank">买{{ i }}</span>
-        <span class="qp-price" :class="heroClass">{{ formatNum(getBidPrice(i)) }}</span>
-        <span class="qp-vol">{{ formatBigNum(getBidVol(i)) }}</span>
+      <!-- 右列: 买盘 (1→5) -->
+      <div class="qp-stack qp-stack-bid">
+        <div
+          v-for="i in 5"
+          :key="`bid-${i}`"
+          class="qp-row qp-row-bid"
+          :class="{ 'is-disabled': !hasBid(i) }"
+          :title="hasBid(i) ? '点击带入委托价' : '无该档行情'"
+          @click="emitApply(getBidPrice(i))"
+        >
+          <span class="qp-rank">买{{ i }}</span>
+          <span class="qp-price" :class="heroClass">{{ formatNum(getBidPrice(i)) }}</span>
+          <span class="qp-vol">{{ formatBigNum(getBidVol(i)) }}</span>
+        </div>
       </div>
     </div>
 
@@ -354,26 +356,36 @@ function emitApply(v) {
 .qp-hero-chg   { font-size: 14px; font-weight: 500; }
 .qp-hero-pct   { font-size: 14px; font-weight: 600; }
 
-/* ③ / ④ 卖/买纵栈 */
-.qp-stack { display: flex; flex-direction: column; gap: 1px; }
+/* ③ / ④ 卖/买左右两列 */
+.qp-orderbook {
+  display: flex;
+  gap: 4px;  /* 左右两列间 4px 缝隙 */
+}
+.qp-stack {
+  flex: 1;  /* 两列等宽 */
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;  /* 允许 flex 子项收缩 */
+}
 .qp-stack-ask { background: var(--ask-tint-bg, rgba(245, 71, 93, 0.04)); border-radius: 3px; padding: 2px 0; }
 .qp-stack-bid { background: var(--bid-tint-bg, rgba(22, 181, 114, 0.04)); border-radius: 3px; padding: 2px 0; }
 
 /* 可点击行 */
 .qp-row {
   display: grid;
-  grid-template-columns: 56px 1fr 80px;
+  grid-template-columns: 48px 1fr 64px;
   align-items: center;
-  padding: 4px 8px;
+  padding: 5px 8px;
   cursor: pointer;
   transition: background .15s;
   user-select: none;
 }
 .qp-row:hover { background: var(--bg-hover, #e9ecf2); }
 .qp-row.is-disabled { cursor: default; opacity: 0.4; }
-.qp-rank  { font-size: 11px; color: var(--text-tertiary, #8f95a1); }
-.qp-price { text-align: right; font-weight: 600; }
-.qp-vol   { text-align: right; font-size: 11px; color: var(--color-vol, #2db7f5); }
+.qp-rank  { font-size: 12px; color: var(--text-tertiary, #8f95a1); }
+.qp-price { text-align: right; font-weight: 600; font-size: 15px; }
+.qp-vol   { text-align: right; font-size: 12px; color: var(--color-vol, #2db7f5); }
 
 /* ⑦ 16 格 stats */
 .qp-stats-grid {
