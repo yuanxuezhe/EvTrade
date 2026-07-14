@@ -1,9 +1,13 @@
 <!--
-  HoldingsPanel.vue — 持仓 mini 面板 (v30 Trade.vue 5 区重构: 嵌入右栏 flex:2; v31.1 字段补全 + 列宽调优)
+  HoldingsPanel.vue — 持仓 mini 面板 (v30 Trade.vue 5 区重构: 嵌入右栏 flex:2; v31.1 字段补全 + 列宽调优; v32 名称查 stocks cache)
 
   数据源: useHoldingsStore().positions (App.vue 启动时已 bootstrap)
   行情:   useQuoteStore() (持仓 codes 已自动 subscribe,见 holdings store)
   实时:   1s tick 强制 column 重读 getter,响应 quote 更新
+
+  v32 修订:
+    - 证券名称列从 row.stock_name (后端字段) 改为 stockName(row.stock_code) (查 stocks store 缓存)
+    - 后端不再返回 name,前端统一查 stocks cache 补名称,查不到显式 '—'
 
   精简相对 Holdings.vue:
     - 无 filter-bar (迷你 el-input 内嵌到 .tp-header)
@@ -49,7 +53,7 @@
         </el-table-column>
         <el-table-column prop="stock_name" label="名称" width="64" show-overflow-tooltip>
           <template #default="{ row }">
-            <span class="text-secondary">{{ row.stock_name || '—' }}</span>
+            <span class="text-secondary">{{ stockName(row.stock_code) || '—' }}</span>
           </template>
         </el-table-column>
         <el-table-column prop="last_vol" label="期初" align="right" width="64">
@@ -124,6 +128,7 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { formatNumber, formatMoney } from '../../utils/format'
+import { stockName } from '../../utils/stockNames'
 import { useQuoteStore } from '../../stores/quote'
 import { useHoldingsStore } from '../../stores/holdings'
 
@@ -158,7 +163,7 @@ const filteredPositions = computed(() => {
   if (!kw) return positions.value
   return positions.value.filter((p) => {
     const code = (p.stock_code || '').toLowerCase()
-    const name = (p.stock_name || '').toLowerCase()
+    const name = (stockName(p.stock_code) || '').toLowerCase()
     return code.includes(kw) || name.includes(kw)
   })
 })
