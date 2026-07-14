@@ -12,8 +12,8 @@ export const PriceType = {
   // 人类可读标签
   LABEL: {
     5: "最新价",
-    11: "限价",
-    14: "挂单价",
+    11: "限价",       // 备用: 不在 UI 暴露, 仅保留给历史数据 / 后端 fallback 解析
+    14: "限价",       // 原"挂单价" — UI 重命名 (送参数 code 仍 14, 不变)
     44: "市价",
   },
 
@@ -41,11 +41,11 @@ export const OrderType = {
 };
 
 /**
- * 价格类型选项（用于 el-segmented）
+ * 价格类型选项（用于 el-radio-button）
+ * v__: "限价" UI 实际送 value=14 (挂单价/对手价)，底层 code 不变
  */
 export const priceTypeOptions = [
-  { label: '限价', value: PriceType.LIMIT },
-  { label: '最新价', value: PriceType.LATEST },
-  { label: '挂单价', value: PriceType.OPPONENT },
-  { label: '市价', value: PriceType.MARKET },
+  { label: '限价', value: PriceType.OPPONENT },  // 14 原"挂单价"
+  { label: '最新价', value: PriceType.LATEST },  // 5
+  { label: '市价', value: PriceType.MARKET },    // 44
 ];

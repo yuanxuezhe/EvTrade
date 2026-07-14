@@ -54,9 +54,9 @@
             v-model="form.price"
             :min="0"
             :precision="2"
-            :step="form.price_type === PriceType.LIMIT ? 0.01 : null"
-            :disabled="form.price_type !== PriceType.LIMIT"
-            :placeholder="form.price_type === PriceType.LIMIT ? '输入价格' : '市价单无需输入'"
+            :step="form.price_type === PriceType.OPPONENT ? 0.01 : null"
+            :disabled="form.price_type !== PriceType.OPPONENT"
+            :placeholder="form.price_type === PriceType.OPPONENT ? '输入价格' : '市价单无需输入'"
             controls-position="right"
             style="width: 100%"
           />
@@ -87,7 +87,7 @@
           <div class="summary-row">
             <span class="summary-label">预估金额</span>
             <span class="summary-value text-mono">
-              <template v-if="form.price_type === PriceType.LIMIT">¥{{ formatMoney(estimatedAmount) }}</template>
+              <template v-if="form.price_type === PriceType.OPPONENT">¥{{ formatMoney(estimatedAmount) }}</template>
               <template v-else>— 市价单 —</template>
             </span>
           </div>
@@ -135,17 +135,17 @@ const form = reactive({
   stock_name: '',
   // 柜台 order_type：股票 23=买入，24=卖出
   order_type: OrderType.BUY,
-  // 柜台 price_type 数字：5=最新价 11=指定价 (限价) 14=对手价 44=市价 ...
-  price_type: PriceType.LIMIT,
+  // 柜台 price_type 数字：5=最新价 14=对手价 (UI 称"限价") 44=市价
+  //   原 11=指定价 已从 UI 选项中移除 (v__: UI"限价"实际送 14, 送参数 code 不变)
+  price_type: PriceType.OPPONENT,
   price: 0,
   volume: 100
 })
 
 // 价格类型选项（从常量导入）
 // const priceTypeOptions = [
-//   { label: '限价', value: 11 },
+//   { label: '限价', value: 14 },
 //   { label: '最新价', value: 5 },
-//   { label: '挂单价', value: 14 },
 //   { label: '市价', value: 44 }
 // ]
 
@@ -153,17 +153,17 @@ const volumeShortcuts = [100, 500, 1000, 5000, 10000]
 
 const estimatedAmount = computed(() => (form.price || 0) * (form.volume || 0))
 
-// 切换市价 (44) 时清空价格；切回限价 (11) 也清空（避免残留的旧值误下单）
+// 切到非对手价 (最新价 5 / 市价 44) 时清空价格；切回对手价 (14) 也清空（避免残留的旧值误下单）
 watch(() => form.price_type, (newType, oldType) => {
-  if (newType !== PriceType.LIMIT) {
-    // 市价单不依赖具体价格，但保留作为显示用也行；这里清空避免误读
+  if (newType !== PriceType.OPPONENT) {
+    // 市价/最新价不依赖具体价格，但保留作为显示用也行；这里清空避免误读
     form.price = 0
   }
 })
 
-// 外部双击行情价格带入：要求限价模式
+// 外部双击行情价格带入：要求对手价 (UI 称"限价") 模式
 function onExternalApply(price) {
-  if (form.price_type !== PriceType.LIMIT) form.price_type = PriceType.LIMIT
+  if (form.price_type !== PriceType.OPPONENT) form.price_type = PriceType.OPPONENT
   form.price = Number(price)
 }
 defineExpose({ onExternalApply })
@@ -206,7 +206,7 @@ async function handleSubmit() {
     ElMessage.warning('请输入股票代码')
     return
   }
-  if (form.price_type === PriceType.LIMIT && form.price <= 0) {
+  if (form.price_type === PriceType.OPPONENT && form.price <= 0) {
     ElMessage.warning('限价单需要输入价格')
     return
   }
@@ -214,7 +214,7 @@ async function handleSubmit() {
     ElMessage.warning('请输入数量')
     return
   }
-  const amountNote = form.price_type === PriceType.LIMIT
+  const amountNote = form.price_type === PriceType.OPPONENT
     ? `预估金额 ¥${formatMoney(estimatedAmount.value)}`
     : `市价单（价格类型 ${form.price_type}）`
   try {
