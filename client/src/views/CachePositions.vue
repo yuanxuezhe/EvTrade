@@ -49,7 +49,11 @@
         empty-text="数据为空 (Pinia 内存)"
       >
         <el-table-column prop="stock_code" label="股票代码" min-width="120" show-overflow-tooltip />
-        <el-table-column prop="stock_name" label="股票名称" min-width="120" show-overflow-tooltip />
+        <el-table-column label="股票名称" min-width="120" show-overflow-tooltip>
+          <template #default="{ row }">
+            <span class="text-secondary">{{ stockName(row.stock_code) || '—' }}</span>
+          </template>
+        </el-table-column>
         <el-table-column prop="last_vol" label="期初" min-width="90" align="right">
           <template #default="{ row }">
             <span class="text-mono">{{ formatNumber(row.last_vol) }}</span>
@@ -168,6 +172,7 @@ import { Search } from '@element-plus/icons-vue'
 import { useHoldingsStore } from '../stores/holdings'
 import { api } from '../api'
 import { formatMoney, formatNumber } from '../utils/format'
+import { stockName } from '../utils/stockNames'
 
 const holdingsStore = useHoldingsStore()
 const positions = computed(() => holdingsStore.positions)

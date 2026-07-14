@@ -87,7 +87,7 @@
     >
       <el-table-column prop="stock_code" label="代码" width="80" />
       <el-table-column label="名称" width="80">
-        <template #default="{ row }">{{ row.stock_name || row.stock_code }}</template>
+        <template #default="{ row }">{{ stockName(row.stock_code) || row.stock_code }}</template>
       </el-table-column>
       <el-table-column prop="vol" label="持仓" align="right" width="70" sortable="custom">
         <template #default="{ row }">{{ formatNumber(row.vol) }}</template>
@@ -448,6 +448,7 @@ import T0TaskDetail from '../components/trade/T0TaskDetail.vue'
 import T0TaskCreateDialog from '../components/trade/T0TaskCreateDialog.vue'
 import { t0TasksApi } from '../api/t0_tasks'
 import { formatNumber, formatPrice, formatAmount } from '../utils/format'
+import { stockName } from '../utils/stockNames'
 import { useT0ChartGeometry, useT0DrawerChartGeometry } from '../composables/useT0ChartGeometry'
 import { useT0OrderSubmit } from '../composables/useT0OrderSubmit'
 import { makeLogger } from '../utils/logger'

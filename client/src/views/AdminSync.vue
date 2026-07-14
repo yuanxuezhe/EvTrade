@@ -110,6 +110,11 @@
       </div>
       <el-table :data="[...errors].reverse()" max-height="320" size="small" :show-header="true">
         <el-table-column prop="stock_code" label="代码" width="140" />
+        <el-table-column label="名称" width="100" show-overflow-tooltip>
+          <template #default="{ row }">
+            <span class="text-secondary">{{ stockName(row.stock_code) || '—' }}</span>
+          </template>
+        </el-table-column>
         <el-table-column prop="error" label="错误信息" />
         <el-table-column prop="ts" label="时间" width="180">
           <template #default="{ row }">{{ formatTime(row.ts) }}</template>
@@ -131,6 +136,7 @@ import { computed, onMounted, onBeforeUnmount } from 'vue'
 import { ElMessage } from 'element-plus'
 import { VideoPlay, VideoPause, Refresh, Delete, Connection } from '@element-plus/icons-vue'
 import { useSyncStore } from '../stores/sync'
+import { stockName } from '../utils/stockNames'
 
 const syncStore = useSyncStore()
 

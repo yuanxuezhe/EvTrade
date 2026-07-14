@@ -98,7 +98,7 @@
             <template #default="{ row }">
               <div class="stock-cell">
                 <div class="stock-code">{{ row.stock_code }}</div>
-                <div class="stock-name">{{ row.stock_name || '--' }}</div>
+                <div class="stock-name">{{ stockName(row.stock_code) || '--' }}</div>
               </div>
             </template>
           </el-table-column>
@@ -169,6 +169,7 @@ import { useHoldingsStore } from '../stores/holdings'
 import { useQuoteStore } from '../stores/quote'
 import { useUiStore } from '../stores/ui'
 import { formatMoney, formatNumber, STATUS_LABEL, STATUS_TYPE } from '../utils/format'
+import { stockName } from '../utils/stockNames'
 
 const assetStore = useAssetStore()
 const orderStore = useOrderStore()

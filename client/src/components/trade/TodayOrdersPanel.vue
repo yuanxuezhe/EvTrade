@@ -56,6 +56,11 @@
             <span class="tp-stock-code">{{ row.stock_code }}</span>
           </template>
         </el-table-column>
+        <el-table-column prop="stock_name" label="名称" width="64" show-overflow-tooltip>
+          <template #default="{ row }">
+            <span class="text-secondary">{{ stockName(row.stock_code) || '—' }}</span>
+          </template>
+        </el-table-column>
         <el-table-column label="方向" width="48">
           <template #default="{ row }">
             <span class="tp-dir-chip" :class="row.order_type === '23' ? 'buy' : 'sell'">
@@ -152,6 +157,11 @@
             <span class="tp-stock-code">{{ row.stock_code }}</span>
           </template>
         </el-table-column>
+        <el-table-column prop="stock_name" label="名称" width="64" show-overflow-tooltip>
+          <template #default="{ row }">
+            <span class="text-secondary">{{ stockName(row.stock_code) || '—' }}</span>
+          </template>
+        </el-table-column>
         <el-table-column label="方向" width="56">
           <template #default="{ row }">
             <span class="tp-dir-chip" :class="row.order_type === '23' ? 'buy' : 'sell'">
@@ -215,6 +225,7 @@
 import { computed, nextTick, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { formatMoney, formatNumber } from '../../utils/format'
+import { stockName } from '../../utils/stockNames'
 import OrderStatusBadge from '../OrderStatusBadge.vue'
 import { useHoldingsStore } from '../../stores/holdings'
 import { useOrderStore } from '../../stores/order'

@@ -63,6 +63,11 @@
       </el-table-column>
 
       <el-table-column prop="stock_code" label="股票代码" width="120" />
+      <el-table-column label="名称" width="80" show-overflow-tooltip>
+        <template #default="{ row }">
+          <span class="text-secondary">{{ stockName(row.stock_code) || '—' }}</span>
+        </template>
+      </el-table-column>
 
       <el-table-column label="配平 (base+target)" width="160">
         <template #default="{ row }">
@@ -118,6 +123,7 @@
 <script setup>
 import { computed, ref, onMounted } from 'vue'
 import { useT0TasksStore } from '../../stores/t0_tasks'
+import { stockName } from '../../utils/stockNames'
 
 const props = defineProps({
   embedding: { type: String, default: 'inline' }, // 'inline' | 'drawer'

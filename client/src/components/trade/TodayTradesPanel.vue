@@ -43,6 +43,11 @@
             <span class="tp-stock-code">{{ row.stock_code }}</span>
           </template>
         </el-table-column>
+        <el-table-column prop="stock_name" label="名称" width="64" show-overflow-tooltip>
+          <template #default="{ row }">
+            <span class="text-secondary">{{ stockName(row.stock_code) || '—' }}</span>
+          </template>
+        </el-table-column>
         <el-table-column label="方向" width="56">
           <template #default="{ row }">
             <span class="tp-dir-chip" :class="row.order_type === '23' ? 'buy' : 'sell'">
@@ -99,6 +104,7 @@
  */
 import { computed, nextTick, ref } from 'vue'
 import { formatMoney, formatNumber } from '../../utils/format'
+import { stockName } from '../../utils/stockNames'
 import { useHoldingsStore } from '../../stores/holdings'
 
 const holdingsStore = useHoldingsStore()

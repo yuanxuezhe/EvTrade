@@ -115,6 +115,11 @@
       <template #header>单券聚合</template>
       <el-table :data="stats.by_stock" size="small" stripe>
         <el-table-column prop="stock_code" label="股票代码" width="120" />
+        <el-table-column label="名称" width="80" show-overflow-tooltip>
+          <template #default="{ row }">
+            <span class="text-secondary">{{ stockName(row.stock_code) || '—' }}</span>
+          </template>
+        </el-table-column>
         <el-table-column prop="realized_pnl" label="已实现" width="140">
           <template #default="{ row }">
             <span :class="pnlClass(row.realized_pnl)">¥{{ formatMoney(row.realized_pnl) }}</span>
@@ -135,6 +140,7 @@
 <script setup>
 import { ref, watch, onMounted } from 'vue'
 import { useT0TasksStore } from '../../stores/t0_tasks'
+import { stockName } from '../../utils/stockNames'
 import StatCard from '../StatCard.vue'
 
 const props = defineProps({
