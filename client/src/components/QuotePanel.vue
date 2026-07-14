@@ -127,7 +127,7 @@
 </template>
 
 <script setup>
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, watch } from 'vue'
 import { useQuoteStore, FIELD } from '../stores/quote'
 
 const props = defineProps({
@@ -178,18 +178,9 @@ watch(
   { immediate: true }  // 首次挂载如果已有 code, 立即订
 )
 
-const tick = ref(0)
-let timer = null
-function startTick() {
-  if (timer) return
-  timer = setInterval(() => { tick.value++ }, 1000)
-}
-function stopTick() {
-  if (timer) { clearInterval(timer); timer = null }
-}
-
 const code = computed(() => (props.stockCode || '').toUpperCase().trim())
-const quote = computed(() => (tick.value, quoteStore.get(code.value)))
+// v33: 订阅 push → triggerRef(byCode) → quote 自动响应, 不再需要 1s tick 强制重建
+const quote = computed(() => quoteStore.get(code.value))
 
 const stockName = computed(() => {
   // 行情数据未携带股票名, 暂回退空 (trader 看代码)
@@ -326,16 +317,8 @@ function emitApply(v) {
   emit('apply-price', n)
 }
 
-onBeforeUnmount(() => {
-  stopTick()
-  // 2026-07-09 quote-snapshot-subscribe: 面板卸载, 取消本组件订阅
-  if (_debounceTimer) { clearTimeout(_debounceTimer); _debounceTimer = null }
-  if (_subscribed && _currentCode) {
-    quoteStore.unsubscribe([_currentCode])
-    _subscribed = false
-  }
-})
-startTick()
+// v33: quote panel 卸载不清订阅 — 永不退订原则 (持仓/自选/曾经查看过的全部保留)
+//   减少 ws 抖动, 提升重新打开速度
 </script>
 
 <style scoped>

@@ -43,7 +43,6 @@
         stripe
         size="small"
         class="tp-table"
-        :key="quoteTick"
       >
         <!-- v31.1: 10 列布局, 列宽压缩适应窄列 mini panel (目标总宽 ~720px fit 856 viewport) -->
         <el-table-column prop="stock_code" label="代码" width="100" fixed="left">
@@ -126,7 +125,7 @@
 </template>
 
 <script setup>
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, ref } from 'vue'
 import { formatNumber, formatMoney } from '../../utils/format'
 import { stockName } from '../../utils/stockNames'
 import { useQuoteStore } from '../../stores/quote'
@@ -135,26 +134,10 @@ import { useHoldingsStore } from '../../stores/holdings'
 const holdingsStore = useHoldingsStore()
 const quoteStore = useQuoteStore()
 
-// 持仓 codes 走 store (App.vue 已 bootstrap + 自动订阅行情)
-// 这里不需要自己 bootstrap / subscribe — store 单例共享
+// v33: 持仓 codes 走 store (App.vue bootstrap 已自动订阅)
+//   push → triggerRef(byCode) → getMarketValue/getProfit/getReturnRate computed 自动重算 → UI 立即更新
+//   删除 1s tick 强制重建: reactivity 现在正确, 不再需要兜底
 const positions = computed(() => holdingsStore.positions || [])
-
-// 1s tick: 强制 column 重读 getter (quote push 不精确触发响应)
-const quoteTick = ref(0)
-let _timer = null
-
-function startTick() {
-  if (_timer) return
-  _timer = setInterval(() => {
-    if (quoteStore.size > 0) quoteTick.value++
-  }, 1000)
-}
-function stopTick() {
-  if (_timer) {
-    clearInterval(_timer)
-    _timer = null
-  }
-}
 
 // 关键字过滤 (迷你 filter, 只匹配代码 + 名称)
 const keyword = ref('')
@@ -205,7 +188,7 @@ function profitClass(v) {
 function priceClass(row) {
   const price = getLastPrice(row.stock_code)
   if (price == null) return ''
-  const q = quoteStore.byCode.get(row.stock_code)
+  const q = quoteStore.byCode?.value?.get?.(row.stock_code) || quoteStore.get?.(row.stock_code) || null
   const prev = q?.prev_close != null ? Number(q.prev_close) : null
   if (prev == null || prev === 0) return ''
   if (price > prev) return 'text-up'
@@ -225,9 +208,6 @@ function formatPercent(v) {
   const sign = n > 0 ? '+' : ''
   return `${sign}${(n * 100).toFixed(2)}%`
 }
-
-onMounted(() => startTick())
-onBeforeUnmount(() => stopTick())
 </script>
 
 <style scoped>

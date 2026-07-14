@@ -82,16 +82,21 @@ export function createBootstrap({
     const codeSet = [...new Set(codes)]
     const lastSet = new Set(_lastSubscribedCodes)
     const added = codeSet.filter(c => !lastSet.has(c))
-    const removed = _lastSubscribedCodes.filter(c => !codeSet.includes(c))
-    if (added.length === 0 && removed.length === 0) return
+    // v33: 永不退订 — 用户原话"请一直保持系统相关标的的订阅"
+    //   即使持仓减仓, 订阅保留 (subscribe 内有 subscribedSet dedup 防重发)
+    const removedNotInPos = _lastSubscribedCodes.filter(c => !codeSet.includes(c))
+    if (added.length === 0 && removedNotInPos.length === 0) return
     _lastSubscribedCodes = codeSet
     try {
       const qs = useQuoteStore()
       if (added.length) qs.subscribe(added)
-      if (removed.length) qs.unsubscribe(removed)
-      log('info', '行情', 'auto-sub', `持仓订阅同步: +${added.length}/-${removed.length}`, {
-        added, removed, total: codeSet.length,
-      })
+      // v33: 不再 unsubscribe — 持仓减仓也保留行情订阅 (trader 想继续盯行情)
+      if (removedNotInPos.length) {
+        log('info', '行情', 'auto-sub', `持仓减仓但保留订阅: ${removedNotInPos.length}`, { removedNotInPos })
+      }
+      if (added.length) {
+        log('info', '行情', 'auto-sub', `持仓订阅增量: +${added.length}`, { added, total: codeSet.length })
+      }
     } catch (e) {
       log('warn', '行情', 'auto-sub', `quote subscribe 异常: ${e?.message || e}`)
     }

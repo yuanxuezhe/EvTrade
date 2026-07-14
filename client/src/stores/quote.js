@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { reactive, computed } from 'vue'
+import { ref, shallowRef, triggerRef, computed } from 'vue'
 import { http } from '../api'  // axios 实例 + Bearer interceptor (api/index.js:12-24)
 
 /**
@@ -39,11 +39,13 @@ export const FIELD = {
 }
 
 export const useQuoteStore = defineStore('quote', () => {
-  // byCode: stock_code -> { last_price, open_price, high_price, low_price, prev_close,
-  //                        volume, amount, fields, body, ts }
-  const byCode = reactive(new Map())
+  // v32+: shallowRef(new Map()) + triggerRef 模式
+  //   原 reactive(new Map()) 陷阱: byCode.get(code) 返回普通对象,
+  //   Vue 追踪不到内部字段变化, computed 必须靠 1s tick 强制重算.
+  //   现改 shallowRef, .set() 后 triggerRef(byCode) → 所有依赖 .value.get(code).field 的 computed 自动重算
+  const byCode = shallowRef(new Map())
   // 2026-07-09: 维护当前已订阅的 code 集合（防止重复 subscribe + 退出页面时 unsubscribe）
-  const subscribedSet = reactive(new Set())
+  const subscribedSet = ref(new Set())
 
   /**
    * 接收 ws push 帧（quote_consumer → ws_manager.broadcast 来的 data）
@@ -53,7 +55,8 @@ export const useQuoteStore = defineStore('quote', () => {
    */
   function update(payload) {
     if (!payload || !payload.stock_code) return
-    const cur = byCode.get(payload.stock_code) || {}
+    // v33: byCode 是 shallowRef(new Map()), .get() 必须在 .value 上
+    const cur = byCode.value.get(payload.stock_code) || {}
     const next = {
       ...cur,
       stock_code: payload.stock_code,
@@ -84,7 +87,9 @@ export const useQuoteStore = defineStore('quote', () => {
         next.bid_vols = [s.bid1_vol, s.bid2_vol, s.bid3_vol, s.bid4_vol, s.bid5_vol].map(Number)
       }
     }
-    byCode.set(payload.stock_code, next)
+    byCode.value.set(payload.stock_code, next)
+    // v32+: 手动触发响应 — shallowRef 不会追踪 Map 内部变化
+    triggerRef(byCode)
   }
 
   /**
@@ -93,11 +98,15 @@ export const useQuoteStore = defineStore('quote', () => {
    */
   function applySnapshots(snapMap) {
     if (!snapMap || typeof snapMap !== 'object') return
+    let dirty = false
     for (const [code, snap] of Object.entries(snapMap)) {
       if (!snap) continue
       // 用 snapshot dict 当 update payload: 复用 update() 路径
       update({ stock_code: code, last_price: snap.last_price, snapshot: snap, ts: snap.ts })
+      dirty = true
     }
+    // v32+: 批量更新后触发一次 (避免 N 次 triggerRef)
+    if (dirty) triggerRef(byCode)
   }
 
   /**
@@ -112,10 +121,10 @@ export const useQuoteStore = defineStore('quote', () => {
    */
   async function subscribe(codes) {
     if (!Array.isArray(codes) || codes.length === 0) return
-    const newCodes = codes.filter(c => c && !subscribedSet.has(c))
+    const newCodes = codes.filter(c => c && !subscribedSet.value.has(c))
     if (newCodes.length === 0) return
     // 标记
-    newCodes.forEach(c => subscribedSet.add(c))
+    newCodes.forEach(c => subscribedSet.value.add(c))
     // 1) REST 拉最新
     try {
       // 2026-07-09 fix: api 是业务方法对象(无 .post), 必须用 http (axios 实例) 走 Bearer interceptor
@@ -140,33 +149,33 @@ export const useQuoteStore = defineStore('quote', () => {
    */
   function unsubscribe(codes) {
     if (!Array.isArray(codes) || codes.length === 0) return
-    const removed = codes.filter(c => subscribedSet.has(c))
+    const removed = codes.filter(c => subscribedSet.value.has(c))
     if (removed.length === 0) return
-    removed.forEach(c => subscribedSet.delete(c))
+    removed.forEach(c => subscribedSet.value.delete(c))
     import('./ws_dispatch').then(({ unsubscribe: wsUnsubscribe }) => {
       wsUnsubscribe(removed)
     }).catch(e => console.warn('[quoteStore] ws unsubscribe failed:', e?.message))
   }
 
   function get(code) {
-    return byCode.get(code) || null
+    return byCode.value.get(code) || null
   }
   const getQuote = (code) => get(code)
 
   function getLastPrice(code) {
-    const q = byCode.get(code)
+    const q = byCode.value.get(code)
     return q && q.last_price != null ? q.last_price : null
   }
 
   function getField(code, idx) {
-    const q = byCode.get(code)
+    const q = byCode.value.get(code)
     if (!q || !q.fields) return null
     return q.fields[idx] ?? null
   }
 
   // 涨跌幅（%），优先用 snapshot 字段（prev_close + last_price）
   const getChangePct = (code) => {
-    const q = byCode.get(code)
+    const q = byCode.value.get(code)
     if (!q) return null
     const last = q.last_price
     const prev = q.prev_close != null ? q.prev_close : (q.fields ? Number(q.fields[FIELD.PREV_CLOSE]) : null)
@@ -176,7 +185,7 @@ export const useQuoteStore = defineStore('quote', () => {
 
   // 2026-07-09: 返回 5 档买卖价 (兼容旧 fields 索引访问)
   function getDepth(code) {
-    const q = byCode.get(code)
+    const q = byCode.value.get(code)
     if (!q) return null
     if (q.ask_prices && q.bid_prices) {
       return {
@@ -201,10 +210,11 @@ export const useQuoteStore = defineStore('quote', () => {
     return null
   }
 
-  const codes = computed(() => Array.from(byCode.keys()))
+  const codes = computed(() => Array.from(byCode.value.keys()))
 
+  const size = computed(() => byCode.value.size)
   return {
-    byCode, subscribedSet,
+    byCode, subscribedSet, size,
     update, applySnapshots, subscribe, unsubscribe,
     get, getQuote, getLastPrice, getField, getChangePct, getDepth,
     codes, FIELD,
