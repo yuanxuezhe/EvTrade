@@ -166,7 +166,7 @@ import { useAssetStore } from '../stores/asset'
 import { useOrderStore } from '../stores/order'
 import { usePositionStore } from '../stores/position'
 import { useHoldingsStore } from '../stores/holdings'
-import { useQuoteStore } from '../stores/quote'
+// v32: quoteStore 订阅下沉到 holdings store bootstrap 阶段, 此处不再需要 useQuoteStore
 import { useUiStore } from '../stores/ui'
 import { formatMoney, formatNumber, STATUS_LABEL, STATUS_TYPE } from '../utils/format'
 import { stockName } from '../utils/stockNames'
@@ -175,7 +175,7 @@ const assetStore = useAssetStore()
 const orderStore = useOrderStore()
 const positionStore = usePositionStore()
 const holdingsStore = useHoldingsStore()
-const quoteStore = useQuoteStore()
+// v32: quoteStore 订阅已下沉 holdings store, 此处不再需要
 const uiStore = useUiStore()
 
 /**
@@ -338,35 +338,12 @@ onMounted(async () => {
   if (!holdingsStore.bootstrapped) {
     holdingsStore.bootstrap()
   }
-  // 2026-07-10 修复：Dashboard 持仓市值/今日盈亏 = 0
-  // 根因：Dashboard 打开时没人订阅持仓行情 → quoteStore.byCode 永远空
-  //   → liveMarketValue.withQuote=0 → 走兜底 cachedAsset（=0）
-  // 修复：跟 Holdings.vue 一致，watch(positionCodes) 自动 subscribe/unsubscribe
-  _subscribePositions()
+  // v32+: 持仓 quote 订阅下沉到 holdings store bootstrap 阶段,
+  //   无需 Dashboard 重复 watch (避免幽灵订阅 + 双发)
 })
 
-// 持仓代码变化时自动订阅/退订（新增持仓订阅，移除持仓退订）
-let _lastSubscribedCodes = []
-function _subscribePositions() {
-  const codes = [...holdingsStore.positionCodes]
-  const added = codes.filter((c) => !_lastSubscribedCodes.includes(c))
-  const removed = _lastSubscribedCodes.filter((c) => !codes.includes(c))
-  if (added.length > 0) {
-    quoteStore.subscribe(added)
-  }
-  if (removed.length > 0) {
-    quoteStore.unsubscribe(removed)
-  }
-  _lastSubscribedCodes = codes
-}
-watch(() => [...holdingsStore.positionCodes], _subscribePositions)
-
 onBeforeUnmount(() => {
-  // 离开 Dashboard 时退订，避免泄漏
-  if (_lastSubscribedCodes.length > 0) {
-    quoteStore.unsubscribe(_lastSubscribedCodes)
-    _lastSubscribedCodes = []
-  }
+  // v32: 持仓订阅已下沉 store, 离开 Dashboard 不需要 unsubscribe
 })
 </script>
 

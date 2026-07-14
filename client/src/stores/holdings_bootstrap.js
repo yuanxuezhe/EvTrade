@@ -20,6 +20,7 @@
  */
 import { api } from '../api'
 import { shiftDateStr } from '../utils/date'
+import { watch } from 'vue'
 import { parseAsset } from './holdings_helpers'
 import {
   applyAssetResult, applyPositionsResult, applyOrdersResult, applyTradesResult,
@@ -32,6 +33,7 @@ import {
   clearDate,
 } from './holdings_idb'
 import { useT0Stats } from '../composables/useT0Stats'
+import { useQuoteStore } from './quote'
 
 // v13: bootstrap 只拉激活日 (Today 视图消费), 历史走 Phase 4 History 视图独立 RPC
 //   单次窗口 = [active, active], 1 天
@@ -65,6 +67,54 @@ export function createBootstrap({
   log,
 }) {
   const refs = { positions, orders, trades, cachedAsset, refCounts, log }
+
+  // ---- v32 quote 自动订阅: 只要持仓涉及的标的, 都订阅行情 ----
+  //   单一订阅点: store 内部管, 所有 view (Dashboard/Trade/...) 自动生效
+  //   diff 算法: 增量 add subscribe + remove unsubscribe
+  //   防重复: quoteStore.subscribe 内已有 subscribedSet dedup
+  //   撤仓退订: 用户原话"只要涉及的标的"=只在持仓时订阅
+  let _lastSubscribedCodes = []
+  function _syncQuoteSubs(newPositions) {
+    const codes = (Array.isArray(newPositions) ? newPositions : [])
+      .map(p => p?.stock_code)
+      .filter(Boolean)
+    // dedup 自身去重
+    const codeSet = [...new Set(codes)]
+    const lastSet = new Set(_lastSubscribedCodes)
+    const added = codeSet.filter(c => !lastSet.has(c))
+    const removed = _lastSubscribedCodes.filter(c => !codeSet.includes(c))
+    if (added.length === 0 && removed.length === 0) return
+    _lastSubscribedCodes = codeSet
+    try {
+      const qs = useQuoteStore()
+      if (added.length) qs.subscribe(added)
+      if (removed.length) qs.unsubscribe(removed)
+      log('info', '行情', 'auto-sub', `持仓订阅同步: +${added.length}/-${removed.length}`, {
+        added, removed, total: codeSet.length,
+      })
+    } catch (e) {
+      log('warn', '行情', 'auto-sub', `quote subscribe 异常: ${e?.message || e}`)
+    }
+  }
+  // watch positions 引用变化 (replace 整个数组)
+  // deep: false 已够 — applyPositionsResult/refresh 都走 ref.value = newList 替换
+  //   但保险用 deep 仅读长度 + codes 集合, 不实际遍历 props
+  let _stopQuoteWatch = null
+  function _startQuoteAutoSub() {
+    if (_stopQuoteWatch) return
+    _stopQuoteWatch = watch(
+      () => (positions.value || []).map(p => p?.stock_code).filter(Boolean),
+      (newCodes) => _syncQuoteSubs((positions.value || [])),
+      { immediate: false }  // bootstrap 自己触发首次 fire
+    )
+    // bootstrap 后立即 fire 一次 (positions 已就绪)
+    if (bootstrapped.value) {
+      _syncQuoteSubs(positions.value || [])
+    }
+  }
+  function _stopQuoteAutoSub() {
+    if (_stopQuoteWatch) { _stopQuoteWatch(); _stopQuoteWatch = null }
+  }
 
   /**
    * 计算 bootstrap 用的 30 天窗口 { startDate, endDate }
@@ -136,6 +186,11 @@ export function createBootstrap({
 
       bootstrapped.value = true
       lastUpdated.value = Date.now()
+
+      // v32: bootstrap 完成后立即 fire 一次 quote 订阅 (用户原话"涉及的标的都订阅")
+      _syncQuoteSubs(positions.value || [])
+      // 同时启动 watch (后续 positions 增量变更自动同步)
+      _startQuoteAutoSub()
 
       // ─── v12: 拉取完成后 fire-and-forget 写 IDB ───
       _saveAfterBootstrap()
@@ -239,6 +294,8 @@ export function createBootstrap({
       ].filter(Boolean)
 
       lastUpdated.value = Date.now()
+      // v32: refresh 完成后也同步一次 quote 订阅 (用户新交易后持仓 codes 可能变化)
+      _syncQuoteSubs(positions.value || [])
       // v12: refresh 拉到的 orders / trades 也 fire-and-forget 写 IDB
       _saveAfterBootstrap()
       const dt = Date.now() - t0
@@ -256,6 +313,8 @@ export function createBootstrap({
     try {
       const list = await api.getHoldings()
       positions.value = Array.isArray(list) ? list : []
+      // v32: 单刷持仓也同步 quote 订阅
+      _syncQuoteSubs(positions.value || [])
       refCounts.value.positions = 'ok'
       lastUpdated.value = Date.now()
       log('ok', '用户', 'user', `持仓已刷新 (${positions.value.length} 只)`)
@@ -308,5 +367,9 @@ export function createBootstrap({
     }
   }
 
-  return { bootstrap, refreshAll, refreshPositions, refreshAsset }
+  return {
+    bootstrap, refreshAll, refreshPositions, refreshAsset,
+    // v32: quote 订阅同步控制 (App.vue 卸载时调 _stopQuoteAutoSub)
+    _startQuoteAutoSub, _stopQuoteAutoSub, _syncQuoteSubs,
+  }
 }

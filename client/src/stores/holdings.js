@@ -72,6 +72,9 @@ export const useHoldingsStore = defineStore('holdings', () => {
     refreshAll,
     refreshPositions,
     refreshAsset,
+    // v32: quote 自动订阅控制
+    _startQuoteAutoSub: _autoSubStart,
+    _stopQuoteAutoSub: _autoSubStop,
   } = createBootstrap({
     positions, orders, trades, cachedAsset,
     activeTrdDate, activeDayStatus,
@@ -85,7 +88,10 @@ export const useHoldingsStore = defineStore('holdings', () => {
     ws.connect()
   }
   async function bootstrap() {
-    return _bootstrap(_startWs)
+    const r = await _bootstrap(_startWs)
+    // v32: bootstrap 完成后启动 watch (后续 positions 增量同步)
+    _autoSubStart()
+    return r
   }
 
   // ---- watcher：quote 变 → 写回 cachedAsset（实时市值）-------------
