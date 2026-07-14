@@ -166,16 +166,27 @@ const totalMv = computed(() => {
 
 // ---- 行情查询 ------------------------------------------------------
 
+// v33: quote tick trigger — 让 template 依赖 quoteStore 的 reactive 状态
+//   直接调 quoteStore.getLastPrice() 不被 Vue 追踪 (它是函数调用)
+//   改用 computed 引用 quoteStore.byCode (pinia 解包后是 Map, 浅响应) + triggerRef
+//   用一个 wrapper computed 每次 render 都读 quote store size 让 Vue 追踪
+const quoteTickTrigger = computed(() => quoteStore.size || 0)
+
 function getLastPrice(code) {
+  // 引用 trigger 让 Vue 追踪此函数调用在 reactive 上下文
+  void quoteTickTrigger.value
   return holdingsStore.getLivePrice(code)
 }
 function getMarketValue(row) {
+  void quoteTickTrigger.value
   return holdingsStore.getMarketValue(row)
 }
 function getProfit(row) {
+  void quoteTickTrigger.value
   return holdingsStore.getProfit(row)
 }
 function getReturnRate(row) {
+  void quoteTickTrigger.value
   return holdingsStore.getReturnRate ? holdingsStore.getReturnRate(row) : null
 }
 
@@ -188,7 +199,8 @@ function profitClass(v) {
 function priceClass(row) {
   const price = getLastPrice(row.stock_code)
   if (price == null) return ''
-  const q = quoteStore.byCode?.value?.get?.(row.stock_code) || quoteStore.get?.(row.stock_code) || null
+  // v33 fix: 直接读 quoteStore.get (内部 byCode.value.get), triggerRef(byCode) 后会重算
+  const q = quoteStore.get(row.stock_code) || null
   const prev = q?.prev_close != null ? Number(q.prev_close) : null
   if (prev == null || prev === 0) return ''
   if (price > prev) return 'text-up'

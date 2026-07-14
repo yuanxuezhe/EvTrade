@@ -139,39 +139,26 @@ const emit = defineEmits(['apply-price'])
 const quoteStore = useQuoteStore()
 const F = FIELD
 
-// 2026-07-09 quote-snapshot-subscribe:
+// v33: 永不退订 — 用户原话"请一直保持系统相关标的的订阅"
 //   - 监听 props.stockCode 变化, 当用户输入新代码 (debounce 300ms) 自动调订阅
-//   - 面板卸载时, 取消本面板持有的订阅 (避免幽灵订阅占 ws_manager)
-//   - 注意: 持仓页/Trade 页可能同时订阅同一 code,
-//     subscribedSet 用 Set 自动去重, unsubscribe 也只是减引用计数, 不影响其他消费者
+//   - 切换 / 清空 / 卸载时都不 unsubscribe (subscribe 内部 subscribedSet dedup 防重发)
+//   - ws_manager 同一 code 仅一份订阅, 无幽灵问题
 let _currentCode = ''
 let _debounceTimer = null
-let _subscribed = false  // 本组件是否真的订阅过 (避免卸载时误 cancel 未订阅的)
 watch(
   () => props.stockCode,
   (newCode) => {
     if (_debounceTimer) { clearTimeout(_debounceTimer); _debounceTimer = null }
     const c = (newCode || '').toUpperCase().trim()
     if (!c) {
-      // 清空时立即取消订阅
-      if (_subscribed && _currentCode) {
-        quoteStore.unsubscribe([_currentCode])
-        _subscribed = false
-      }
+      // 清空时不 unsubscribe — 保留订阅
       _currentCode = ''
       return
     }
     // 300ms debounce: 用户连续输 "000001.SZ" 时, 避免对每个字符都发订阅请求
     _debounceTimer = setTimeout(() => {
-      // 切换 code: 取消旧的 (如果之前订过)
-      if (_subscribed && _currentCode && _currentCode !== c) {
-        quoteStore.unsubscribe([_currentCode])
-      }
-      // 订新的 (如果未订过)
-      if (!_subscribed || _currentCode !== c) {
-        quoteStore.subscribe([c])
-        _subscribed = true
-      }
+      // 订新 code (subscribe 内部 subscribedSet dedup, 已订过不会重发)
+      quoteStore.subscribe([c])
       _currentCode = c
     }, 300)
   },

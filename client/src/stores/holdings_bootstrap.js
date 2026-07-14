@@ -186,8 +186,15 @@ export function createBootstrap({
 
       applyAssetResult(rAsset, refs, 'bootstrap')
       applyPositionsResult(rPos, refs, 'bootstrap')
-      applyOrdersResult(rOrd, refs, 'bootstrap')
-      applyTradesResult(rTrd, refs, 'bootstrap')
+      // v33 fix: IDB hit 时跳过 applyOrdersResult/applyTradesResult
+      //   旧 bug: 占位 { code:0, list:[] } 进入 apply 后会 orders.value=[], 把 IDB 已写数据清空
+      //   改为: 仅在 RPC 拉取时 (dateRange != null) 才 apply
+      if (dateRange) {
+        applyOrdersResult(rOrd, refs, 'bootstrap')
+        applyTradesResult(rTrd, refs, 'bootstrap')
+      } else {
+        log('info', '缓存', 'bootstrap', 'IDB hit, 跳过 applyOrdersResult/applyTradesResult (保护 IDB 写数据)')
+      }
 
       bootstrapped.value = true
       lastUpdated.value = Date.now()
