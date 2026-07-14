@@ -360,9 +360,13 @@ function handleReset() {
 }
 
 .form-actions {
+  /* v35: 与上方 el-form-item 对齐 — el-form label-width=80px, 此处左边留 80px 让按钮行与 input 区域对齐 */
   display: flex;
   gap: var(--space-2);
   margin-top: var(--space-3);
+  padding-left: 80px;
+  /* 兜底: 即使 el-form label-width 变动, 仍与 label 末位对齐 */
+  box-sizing: border-box;
 }
 
 .submit-btn {
