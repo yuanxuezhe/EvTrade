@@ -1,40 +1,47 @@
 <!--
-  Trade.vue — 交易下单页（v30 整体布局重构: 5 区参考图布局）
+  Trade.vue — 交易下单页（v32 四宫格重构）
 
-  主体 grid 2 列:
-    - 左列: OrderForm 下单 + QuotePanel 行情 (flex 等分左列高度)
-      左列宽度 280px (约 22%, 适合窄列输入表单)
-    - 右列: HoldingsPanel (持仓, flex:2) + TodayOrdersPanel (今日委托, flex:1)
-      - 成交(当日) 状态在 TodayOrdersPanel 委托行内嵌 (成交量/状态列), 不再单独 panel
-      - 持仓占大头 (flex:2), 委托占小头 (flex:1), 比例近似 2:1
+  主体 grid 2x2:
+    - 左列 420px (v30 280 + 50% ≈ 420), 右列 1fr 吃剩
+    - 左上 (1,1) = OrderForm 下单
+    - 左下 (2,1) = QuotePanel 行情
+    - 右上 (1,2) = HoldingsPanel 持仓
+    - 右下 (2,2) = TodayOrdersPanel 今日委托 (内含 委托/成交 tab)
+    - 行高各 1fr, 视觉上四块等大
 
   历史:
-    v30 重构: 5 区布局 (下单/行情/持仓/委托/成交) → 4 区 (成交并入委托, 左列 22%)
-  v13.1 修订: 左列子组件等分 (flex 链填满不留白)
-  v13   修订: 委托 / 成交 从外链按钮改为右侧嵌入 mini panel
-  v12   修订: 委托 / 成交 曾拆到 /today/orders /today/trades 独立路由 (v13 删除, 由 mini panel 承担)
+    v32 重构: 5 区布局 → 2x2 四宫格 (左列 420px, 行高 1fr 1fr)
+    v30 重构: 5 区布局 → 4 区 (成交并入委托, 左列 22% / 280px)
+    v13  / v12 修订: 委托/成交嵌入 mini panel, 删独立路由
 -->
 <template>
   <div class="trade-view fade-in-up" :style="tradeViewStyle">
     <div class="trade-grid">
-      <!-- 左侧: 下单表单 + 行情面板 -->
-      <div class="trade-form-col">
+      <!-- 左上 (1,1) = OrderForm -->
+      <div class="trade-cell trade-cell-order">
         <OrderForm
           ref="orderFormRef"
           :on-submit="handleOrderSubmit"
           :default-stock-code="quickStock"
           @update:stock-code="quickStock = $event"
         />
+      </div>
 
+      <!-- 左下 (2,1) = QuotePanel -->
+      <div class="trade-cell trade-cell-quote">
         <QuotePanel
           :stock-code="formStockCode"
           @apply-price="onApplyPrice"
         />
       </div>
 
-      <!-- 右侧: 持仓 + 委托 mini panel 堆叠 (成交状态内嵌委托行) -->
-      <div class="trade-panels-col">
+      <!-- 右上 (1,2) = HoldingsPanel -->
+      <div class="trade-cell trade-cell-holdings">
         <HoldingsPanel />
+      </div>
+
+      <!-- 右下 (2,2) = TodayOrdersPanel (内含委托/成交 tab) -->
+      <div class="trade-cell trade-cell-orders">
         <TodayOrdersPanel />
       </div>
     </div>
@@ -83,18 +90,16 @@ function onApplyPrice(price) {
 
 <style scoped>
 /*
- * Trade.vue 布局 (v13 panel 嵌入 + v13.1 上下填满 + v13.2 quicklinks 删除 + 左列 flex 链填充)
+ * Trade.vue 布局 (v32 2x2 四宫格)
 
- * 整体策略: flex 链 + grid 拆分列
+ * 整体策略: grid 2x2
  *   .trade-view         flex column, 填满 .app-content 的可用区
- *   .trade-grid         flex:1, 占据垂直空间 (填满到 OperationLog 之上)
- *   .trade-form-col     左列 (单格表单), flex column; 子组件 (OrderForm + QuotePanel) 等分左列
- *   .trade-panels-col   右列, flex column, sticky + max-height(跟随 --oplog-h); 子 panel 等分右列
-
- * OperationLog 遮挡修复:
+ *   .trade-grid         grid 模板 1fr 1fr / 420px 1fr, 4 个 cell 各占一格
+ *   .trade-cell         flex column, 容纳单个组件, min-width/min-height 0 防止内容溢出
+ *
+ * OperationLog 遮挡修复 (沿用 v30):
  *   --oplog-h 由 uiStore.oplogExpanded 驱动 (折叠 44px / 展开 320px)
- *   右列 max-height: calc(100vh - 80px(header+pad) - var(--oplog-h))
- *   当 OperationLog 展开时,自动收紧
+ *   .trade-view 利用 --oplog-h 算出可用高度
  */
 .trade-view {
   display: flex;
@@ -102,71 +107,59 @@ function onApplyPrice(price) {
   gap: var(--space-4);
   height: 100%;
   min-height: 0;
+  /* v32: 用 --oplog-h 限制实际可用高度,避免右侧 panel 撑出 OperationLog 遮挡区 */
+  max-height: calc(100vh - 80px - var(--oplog-h, 44px));
 }
 
 .trade-grid {
   display: grid;
-  /* v30: 左列 280px (≈22%, 适合窄列表单), 右列 1fr 吃剩 */
-  grid-template-columns: 280px 1fr;
+  /* v32: 左列 420px (v30 280 + 用户要求 50% 加宽), 行高 1fr 1fr 四宫格
+     grid-template-areas 显式指定每格内容, 避免 grid auto-flow 把第二个子元素塞到 (1,2) */
+  grid-template-columns: 420px 1fr;
+  grid-template-rows: 1fr 1fr;
+  grid-template-areas:
+    "order holdings"
+    "quote orders";
   gap: var(--space-4);
   flex: 1;
   min-height: 0;
 }
 
-.trade-form-col {
+.trade-cell {
   display: flex;
   flex-direction: column;
-  gap: var(--space-3);
-  min-height: 0;
-  /* 左列内容(下单表单 + 行情) 高度超过行高时,允许内部滚动 */
-  overflow: hidden;
-}
-
-/* 左列两个组件 (OrderForm + QuotePanel) 等分左列高度 */
-.trade-form-col > * {
-  flex: 1 1 0;
+  min-width: 0;
   min-height: 0;
   overflow: hidden;
 }
 
-.trade-panels-col {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-  min-height: 0;
-  /* sticky 让面板跟随滚动; max-height 用 --oplog-h 让 OperationLog 不遮挡 */
-  position: sticky;
-  top: 80px;
-  /* 默认 --oplog-h: 44px (折叠态), 下行表达式:
-       calc(100vh - 80 - 44) = 视口高 - header - OperationLog */
-  max-height: calc(100vh - 80px - var(--oplog-h, 44px));
+/* 显式 grid area 绑定, 确保 OrderForm 在左上, QuotePanel 在左下, 持仓在右上, 委托在右下 */
+.trade-cell-order    { grid-area: order; }
+.trade-cell-quote    { grid-area: quote; }
+.trade-cell-holdings { grid-area: holdings; }
+.trade-cell-orders   { grid-area: orders; }
+
+/* 左上 OrderForm / 右上 HoldingsPanel 各占自身完整行高 */
+.trade-cell-order,
+.trade-cell-holdings {
+  /* 默认 1fr, 配合 grid-template-rows 已自动等分 */
 }
 
-/* v30: 持仓 (HoldingsPanel) 占大头 flex:2, 委托 (TodayOrdersPanel) 占小头 flex:1 */
-.trade-panels-col > *:first-child {
-  flex: 2 1 0;
-  min-height: 0;
-  overflow: hidden;
-}
-.trade-panels-col > *:last-child {
-  flex: 1 1 0;
-  min-height: 0;
-  overflow: hidden;
+/* 左下 QuotePanel / 右下 TodayOrdersPanel 各占自身完整行高 */
+.trade-cell-quote,
+.trade-cell-orders {
+  /* 默认 1fr, 配合 grid-template-rows 已自动等分 */
 }
 
 @media (max-width: 1100px) {
-  .trade-grid { grid-template-columns: 1fr; }
-  .trade-form-col {
-    overflow: visible;
+  /* 窄屏回退到单列堆叠 */
+  .trade-grid {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto;
   }
-  .trade-panels-col {
-    position: static;
-    max-height: none;
-    /* 窄屏不强制两端对齐, 让 panel 跟随内容 */
-  }
-  .trade-panels-col > * {
-    flex: 0 0 auto;
+  .trade-cell {
     overflow: visible;
+    min-height: 240px;
   }
 }
 </style>

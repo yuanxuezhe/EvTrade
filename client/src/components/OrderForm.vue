@@ -21,7 +21,8 @@
     </div>
 
     <div class="form-body">
-      <el-form :model="form" label-position="top" size="default">
+      <!-- v32: label 同行 (label-position="left" label-width="80px"), 让左列 420px 充分利用 -->
+      <el-form :model="form" label-position="left" label-width="80px" size="default">
         <el-form-item label="股票代码" class="row-tight">
           <!-- v28: StockCodePicker 强化'输入合法性'契约, blur 时未选自动清空 -->
           <StockCodePicker
