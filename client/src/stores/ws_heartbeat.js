@@ -56,9 +56,10 @@ function _wsUrl(channel) {
  * 工厂: 创建一个 ws manager 实例
  *
  * @param {Function} onMessage  payload → void（业务分发回调，注入 ws_dispatch.dispatchPayload）
- * @returns {{connect, disconnect, connected, lastEvent}}
+ * @param {Function} [onConnected]  (channel) → void（连接成功回调，用于 2026-07-14 fix 重订阅）
+ * @returns {{connect, disconnect, connected, lastEvent, sendToChannel}}
  */
-export function createWsManager(onMessage) {
+export function createWsManager(onMessage, onConnected) {
   const connected = ref(false)
   const lastEvent = ref(null)
   const _sockets = {}    // channel -> WebSocket
@@ -80,6 +81,9 @@ export function createWsManager(onMessage) {
       _pongMissed[channel] = 0  // v10 增: 重置 pong 计数
       // eslint-disable-next-line no-console
       log.info(`${channel} connected`)
+      // 2026-07-14 fix-ws-reconnect-subscription: 通知业务层连接成功
+      //   让 quote store 强制重发 subscribedSet (服务端 disconnect 时已 clear_ws)
+      try { onConnected?.(channel) } catch (e) { /* 业务层错误不影响 ws */ }
       // change ws-quote-fanout: 客户端 30s 主动 ping — quote_update 现在走后端，
       //   同样走 ping/pong 心跳。后端 quote_update 通道的 heartbeat sender 已特判跳过服务端 ping，
       //   但客户端主动 ping 后端仍会回 pong（见 server/ws/endpoint.py: ping/pong 双向逻辑）。

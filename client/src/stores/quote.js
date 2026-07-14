@@ -145,6 +145,35 @@ export const useQuoteStore = defineStore('quote', () => {
   }
 
   /**
+   * 2026-07-14 fix-ws-reconnect-subscription: ws 重连后, 自动 replay 所有已订阅 code
+   *   - 场景: 网络抖动 / 后端重启 / 浏览器切后台 → ws onclose → 重连成功后服务端订阅已清空
+   *     前端 subscribedSet 还以为订阅了 → 数据不再更新 (用户报告 "行情不更新")
+   *   - 修法: 强制重发所有 subscribedSet 的 code, 不走 dedup 路径
+   *     subscribedSet 在 replay 后保持 (幂等, 无副作用)
+   *   - 配合 ws_heartbeat._openChannel onopen 里调用
+   */
+  async function replayAll() {
+    const codes = Array.from(subscribedSet.value)
+    if (codes.length === 0) return 0
+    try {
+      const { subscribe: wsSubscribe } = await import('./ws_dispatch')
+      wsSubscribe(codes)
+    } catch (e) {
+      console.warn('[quoteStore] replayAll ws subscribe failed:', e?.message)
+    }
+    // 同时 REST 拉一次最新值 (防 ws subscribe_ack 的 snapshot 不完整时)
+    try {
+      const { data } = await http.post('/quote/snapshots', { stock_codes: codes })
+      if (data && data.snapshots) {
+        applySnapshots(data.snapshots)
+      }
+    } catch (e) {
+      console.warn('[quoteStore] replayAll fetchSnapshots failed:', e?.message)
+    }
+    return codes.length
+  }
+
+  /**
    * 取消订阅（页面卸载时调用，避免幽灵订阅）
    */
   function unsubscribe(codes) {
@@ -215,7 +244,7 @@ export const useQuoteStore = defineStore('quote', () => {
   const size = computed(() => byCode.value.size)
   return {
     byCode, subscribedSet, size,
-    update, applySnapshots, subscribe, unsubscribe,
+    update, applySnapshots, subscribe, unsubscribe, replayAll,
     get, getQuote, getLastPrice, getField, getChangePct, getDepth,
     codes, FIELD,
   }

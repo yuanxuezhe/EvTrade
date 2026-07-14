@@ -31,11 +31,26 @@
 import { defineStore } from 'pinia'
 import { createWsManager } from './ws_heartbeat'
 import { dispatchPayload } from './ws_dispatch'
+import { makeLogger } from '../utils/logger'
+
+const log = makeLogger('ws')
 
 export const useWsStore = defineStore('ws', () => {
   // ws_heartbeat 持有连接 + 心跳, 业务分发通过 onMessage 回调注入
   // 2026-07-09 quote-snapshot-subscribe: 暴露 sendToChannel（quoteStore.subscribe 用）
-  const { connect, disconnect, connected, lastEvent, sendToChannel } = createWsManager(dispatchPayload)
+  // 2026-07-14 fix-ws-reconnect-subscription: onConnected 回调在 ws 重连成功后强制重发 quote 订阅
+  const onConnected = (channel) => {
+    if (channel !== 'quote_update') return
+    // 动态 import 避免循环依赖（quote → ws_dispatch → ws → ws_heartbeat → ?）
+    import('./quote').then(({ useQuoteStore }) => {
+      const quoteStore = useQuoteStore()
+      if (quoteStore.subscribedSet.size > 0) {
+        log.info('[ws] replay subscriptions:', quoteStore.subscribedSet.size)
+        quoteStore.replayAll().catch((e) => log.warn('replay failed:', e?.message))
+      }
+    }).catch((e) => log.warn('quote import failed:', e?.message))
+  }
+  const { connect, disconnect, connected, lastEvent, sendToChannel } = createWsManager(dispatchPayload, onConnected)
 
   return {
     connected,
