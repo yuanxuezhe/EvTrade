@@ -6,6 +6,7 @@ import { stocksApi } from '../api'
  * 股票基础信息 store
  * v25 stocks-cache-and-short-name: 全量缓存 + 真分页 + autocomplete 筛选
  * v26 (2026-07-12-universalize-stockcode-autocomplete): 多页面共用 cache
+ * v32 (2026-07-14-stock-names-from-cache): +stockName(code) getter,供表格/表单查名称
  *
  * 数据源：
  *   1. REST GET /api/stocks?page=N&page_size=100     循环拉全量 → cache (autocomplete 用)
@@ -175,6 +176,17 @@ export const useStocksStore = defineStore('stocks', () => {
   }
 
   /**
+   * 按 stock_code 查名称（v32 stock-names-from-cache）
+   * 返回 null 表示查不到/缓存未加载；调用方决定占位字符串
+   */
+  function stockName(code) {
+    if (!code) return null
+    if (!cacheLoaded.value || !cache.value.length) return null
+    const hit = cache.value.find((s) => s.stock_code === code)
+    return hit?.stock_name || null
+  }
+
+  /**
    * 保存编辑（PATCH）
    * 同时刷新 cache + pageRows + 后端
    * @returns {Promise<{ok: boolean, msg?: string}>}
@@ -235,6 +247,7 @@ export const useStocksStore = defineStore('stocks', () => {
     setPageSize,
     openEdit,
     closeEdit,
-    saveEdit
+    saveEdit,
+    stockName
   }
 })
