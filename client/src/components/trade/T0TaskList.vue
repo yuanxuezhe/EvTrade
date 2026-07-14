@@ -56,20 +56,20 @@
       empty-text="暂无 T0 任务，点击「新建任务」创建"
       class="ttl-table"
     >
-      <el-table-column label="状态" width="80">
+      <el-table-column label="状态" width="100">
         <template #default="{ row }">
           <el-tag :type="statusTagType(row.status)" size="small">{{ statusLabel(row.status) }}</el-tag>
         </template>
       </el-table-column>
 
-      <el-table-column prop="stock_code" label="股票代码" width="120" />
-      <el-table-column label="名称" width="80" show-overflow-tooltip>
+      <el-table-column prop="stock_code" label="股票代码" width="100" />
+      <el-table-column label="名称" width="100" show-overflow-tooltip>
         <template #default="{ row }">
           <span class="text-secondary">{{ stockName(row.stock_code) || '—' }}</span>
         </template>
       </el-table-column>
 
-      <el-table-column label="配平 (base+target)" width="160">
+      <el-table-column label="配平 (base+target)" width="100">
         <template #default="{ row }">
           <span class="text-mono">
             {{ row.base_volume }} + {{ row.target_volume }} = <b>{{ row.base_volume + row.target_volume }}</b>
@@ -77,7 +77,7 @@
         </template>
       </el-table-column>
 
-      <el-table-column label="task 净开仓" width="110">
+      <el-table-column label="task 净开仓" width="100">
         <template #default="{ row }">
           <span class="text-mono">{{ row.task_net_volume ?? '—' }}</span>
         </template>
@@ -89,7 +89,7 @@
         </template>
       </el-table-column>
 
-      <el-table-column label="已实现盈亏" width="130">
+      <el-table-column label="已实现盈亏" width="100">
         <template #default="{ row }">
           <span class="text-mono" :class="pnlClass(row.realized_pnl)">
             ¥{{ formatAmount(row.realized_pnl || 0) }}
@@ -97,9 +97,9 @@
         </template>
       </el-table-column>
 
-      <el-table-column prop="note" label="备注" min-width="120" show-overflow-tooltip />
+      <el-table-column prop="note" label="备注" min-width="100" show-overflow-tooltip />
 
-      <el-table-column label="操作" width="240" fixed="right">
+      <el-table-column label="操作" width="100" fixed="right">
         <template #default="{ row }">
           <el-button v-if="row.status === 'active'" size="small" link @click="$emit('balance', row.id)">配平</el-button>
           <el-button v-if="row.status === 'active'" size="small" link @click="$emit('close', row.id)">平仓</el-button>

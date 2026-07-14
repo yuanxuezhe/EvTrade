@@ -305,6 +305,10 @@ function handleReset() {
 
 .form-body {
   padding: var(--space-3) var(--space-4);
+  /* v32: 修 commit 4 副作用 — 4 个 form-item + 快捷金额 + 按钮 在 206.5px cell 内溢出, 加纵向滚动 */
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
 }
 
 .volume-quick {

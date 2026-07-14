@@ -346,6 +346,35 @@ h1, h2, h3, h4, h5, h6 {
   --el-table-bg-color: var(--bg-elevated) !important;
   --el-table-tr-bg-color: var(--bg-elevated) !important;
   background: var(--bg-elevated) !important;
+  /* v32: 列总宽超出容器时自动出横向滚动 (列最小 100px 兜底) */
+  overflow-x: auto !important;
+}
+.el-table__body-wrapper {
+  /* v32: body wrapper 也需要 overflow-x, 避免内部列宽溢出后没有横向滚动 */
+  overflow-x: auto !important;
+}
+/* v32: 表头 wrapper 默认 overflow-x: hidden, 改 auto 让 header 跟随 body 一起横向滚动 */
+.el-table__header-wrapper {
+  overflow-x: auto !important;
+}
+/* v32: el-table 默认 fit=true 会让 body table fit container. el-scrollbar 接管横向滚动.
+   这里只设 min-width: 100% 让表格不小于 cell 宽度, 避免空表格 collapse */
+.el-table {
+  min-width: 100%;
+}
+/* v32: el-scrollbar 横向滚动条样式增强 (默认 thin + hover 才显示, 小屏时找不到) */
+.el-scrollbar__bar.is-horizontal {
+  display: block !important;
+  height: 8px !important;
+  background: var(--bg-muted, #e5e7eb) !important;
+  border-radius: 4px !important;
+  opacity: 1 !important;
+}
+.el-scrollbar__bar.is-horizontal > div {
+  height: 100% !important;
+  background: var(--accent, #3b82f6) !important;
+  border-radius: 4px !important;
+  opacity: 1 !important;
 }
 .el-table th.el-table__cell {
   background: var(--bg-soft) !important;

@@ -105,23 +105,23 @@
             <span class="text-mono text-secondary">{{ row.order_no }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="类型" width="80">
+        <el-table-column label="类型" width="100">
           <template #default="{ row }">
             <el-tag v-if="Number(row.order_flag) === 1" type="warning" size="small">撤单</el-tag>
             <span v-else class="text-secondary">委托</span>
           </template>
         </el-table-column>
-        <el-table-column prop="stock_code" label="股票代码" width="120">
+        <el-table-column prop="stock_code" label="股票代码" width="100">
           <template #default="{ row }">
             <span class="stock-code">{{ row.stock_code }}</span>
           </template>
         </el-table-column>
-        <el-table-column prop="stock_name" label="名称" width="64" show-overflow-tooltip>
+        <el-table-column prop="stock_name" label="名称" width="100" show-overflow-tooltip>
           <template #default="{ row }">
             <span class="text-secondary">{{ stockName(row.stock_code) || '—' }}</span>
           </template>
         </el-table-column>
-        <el-table-column prop="order_type" label="方向" width="70">
+        <el-table-column prop="order_type" label="方向" width="100">
           <template #default="{ row }">
             <span class="dir-chip" :class="row.order_type === '23' ? 'buy' : 'sell'">
               {{ row.order_type === '23' ? '买入' : '卖出' }}
@@ -143,17 +143,17 @@
             <span class="text-mono">{{ formatNumber(row.traded_volume) }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="成交金额" align="right" width="120">
+        <el-table-column label="成交金额" align="right" width="100">
           <template #default="{ row }">
             <span class="text-mono">{{ formatAmount(row.traded_amount) }}</span>
           </template>
         </el-table-column>
-        <el-table-column prop="status" label="状态" width="110">
+        <el-table-column prop="status" label="状态" width="100">
           <template #default="{ row }">
             <OrderStatusBadge :status="row.status" :remark="row.remark" :status_msg="row.status_msg" />
           </template>
         </el-table-column>
-        <el-table-column prop="order_id" label="合同序号" min-width="140" show-overflow-tooltip>
+        <el-table-column prop="order_id" label="合同序号" min-width="100" show-overflow-tooltip>
           <template #default="{ row }">
             <span class="text-mono text-secondary">{{ row.order_id }}</span>
           </template>

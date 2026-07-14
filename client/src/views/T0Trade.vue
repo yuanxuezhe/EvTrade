@@ -85,21 +85,21 @@
       empty-text="暂无持仓"
       size="default"
     >
-      <el-table-column prop="stock_code" label="代码" width="80" />
-      <el-table-column label="名称" width="80">
+      <el-table-column prop="stock_code" label="代码" width="100" />
+      <el-table-column label="名称" width="100">
         <template #default="{ row }">{{ stockName(row.stock_code) || row.stock_code }}</template>
       </el-table-column>
-      <el-table-column prop="vol" label="持仓" align="right" width="70" sortable="custom">
+      <el-table-column prop="vol" label="持仓" align="right" width="100" sortable="custom">
         <template #default="{ row }">{{ formatNumber(row.vol) }}</template>
       </el-table-column>
-      <el-table-column prop="last_price" label="现价" align="right" width="80" sortable="custom">
+      <el-table-column prop="last_price" label="现价" align="right" width="100" sortable="custom">
         <template #default="{ row }">
           <span :class="quoteStore.getChangePct(row.stock_code) >= 0 ? 'up' : 'down'">
             {{ formatPrice(quoteStore.getLastPrice(row.stock_code)) }}
           </span>
         </template>
       </el-table-column>
-      <el-table-column prop="change_pct" label="涨跌" align="right" width="70" sortable="custom">
+      <el-table-column prop="change_pct" label="涨跌" align="right" width="100" sortable="custom">
         <template #default="{ row }">
           <span :class="quoteStore.getChangePct(row.stock_code) >= 0 ? 'up' : 'down'">
             {{ quoteStore.getChangePct(row.stock_code)?.toFixed(2) }}%
@@ -108,7 +108,7 @@
       </el-table-column>
 
       <!-- 今盈 (t0Stats realized_pnl, 按需加载) -->
-      <el-table-column prop="realized_pnl" label="今盈" align="right" width="90" sortable="custom">
+      <el-table-column prop="realized_pnl" label="今盈" align="right" width="100" sortable="custom">
         <template #default="{ row }">
           <template v-if="t0StatsMap[row.stock_code]">
             <span :class="t0StatsMap[row.stock_code].realized_pnl >= 0 ? 'up' : 'down'">
@@ -120,7 +120,7 @@
       </el-table-column>
 
       <!-- 净敞口 (today_buy_volume - today_sell_volume) -->
-      <el-table-column prop="net_exposure" label="净敞口" align="right" width="80" sortable="custom">
+      <el-table-column prop="net_exposure" label="净敞口" align="right" width="100" sortable="custom">
         <template #default="{ row }">
           <template v-if="t0StatsMap[row.stock_code]">
             <span :class="netExposure(row) > 0 ? 'up' : netExposure(row) < 0 ? 'down' : ''">
@@ -132,7 +132,7 @@
       </el-table-column>
 
       <!-- 浮盈% (holdingsStore.getReturnRate) — 默认按此 desc -->
-      <el-table-column prop="return_rate" label="浮盈%" align="right" width="70" sortable="custom">
+      <el-table-column prop="return_rate" label="浮盈%" align="right" width="100" sortable="custom">
         <template #default="{ row }">
           <span :class="holdingsStore.getReturnRate(row.stock_code) >= 0 ? 'up' : 'down'">
             {{ (holdingsStore.getReturnRate(row.stock_code) * 100).toFixed(2) }}%
@@ -141,7 +141,7 @@
       </el-table-column>
 
       <!-- quota 列 (change-quota-frame): 可买 + 可卖 -->
-      <el-table-column label="可买" align="right" width="80" prop="max_buyable">
+      <el-table-column label="可买" align="right" width="100" prop="max_buyable">
         <template #default="{ row }">
           <el-tooltip
             :content="quoteStore.getLastPrice(row.stock_code) ? `依赖最新价 ¥${formatPrice(quoteStore.getLastPrice(row.stock_code))}` : '依赖最新价, 未到时显示 0'"
@@ -153,7 +153,7 @@
           </el-tooltip>
         </template>
       </el-table-column>
-      <el-table-column label="可卖" align="right" width="80" prop="max_sellable">
+      <el-table-column label="可卖" align="right" width="100" prop="max_sellable">
         <template #default="{ row }">
           <el-tooltip content="持仓可用 vol (avl_vol)" placement="top">
             <span class="text-mono quota-cell" :class="`quota-${quotaLevel(quotaForRow(row).maxSellable)}`">
@@ -164,7 +164,7 @@
       </el-table-column>
 
       <!-- 操作列: 4 按钮 (买/卖/配平/详情) -->
-      <el-table-column label="操作" align="center" width="200" fixed="right">
+      <el-table-column label="操作" align="center" width="100" fixed="right">
         <template #default="{ row }">
           <div class="op-col">
             <el-tooltip :content="buyState(row).tip" placement="top">
@@ -199,7 +199,7 @@
       </el-table-column>
 
       <!-- 副行 (默认展开, 通过 expand 实现) -->
-      <el-table-column type="expand" width="0">
+      <el-table-column type="expand" width="100">
         <template #default="{ row }">
           <div class="sub-row">
             <div class="sub-item">

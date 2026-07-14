@@ -35,65 +35,65 @@
         size="small"
         class="tp-table"
       >
-        <el-table-column prop="order_no" label="委托编号" width="98" show-overflow-tooltip>
+        <el-table-column prop="order_no" label="委托编号" width="100" show-overflow-tooltip>
           <template #default="{ row }">
             <span class="text-mono text-secondary">{{ row.order_no }}</span>
           </template>
         </el-table-column>
-        <el-table-column prop="order_time" label="时间" width="78">
+        <el-table-column prop="order_time" label="时间" width="100">
           <template #default="{ row }">
             <span class="text-mono text-secondary">{{ row.order_time }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="类型" width="60">
+        <el-table-column label="类型" width="100">
           <template #default="{ row }">
             <el-tag v-if="Number(row.order_flag) === 1" type="warning" size="small">撤单</el-tag>
             <span v-else class="text-secondary">委托</span>
           </template>
         </el-table-column>
-        <el-table-column prop="stock_code" label="代码" width="92">
+        <el-table-column prop="stock_code" label="代码" width="100">
           <template #default="{ row }">
             <span class="tp-stock-code">{{ row.stock_code }}</span>
           </template>
         </el-table-column>
-        <el-table-column prop="stock_name" label="名称" width="64" show-overflow-tooltip>
+        <el-table-column prop="stock_name" label="名称" width="100" show-overflow-tooltip>
           <template #default="{ row }">
             <span class="text-secondary">{{ stockName(row.stock_code) || '—' }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="方向" width="48">
+        <el-table-column label="方向" width="100">
           <template #default="{ row }">
             <span class="tp-dir-chip" :class="row.order_type === '23' ? 'buy' : 'sell'">
               {{ row.order_type === '23' ? '买' : '卖' }}
             </span>
           </template>
         </el-table-column>
-        <el-table-column prop="volume" label="委托量" align="right" width="64" sortable>
+        <el-table-column prop="volume" label="委托量" align="right" width="100" sortable>
           <template #default="{ row }">
             <span class="text-mono">{{ formatNumber(row.volume) }}</span>
           </template>
         </el-table-column>
-        <el-table-column prop="traded_volume" label="成交量" align="right" width="64" sortable>
+        <el-table-column prop="traded_volume" label="成交量" align="right" width="100" sortable>
           <template #default="{ row }">
             <span class="text-mono">{{ formatNumber(row.traded_volume || 0) }}</span>
           </template>
         </el-table-column>
-        <el-table-column prop="price" label="价" align="right" width="68" sortable>
+        <el-table-column prop="price" label="价" align="right" width="100" sortable>
           <template #default="{ row }">
             <span class="text-mono">{{ formatMoney(row.price) }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="金额" align="right" width="92">
+        <el-table-column label="金额" align="right" width="100">
           <template #default="{ row }">
             <span class="text-mono">¥{{ formatMoney(orderAmount(row)) }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="状态" width="78">
+        <el-table-column label="状态" width="100">
           <template #default="{ row }">
             <OrderStatusBadge :status="row.status" :remark="row.remark" :status_msg="row.status_msg" />
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="48" fixed="right">
+        <el-table-column label="操作" width="100" fixed="right">
           <template #default="{ row }">
             <el-button
               v-if="canCancel(row)"
@@ -136,17 +136,17 @@
         size="small"
         class="tp-table"
       >
-        <el-table-column prop="trade_time" label="时间" width="78">
+        <el-table-column prop="trade_time" label="时间" width="100">
           <template #default="{ row }">
             <span class="text-mono text-secondary">{{ row.trade_time }}</span>
           </template>
         </el-table-column>
-        <el-table-column prop="trade_id" label="成交编号" min-width="140" show-overflow-tooltip>
+        <el-table-column prop="trade_id" label="成交编号" min-width="100" show-overflow-tooltip>
           <template #default="{ row }">
             <span class="text-mono text-secondary">{{ row.trade_id }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="类型" width="68">
+        <el-table-column label="类型" width="100">
           <template #default="{ row }">
             <el-tag v-if="Number(row.trade_type) === 1" type="warning" size="small">撤单</el-tag>
             <span v-else class="text-secondary">成交</span>
@@ -157,24 +157,24 @@
             <span class="tp-stock-code">{{ row.stock_code }}</span>
           </template>
         </el-table-column>
-        <el-table-column prop="stock_name" label="名称" width="64" show-overflow-tooltip>
+        <el-table-column prop="stock_name" label="名称" width="100" show-overflow-tooltip>
           <template #default="{ row }">
             <span class="text-secondary">{{ stockName(row.stock_code) || '—' }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="方向" width="56">
+        <el-table-column label="方向" width="100">
           <template #default="{ row }">
             <span class="tp-dir-chip" :class="row.order_type === '23' ? 'buy' : 'sell'">
               {{ row.order_type === '23' ? '买' : '卖' }}
             </span>
           </template>
         </el-table-column>
-        <el-table-column prop="volume" label="量" align="right" width="68" sortable>
+        <el-table-column prop="volume" label="量" align="right" width="100" sortable>
           <template #default="{ row }">
             <span class="text-mono">{{ formatNumber(row.volume) }}</span>
           </template>
         </el-table-column>
-        <el-table-column prop="price" label="价" align="right" width="80" sortable>
+        <el-table-column prop="price" label="价" align="right" width="100" sortable>
           <template #default="{ row }">
             <span class="text-mono">{{ formatMoney(row.price) }}</span>
           </template>

@@ -17,19 +17,19 @@
       stripe
       class="audit-el-table"
     >
-      <el-table-column prop="created_at" label="时间" width="160">
+      <el-table-column prop="created_at" label="时间" width="100">
         <template #default="{ row }">
           <span class="text-mono text-secondary">{{ formatTime(row.created_at) }}</span>
         </template>
       </el-table-column>
-      <el-table-column prop="trigger_type" label="触发类型" width="160">
+      <el-table-column prop="trigger_type" label="触发类型" width="100">
         <template #default="{ row }">
           <el-tag size="small" :type="triggerTypeColor(row.trigger_type)">
             {{ TRIGGER_LABEL[row.trigger_type] || row.trigger_type }}
           </el-tag>
         </template>
       </el-table-column>
-      <el-table-column prop="regime_id" label="regime" width="80" align="right">
+      <el-table-column prop="regime_id" label="regime" width="100" align="right">
         <template #default="{ row }">
           <span v-if="row.regime_id" class="text-mono">#{{ row.regime_id }}</span>
         </template>
@@ -41,17 +41,17 @@
           </span>
         </template>
       </el-table-column>
-      <el-table-column label="持仓量" width="80" align="right">
+      <el-table-column label="持仓量" width="100" align="right">
         <template #default="{ row }">
           <span v-if="row.position_vol != null" class="text-mono">{{ row.position_vol }}</span>
         </template>
       </el-table-column>
-      <el-table-column prop="order_no" label="委托号" width="120">
+      <el-table-column prop="order_no" label="委托号" width="100">
         <template #default="{ row }">
           <span v-if="row.order_no" class="text-mono">{{ row.order_no }}</span>
         </template>
       </el-table-column>
-      <el-table-column prop="reject_reason" label="拒绝原因" min-width="160">
+      <el-table-column prop="reject_reason" label="拒绝原因" min-width="100">
         <template #default="{ row }">
           <span v-if="row.reject_reason" class="audit-reject">{{ row.reject_reason }}</span>
         </template>

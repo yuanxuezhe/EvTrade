@@ -94,7 +94,7 @@
           </router-link>
         </div>
         <el-table :data="topPositions" :show-header="true" size="default">
-          <el-table-column prop="stock_code" label="代码" width="120">
+          <el-table-column prop="stock_code" label="代码" width="100">
             <template #default="{ row }">
               <div class="stock-cell">
                 <div class="stock-code">{{ row.stock_code }}</div>

@@ -87,22 +87,22 @@
     <el-card v-if="stats?.daily?.length" class="ttd-daily" shadow="hover">
       <template #header>每日明细</template>
       <el-table :data="stats.daily" size="small" stripe>
-        <el-table-column prop="trd_date" label="交易日" width="110" />
+        <el-table-column prop="trd_date" label="交易日" width="100" />
         <el-table-column prop="buy_vol" label="买入量" width="100" />
         <el-table-column prop="sell_vol" label="卖出量" width="100" />
-        <el-table-column prop="buy_amt" label="买入额" width="130">
+        <el-table-column prop="buy_amt" label="买入额" width="100">
           <template #default="{ row }">¥{{ formatMoney(row.buy_amt) }}</template>
         </el-table-column>
-        <el-table-column prop="sell_amt" label="卖出额" width="130">
+        <el-table-column prop="sell_amt" label="卖出额" width="100">
           <template #default="{ row }">¥{{ formatMoney(row.sell_amt) }}</template>
         </el-table-column>
-        <el-table-column prop="realized_pnl" label="已实现" width="120">
+        <el-table-column prop="realized_pnl" label="已实现" width="100">
           <template #default="{ row }">
             <span :class="pnlClass(row.realized_pnl)">¥{{ formatMoney(row.realized_pnl) }}</span>
           </template>
         </el-table-column>
-        <el-table-column prop="trade_count" label="笔数" width="80" />
-        <el-table-column prop="cum_pnl" label="累计盈亏" width="140">
+        <el-table-column prop="trade_count" label="笔数" width="100" />
+        <el-table-column prop="cum_pnl" label="累计盈亏" width="100">
           <template #default="{ row }">
             <span :class="pnlClass(row.cum_pnl)">¥{{ formatMoney(row.cum_pnl) }}</span>
           </template>
@@ -114,18 +114,18 @@
     <el-card v-if="stats?.by_stock?.length" class="ttd-bystock" shadow="hover">
       <template #header>单券聚合</template>
       <el-table :data="stats.by_stock" size="small" stripe>
-        <el-table-column prop="stock_code" label="股票代码" width="120" />
-        <el-table-column label="名称" width="80" show-overflow-tooltip>
+        <el-table-column prop="stock_code" label="股票代码" width="100" />
+        <el-table-column label="名称" width="100" show-overflow-tooltip>
           <template #default="{ row }">
             <span class="text-secondary">{{ stockName(row.stock_code) || '—' }}</span>
           </template>
         </el-table-column>
-        <el-table-column prop="realized_pnl" label="已实现" width="140">
+        <el-table-column prop="realized_pnl" label="已实现" width="100">
           <template #default="{ row }">
             <span :class="pnlClass(row.realized_pnl)">¥{{ formatMoney(row.realized_pnl) }}</span>
           </template>
         </el-table-column>
-        <el-table-column prop="unrealized_pnl" label="未实现" width="140">
+        <el-table-column prop="unrealized_pnl" label="未实现" width="100">
           <template #default="{ row }">
             <span :class="pnlClass(row.unrealized_pnl)">¥{{ formatMoney(row.unrealized_pnl) }}</span>
           </template>

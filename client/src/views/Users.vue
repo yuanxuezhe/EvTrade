@@ -57,13 +57,13 @@
         :default-sort="{ prop: 'id', order: 'ascending' }"
         row-key="id"
       >
-        <el-table-column prop="id" label="ID" width="70" sortable>
+        <el-table-column prop="id" label="ID" width="100" sortable>
           <template #default="{ row }">
             <span class="text-mono text-secondary">#{{ row.id }}</span>
           </template>
         </el-table-column>
 
-        <el-table-column prop="username" label="用户名" min-width="140">
+        <el-table-column prop="username" label="用户名" min-width="100">
           <template #default="{ row }">
             <div class="user-cell">
               <div class="avatar" :class="`role-${row.role}`">
@@ -77,14 +77,14 @@
           </template>
         </el-table-column>
 
-        <el-table-column prop="email" label="邮箱" min-width="180">
+        <el-table-column prop="email" label="邮箱" min-width="100">
           <template #default="{ row }">
             <span v-if="row.email" class="text-secondary">{{ row.email }}</span>
             <span v-else class="text-placeholder">--</span>
           </template>
         </el-table-column>
 
-        <el-table-column prop="role" label="角色" width="120">
+        <el-table-column prop="role" label="角色" width="100">
           <template #default="{ row }">
             <span class="role-chip" :class="`role-${row.role}`">
               {{ ROLE_LABEL[row.role] || row.role }}
@@ -92,7 +92,7 @@
           </template>
         </el-table-column>
 
-        <el-table-column prop="is_active" label="状态" width="90">
+        <el-table-column prop="is_active" label="状态" width="100">
           <template #default="{ row }">
             <el-tag
               :type="row.is_active ? 'success' : 'danger'"
@@ -104,7 +104,7 @@
           </template>
         </el-table-column>
 
-        <el-table-column prop="last_login_at" label="最近登录" width="160">
+        <el-table-column prop="last_login_at" label="最近登录" width="100">
           <template #default="{ row }">
             <span class="text-mono text-secondary">
               {{ formatDateTime(row.last_login_at) }}
@@ -112,7 +112,7 @@
           </template>
         </el-table-column>
 
-        <el-table-column prop="created_at" label="创建时间" width="160">
+        <el-table-column prop="created_at" label="创建时间" width="100">
           <template #default="{ row }">
             <span class="text-mono text-secondary">
               {{ formatDateTime(row.created_at) }}
@@ -120,7 +120,7 @@
           </template>
         </el-table-column>
 
-        <el-table-column label="操作" width="240" fixed="right">
+        <el-table-column label="操作" width="100" fixed="right">
           <template #default="{ row }">
             <div class="row-actions">
               <el-button size="small" link type="primary" @click="actions.openEdit(row)">

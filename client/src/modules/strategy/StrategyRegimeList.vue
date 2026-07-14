@@ -55,7 +55,7 @@
             :show-overflow-tooltip="true"
             class="rl-grid-table"
           >
-            <el-table-column label="方向" width="60">
+            <el-table-column label="方向" width="100">
               <template #default="{ row }">
                 <span :class="['rl-dir-chip', row.direction]">
                   {{ row.direction === 'buy' ? '买' : '卖' }}
@@ -67,7 +67,7 @@
                 <span class="text-mono">{{ row.trigger_price.toFixed(3) }}</span>
               </template>
             </el-table-column>
-            <el-table-column label="量" width="80" align="right">
+            <el-table-column label="量" width="100" align="right">
               <template #default="{ row }">
                 <span class="text-mono">{{ row.volume }}</span>
               </template>
@@ -77,13 +77,13 @@
                 {{ row.fired_count || 0 }} / {{ row.max_fires ?? '∞' }}
               </template>
             </el-table-column>
-            <el-table-column label="启用" width="60">
+            <el-table-column label="启用" width="100">
               <template #default="{ row }">
                 <el-tag v-if="row.enabled === false" size="small" type="info">停用</el-tag>
                 <el-tag v-else size="small" type="success">启用</el-tag>
               </template>
             </el-table-column>
-            <el-table-column label="优先级" width="80" align="right">
+            <el-table-column label="优先级" width="100" align="right">
               <template #default="{ row }">
                 <span class="text-mono">{{ row.priority }}</span>
               </template>

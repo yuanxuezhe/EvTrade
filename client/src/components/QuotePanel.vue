@@ -346,6 +346,9 @@ startTick()
   gap: 8px;
   font-family: 'Roboto Mono', 'Menlo', monospace;
   font-size: 13px;
+  /* v32: 修 commit 4 副作用 — 五档 + 11 个数据格 在 206.5px cell 内溢出, 加纵向滚动 */
+  overflow-y: auto;
+  min-height: 0;
 }
 
 /* ① 头部 */

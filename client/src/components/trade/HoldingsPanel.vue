@@ -46,37 +46,37 @@
         :key="quoteTick"
       >
         <!-- v31.1: 10 列布局, 列宽压缩适应窄列 mini panel (目标总宽 ~720px fit 856 viewport) -->
-        <el-table-column prop="stock_code" label="代码" width="76" fixed="left">
+        <el-table-column prop="stock_code" label="代码" width="100" fixed="left">
           <template #default="{ row }">
             <span class="tp-stock-code">{{ row.stock_code }}</span>
           </template>
         </el-table-column>
-        <el-table-column prop="stock_name" label="名称" width="64" show-overflow-tooltip>
+        <el-table-column prop="stock_name" label="名称" width="100" show-overflow-tooltip>
           <template #default="{ row }">
             <span class="text-secondary">{{ stockName(row.stock_code) || '—' }}</span>
           </template>
         </el-table-column>
-        <el-table-column prop="last_vol" label="期初" align="right" width="64">
+        <el-table-column prop="last_vol" label="期初" align="right" width="100">
           <template #default="{ row }">
             <span class="text-mono">{{ formatNumber(row.last_vol) }}</span>
           </template>
         </el-table-column>
-        <el-table-column prop="vol" label="持仓" align="right" width="64">
+        <el-table-column prop="vol" label="持仓" align="right" width="100">
           <template #default="{ row }">
             <span class="text-mono">{{ formatNumber(row.vol) }}</span>
           </template>
         </el-table-column>
-        <el-table-column prop="avl_vol" label="可用" align="right" width="64">
+        <el-table-column prop="avl_vol" label="可用" align="right" width="100">
           <template #default="{ row }">
             <span class="text-mono">{{ formatNumber(row.avl_vol) }}</span>
           </template>
         </el-table-column>
-        <el-table-column prop="cost_price" label="成本" align="right" width="68">
+        <el-table-column prop="cost_price" label="成本" align="right" width="100">
           <template #default="{ row }">
             <span class="text-mono">{{ row.cost_price != null ? formatMoney(row.cost_price) : '—' }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="最新" align="right" width="68">
+        <el-table-column label="最新" align="right" width="100">
           <template #default="{ row }">
             <span
               v-if="getLastPrice(row.stock_code) != null"
@@ -88,7 +88,7 @@
             <span v-else class="text-muted">—</span>
           </template>
         </el-table-column>
-        <el-table-column label="市值" align="right" width="80">
+        <el-table-column label="市值" align="right" width="100">
           <template #default="{ row }">
             <span v-if="getMarketValue(row) != null" class="text-mono">
               {{ formatMoney(getMarketValue(row)) }}
@@ -96,7 +96,7 @@
             <span v-else class="text-muted">—</span>
           </template>
         </el-table-column>
-        <el-table-column label="浮动盈亏" align="right" width="90">
+        <el-table-column label="浮动盈亏" align="right" width="100">
           <template #default="{ row }">
             <template v-if="getProfit(row) != null">
               <span class="text-mono" :class="profitClass(getProfit(row))">
@@ -106,7 +106,7 @@
             <span v-else class="text-muted">—</span>
           </template>
         </el-table-column>
-        <el-table-column label="收益率" align="right" width="80" fixed="right">
+        <el-table-column label="收益率" align="right" width="100" fixed="right">
           <template #default="{ row }">
             <template v-if="getReturnRate(row) != null">
               <span class="text-mono" :class="profitClass(getReturnRate(row))">

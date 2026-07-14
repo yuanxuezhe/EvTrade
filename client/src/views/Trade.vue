@@ -130,6 +130,7 @@ function onApplyPrice(price) {
   flex-direction: column;
   min-width: 0;
   min-height: 0;
+  /* v32 (commit 4): overflow hidden 防止内容溢出到隔壁 cell, 横向滚动由内层 el-scrollbar 处理 */
   overflow: hidden;
 }
 

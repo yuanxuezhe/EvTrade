@@ -83,16 +83,16 @@
           empty-text="无数据"
           style="margin-top: 12px"
         >
-          <el-table-column prop="stock_code" label="代码" min-width="110" />
-          <el-table-column prop="stock_name" label="名称" min-width="110" />
-          <el-table-column prop="sector" label="板块" min-width="140" show-overflow-tooltip />
+          <el-table-column prop="stock_code" label="代码" min-width="100" />
+          <el-table-column prop="stock_name" label="名称" min-width="100" />
+          <el-table-column prop="sector" label="板块" min-width="100" show-overflow-tooltip />
           <el-table-column label="回转标志" width="100" align="center">
             <template #default="{ row }">
               <el-tag v-if="row.is_t0_able" type="success" size="small">T+0</el-tag>
               <el-tag v-else type="info" size="small">T+1</el-tag>
             </template>
           </el-table-column>
-          <el-table-column prop="min_buy_qty" label="最小买入数量" width="110" align="right">
+          <el-table-column prop="min_buy_qty" label="最小买入数量" width="100" align="right">
             <template #default="{ row }">
               <span class="text-mono">{{ row.min_buy_qty ?? 100 }}</span>
             </template>
@@ -102,12 +102,12 @@
               <span class="text-mono">{{ row.trade_unit ?? 1 }}</span>
             </template>
           </el-table-column>
-          <el-table-column prop="short_name" label="首字母" width="90" align="center">
+          <el-table-column prop="short_name" label="首字母" width="100" align="center">
             <template #default="{ row }">
               <span class="text-mono">{{ row.short_name || '—' }}</span>
             </template>
           </el-table-column>
-          <el-table-column label="操作" width="80" fixed="right">
+          <el-table-column label="操作" width="100" fixed="right">
             <template #default="{ row }">
               <el-button size="small" link type="primary" @click="onEdit(row)">
                 编辑
