@@ -1256,3 +1256,33 @@ The system SHALL render `client/src/components/StockCodeAutocomplete.vue` 为左
 - 改 `client/src/components/OrderForm.vue` 第 38-51 行 template: `el-radio-group + el-radio(border) + class="price-type-grid"` → `el-radio-group + el-radio-button(size="default")`
 - 删 `client/src/components/OrderForm.vue` 第 364-386 行 `.price-type-grid` / `:deep(.price-type-grid .el-radio*)` 死 CSS
 - 数据流不变 (`v-model="form.price_type"` + `PriceType.FIX_PRICE` 校验逻辑不动); 后端协议 `{price_type: 0|1|2}`（v__: 与 xtconstant 柜台协议 1:1 对齐）
+
+
+### REQ-FE-INIT-001: 收到 init_completed 触发 store 刷新
+
+- **WHEN** ws 收到 `{type:'init_completed', trd_date, report_id, status, ts}` payload
+- **THEN** 前端 `client/src/stores/ws_dispatch.js::_onInitCompleted(data)` 触发：
+  1. `useHoldingsStore().refreshAll()` — 并行 4 RPC（asset / positions / orders / trades）写缓存
+  2. `useAssetStore().fetchAsset()` — 资金刷新（兼容老 view，holdings 已含 cachedAsset 但 store 桥接另算）
+  3. `usePositionStore().fetchPositions()` — 持仓刷新（同上兼容）
+- **AND** 不弹 toast / 不弹 Notification（静默刷新，与 AppHeader 按钮行为对齐）
+- **AND** 失败由 `holdings.refreshAll()` 内部 refCounts 守门，不抛异常到 UI
+- **AND** SystemInit.vue::handleInit 收到 HTTP 200 后**也**直接调一次 refreshAll（双保险，不依赖 ws 推送成功）
+
+#### Scenario: init_completed 全量刷新
+
+- **WHEN** 后端推 init_completed (status='ok')
+- **THEN** 持仓页 / 资金页数字立即更新（无需点 AppHeader 刷新按钮）
+
+#### Scenario: 双保险 — HTTP 200 同步刷新 + ws 推送
+
+- **WHEN** SystemInit.vue::handleInit 收到 HTTP 200
+- **THEN** **也**直接调一次 refreshAll（不依赖 ws 推送成功）
+- **AND** ws init_completed 到达后**再**调一次 refreshAll（最终一致性）
+- **AND** 两次 refreshAll 内部幂等（refCounts 已就位时跳过）
+
+#### Scenario: ws 未连接 / 推送丢失
+
+- **WHEN** 用户 ws 断开（refreshAll 已弹错）
+- **THEN** handleInit 同步刷新路径保证持仓页更新
+- **AND** 下次 ws 重连后 init_completed 不会重放（fire-and-forget，无重试）

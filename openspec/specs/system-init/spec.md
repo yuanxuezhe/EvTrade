@@ -51,13 +51,64 @@ do_reconcile(trd_date=today)
   ↓
 UPDATE sys_status SET trd_date=today, last_reconcile_at=now
   ↓
-WS 推 {channel: "system_update", type: "trading_day_changed", trd_date: today}
+WS 推 {channel: "system_update", type: "init_completed", trd_date: today, report_id, status}
 ```
+
+### REQ-INIT-003.1: 日初成功后 ws 推 init_completed
+
+- **WHEN** `POST /api/admin/sys-status/init` 成功（`result.ok=True` 且 `rpc_status != 'failed'`，即 `'ok'` 或 `'partial'`）
+- **THEN** 后端通过 `ws_manager.broadcast('system_update', ...)` 推送 1 帧：
+  ```json
+  {
+    "type": "init_completed",
+    "trd_date": "20260715",
+    "report_id": 123,
+    "status": "ok" | "partial",
+    "ts": "2026-07-15T15:30:00"
+  }
+  ```
+- **AND** 不阻塞 HTTP 响应（`asyncio.ensure_future` 调度，与 `services/push/dispatcher.py::_broadcast_trade_cfm` 范式一致）
+- **AND** `status` 字段语义：`'ok'` = 全部 RPC 成功；`'partial'` = 部分 RPC 失败但交易日仍切成功
+- **AND** 失败通道：`rpc_status='failed'`（全部 RPC 失败）→ **不**推送，前端 AppHeader 刷新按钮兜底
+- **AND** `reconcile_only` 端点 (`POST /api/admin/sys-status/reconcile`) **不**推送（仅生成报告不切日，详见 REQ-INIT-005）
+
+#### Scenario: 全成功
+
+- **WHEN** `do_reconcile` 返回 `ok=True, applied=True, error=None`
+- **THEN** 推 `status='ok'`，所有持仓/资金数据已落 DB
+
+#### Scenario: 部分 RPC 失败但交易日切成功
+
+- **WHEN** `do_reconcile` 返回 `ok=True, applied=True, error='qry_positions: timeout'`（positions 拉取失败但 asset 成功）
+- **THEN** 仍推 `status='partial'`，前端刷新但持仓数可能缺失
+
+#### Scenario: 全部 RPC 失败
+
+- **WHEN** `do_reconcile` 返回 `ok=False, error='全部 RPC 失败: ...'`
+- **THEN** **不**推送，前端 AppHeader 按钮兜底
+
+#### Scenario: 仅生成对账报告（manual mode）
+
+- **WHEN** `POST /api/admin/sys-status/reconcile` 调用
+- **THEN** **不**推送（持仓无变化）
 
 ### REQ-INIT-004: 三屏障与日初的依赖
 
 未做日初 → `/api/orders/place` 返 503 `RECONCILE_NOT_DONE`
 （见 `trading/spec.md` REQ-TRADE-005 三屏障）
+
+### REQ-INIT-005: reconcile_only 不推送
+
+- **WHEN** `POST /api/admin/sys-status/reconcile` 端点（仅 manual 模式生成报告）
+- **THEN** **不**推送 init_completed（持仓无变化，无需刷新）
+- **AND** 仅刷新 SystemInit 页内的 `loadReports()`，不通知其他 tab
+
+#### Scenario: reconcile_only 仅写报告
+
+- **WHEN** admin 调 reconcile_only (`mode='manual'`)
+- **THEN** do_reconcile 写 report 但不切交易日
+- **AND** ws 不推送 init_completed
+- **AND** SystemInit 页 loadReports() 刷新历史报告列表
 
 ## 影响 cap
 

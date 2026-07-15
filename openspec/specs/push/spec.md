@@ -21,9 +21,11 @@ QMT 柜台通过 RabbitMQ 主动推送（`EvTrade.Test.Push` 队列）异步通�
 |---|---|---|---|
 | `ord_cfm` | 委托状态变更/成交 | `order_update` | 替换 store 中同 order_no 的项；**status 字段是后端本地推断结果**（见 REQ-PUSH-005） |
 | `trd_cfm` | 成交回报 | `trade_update` | 追加到 trades 列表 |
-| `qry_pos` 等查询响应 | ❌ **不应在 push 出现** | — | 忽略，**应被 reply 队列消费** |
+| qry_pos 等查询响应 | ❌ **不应在 push 出现** | — | 忽略，**应被 reply 队列消费** |
 | ~~`pos_cfm`~~ | ❌ broker 不发 | — | consolidate-position-data-flow: 已删除 |
 | ~~`ast_cfm`~~ | ❌ broker 不发 | — | consolidate-position-data-flow: 已删除 |
+| **业务事件** | | | |
+| `init_trading_day` 成功 | `init_completed` | `system_update` | 客户端 `client/src/stores/ws_dispatch.js::_onInitCompleted` 触发 holdings.refreshAll + asset/position fetch (REQ-INIT-003.1) |
 
 ### REQ-PUSH-003: WS 频道 → 前端 store
 
@@ -31,6 +33,7 @@ QMT 柜台通过 RabbitMQ 主动推送（`EvTrade.Test.Push` 队列）异步通�
 - `trade_update` → 追加到 trades
 - ~~`position_update`~~ → consolidate-position-data-flow: 频道已删除（broker 不发 pos_cfm）
 - ~~`asset_update`~~ → consolidate-position-data-flow: 频道已删除（broker 不发 ast_cfm）
+- **`system_update`** → 2026-07-15-system-init-broadcast: `init_completed` 触发 holdings/asset/position store 全量刷新（详见 REQ-PUSH-006）
 - **端点实现位置**（phase-2 拆分后）：`server/ws/endpoint.py::register_ws_endpoint(app)`，在 `server/main.py` 启动装配时调一次注册 `/ws/{channel}` 端点
   - 认证 / 接入 / 双向心跳 / 4408 timeout 关闭全部在该模块
   - ws_manager 单例由 `server/ws/manager.py` 提供（业务推送 `server/services/push_handlers.py` 也共用）
@@ -448,3 +451,32 @@ RS2: [{
 - ✅ consolidate-position-data-flow: `pos_cfm` / `ast_cfm` / `position_update` / `asset_update` 已删除（REQs 032/033），handler dead code 清除
 - 🟡 `func=qry_pos` 误路由问题根因是 QMT 端，不在本项目修复范围但需健壮处理
 - 🟢 push listener 的解析器 `_parse_ord_cfm` 散落在 `client.py`，应统一为 `rpc-protocol` 能力
+
+
+## 业务事件频道（2026-07-15-system-init-broadcast）
+
+### REQ-PUSH-006: system_update 频道
+
+- 后端 `server/ws/manager.py` `active_connections` 注册 `system_update: Set[WebSocket]`
+- 用途：服务端主动推送"系统级业务事件"（日初完成等），与行情/委托/成交增量推送并列
+- 触发源：**业务接口**（`init_trading_day` handler）而非 broker push；与 REQ-PUSH-001 push 队列监听同框架、不同来源
+- 端点：`ws://host:8000/ws/system_update`，鉴权与现有频道一致（JWT token query param）
+- 前端订阅方式：`wsStore.connectChannel('system_update')`，无需 stock_codes（系统事件不分股票）
+
+#### Scenario: 新 ws 连接 system_update 频道
+
+- **WHEN** 前端 `ws.connectToChannel('system_update')`
+- **THEN** ws 进入 `system_update` 频道（注册到 active_connections）
+- **AND** 之后所有 `ws_manager.broadcast('system_update', payload)` 均能收到
+
+#### Scenario: 日初成功后推 init_completed
+
+- **WHEN** admin POST /api/admin/sys-status/init 成功（result.ok=True, rpc_status != 'failed'）
+- **THEN** 后端 `asyncio.ensure_future(ws_manager.broadcast('system_update', {type:'init_completed', trd_date, report_id, status, ts}, trace_id=...))`
+- **AND** 不阻塞 HTTP 响应
+- **AND** 前端 ws_dispatch._onInitCompleted 触发 holdings/asset/position store 刷新
+
+#### Scenario: 零订阅者不报错
+
+- **WHEN** 当前 system_update 频道无 ws 连接
+- **THEN** ws_manager.broadcast 静默返回（不抛异常），与现有 quote/order/trade 频道行为一致
