@@ -1,20 +1,22 @@
 """
 api/stocks.py — 股票基础信息查询 REST 端点
 v25 stocks-cache-and-short-name: 真分页 page/page_size + total 返回 + short_name 白名单
+v46 stock-info-create: 新增 POST /api/stocks admin 手动添加
 
 端点:
 - GET   /api/stocks                  列表(真分页 page/page_size,服务端筛选 sector/keyword/is_t0_able)
 - GET   /api/stocks/{stock_code}     按代码查详情
 - PATCH /api/stocks/{stock_code}     admin 编辑 stocks 行 (v22 stock-info-editor, v23 字段同步, v25 +short_name)
+- POST  /api/stocks                  admin 添加 stocks 行 (v46 stock-info-create, 8 字段白名单)
 
 鉴权:
 - GET: _AUTH (任意登录用户)
-- PATCH: require_admin (admin only,内联覆盖)
+- PATCH/POST: require_admin (admin only,内联覆盖)
 """
 from typing import Optional, List
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, validator
 from sqlalchemy import func as sa_func
 
 from server.db import get_db
@@ -165,3 +167,54 @@ async def update_stock(stock_code: str, body: StockUpdateRequest, db=Depends(get
     if updated is None:
         raise HTTPException(status_code=404, detail=f"stock {stock_code} not found")
     return {"code": 0, "msg": "ok", "data": stocks_repo.to_dict(updated)}
+
+
+# ============================================================
+# POST — v46 stock-info-create admin 手动添加
+# ============================================================
+
+# 证券代码正则:6 位数字 + .SH/.SZ/.BJ 后缀(A 股沪深京)
+STOCK_CODE_REGEX = r"^\d{6}\.(SH|SZ|BJ)$"
+
+
+class StockCreateRequest(BaseModel):
+    """admin 添加 stocks 行的字段白名单(REQ-STOCK-006)
+
+    8 字段:
+    - stock_code: PK, 必填, regex 校验(000001.SZ / 600000.SH / 920169.BJ)
+    - stock_name: 必填, max 64
+    - sector / short_name: 可选
+    - is_t0_able / min_buy_qty / trade_unit: 有默认值
+
+    v46 严格白名单:`extra=forbid` 让 industry/market/intro 等 v22 旧字段
+    在 Pydantic 层即抛 422(防数据脏)
+    """
+    stock_code: str = Field(..., regex=STOCK_CODE_REGEX, max_length=16)
+    stock_name: str = Field(..., min_length=1, max_length=64)
+    sector: Optional[str] = Field(None, max_length=64)
+    short_name: Optional[str] = Field(None, max_length=16)
+    is_t0_able: bool = False
+    min_buy_qty: int = Field(100, ge=1)
+    trade_unit: int = Field(1, ge=1)
+
+    class Config:
+        extra = "forbid"
+
+
+@router.post("", status_code=201, dependencies=[Depends(require_admin)])
+async def create_stock(body: StockCreateRequest, db=Depends(get_db)):
+    """admin 手动添加单只股票到 stocks 表(REQ-STOCK-006)
+
+    Returns:
+        {code:0, msg:"ok", data:{...}}  新插入的完整 stock
+        409: stock_code 已存在
+        422: 字段校验失败(由 Pydantic 自动处理)
+    """
+    payload = body.dict()
+    new_stock = stocks_repo.create_by_admin(db, payload)
+    if new_stock is None:
+        raise HTTPException(
+            status_code=409,
+            detail=f"stock {body.stock_code} already exists"
+        )
+    return {"code": 0, "msg": "ok", "data": stocks_repo.to_dict(new_stock)}

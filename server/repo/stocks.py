@@ -103,6 +103,39 @@ def update_by_admin(db: Session, stock_code: str, data: Dict) -> Optional[Stock]
     return existing
 
 
+def create_by_admin(db: Session, data: Dict) -> Optional[Stock]:
+    """admin 手动添加 stocks 行(REQ-STOCK-006)
+
+    与 upsert 的区别:
+    - upsert 是爬虫自动入仓,7 天阈值跳过
+    - create_by_admin 是 admin 手动新增,无阈值,stock_code 必填且必须不存在
+
+    Args:
+        db: SQLAlchemy Session
+        data: dict,必含 stock_code;其余字段走白名单 _ADMIN_EDITABLE_FIELDS 过滤
+
+    Returns:
+        新插入的 Stock ORM 对象,或 None(stock_code 已存在 → API 层抛 409)
+    """
+    stock_code = data.get('stock_code')
+    if not stock_code:
+        return None  # API 层会在 Pydantic 阶段拦截(必填字段)
+
+    # 重复检查(API 层会基于 None 返 409)
+    existing = db.query(Stock).filter_by(stock_code=stock_code).first()
+    if existing is not None:
+        return None
+
+    # 只允许白名单字段,stock_code 单独处理
+    payload = {k: v for k, v in data.items()
+               if k in _ADMIN_EDITABLE_FIELDS and hasattr(Stock, k)}
+    stock = Stock(stock_code=stock_code, **payload)
+    db.add(stock)
+    db.commit()
+    db.refresh(stock)
+    return stock
+
+
 def list_all(db: Session, limit: Optional[int] = None) -> List[Stock]:
     q = db.query(Stock).order_by(Stock.stock_code)
     if limit:
