@@ -96,5 +96,16 @@ export const stocksApi = {
       payload
     )
     return data
+  },
+
+  /**
+   * admin 添加证券 (v46 stock-info-create, REQ-STOCK-006)
+   * @param {Object} payload 8 字段: stock_code(必填) + stock_name(必填) + 可选 sector/short_name/is_t0_able/min_buy_qty/trade_unit
+   * @returns {Promise<Object>} 新插入的完整 stock
+   *   错误处理: 409 (重复) / 422 (字段校验失败) 由调用方 catch
+   */
+  async create(payload) {
+    const { data } = await http.post('/stocks', payload)
+    return data
   }
 }

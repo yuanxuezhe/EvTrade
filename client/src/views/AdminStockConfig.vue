@@ -34,6 +34,10 @@
           <el-button :icon="Refresh" :loading="store.loading" @click="onRefresh">
             刷新
           </el-button>
+          <!-- v46 stock-info-create: 添加证券按钮 (独立于编辑 dialog) -->
+          <el-button type="primary" @click="onCreateOpen">
+            添加证券
+          </el-button>
         </div>
 
         <!-- 筛选条 -->
@@ -199,6 +203,42 @@
         </el-button>
       </template>
     </el-dialog>
+
+    <!-- ==================== 添加证券 dialog (v46 stock-info-create) ==================== -->
+    <el-dialog v-model="createDialogVisible" title="添加证券" width="520px" :close-on-click-modal="false">
+      <el-form ref="createFormRef" :model="createForm" :rules="createRules" label-width="100px">
+        <el-form-item label="证券代码" prop="stock_code">
+          <el-input v-model="createForm.stock_code" placeholder="例如 600519.SH" maxlength="16" />
+        </el-form-item>
+        <el-form-item label="证券名称" prop="stock_name">
+          <el-input v-model="createForm.stock_name" placeholder="例如 贵州茅台" maxlength="64" />
+        </el-form-item>
+        <el-form-item label="所属板块" prop="sector">
+          <el-input v-model="createForm.sector" placeholder="可选,例如 消费" maxlength="64" />
+        </el-form-item>
+        <el-form-item label="简称" prop="short_name">
+          <el-input v-model="createForm.short_name" placeholder="可选,例如 茅台" maxlength="16" />
+        </el-form-item>
+        <el-form-item label="T+0">
+          <el-switch v-model="createForm.is_t0_able" />
+          <span style="margin-left: 12px; color: #909399; font-size: 12px;">默认 false (T+1)</span>
+        </el-form-item>
+        <el-form-item label="最小买入">
+          <el-input-number v-model="createForm.min_buy_qty" :min="1" :step="100" />
+          <span style="margin-left: 8px; color: #909399; font-size: 12px;">股</span>
+        </el-form-item>
+        <el-form-item label="买卖单位">
+          <el-input-number v-model="createForm.trade_unit" :min="1" :step="1" />
+          <span style="margin-left: 8px; color: #909399; font-size: 12px;">手</span>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="createDialogVisible = false">取消</el-button>
+        <el-button type="primary" :loading="store.createLoading" @click="onCreateSave">
+          添加
+        </el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -251,6 +291,78 @@ async function onSave() {
 function onDialogClosed() {
   store.closeEdit()
   editingCodeRef.value = ''
+}
+
+// ==================== 添加证券 (v46 stock-info-create) ====================
+
+// dialog 可见性 + form ref
+const createDialogVisible = ref(false)
+const createFormRef = ref(null)
+
+// form 数据模板(每次打开重置)
+const emptyCreateForm = () => ({
+  stock_code: '',
+  stock_name: '',
+  sector: '',
+  short_name: '',
+  is_t0_able: false,
+  min_buy_qty: 100,
+  trade_unit: 1
+})
+const createForm = ref(emptyCreateForm())
+
+// form 校验规则(与后端 Pydantic StockCreateRequest 对齐)
+const createRules = {
+  stock_code: [
+    { required: true, message: '请输入证券代码', trigger: 'blur' },
+    {
+      pattern: /^\d{6}\.(SH|SZ|BJ)$/,
+      message: '格式必须是 6 位数字 + .SH/.SZ/.BJ (例如 600519.SH)',
+      trigger: 'blur'
+    }
+  ],
+  stock_name: [
+    { required: true, message: '请输入证券名称', trigger: 'blur' },
+    { min: 1, max: 64, message: '长度 1-64 字符', trigger: 'blur' }
+  ],
+  sector: [{ max: 64, message: '最长 64 字符', trigger: 'blur' }],
+  short_name: [{ max: 16, message: '最长 16 字符', trigger: 'blur' }],
+  min_buy_qty: [{ type: 'number', min: 1, message: '≥ 1', trigger: 'blur' }],
+  trade_unit: [{ type: 'number', min: 1, message: '≥ 1', trigger: 'blur' }]
+}
+
+// 打开 dialog:重置 form + 清校验
+function onCreateOpen() {
+  createForm.value = emptyCreateForm()
+  createFormRef.value?.clearValidate()
+  createDialogVisible.value = true
+}
+
+// 提交
+async function onCreateSave() {
+  try {
+    await createFormRef.value?.validate()
+  } catch {
+    return  // Element Plus 已显示行内错误
+  }
+  // 把空字符串转 null(后端 Optional 字段友好)
+  const payload = {
+    stock_code: createForm.value.stock_code.trim(),
+    stock_name: createForm.value.stock_name.trim(),
+    sector: createForm.value.sector.trim() || null,
+    short_name: createForm.value.short_name.trim() || null,
+    is_t0_able: createForm.value.is_t0_able,
+    min_buy_qty: createForm.value.min_buy_qty,
+    trade_unit: createForm.value.trade_unit
+  }
+  const r = await store.createStock(payload)
+  if (r.ok) {
+    ElMessage.success(`已添加 ${payload.stock_code} ${payload.stock_name}`)
+    createDialogVisible.value = false
+  } else {
+    // 422 (字段校验) / 409 (重复) 都走这里
+    ElMessage.error(r.msg)
+  }
 }
 
 // autocomplete 选中候选时:刷新 editForm (拉新 stock 的详情)

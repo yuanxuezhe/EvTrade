@@ -186,6 +186,38 @@ export const useStocksStore = defineStore('stocks', () => {
     return hit?.stock_name || null
   }
 
+  // ==================== 添加 (v46 stock-info-create) ====================
+
+  // 添加 loading（与 editLoading 同）
+  const createLoading = ref(false)
+
+  /**
+   * admin 添加证券（REQ-STOCK-006 / REQ-FE-STOCK-CREATE）
+   * 同时同步 cache + total + pageRows
+   * @param {Object} payload 8 字段: stock_code(必填) + stock_name(必填) + 可选 sector/short_name/is_t0_able/min_buy_qty/trade_unit
+   * @returns {Promise<{ok: boolean, msg?: string, data?: Object}>}
+   */
+  async function createStock(payload) {
+    createLoading.value = true
+    try {
+      const data = await stocksApi.create(payload)
+      // 同步 cache（unshift 头部，便于 autocomplete）
+      cache.value.unshift(data)
+      // total +1
+      total.value += 1
+      // 当前页立即显示（如果当前是第 1 页或 pageRows 空）
+      if (page.value === 1) {
+        pageRows.value.unshift(data)
+      }
+      return { ok: true, msg: '添加成功', data }
+    } catch (e) {
+      const msg = e?.response?.data?.detail || e?.message || '添加失败'
+      return { ok: false, msg }
+    } finally {
+      createLoading.value = false
+    }
+  }
+
   /**
    * 保存编辑（PATCH）
    * 同时刷新 cache + pageRows + 后端
@@ -239,6 +271,7 @@ export const useStocksStore = defineStore('stocks', () => {
     editingCode,
     editForm,
     editLoading,
+    createLoading,  // v46 stock-info-create
     // actions
     loadCache,
     searchCache,
@@ -248,6 +281,7 @@ export const useStocksStore = defineStore('stocks', () => {
     openEdit,
     closeEdit,
     saveEdit,
+    createStock,  // v46 stock-info-create
     stockName
   }
 })
