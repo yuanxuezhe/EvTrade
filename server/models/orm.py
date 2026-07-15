@@ -85,7 +85,7 @@ class Order(Base):
     user_def = Column(String(255), nullable=False, default="")      # 外部自定义信息透传
     stock_code = Column(String(16), nullable=False)
     order_type = Column(String(2), nullable=False)                  # 23=买 24=卖
-    price_type = Column(Integer, nullable=False, default=11)
+    price_type = Column(Integer, nullable=False, default=0)
     price = Column(Float, nullable=False, default=0.0)
     volume = Column(Integer, nullable=False, default=0)
     traded_volume = Column(Integer, nullable=False, default=0)

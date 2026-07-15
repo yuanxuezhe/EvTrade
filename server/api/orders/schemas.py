@@ -20,7 +20,7 @@ class PlaceOrderRequest(BaseModel):
     user_def: str = ""                # 外部自定义信息透传（无业务约束）
     stock_code: str
     order_type: str          # 23=买 24=卖
-    price_type: int = PriceType.LIMIT  # 默认限价单
+    price_type: int = PriceType.FIX_PRICE  # 默认限价单
     price: float
     volume: int
     t0_coefficient: float = 1.0
