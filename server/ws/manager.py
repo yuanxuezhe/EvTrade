@@ -53,6 +53,11 @@ class WSManager:
             "quote_update": set(),
             # change strategy_trade: 策略引擎事件频道（regime_changed / grid_triggered / regime_cooldown）
             "strategy_update": set(),
+            # change 2026-07-15-system-init-broadcast: 系统级事件频道
+            #   - 日初成功 → init_completed
+            #   - (后续) 对账失败 / 切日失败等扩展位
+            #   - 与 push 事件频道并列，但触发源是 init_trading_day 业务接口而非 broker push
+            "system_update": set(),
         }
         # 2026-07-09 quote-snapshot-subscribe:
         #   stock_code -> Set[WebSocket]：倒排索引（订阅了此 code 的 ws 集合）
