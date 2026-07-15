@@ -22,6 +22,9 @@ import { useHoldingsStore } from './holdings'
 import { useStrategyStore } from './strategy'
 import { useSyncStore } from './sync'  // v21 stock-info-crawler
 import { useWsStore } from './ws'
+// change 2026-07-15-system-init-broadcast: 收到 init_completed 时需要刷新 asset/position store
+import { useAssetStore } from './asset'
+import { usePositionStore } from './position'
 import { STATUS_LABEL } from '../utils/format'
 import { makeLogger } from '../utils/logger'
 
@@ -47,6 +50,8 @@ export function dispatchPayload(payload) {
   else if (t === 'sync_failed') _onSyncFailed(payload.data)
   else if (t === 'sync_stopped') _onSyncStopped(payload.data)
   else if (t === 'stock_synced') _onStockSynced(payload.data)
+  // change 2026-07-15-system-init-broadcast: 日初成功后推 init_completed → 全量刷新缓存
+  else if (t === 'init_completed') _onInitCompleted(payload.data)
 }
 
 /**
@@ -256,6 +261,27 @@ function _onStockSynced(data) {
   if (!data) return
   try { useSyncStore().onStockSynced(data) }
   catch (e) { log.warn('_onStockSynced:', e?.message) }
+}
+
+// ============================================================
+// change 2026-07-15-system-init-broadcast: 收到后端 init_completed
+//   → 全量刷新 holdings/asset/position store (与 AppHeader 刷新按钮行为一致)
+//   → 不弹 toast / Notification, 静默更新 (用户期望与点刷新按钮同体验)
+//   → ws 推失败时由 SystemInit.vue handleInit 同步刷新路径兜底
+// ============================================================
+function _onInitCompleted(data) {
+  if (!data) return
+  log.info('init_completed 收到:', data.trd_date, 'status=', data.status, 'report_id=', data.report_id)
+  try {
+    const hs = useHoldingsStore()
+    // refreshAll 内部已用 Promise.allSettled 并行 + refCounts 守门
+    hs.refreshAll()
+    // 兼容老 view (Position.vue / Asset.vue 通过 store.fetch* 拿数据)
+    useAssetStore().fetchAsset()
+    usePositionStore().fetchPositions()
+  } catch (e) {
+    log.warn('_onInitCompleted refresh failed:', e?.message)
+  }
 }
 
 /**

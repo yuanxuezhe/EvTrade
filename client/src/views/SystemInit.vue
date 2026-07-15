@@ -142,6 +142,12 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Setting } from '@element-plus/icons-vue'
 import { sysStatusApi, reconcileApi } from '../api/admin'
 import { http } from '../api'
+// change 2026-07-15-system-init-broadcast: handleInit 成功后同步刷新 holdings/asset/position
+//   双保险: 即便 ws init_completed 推送丢失/未连, 用户也能立即看到新持仓
+import { useHoldingsStore } from '../stores/holdings'
+import { useAssetStore } from '../stores/asset'
+import { usePositionStore } from '../stores/position'
+// change 2026-07-15-system-init-broadcast end
 
 const loading = reactive({
   current: false,
@@ -218,6 +224,14 @@ async function handleInit() {
       ElMessage.success(`日初成功：${result.report_id || ''}`)
       loadCurrent()
       loadReports()
+      // change 2026-07-15-system-init-broadcast: 双保险 — 即便 ws init_completed 推送丢失/未连, 也能立即刷新
+      //   ws 是主路径（多 tab 自动同步）, 此处是兜底（同 tab 立即可见）
+      try {
+        const hs = useHoldingsStore()
+        hs.refreshAll()
+        useAssetStore().fetchAsset()
+        usePositionStore().fetchPositions()
+      } catch (_e) { /* store 未就绪时忽略, 不影响 HTTP 200 路径 */ }
     } else {
       ElMessage.error(`日初失败：${result.msg || '未知错误'}（报告 #${result.report_id}）`)
     }
