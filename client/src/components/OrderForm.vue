@@ -54,9 +54,9 @@
             v-model="form.price"
             :min="0"
             :precision="2"
-            :step="form.price_type === PriceType.OPPONENT ? 0.01 : null"
-            :disabled="form.price_type !== PriceType.OPPONENT"
-            :placeholder="form.price_type === PriceType.OPPONENT ? '输入价格' : '市价单无需输入'"
+            :step="form.price_type === PriceType.FIX_PRICE ? 0.01 : null"
+            :disabled="form.price_type !== PriceType.FIX_PRICE"
+            :placeholder="form.price_type === PriceType.FIX_PRICE ? '输入价格' : '市价单无需输入'"
             controls-position="right"
             style="width: 100%"
           />
@@ -87,7 +87,7 @@
           <div class="summary-row">
             <span class="summary-label">预估金额</span>
             <span class="summary-value text-mono">
-              <template v-if="form.price_type === PriceType.OPPONENT">¥{{ formatMoney(estimatedAmount) }}</template>
+              <template v-if="form.price_type === PriceType.FIX_PRICE">¥{{ formatMoney(estimatedAmount) }}</template>
               <template v-else>— 市价单 —</template>
             </span>
           </div>
@@ -137,7 +137,7 @@ const form = reactive({
   order_type: OrderType.BUY,
   // 柜台 price_type 数字：5=最新价 14=对手价 (UI 称"限价") 44=市价
   //   原 11=指定价 已从 UI 选项中移除 (v__: UI"限价"实际送 14, 送参数 code 不变)
-  price_type: PriceType.OPPONENT,
+  price_type: PriceType.FIX_PRICE,
   price: 0,
   volume: 100
 })
@@ -155,7 +155,7 @@ const estimatedAmount = computed(() => (form.price || 0) * (form.volume || 0))
 
 // 切到非对手价 (最新价 5 / 市价 44) 时清空价格；切回对手价 (14) 也清空（避免残留的旧值误下单）
 watch(() => form.price_type, (newType, oldType) => {
-  if (newType !== PriceType.OPPONENT) {
+  if (newType !== PriceType.FIX_PRICE) {
     // 市价/最新价不依赖具体价格，但保留作为显示用也行；这里清空避免误读
     form.price = 0
   }
@@ -163,7 +163,7 @@ watch(() => form.price_type, (newType, oldType) => {
 
 // 外部双击行情价格带入：要求对手价 (UI 称"限价") 模式
 function onExternalApply(price) {
-  if (form.price_type !== PriceType.OPPONENT) form.price_type = PriceType.OPPONENT
+  if (form.price_type !== PriceType.FIX_PRICE) form.price_type = PriceType.FIX_PRICE
   form.price = Number(price)
 }
 defineExpose({ onExternalApply })
@@ -206,7 +206,7 @@ async function handleSubmit() {
     ElMessage.warning('请输入股票代码')
     return
   }
-  if (form.price_type === PriceType.OPPONENT && form.price <= 0) {
+  if (form.price_type === PriceType.FIX_PRICE && form.price <= 0) {
     ElMessage.warning('限价单需要输入价格')
     return
   }
@@ -214,7 +214,7 @@ async function handleSubmit() {
     ElMessage.warning('请输入数量')
     return
   }
-  const amountNote = form.price_type === PriceType.OPPONENT
+  const amountNote = form.price_type === PriceType.FIX_PRICE
     ? `预估金额 ¥${formatMoney(estimatedAmount.value)}`
     : `市价单（价格类型 ${form.price_type}）`
   try {
