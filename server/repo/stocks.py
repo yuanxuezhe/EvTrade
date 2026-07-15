@@ -1,18 +1,21 @@
 """
-repo/stocks.py — 股票基础信息 CRUD (v23 slim-stocks-table)
+repo/stocks.py — 股票基础信息 CRUD (v23 slim-stocks-table, v46+ short-name-auto)
 
 职责:
 - upsert:增量更新(7 天内跳过),crawler 自动入仓用
 - get_by_code:按代码查(前端展示用)
 - list_all:全表(同步任务遍历用)
 - list_codes:仅返回 stock_code 列表(轻量)
-- update_by_admin:admin 手动编辑 stocks 字段(白名单)
+- update_by_admin:admin 手动编辑 stocks 字段(白名单, stock_name 改动自动重算 short_name)
+- create_by_admin:admin 手动添加(自动生成 short_name, REQ-STOCK-007)
 - to_dict:ORM → dict(WS 推送用)
 - to_dict_from_data:raw dict (来自 crawler) → 标准 dict (WS 推送用)
 
 字段精简历史:
 - v21 (2026-07-10) stock-info-crawler: 14 个业务字段(基础信息 + 公司简介)
 - v23 (2026-07-12) slim-stocks-table: 6 个业务字段(基础信息 + 交易粒度)
+- v25 (2026-07-12) stocks-cache-and-short-name: +short_name 字段(7 字段)
+- v46+ (2026-07-15) short-name-auto: short_name 改为自动生成, admin 无需传 (REQ-STOCK-007)
   历史 14 字段数据保留在 stocks_legacy 表
 """
 from datetime import datetime, timedelta
@@ -21,6 +24,7 @@ from typing import List, Optional, Dict
 from sqlalchemy.orm import Session
 
 from server.models.orm import Stock
+from server.services.short_name import to_short_name  # v46+ REQ-STOCK-007
 
 
 # 增量 upsert 的"7 天内跳过"阈值
@@ -78,44 +82,49 @@ _ADMIN_EDITABLE_FIELDS = (
 
 
 def update_by_admin(db: Session, stock_code: str, data: Dict) -> Optional[Stock]:
-    """admin 显式编辑 stocks 表(REQ-STOCK-003)
+    """admin 显式编辑 stocks 表(REQ-STOCK-003 + REQ-STOCK-007)
 
     与 upsert 的区别:
     - upsert 是爬虫自动入仓,7 天阈值跳过
     - update_by_admin 是 admin 手动改,无阈值,白名单字段全覆盖
 
-    Args:
-        db: SQLAlchemy Session
-        stock_code: PK
-        data: dict,只接受白名单内字段
-
-    Returns:
-        更新后的 Stock ORM 对象,或 None(stock_code 不存在)
+    v46+: 若 stock_name 字段在 data 中被修改, 自动重算 short_name (REQ-STOCK-007)
+          data 中若含 short_name 也会被忽略 (admin 无权改)
     """
     existing = db.query(Stock).filter_by(stock_code=stock_code).first()
     if existing is None:
         return None
+
+    # v46+: 检测 stock_name 变化, 若变则重算 short_name
+    new_short_name = None
+    if 'stock_name' in data:
+        new_short_name = to_short_name(data['stock_name'])
+
     for k, v in data.items():
+        # v46+: 忽略 admin 传入的 short_name 字段
+        if k == 'short_name':
+            continue
         if k in _ADMIN_EDITABLE_FIELDS and hasattr(existing, k):
             setattr(existing, k, v)
+
+    # v46+: 应用重算后的 short_name
+    if new_short_name is not None:
+        existing.short_name = new_short_name
+
     db.commit()
     db.refresh(existing)
     return existing
 
 
 def create_by_admin(db: Session, data: Dict) -> Optional[Stock]:
-    """admin 手动添加 stocks 行(REQ-STOCK-006)
+    """admin 手动添加 stocks 行(REQ-STOCK-006 + REQ-STOCK-007)
 
     与 upsert 的区别:
     - upsert 是爬虫自动入仓,7 天阈值跳过
     - create_by_admin 是 admin 手动新增,无阈值,stock_code 必填且必须不存在
 
-    Args:
-        db: SQLAlchemy Session
-        data: dict,必含 stock_code;其余字段走白名单 _ADMIN_EDITABLE_FIELDS 过滤
-
-    Returns:
-        新插入的 Stock ORM 对象,或 None(stock_code 已存在 → API 层抛 409)
+    v46+: short_name 由 stock_name 自动派生 (REQ-STOCK-007)
+          data 中若含 short_name 会被忽略 (admin 无权传)
     """
     stock_code = data.get('stock_code')
     if not stock_code:
@@ -126,9 +135,12 @@ def create_by_admin(db: Session, data: Dict) -> Optional[Stock]:
     if existing is not None:
         return None
 
-    # 只允许白名单字段,stock_code 单独处理
+    # 只允许白名单字段,stock_code 单独处理;v46+ 排除 short_name (自动生成)
     payload = {k: v for k, v in data.items()
-               if k in _ADMIN_EDITABLE_FIELDS and hasattr(Stock, k)}
+               if k in _ADMIN_EDITABLE_FIELDS and hasattr(Stock, k) and k != 'short_name'}
+    # v46+: 自动生成 short_name (来自 stock_name)
+    payload['short_name'] = to_short_name(data.get('stock_name', ''))
+
     stock = Stock(stock_code=stock_code, **payload)
     db.add(stock)
     db.commit()

@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-backfill_short_name.py — 一次性灌入 stocks.short_name 字段 (v25 stocks-cache-and-short-name)
+backfill_short_name.py — 一次性灌入 stocks.short_name 字段 (v25 stocks-cache-and-short-name, v46+ 共享 to_short_name)
 
 用户指令（2026-07-12）: "后端数据库增加证券简称字段，填入名称拼音首字母，
 用来快速通过首字母筛选"
 
 策略:
   1. 读 stocks 表所有行
-  2. 用 pypinyin.lazy_pinyin 转每个汉字首字母(大写)
+  2. 用 server.services.short_name.to_short_name() 转每个 stock_name 首字母(大写, ST 前缀保留)
   3. UPDATE stocks SET short_name = ? WHERE stock_code = ?
   4. 跳过已填的(幂等, --force 覆盖)
 
@@ -22,7 +22,11 @@ backfill_short_name.py — 一次性灌入 stocks.short_name 字段 (v25 stocks-
     - 单条 UPDATE,无事务包裹(失败单条不影响整体)
 
 依赖: server/.env 含 EVTRADE_DB_URL (v20 MySQL-only 强制)
+
+v46+ 变更: to_short_name 移到 server/services/short_name.py (REQ-STOCK-007), 共享给
+create_by_admin / update_by_admin / 本脚本, 算法升级 (ST 前缀保留)
 """
+
 import argparse
 import os
 import sys
@@ -42,8 +46,7 @@ except ImportError:
     pass
 
 from sqlalchemy import text, create_engine
-from pypinyin import lazy_pinyin
-
+from server.services.short_name import to_short_name  # v46+ 共享函数 (REQ-STOCK-007)
 DATABASE_URL = os.environ.get("EVTRADE_DB_URL")
 if not DATABASE_URL:
     raise RuntimeError(
@@ -57,24 +60,8 @@ if not DATABASE_URL.startswith("mysql"):
 engine = create_engine(DATABASE_URL, pool_pre_ping=True)
 
 
-def to_short_name(stock_name: str) -> str:
-    """拼音首字母转大写
-
-    例:
-      平安银行 → PAYH
-      贵州茅台 → GZMT
-      *ST实达 → *SD
-      ST华微   → SHW
-
-    空字符串 / None → 空字符串
-    """
-    if not stock_name:
-        return ""
-    try:
-        initials = [s[0] for s in lazy_pinyin(stock_name) if s]
-        return "".join(initials).upper()[:16]
-    except Exception:
-        return ""
+# v46+ 共享函数: from server.services.short_name import to_short_name (上方已 import)
+# 删除本地副本, 防止算法漂移 (REQ-STOCK-007)
 
 
 def main():

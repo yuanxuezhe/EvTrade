@@ -126,26 +126,25 @@ async def get_stock(stock_code: str, db=Depends(get_db)):
 
 
 # ============================================================
-# PATCH — v22 stock-info-editor → v23 slim-stocks-table → v25 +short_name
+# PATCH — v22 stock-info-editor → v23 slim-stocks-table → v25 +short_name → v46+ short_name 自动生成
 # ============================================================
 
 class StockUpdateRequest(BaseModel):
-    """admin 编辑 stocks 行的可编辑字段白名单(v25 6 字段 + short_name = 7 字段)
+    """admin 编辑 stocks 行的可编辑字段白名单(v46+ 6 字段, short_name 自动生成)
 
     所有字段可选 — 前端可能只改其中几个,Pydantic 默认 None。
     8 字段中 stock_code 是 PK(created_at/updated_at 由 DB 维护,不可改)
-    → 实际可编辑 7 字段: stock_name/sector/is_t0_able/min_buy_qty/trade_unit/short_name
+    → 实际可编辑 6 字段: stock_name/sector/is_t0_able/min_buy_qty/trade_unit
+    (v46+ 移除 short_name 字段:由 stock_name 自动派生, REQ-STOCK-007)
 
     v23 严格白名单:`extra=forbid` 让 industry/market/intro 等 9 旧字段
     在 Pydantic 层即抛 422(防 repo._ADMIN_EDITABLE_FIELDS 静默 drop 漏改)
-    v25: 加 short_name 字段(可选,空字符串清空)
     """
     stock_name: Optional[str] = Field(None, max_length=64)
     sector: Optional[str] = Field(None, max_length=64)
     is_t0_able: Optional[bool] = None
     min_buy_qty: Optional[int] = Field(None, ge=1)
     trade_unit: Optional[int] = Field(None, ge=1)
-    short_name: Optional[str] = Field(None, max_length=16)  # v25: 拼音首字母简称
 
     class Config:
         extra = "forbid"
@@ -153,8 +152,9 @@ class StockUpdateRequest(BaseModel):
 
 @router.patch("/{stock_code}", dependencies=[Depends(require_admin)])
 async def update_stock(stock_code: str, body: StockUpdateRequest, db=Depends(get_db)):
-    """admin 显式编辑单只股票基础信息(REQ-STOCK-003)
+    """admin 显式编辑单只股票基础信息(REQ-STOCK-003 + REQ-STOCK-007)
 
+    v46+: 若 stock_name 字段被修改, 后端自动重算 short_name (REQ-STOCK-007)
     Returns:
         {code:0, msg:"ok", data:{...}}  更新后的完整 stock
         404: stock_code 不存在
@@ -178,13 +178,14 @@ STOCK_CODE_REGEX = r"^\d{6}\.(SH|SZ|BJ)$"
 
 
 class StockCreateRequest(BaseModel):
-    """admin 添加 stocks 行的字段白名单(REQ-STOCK-006)
+    """admin 添加 stocks 行的字段白名单(REQ-STOCK-006 + REQ-STOCK-007)
 
     8 字段:
     - stock_code: PK, 必填, regex 校验(000001.SZ / 600000.SH / 920169.BJ)
-    - stock_name: 必填, max 64
-    - sector / short_name: 可选
+    - stock_name: 必填, max 64 (用于自动生成 short_name)
+    - sector: 可选
     - is_t0_able / min_buy_qty / trade_unit: 有默认值
+    (v46+ 移除 short_name 字段:由 stock_name 自动派生, REQ-STOCK-007)
 
     v46 严格白名单:`extra=forbid` 让 industry/market/intro 等 v22 旧字段
     在 Pydantic 层即抛 422(防数据脏)
@@ -192,7 +193,6 @@ class StockCreateRequest(BaseModel):
     stock_code: str = Field(..., regex=STOCK_CODE_REGEX, max_length=16)
     stock_name: str = Field(..., min_length=1, max_length=64)
     sector: Optional[str] = Field(None, max_length=64)
-    short_name: Optional[str] = Field(None, max_length=16)
     is_t0_able: bool = False
     min_buy_qty: int = Field(100, ge=1)
     trade_unit: int = Field(1, ge=1)
