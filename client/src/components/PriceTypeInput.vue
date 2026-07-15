@@ -190,6 +190,20 @@ function onPriceInput(v) {
     box-shadow: 0 0 0 1px var(--el-color-primary, #409eff) inset !important;
 }
 
+/* v33.1: 隐藏浏览器原生 number input 的上下箭头 spinners (Chrome/Safari/Firefox/Edge) */
+.pti-el-input :deep(.el-input__inner) {
+    appearance: textfield !important; /* Firefox */
+}
+.pti-el-input :deep(.el-input__inner)::-webkit-outer-spin-button,
+.pti-el-input :deep(.el-input__inner)::-webkit-inner-spin-button {
+    -webkit-appearance: none !important;
+    appearance: none !important;
+    margin: 0 !important;
+}
+.pti-el-input :deep(input[type='number']) {
+    -moz-appearance: textfield !important; /* Firefox */
+}
+
 /* v28-17: 强制 inner line-height: 30px 跟 placeholder 对齐 */
 .pti-el-input :deep(.el-input__inner) {
     line-height: 30px !important;
