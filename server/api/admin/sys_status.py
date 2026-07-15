@@ -27,6 +27,8 @@ from pydantic import BaseModel
 from typing import Optional, List
 from sqlalchemy.orm import Session
 from sqlalchemy import desc
+from datetime import datetime, timezone
+import asyncio
 
 from server.db import get_db
 from server.models.orm import SysStatus
@@ -103,6 +105,34 @@ async def init_trading_day(
     new_day = db.query(SysStatus).filter_by(
         status='active', trd_date=req.trd_date
     ).first()
+
+    # 2026-07-15-system-init-broadcast: 日初成功后 ws 推 init_completed,
+    #   让前端自动刷新 holdings/asset/position 缓存 (无需点 AppHeader 刷新按钮)
+    #   - 范式与 services/push/dispatcher.py::_broadcast_trade_cfm 一致: ensure_future 调度, 不阻塞 HTTP 响应
+    #   - status 简化判定: error 为空 = 'ok'，否则 'partial'（全失败时 ok=False 已早返到 line ~95，不会到这）
+    #   - reconcile_only 端点不会执行到本块（不同函数）
+    try:
+        from server.ws.manager import ws_manager
+        _init_status = 'partial' if result.get('error') else 'ok'
+        _ts = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
+        asyncio.ensure_future(ws_manager.broadcast(
+            'system_update',
+            {
+                'type': 'init_completed',
+                'trd_date': req.trd_date,
+                'report_id': result['report_id'],
+                'status': _init_status,
+                'ts': _ts,
+            },
+            trace_id=f"init:{req.trd_date}:{result['report_id']}",
+        ))
+    except Exception as _e:
+        # ws 推送失败不应影响 init HTTP 响应 (用户已收到 200, 缓存可手动刷新)
+        import logging
+        logging.getLogger(__name__).warning(
+            "init_trading_day ws broadcast failed: %s", _e
+        )
+
     return InitResponse(
         code=0,
         msg="日初完成",
