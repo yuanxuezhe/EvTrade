@@ -25,6 +25,15 @@ export function formatPrice(val, decimals = 2) {
   return formatMoney(val, decimals)
 }
 
+// v33.1.2: 价格智能格式化 — 保留最多 4 位有效小数, 去尾 0 (0.0039 → "0.0039", 12.5 → "12.5", 12.00 → "12")
+// 用于最新价/卖一价/买一价 sub 标签, 避免 0.0039 被 formatMoney 截成 "0.00"
+export function formatPriceAuto(val) {
+  const n = Number(val)
+  if (!Number.isFinite(n) || n === 0) return '0'
+  // toFixed(4) 保留 4 位小数, 再用正则去掉尾部 0 和孤立的 .
+  return n.toFixed(4).replace(/(\.\d*?)0+$/, '$1').replace(/\.$/, '')
+}
+
 export function formatPercent(val, decimals = 2) {
   const n = Number(val)
   if (!Number.isFinite(n)) return '0.00%'

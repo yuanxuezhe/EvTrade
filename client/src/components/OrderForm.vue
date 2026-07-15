@@ -77,6 +77,8 @@
             <span class="summary-label">预估金额</span>
             <span class="summary-value text-mono">
               <template v-if="form.price_type === PriceType.FIX_PRICE">¥{{ formatMoney(estimatedAmount) }}</template>
+              <!-- v33.1.3: 最新价=last_price; 市价=方向对手方价 (买→卖1, 卖→买1) -->
+              <template v-else-if="form.stock_code && estimatedPrice > 0">¥{{ formatMoney(estimatedAmountByPriceType) }}<span class="summary-sub">({{ estimatedPriceLabel }} ¥{{ formatPriceAuto(estimatedPrice) }} × {{ formatVolume(form.volume) }})</span></template>
               <template v-else>— 市价单 —</template>
             </span>
           </div>
@@ -105,7 +107,7 @@
 import { computed, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Top, Bottom } from '@element-plus/icons-vue'
-import { formatMoney } from '../utils/format'
+import { formatMoney, formatPriceAuto } from '../utils/format'
 import { PriceType, priceTypeOptions, OrderType } from '../constants/priceType'
 import StockCodePicker from './StockCodePicker.vue'
 import PriceTypeInput from './PriceTypeInput.vue'
@@ -151,6 +153,53 @@ const volumeShortcuts = [100, 500, 1000, 5000, 10000]
 
 const estimatedAmount = computed(() => (form.price || 0) * (form.volume || 0))
 
+// v33.1.3: 按价格类型取预估价
+//   FIX_PRICE: 输入价
+//   LATEST_PRICE: 直接取 last_price (最新价, 不分方向)
+//   MARKET_PEER_PRICE_FIRST: 按方向取对手方最优价 (买→卖1, 卖→买1)
+const estimatedPrice = computed(() => {
+  if (!form.stock_code) return 0
+  if (form.price_type === PriceType.FIX_PRICE) {
+    return Number(form.price) || 0
+  }
+  const q = quoteStore.getQuote(form.stock_code)
+  if (form.price_type === PriceType.LATEST_PRICE) {
+    // 最新价 — 直接读 q.last_price
+    return Number(quoteStore.getLastPrice(form.stock_code)) || 0
+  }
+  if (form.price_type === PriceType.MARKET_PEER_PRICE_FIRST) {
+    const isBuy = String(form.order_type) === '23'
+    // 买→卖1价 (q.ask_prices[0]), 卖→买1价 (q.bid_prices[0]) — store 在 update(snapshot) 路径写数组
+    const peer = isBuy ? q?.ask_prices?.[0] : q?.bid_prices?.[0]
+    return Number(peer) || 0
+  }
+  return 0
+})
+
+// 实际预估金额: estimatedPrice × volume (FIX_PRICE=输入价; 最新价=最新; 市价=方向对手方价)
+// 行情不可得 (estimatedPrice=0) → 0; volume=0 → 0
+const estimatedAmountByPriceType = computed(() => {
+  const px = estimatedPrice.value
+  const vol = Number(form.volume) || 0
+  if (px <= 0 || vol <= 0) return 0
+  return px * vol
+})
+
+// v33.1.3: 预估金额 sub 标签
+//   FIX_PRICE: 空
+//   LATEST_PRICE: "最新价" (不分方向)
+//   MARKET_PEER_PRICE_FIRST: 按方向 "卖一价" (买) / "买一价" (卖)
+const estimatedPriceLabel = computed(() => {
+  if (!form.stock_code) return ''
+  if (form.price_type === PriceType.FIX_PRICE) return ''
+  if (form.price_type === PriceType.LATEST_PRICE) return '最新价'
+  if (form.price_type === PriceType.MARKET_PEER_PRICE_FIRST) {
+    const isBuy = String(form.order_type) === '23'
+    return isBuy ? '卖一价' : '买一价'
+  }
+  return ''
+})
+
 // ==============================================================
 // v33: 可交易数量 (可买 / 可卖) 计算 — 实时响应持仓 + 资金 + 行情
 // ==============================================================
@@ -192,12 +241,14 @@ const availableText = computed(() => {
   if (form.price_type === PriceType.FIX_PRICE) {
     px = Number(form.price) || 0
   } else if (form.price_type === PriceType.LATEST_PRICE) {
+    // 最新价 — 行情 last_price
     px = quoteStore.getLastPrice(form.stock_code) ?? 0
   } else if (form.price_type === PriceType.MARKET_PEER_PRICE_FIRST) {
-    // 卖一价 (对手方最优价 / 吃档 1) — 从 quote store 取 ask_prices[0]
+    // 吃对手方最优价 (买→卖1, 卖→买1)
     const q = quoteStore.getQuote(form.stock_code)
-    const asks = q?.ask_prices || []
-    px = Number(asks[0]) || 0
+    const isBuy = String(form.order_type) === '23'
+    const peer = isBuy ? q?.ask_prices?.[0] : q?.bid_prices?.[0]
+    px = Number(peer) || 0
   }
   if (px <= 0) return '—'
 
@@ -430,6 +481,14 @@ function handleReset() {
 .summary-value {
   font-weight: 600;
   color: var(--text-primary);
+}
+
+/* v33.1: 预估金额的细分小字 (最新价/卖一价 × N股) */
+.summary-sub {
+  margin-left: 8px;
+  font-size: 11px;
+  font-weight: normal;
+  color: var(--text-secondary);
 }
 
 .form-actions {
