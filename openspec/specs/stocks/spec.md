@@ -235,6 +235,58 @@ EvTrade 当前缺股票基础信息(行业/市值/PE/PB/公司简介)。本 capa
 - **WHEN** POST `/api/stocks`
 - **THEN** 响应 403（`require_admin` 拦截）
 
+## REQ-STOCK-007: short_name 自动生成 + ST 前缀保留（v46+ short-name-auto）
+
+**目的**: `short_name`（拼音首字母）字段完全由后端基于 `stock_name` 自动生成；前端不参与。
+
+**位置**: `server/services/short_name.py::to_short_name(name: str) -> str`
+
+**算法**（`to_short_name` 实现，v46+）：
+1. `name.strip()` 去两端空白
+2. 检测前缀（4 种大小写组合）：`*ST` / `*st` / `*St` / `*sT` → 归一为 `*ST`；`ST` / `st` / `St` / `sT` → 归一为 `ST`；剥离前缀
+3. 主体用 `pypinyin.lazy_pinyin` 取每个汉字拼音首字母 → 大写拼接
+4. 输出 = `prefix + body`（如 `STHW` / `*STKJ`）
+5. 截断到 16 字符
+6. 输入空或全空白字符串 → 返回 `""`
+7. pypinyin 异常（如编码错）→ 返回 `""`（try/except 兜底）
+
+**触发点**（v46+）：
+- `server/repo/stocks.py::create_by_admin()`: 创建新 stocks 行时，**根据 `data["stock_name"]` 自动计算并写入 `short_name`**（admin 不需要传）
+- `server/repo/stocks.py::update_by_admin()`: PATCH 时，若 `data` 含 `stock_name`（且实际值变了），自动重算 `short_name`
+
+**调用方**（v46+）：
+- `server/scripts/backfill_short_name.py`: v25 一次性灌数据脚本 — v46+ 改为 `from server.services.short_name import to_short_name`，**删除本地副本**（防止算法漂移）
+
+**契约**（v46+）：
+- `StockCreateRequest` / `StockUpdateRequest` Pydantic schema（`extra=forbid`）**移除 `short_name` 字段**：admin 无法显式传入 — 显式传将被 422 拒绝（`extra fields not permitted`）
+- `to_short_name` 是**单一可信来源**（single source of truth），所有路径（create/update/backfill）必须通过它，禁止散落实现
+
+#### Scenario
+
+- **GIVEN** admin POST `/api/stocks` 提交 `stock_name="平安银行"`
+- **WHEN** `create_by_admin` 处理请求
+- **THEN** DB 中 `short_name` 字段值为 `"PAYH"`（不是用户传，是后端算）
+- **AND** 响应 201 返回的数据包含 `short_name="PAYH"`
+
+- **GIVEN** admin PATCH `/api/stocks/600519.SH` 提交 `{"stock_name": "贵州茅台改名"}`
+- **AND** 旧 `stock_name="贵州茅台"`,旧 `short_name="GZMT"`
+- **WHEN** `update_by_admin` 处理请求
+- **THEN** 新 `short_name` 字段重算为 `"GZMTGM"`（或类似：`GZMT` + `改名` 首字母）
+- **AND** 响应 200 返回的数据包含 `short_name` 新值
+
+- **GIVEN** admin PATCH `/api/stocks/600519.SH` 提交 `{"short_name": "EVIL"}`
+- **WHEN** Pydantic 校验
+- **THEN** 响应 422（`extra fields not permitted`，因为 `extra=forbid`）
+- **AND** DB 无变动
+
+- **GIVEN** `to_short_name("*st康佳")` 调用
+- **WHEN** pypinyin 处理
+- **THEN** 返回 `"*STKJ"`（**ST 前缀识别，大小写归一 + 大写**）
+
+- **GIVEN** `to_short_name("ST华微")` 调用
+- **WHEN** pypinyin 处理
+- **THEN** 返回 `"STHW"`（**ST 前缀保留**，之前 `SHW` 是 v25 错实现，v46+ 修正）
+
 ## Non-Functional Requirements
 
 - **NFR-STOCK-001**:首次 backfill 全市场 ~5400 只耗时 ≤ 60 min

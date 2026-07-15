@@ -1350,3 +1350,53 @@ The system SHALL render `client/src/components/StockCodeAutocomplete.vue` 为左
 - **WHEN** blur 输入框（触发校验）
 - **THEN** 输入框红色高亮 + 下方红字"格式必须是 6 位数字 + .SH/.SZ/.BJ"
 - **AND** 添加按钮即使点击也走不到后端（element-plus validate 拦截）
+
+### REQ-FE-STOCK-HIDE: 隐藏 short_name 编辑界面（v46+ short-name-auto）
+
+**位置**: `client/src/views/AdminStockConfig.vue` (`/admin/stock-config` 页面)
+
+**目的**: `short_name` 字段完全由后端自动生成，前端不展示、不接收、不传输。
+
+**UI 变更**（v46+ vs v25）：
+- ❌ **删除表格列**"首字母"`prop="short_name"`（之前 8 列 → 现在 7 列）
+- ❌ **删除编辑对话框**"拼音首字母"`<el-form-item label="拼音首字母">`（input + maxlength=16 + show-word-limit）
+- ❌ **删除添加对话框**"简称"`<el-form-item label="简称" prop="short_name">`（input + maxlength=16）
+- ❌ **删除 form 默认值** `short_name: ''`
+- ❌ **删除 form 校验规则** `short_name: [{ max: 16, ... }]`
+- ❌ **删除提交 payload** `short_name: createForm.value.short_name.trim() || null`
+
+**保留**（v46+）：
+- ✅ **客户端 keyword 搜索**仍走 short_name 二次过滤（仅前端 cache 命中，不发请求）
+  - 位置：`store.fetchFilteredStockList` 中 `const short = (s.short_name || '').toLowerCase()`（约 12597 行）
+- ✅ **API 调用层** `stocksApi.create/update` payload 不再含 `short_name`（与 v46+ 后端 `extra=forbid` 对齐）
+
+**契约**（v46+）：
+- 表格 columnheader 集合：代码 / 名称 / 板块 / 回转标志 / 最小买入数量 / 买卖单位 / 操作（**7 列**，无"首字母"）
+- 添加对话框 el-form-item 集合：证券代码（必）/ 证券名称（必）/ 所属板块 / T+0 / 最小买入 / 买卖单位（**6 项**，无"简称"）
+- 编辑对话框 el-form-item 集合：板块 / 回转标志 / 最小买入 / 买卖单位（**保留 4 项**，无"拼音首字母" — 板块前移）
+
+#### Scenario
+
+- **GIVEN** admin 打开 `/admin/stock-config` 页面（无 short_name 缓存）
+- **WHEN** 表格渲染
+- **THEN** columnheader 集合不含"首字母"列（只有 7 列：代码/名称/板块/回转标志/最小买入/买卖单位/操作）
+
+- **GIVEN** admin 点击"添加证券"按钮
+- **WHEN** dialog 弹出
+- **THEN** 可见 el-form-item 只有 6 项（**无"简称"项**）
+- **AND** 表单提交 payload 不含 `short_name` 字段
+
+- **GIVEN** admin 点击某行"编辑"按钮
+- **WHEN** 编辑 dialog 弹出
+- **THEN** 可见 el-form-item 没有"拼音首字母"项
+- **AND** PATCH payload 不含 `short_name`
+
+- **GIVEN** admin 在顶部搜索框输入 `PAYH`（之前短名命中过平安银行）
+- **WHEN** 前端 cache 模糊匹配
+- **THEN** "代码 / 名称搜索"过滤仍能命中（**前端保留 short_name 搜索能力**）
+- **AND** 与"首字母列是否展示"无关（列隐藏但 search 维度保留）
+
+- **GIVEN** admin 添加 stock_name="\*st康佳"（小写开头）
+- **WHEN** 添加成功
+- **THEN** 表格新行显示名称列"\*st康佳"（**保留原名大小写**）
+- **AND** 表格不展示 short_name 但服务端 GET `/api/stocks/{code}` 返回 `short_name="*STKJ"`（自动归一）
