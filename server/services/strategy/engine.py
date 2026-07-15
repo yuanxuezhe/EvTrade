@@ -27,6 +27,7 @@ from server.services.strategy.audit import write_audit
 # Late import 拿 patched symbol（test_engine.py monkeypatch 路径）
 from server.api.orders import ord_stk
 from server.db import db_session
+from server.enums.trading import PriceType
 from server.models.orm import Order
 from server.repo.orders import next_order_no
 from server.utils.time import format_ts
@@ -321,7 +322,7 @@ class StrategyEngine:
                     user_def=str(self.strategy_id),  # spec REQ-STRAT-006 step 7
                     stock_code=self.stock_code,
                     order_type="23" if action.direction == "buy" else "24",
-                    price_type=11,  # 限价（spec 默认对手价；v1 简化为限价 = current_price）
+                    price_type=PriceType.FIX_PRICE,  # 限价 (= current_price)
                     price=current_price,
                     volume=action.volume,
                     traded_volume=0, traded_amount=0.0, avg_price=0.0,
@@ -337,7 +338,7 @@ class StrategyEngine:
                 ack = await ord_stk(
                     stock_code=self.stock_code,
                     volume=action.volume,
-                    price_type=11,
+                    price_type=PriceType.FIX_PRICE,
                     price=current_price,
                     order_type="23" if action.direction == "buy" else "24",
                     remark=order_no,

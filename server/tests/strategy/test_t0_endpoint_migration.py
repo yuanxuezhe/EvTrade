@@ -21,6 +21,7 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 
 from server.db import Base, engine, init_db, SessionLocal
+from server.enums.trading import PriceType
 from server.models.orm import Order, Trade
 from server.models.user import User
 from server.auth.security import hash_password, create_access_token
@@ -80,7 +81,7 @@ def _mk_order(db, order_no, user_def, order_type="23", price=10.0,
     o = Order(
         trd_date=trd_date, order_no=order_no, order_id=None,
         user_def=user_def, stock_code=stock_code, order_type=order_type,
-        price_type=11, price=price, volume=volume,
+        price_type=PriceType.FIX_PRICE, price=price, volume=volume,
         traded_volume=volume, traded_amount=price * volume, avg_price=price,
         status=status, status_msg="",
         order_time="2026-07-06 10:00:00.000",
