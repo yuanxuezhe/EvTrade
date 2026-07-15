@@ -45,6 +45,8 @@
 }
 .tp-table {
   font-size: 12px;
+  height: 100%;  /* 撑满 .tp-body (flex:1) → el-table 自动出 el-scrollbar 上下+左右滚动条 */
+  width: 100%;
 }
 .tp-table :deep(.el-table__cell) {
   padding: 4px 0;
