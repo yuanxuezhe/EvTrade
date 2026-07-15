@@ -75,8 +75,9 @@
       </div>
     </div>
 
-    <!-- ⑤ 16 格 stats grid (label-left / value-right; 价格格均可点) -->
+    <!-- ⑤ v33: 16 格 → 12 格 stats grid (删 涨跌/涨幅/现手/量比; 最高/最低移到第 2 行 原涨跌位置) -->
     <div class="qp-stats-grid">
+      <!-- Row 1: 昨收 / 开盘 -->
       <div
         class="qp-stats-cell is-clickable"
         :title="prevClose != null ? '点击带入委托价' : ''"
@@ -87,28 +88,32 @@
         :title="(quote?.fields?.[F.OPEN] != null && Number(quote?.fields?.[F.OPEN]) > 0) ? '点击带入委托价' : ''"
         @click="emitApply(quote?.fields?.[F.OPEN])"
       ><span class="qp-cell-label">开盘</span><span class="qp-cell-value" :class="heroClass">{{ formatNum(quote?.fields?.[F.OPEN]) }}</span></div>
-      <div class="qp-stats-cell"><span class="qp-cell-label">涨跌</span><span class="qp-cell-value" :class="signClass(changeNum)">{{ changeText }}</span></div>
+
+      <!-- Row 2 (原涨跌位置): 最高 / 最低 — v33 从原第 2/3 行移到这里 -->
       <div
         class="qp-stats-cell is-clickable"
         :title="(quote?.fields?.[F.HIGH] != null && Number(quote?.fields?.[F.HIGH]) > 0) ? '点击带入委托价' : ''"
         @click="emitApply(quote?.fields?.[F.HIGH])"
       ><span class="qp-cell-label">最高</span><span class="qp-cell-value" :class="heroClass">{{ formatNum(quote?.fields?.[F.HIGH]) }}</span></div>
-      <div class="qp-stats-cell"><span class="qp-cell-label">涨幅</span><span class="qp-cell-value" :class="signClass(changePct)">{{ changePctText }}</span></div>
       <div
         class="qp-stats-cell is-clickable"
         :title="(quote?.fields?.[F.LOW] != null && Number(quote?.fields?.[F.LOW]) > 0) ? '点击带入委托价' : ''"
         @click="emitApply(quote?.fields?.[F.LOW])"
       ><span class="qp-cell-label">最低</span><span class="qp-cell-value" :class="heroClass">{{ formatNum(quote?.fields?.[F.LOW]) }}</span></div>
+
+      <!-- Row 3: 振幅 / 均价 -->
       <div class="qp-stats-cell"><span class="qp-cell-label">振幅</span><span class="qp-cell-value">{{ amplitudeText }}</span></div>
       <div
         class="qp-stats-cell is-clickable"
         :title="avgPrice != null ? '点击带入委托价' : ''"
         @click="emitApply(avgPrice)"
       ><span class="qp-cell-label">均价</span><span class="qp-cell-value">{{ avgPriceText }}</span></div>
-      <div class="qp-stats-cell"><span class="qp-cell-label">现手</span><span class="qp-cell-value">—</span></div>
+
+      <!-- Row 4: 金额 / 总手 -->
       <div class="qp-stats-cell"><span class="qp-cell-label">金额</span><span class="qp-cell-value">{{ formatBigNum(quote?.fields?.[F.AMOUNT]) }}</span></div>
       <div class="qp-stats-cell"><span class="qp-cell-label">总手</span><span class="qp-cell-value">{{ formatBigNum(quote?.fields?.[F.VOLUME]) }}</span></div>
-      <div class="qp-stats-cell"><span class="qp-cell-label">量比</span><span class="qp-cell-value">—</span></div>
+
+      <!-- Row 5: 涨停 / 跌停 -->
       <div
         class="qp-stats-cell is-clickable"
         :title="limitUp != null ? '点击带入委托价' : ''"
@@ -119,6 +124,8 @@
         :title="limitDown != null ? '点击带入委托价' : ''"
         @click="emitApply(limitDown)"
       ><span class="qp-cell-label">跌停</span><span class="qp-cell-value text-down">{{ limitDownText }}</span></div>
+
+      <!-- Row 6: 市值 / 费率 — 后端未支持, 显示 — -->
       <div class="qp-stats-cell"><span class="qp-cell-label">市值</span><span class="qp-cell-value">—</span></div>
       <div class="qp-stats-cell"><span class="qp-cell-label">费率</span><span class="qp-cell-value">—</span></div>
     </div>
@@ -131,6 +138,7 @@
 <script setup>
 import { computed, watch } from 'vue'
 import { useQuoteStore, FIELD } from '../stores/quote'
+import { useStocksStore } from '../stores/stocks'
 
 const props = defineProps({
   stockCode: { type: String, default: '' }
@@ -140,6 +148,8 @@ const emit = defineEmits(['apply-price'])
 
 const quoteStore = useQuoteStore()
 const F = FIELD
+// v33: 从证券信息缓存获取证券名称 (v32 已实现 getByCode)
+const stocksStore = useStocksStore()
 
 // v33: 永不退订 — 用户原话"请一直保持系统相关标的的订阅"
 //   - 监听 props.stockCode 变化, 当用户输入新代码 (debounce 300ms) 自动调订阅
@@ -172,8 +182,8 @@ const code = computed(() => (props.stockCode || '').toUpperCase().trim())
 const quote = computed(() => quoteStore.get(code.value))
 
 const stockName = computed(() => {
-  // 行情数据未携带股票名, 暂回退空 (trader 看代码)
-  return ''
+  // v33: 证券名称从 stocks store 缓存查 (v32 stocks-names-from-cache)
+  return stocksStore.stockName(code.value) || ''
 })
 
 const lastPrice = computed(() => {
