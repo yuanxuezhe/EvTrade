@@ -28,7 +28,7 @@
 - `POST /api/orders/place`
 - 必传：`stock_code, order_type, volume, price, price_type`
 - `order_type` 数字串：股票场景 `23=买入 24=卖出`
-- `price_type` 数字：`5=最新价 11=指定价 14=对手价 44=市价 ...`
+- `price_type` 数字：`0=限价(xtconstant.FIX_PRICE) 1=最新价(xtconstant.LATEST_PRICE) 2=市价(xtconstant.MARKET_PEER_PRICE_FIRST, 对手方最优价, 吃档 1)`（v__: 与 xtconstant 柜台协议 1:1 对齐）
 - 走 `ord_stk` RPC，等待柜台 ack，**fire-and-forget 后状态变更靠 push 推送**
 - **v5 幂等 / 路由定位**：
   - `client_order_id` 客户端幂等号（同 cid 二次提交返原单）
@@ -589,7 +589,7 @@ admin 资金 / 持仓盘中调平端点，**核心合约**详见 `asset-position
 ### S-TRADE-001: 下一笔限价买单
 
 Given trader 已登录，钱够  
-When `POST /api/orders/place {stock_code:"600030.SH", order_type:"23", volume:100, price:12.34, price_type:11}`  
+When `POST /api/orders/place {stock_code:"600030.SH", order_type:"23", volume:100, price:12.34, price_type:0}`  
 Then 柜台返回 ack（order_id 形式 `{exchange}|{seq}`）  
 And 数秒后 WS 收到 `order_update` 推送（status: "48" 待报 或 "49" 已报）
 

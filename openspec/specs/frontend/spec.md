@@ -733,7 +733,7 @@ And Asset/Holdings 等视图若订阅了该股则自动刷新
 
 - **位置**：`client/src/components/OrderForm.vue`
 - **契约**：
-  - 限价单（`price_type === PriceType.LIMIT`）委托价格输入支持 2 位小数（A 股最小变动单位 0.01 元）
+  - 限价单（`price_type === PriceType.FIX_PRICE`）委托价格输入支持 2 位小数（A 股最小变动单位 0.01 元）
 
 ### REQ-FE-011: 前端 5 张字典按 broker 义重映射（v11）
 
@@ -1153,10 +1153,10 @@ The system SHALL render `client/src/components/OrderForm.vue` 的价格类型选
 
 #### Scenario: 数据绑定不变
 
-- **GIVEN** `v-model="form.price_type"` 与 `form.price_type` 联动委托价格 input 的 `disabled` / `placeholder` / `PriceType.LIMIT` 校验
+- **GIVEN** `v-model="form.price_type"` 与 `form.price_type` 联动委托价格 input 的 `disabled` / `placeholder` / `PriceType.FIX_PRICE` 校验
 - **WHEN** 用户切换价格类型
 - **THEN** 委托价格 input 的禁用条件与 placeholder 保持原行为
-- **AND** 后端 API 调用不变 (`{price_type: 11|5|14|44}`)
+- **AND** 后端 API 调用协议 `{price_type: 0|1|2}`（v__: 与 xtconstant 柜台协议 1:1 对齐）
 
 ### REQ-FE-520: StockCodeAutocomplete 左右拆分两半（v27 重构, 2026-07-13）
 
@@ -1255,4 +1255,4 @@ The system SHALL render `client/src/components/StockCodeAutocomplete.vue` 为左
 **Migration**:
 - 改 `client/src/components/OrderForm.vue` 第 38-51 行 template: `el-radio-group + el-radio(border) + class="price-type-grid"` → `el-radio-group + el-radio-button(size="default")`
 - 删 `client/src/components/OrderForm.vue` 第 364-386 行 `.price-type-grid` / `:deep(.price-type-grid .el-radio*)` 死 CSS
-- 数据流不变 (`v-model="form.price_type"` + `PriceType.LIMIT` 校验逻辑不动); 后端协议不变 (`{price_type: 11|5|14|44}`)
+- 数据流不变 (`v-model="form.price_type"` + `PriceType.FIX_PRICE` 校验逻辑不动); 后端协议 `{price_type: 0|1|2}`（v__: 与 xtconstant 柜台协议 1:1 对齐）

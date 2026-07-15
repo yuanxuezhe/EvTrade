@@ -182,7 +182,15 @@ def _h_ord_stk(pkt: MsgPacket) -> HandlerReturn:
     direction_str = pkt.get_value_str("direction")
     remark = pkt.get_value_str("remark")
 
-    price_type_map = {"1": xtconstant.LATEST_PRICE, "0": xtconstant.FIX_PRICE}
+# v__: 价格类型与 xtconstant 架台协议 1:1 对齐
+    #   "0" -> FIX_PRICE                  (限价 / 指定价)
+    #   "1" -> LATEST_PRICE               (最新价)
+    #   "2" -> MARKET_PEER_PRICE_FIRST    (市价 / 对手方最优价, 吃档 1)
+    price_type_map = {
+        "0": xtconstant.FIX_PRICE,
+        "1": xtconstant.LATEST_PRICE,
+        "2": xtconstant.MARKET_PEER_PRICE_FIRST,
+    }
     price_type = price_type_map.get(price_type_str, xtconstant.LATEST_PRICE)
     direction = xtconstant.STOCK_BUY if direction_str == "BUY" else xtconstant.STOCK_SELL
 

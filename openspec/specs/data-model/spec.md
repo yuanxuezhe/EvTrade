@@ -49,7 +49,7 @@ ORM 注释必须与本 spec 保持一致（diff 检查项之一）。
 | `user_def` | String(255) | NO | "" | 外部自定义信息（前端幂等号 / 备注等，不做幂等约束） |
 | `stock_code` | String(16) | NO | — | 股票代码 |
 | `order_type` | String(2) | NO | — | 23=买 24=卖 |
-| `price_type` | Integer | NO | 11 | 5/11/14/44 详见 trading spec |
+| `price_type` | Integer | NO | 0 | 0/1/2 详见 trading spec（v__: 与 xtconstant 柜台协议 1:1 对齐） |
 | `price` | Float | NO | 0.0 | 委托价 |
 | `volume` | Integer | NO | 0 | 委托量 |
 | `traded_volume` | Integer | NO | 0 | 累计成交量 |

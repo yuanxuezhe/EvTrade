@@ -125,7 +125,7 @@ v10 统一为 `"YYYY-MM-DD HH:MM:SS.fff"`（[server/utils/time.py](../server/uti
 | `user_def` | str | ✗ | 外部自定义信息（透传，**默认空串**） |
 | `stock_code` | str | ✓ | 证券代码 |
 | `order_type` | str | ✓ | `"23"` 买 / `"24"` 卖 |
-| `price_type` | int | ✗ | 默认 `PriceType.LIMIT` (限价) |
+| `price_type` | int | ✗ | 默认 `PriceType.FIX_PRICE` (限价)。**v__: 与 xtconstant 柜台协议 1:1 对齐** — `0=限价` / `1=最新价` / `2=市价 (对手方最优价, 吃档 1)` |
 | `price` | float | ✓ | 委托价 |
 | `volume` | int | ✓ | 委托量 |
 | `t0_coefficient` | float | ✗ | T0 配平系数，默认 `1.0` |
