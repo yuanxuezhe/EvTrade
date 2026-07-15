@@ -49,7 +49,7 @@
 
 <script setup>
 import { computed } from 'vue'
-import { PriceType, priceTypeOptions } from '@/constants/priceType.js'
+import { PriceType, priceTypeOptions } from '../constants/priceType.js'
 
 const props = defineProps({
   price: { type: [Number, String], default: null },

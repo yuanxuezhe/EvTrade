@@ -35,34 +35,23 @@
           />
         </el-form-item>
 
-        <!-- 价格类型：单行 inline radio-button (与 T0Trade 价格档风格一致;2026-07-09 单行化重构, v15 替换 2×2 grid 避免占满整行) -->
-        <el-form-item label="价格类型" class="row-tight">
-          <el-radio-group v-model="form.price_type" size="default">
-            <el-radio-button
-              v-for="opt in priceTypeOptions"
-              :key="opt.value"
-              :value="opt.value"
-            >
-              {{ opt.label }}
-            </el-radio-button>
-          </el-radio-group>
-        </el-form-item>
-
-        <!-- 委托价格：独立全宽行 (与"委托数量"对称) -->
-        <el-form-item label="委托价格" class="row-tight">
-          <el-input-number
-            v-model="form.price"
-            :min="0"
-            :precision="2"
-            :step="form.price_type === PriceType.FIX_PRICE ? 0.01 : null"
-            :disabled="form.price_type !== PriceType.FIX_PRICE"
-            :placeholder="form.price_type === PriceType.FIX_PRICE ? '输入价格' : '市价单无需输入'"
-            controls-position="right"
-            style="width: 100%"
+        <!-- v33: 价格类型 + 委托价格 → 合并为 1 行 PriceTypeInput (input + select 50/50) -->
+        <el-form-item label="委托价格" class="row-tight" prop="price">
+          <PriceTypeInput
+            v-model:price="form.price"
+            v-model:price-type="form.price_type"
           />
         </el-form-item>
 
-        <el-form-item label="委托数量" class="row-tight">
+        <!-- v33: 可用行 — 在价格组合行下, 委托数量行上; 根据买入/卖出 + 价格类型实时计算 -->
+        <el-form-item label="可交易" class="row-tight">
+          <div class="order-available-row">
+            <span class="order-available-label">{{ availableLabel }}</span>
+            <span class="order-available-value">{{ availableText }}</span>
+          </div>
+        </el-form-item>
+
+        <el-form-item label="委托数量" class="row-tight" prop="volume">
           <el-input-number
             v-model="form.volume"
             :min="100"
@@ -119,6 +108,10 @@ import { Top, Bottom } from '@element-plus/icons-vue'
 import { formatMoney } from '../utils/format'
 import { PriceType, priceTypeOptions, OrderType } from '../constants/priceType'
 import StockCodePicker from './StockCodePicker.vue'
+import PriceTypeInput from './PriceTypeInput.vue'
+import { useAssetStore } from '../stores/asset'
+import { usePositionStore } from '../stores/position'
+import { useQuoteStore } from '../stores/quote'
 
 const props = defineProps({
   onSubmit: { type: Function, required: true },
@@ -135,12 +128,17 @@ const form = reactive({
   stock_name: '',
   // 柜台 order_type：股票 23=买入，24=卖出
   order_type: OrderType.BUY,
-  // 柜台 price_type 数字：5=最新价 14=对手价 (UI 称"限价") 44=市价
-  //   原 11=指定价 已从 UI 选项中移除 (v__: UI"限价"实际送 14, 送参数 code 不变)
+  // v__: 柜台 price_type: 0=限价 1=最新价 2=市价 (与 xtconstant 柜台协议 1:1 对齐)
+  //   UI 默认 FIX_PRICE = 0
   price_type: PriceType.FIX_PRICE,
   price: 0,
   volume: 100
 })
+
+// v33: 新增 — 持仓 / 资金 / 行情 store 引用 (用于可交易数量实时计算)
+const assetStore = useAssetStore()
+const positionStore = usePositionStore()
+const quoteStore = useQuoteStore()
 
 // 价格类型选项（从常量导入）
 // const priceTypeOptions = [
@@ -152,6 +150,61 @@ const form = reactive({
 const volumeShortcuts = [100, 500, 1000, 5000, 10000]
 
 const estimatedAmount = computed(() => (form.price || 0) * (form.volume || 0))
+
+// ==============================================================
+// v33: 可交易数量 (可买 / 可卖) 计算 — 实时响应持仓 + 资金 + 行情
+// ==============================================================
+
+/** 买卖方向 label — 动态切换 "可买" / "可卖" */
+const availableLabel = computed(() =>
+  form.order_type === OrderType.BUY ? '可买 (股)' : '可卖 (股)'
+)
+
+/**
+ * 可买/可卖数量
+ *
+ * 买入时 (用可用的现金 cash 计算):
+ *   - 限价 (FIX_PRICE) → 用 输入价格
+ *   - 最新价 (LATEST_PRICE) → 行情最新价 (quote.last_price)
+ *   - 市价 (MARKET_PEER_PRICE_FIRST) → 卖一价 (ask_price[0])
+ *   - 公式: floor(cash / price / 100) * 100 (A股 100 股一手, 不足一手部分丢弃)
+ *
+ * 卖出时 (用持仓 avl_vol 即"可用"):
+ *   - 取持仓 avl_vol 字段 (T+1 制度下该字段即为可卖数)
+ *   - 未持仓 / 行情无 → "0"
+ */
+const availableText = computed(() => {
+  // ----- 卖出: 直接返回 avl_vol -----
+  if (form.order_type === OrderType.SELL) {
+    if (!form.stock_code) return '0'
+    const pos = positionStore.positions.find((p) => p.stock_code === form.stock_code)
+    if (!pos) return '0'
+    const avl = Number(pos.avl_vol) || 0
+    return avl.toLocaleString()
+  }
+
+  // ----- 买入: 根据价格类型取不同价格, 计算可买股数 -----
+  if (!form.stock_code) return '—'
+  const cash = Number(assetStore.asset.cash) || 0
+  if (cash <= 0) return '0'
+
+  let px = 0
+  if (form.price_type === PriceType.FIX_PRICE) {
+    px = Number(form.price) || 0
+  } else if (form.price_type === PriceType.LATEST_PRICE) {
+    px = quoteStore.getLastPrice(form.stock_code) ?? 0
+  } else if (form.price_type === PriceType.MARKET_PEER_PRICE_FIRST) {
+    // 卖一价 (对手方最优价 / 吃档 1) — 从 quote store 取 ask_prices[0]
+    const q = quoteStore.getQuote(form.stock_code)
+    const asks = q?.ask_prices || []
+    px = Number(asks[0]) || 0
+  }
+  if (px <= 0) return '—'
+
+  // A 股最小买入 100 股, 向下取整到 100 倍数
+  const raw = Math.floor(cash / px / 100) * 100
+  return raw.toLocaleString()
+})
 
 // 切到非对手价 (最新价 5 / 市价 44) 时清空价格；切回对手价 (14) 也清空（避免残留的旧值误下单）
 watch(() => form.price_type, (newType, oldType) => {
@@ -340,6 +393,26 @@ function handleReset() {
   background: var(--bg-soft);
   border-radius: var(--radius-sm);
   margin: var(--space-3) 0;
+}
+
+/* v33: 可交易行 — 与 summary-row 对称, 左 label 右 value */
+.order-available-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 13px;
+  padding: 2px 0;
+}
+
+.order-available-label {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.order-available-value {
+  font-weight: 600;
+  color: var(--text-primary);
+  font-family: var(--font-mono, 'SF Mono', Consolas, monospace);
 }
 
 .summary-row {
