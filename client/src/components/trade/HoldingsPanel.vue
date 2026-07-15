@@ -43,8 +43,10 @@
         stripe
         size="small"
         class="tp-table"
+        :cell-class-name="cellClassName"
       >
-        <!-- v31.1: 10 列布局, 列宽压缩适应窄列 mini panel (目标总宽 ~720px fit 856 viewport) -->
+        <!-- v31.1: 10 列布局, 列宽压缩适应窄列 mini panel (目标总宽 ~720px fit 856 viewport)
+             v37 移动端: cell-class-name 给每个 <td> 加 col-{label} class, main.css .is-mobile 模式下展示字段名 -->
         <el-table-column prop="stock_code" label="代码" width="100" fixed="left">
           <template #default="{ row }">
             <span class="tp-stock-code">{{ row.stock_code }}</span>
@@ -171,6 +173,12 @@ const totalMv = computed(() => {
 //   改用 computed 引用 quoteStore.byCode (pinia 解包后是 Map, 浅响应) + triggerRef
 //   用一个 wrapper computed 每次 render 都读 quote store size 让 Vue 追踪
 const quoteTickTrigger = computed(() => quoteStore.size || 0)
+
+// v37 移动端: 给每个 <td> 加 col-{label} class, main.css .is-mobile 模式下 ::before 展示字段名
+function cellClassName({ row, column }) {
+  const label = (column && column.label) || ''
+  return 'col-' + label
+}
 
 function getLastPrice(code) {
   // 引用 trigger 让 Vue 追踪此函数调用在 reactive 上下文

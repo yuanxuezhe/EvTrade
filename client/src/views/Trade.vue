@@ -15,7 +15,7 @@
     v13  / v12 修订: 委托/成交嵌入 mini panel, 删独立路由
 -->
 <template>
-  <div class="trade-view fade-in-up" :style="tradeViewStyle">
+  <div class="trade-view fade-in-up" :style="tradeViewStyle" :class="{ 'is-mobile': uiStore.isMobile }">
     <div class="trade-grid">
       <!-- 左上 (1,1) = OrderForm -->
       <div class="trade-cell trade-cell-order">
@@ -192,4 +192,36 @@ function onApplyPrice(price) {
     min-height: 240px;
   }
 }
+
+/*
+ * v37: 手机竖屏布局优化 (兼容 useUiStore().isMobile)
+ *   - 触发条件: ui store isMobile=true (URL ?mobile=1 或 window <= 900)
+ *   - 策略: 单列垂直堆叠, OrderForm/QuotePanel/HoldingsPanel/TodayOrdersPanel 顺序排
+ *   - 持仓/委托/成交 表: 改卡片式 (display:block + 每行变卡片), 避免横向滚动看不到关键数据
+ *   - QuotePanel 盘口: 单列竖排 (卖1→卖5 / 买1→买5), 不再左右两列
+ *   - 取消主视口 height 限制, 让用户自然滚动
+ */
+.trade-view.is-mobile {
+  max-height: none;  /* 移动端不限制高度, 让用户自然滚动 */
+  gap: var(--space-3);
+}
+.trade-view.is-mobile .trade-grid {
+  grid-template-columns: 1fr;
+  grid-template-rows: auto;
+  grid-template-areas:
+    "order"
+    "quote"
+    "holdings"
+    "orders";
+  gap: var(--space-3);
+}
+.trade-view.is-mobile .trade-cell {
+  overflow: hidden;
+  min-height: auto;
+  /* 移动端每个面板给出最小舒适高度 */
+}
+.trade-view.is-mobile .trade-cell-order    { min-height: 280px; }
+.trade-view.is-mobile .trade-cell-quote    { min-height: 360px; }
+.trade-view.is-mobile .trade-cell-holdings { min-height: 320px; }
+.trade-view.is-mobile .trade-cell-orders   { min-height: 320px; }
 </style>

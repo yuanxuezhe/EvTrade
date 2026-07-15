@@ -542,3 +542,176 @@ h1, h2, h3, h4, h5, h6 {
     grid-template-columns: 1fr !important;
   }
 }
+
+/*
+ * v37: 手机竖屏布局 (兼容 useUiStore().isMobile)
+ *   - 触发: ui store isMobile=true (URL ?mobile=1 或 viewport <= 900)
+ *   - .is-mobile 由 Trade.vue 等 view 在 root 加 class
+ *   - 表格: 每行变卡片, 关键 6 列 (代码/名称/最新/市值/盈亏/收益率) 两行展示
+ *   - 持仓/委托/成交 表: 全部走卡片化样式, 关键字段加 :before 显示字段名
+ */
+.is-mobile .el-table {
+  /* 关闭 fit (让出 100% 列宽), 卡片模式需要每行独立 */
+  width: 100% !important;
+  min-width: 0 !important;
+  display: block !important;  /* el-table 自身 block, 让 colgroup 不再控制宽度 */
+/* 关闭 el-table 内部所有 table/row/cell 的 table-layout, 转 block 模型让卡片占满容器 */
+.is-mobile .el-table table,
+.is-mobile .el-table .el-table__inner-wrapper,
+.is-mobile .el-table .el-table__body,
+.is-mobi...[truncated]
+.is-mobile .el-table col {
+  /* 卡片模式忽略 colgroup / 内部 table 设定的列宽 */
+  display: block !important;
+  width: 100% !important;
+  min-width: 0 !important;
+}
+.is-mobile .el-table .el-table__header-wrapper,
+.is-mobile .el-table .el-table__body-wrapper {
+  /* 卡片模式不需要横向滚动 */
+  overflow-x: visible !important;
+  width: 100% !important;
+}
+.is-mobile .el-table tbody,
+.is-mobile .el-table tbody tr,
+.is-mobile .el-table tbody tr td {
+  display: block !important;
+}
+.is-mobile .el-table tbody tr {
+  /* 每行变卡片 */
+  display: block !important;
+  width: 100% !important;  /* 卡片占满容器宽 */
+  background: var(--bg-elevated, #fff) !important;
+  border: 1px solid var(--el-border-color-lighter, #ebeef5) !important;
+  border-radius: 8px !important;
+  margin-bottom: 10px !important;
+  padding: 10px 12px !important;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.04) !important;
+}
+.is-mobile .el-table tbody tr td {
+  /* 每个 cell 用 flex: 字段名(左) + 值(右) */
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  width: 100% !important;
+  padding: 4px 0 !important;
+  border-bottom: 1px dashed var(--el-border-color-lighter, #ebeef5) !important;
+  font-size: 14px !important;
+  min-height: 28px;
+}
+.is-mobile .el-table tbody tr td:last-child {
+  border-bottom: none !important;
+}
+/* 移动端 cell 标签: 用 class 名直接展示中文 label
+   .col-代码::before { content: '代码' } 等. 复用 column label 避免 template 重复 */
+.is-mobile .el-table tbody tr td::before {
+  color: var(--el-text-color-secondary, #909399);
+  font-size: 12px;
+  flex-shrink: 0;
+  margin-right: 8px;
+}
+.is-mobile .el-table tbody tr td.col-代码::before       { content: '代码'; }
+.is-mobile .el-table tbody tr td.col-名称::before       { content: '名称'; }
+.is-mobile .el-table tbody tr td.col-期初::before       { content: '期初'; }
+.is-mobile .el-table tbody tr td.col-持仓::before       { content: '持仓'; }
+.is-mobile .el-table tbody tr td.col-可用::before       { content: '可用'; }
+.is-mobile .el-table tbody tr td.col-成本::before       { content: '成本'; }
+.is-mobile .el-table tbody tr td.col-最新::before       { content: '最新'; }
+.is-mobile .el-table tbody tr td.col-最新价::before     { content: '最新'; }
+.is-mobile .el-table tbody tr td.col-当前价::before     { content: '当前'; }
+.is-mobile .el-table tbody tr td.col-市值::before       { content: '市值'; }
+.is-mobile .el-table tbody tr td.col-浮动盈亏::before   { content: '浮动盈亏'; }
+.is-mobile .el-table tbody tr td.col-收益率::before     { content: '收益率'; }
+.is-mobile .el-table tbody tr td.col-委托价格::before   { content: '委托价'; }
+.is-mobile .el-table tbody tr td.col-委托数量::before   { content: '数量'; }
+.is-mobile .el-table tbody tr td.col-成交价格::before   { content: '成交价'; }
+.is-mobile .el-table tbody tr td.col-成交数量::before   { content: '数量'; }
+.is-mobile .el-table tbody tr td.col-委托时间::before   { content: '时间'; }
+.is-mobile .el-table tbody tr td.col-成交时间::before   { content: '时间'; }
+.is-mobile .el-table tbody tr td.col-委托编号::before   { content: '委托号'; }
+.is-mobile .el-table tbody tr td.col-方向::before       { content: '方向'; }
+.is-mobile .el-table tbody tr td.col-状态::before       { content: '状态'; }
+.is-mobile .el-table tbody tr td.col-备注::before       { content: '备注'; }
+/* 卡片顶部: 代码 + 名称 突出 */
+.is-mobile .el-table tbody tr td.col-代码 {
+  font-size: 16px !important;
+  font-weight: 600 !important;
+  color: var(--accent, #3b82f6) !important;
+  border-bottom: 1px solid var(--el-border-color-lighter, #ebeef5) !important;
+  padding-bottom: 8px !important;
+  margin-bottom: 4px !important;
+}
+.is-mobile .el-table tbody tr td.col-代码::before {
+  display: none !important;  /* 代码行不加 label */
+}
+.is-mobile .el-table tbody tr td.col-名称 {
+  font-size: 14px !important;
+  font-weight: 500 !important;
+  border-bottom: 1px solid var(--el-border-color-lighter, #ebeef5) !important;
+  padding-bottom: 8px !important;
+  margin-bottom: 4px !important;
+}
+.is-mobile .el-table tbody tr td.col-名称::before {
+  display: none !important;  /* 名称行不加 label */
+}
+
+/* 移动端 QuotePanel 盘口: 单列竖排 (卖1→卖5 / 买1→买5) */
+.is-mobile .qp-orderbook {
+  flex-direction: column !important;
+  gap: var(--space-2) !important;
+}
+.is-mobile .qp-stack {
+  flex: none !important;
+  width: 100% !important;
+}
+.is-mobile .qp-hero {
+  flex-wrap: wrap;
+}
+
+/* 移动端 OrderForm: 紧凑间距 + label 与 input 分行 (label 占整行, input 占整行) */
+.is-mobile .order-form {
+  padding: var(--space-2) !important;
+}
+.is-mobile .form-body {
+  padding: var(--space-2) !important;
+}
+
+/* 移动端 table panel (HoldingsPanel/TodayOrdersPanel 等) — 卡片模式撑开高度,
+   用整页滚动, 而不是 panel 内滚动. 不让 el-table body-wrapper / el-scrollbar 撑高 */
+.is-mobile .hp-shell,
+.is-mobile .tp-shell {
+  height: auto !important;
+  max-height: none !important;
+  overflow: visible !important;
+}
+.is-mobile .hp-shell .tp-body,
+.is-mobile .tp-shell .tp-body,
+.is-mobile .hp-shell .el-table__body-wrapper,
+.is-mobile .tp-shell .el-table__body-wrapper,
+.is-mobile .el-table__body-wrapper,
+.is-mobile .el-scrollbar,
+.is-mobile .el-scrollbar__wrap {
+  height: auto !important;
+  max-height: none !important;
+  overflow: visible !important;
+  min-height: 0 !important;
+}
+
+/* 移动端 sidebar 抽屉 (ui store 已处理 toggleSidebar 走 drawer 模式) */
+.is-mobile .app-sidebar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  height: 100vh;
+  z-index: 100;
+  transform: translateX(-100%);
+  transition: transform 0.25s ease;
+}
+.is-mobile .app-sidebar.is-open {
+  transform: translateX(0);
+}
+
+/* 移动端 content padding 收紧 */
+.is-mobile .app-content {
+  padding: var(--space-2) !important;
+}
