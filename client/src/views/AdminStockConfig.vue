@@ -12,6 +12,7 @@
     v22: 11 字段编辑(行业/市场/上市日期/总股本/流通股本/总市值/PE/PB/简介 等)
     v23: 5 字段编辑(名称/板块/回转标志/最小买入数量/买卖单位)
     v25: 6 字段编辑(+short_name 拼音首字母)
+    v46+: short_name 完全由后端自动生成 (前端列隐藏 + 无表单字段)
 -->
 <template>
   <div class="admin-stock-config fade-in-up">
@@ -106,11 +107,7 @@
               <span class="text-mono">{{ row.trade_unit ?? 1 }}</span>
             </template>
           </el-table-column>
-          <el-table-column prop="short_name" label="首字母" width="100" align="center">
-            <template #default="{ row }">
-              <span class="text-mono">{{ row.short_name || '—' }}</span>
-            </template>
-          </el-table-column>
+          <!-- v46+ short-name-auto: 首字母列已隐藏 (后端自动生成, 前端无需展示) -->
           <el-table-column label="操作" width="100" fixed="right">
             <template #default="{ row }">
               <el-button size="small" link type="primary" @click="onEdit(row)">
@@ -161,14 +158,7 @@
         <el-form-item label="板块">
           <el-input v-model="store.editForm.sector" maxlength="64" placeholder="如：银行-国有大型银行" />
         </el-form-item>
-        <el-form-item label="拼音首字母">
-          <el-input
-            v-model="store.editForm.short_name"
-            maxlength="16"
-            placeholder="如：平安银行 → PAYH"
-            show-word-limit
-          />
-        </el-form-item>
+        <!-- v46+ short-name-auto: 编辑对话框不显示 short_name 输入 (后端根据 stock_name 自动生成) -->
         <el-form-item label="回转标志">
           <el-switch
             v-model="store.editForm.is_t0_able"
@@ -216,9 +206,7 @@
         <el-form-item label="所属板块" prop="sector">
           <el-input v-model="createForm.sector" placeholder="可选,例如 消费" maxlength="64" />
         </el-form-item>
-        <el-form-item label="简称" prop="short_name">
-          <el-input v-model="createForm.short_name" placeholder="可选,例如 茅台" maxlength="16" />
-        </el-form-item>
+        <!-- v46+ short-name-auto: 添加对话框不显示 short_name 输入 (后端根据 stock_name 自动生成) -->
         <el-form-item label="T+0">
           <el-switch v-model="createForm.is_t0_able" />
           <span style="margin-left: 12px; color: #909399; font-size: 12px;">默认 false (T+1)</span>
@@ -300,11 +288,11 @@ const createDialogVisible = ref(false)
 const createFormRef = ref(null)
 
 // form 数据模板(每次打开重置)
+// v46+ short-name-auto: short_name 字段已移除 (后端自动生成)
 const emptyCreateForm = () => ({
   stock_code: '',
   stock_name: '',
   sector: '',
-  short_name: '',
   is_t0_able: false,
   min_buy_qty: 100,
   trade_unit: 1
@@ -326,7 +314,6 @@ const createRules = {
     { min: 1, max: 64, message: '长度 1-64 字符', trigger: 'blur' }
   ],
   sector: [{ max: 64, message: '最长 64 字符', trigger: 'blur' }],
-  short_name: [{ max: 16, message: '最长 16 字符', trigger: 'blur' }],
   min_buy_qty: [{ type: 'number', min: 1, message: '≥ 1', trigger: 'blur' }],
   trade_unit: [{ type: 'number', min: 1, message: '≥ 1', trigger: 'blur' }]
 }
@@ -350,7 +337,7 @@ async function onCreateSave() {
     stock_code: createForm.value.stock_code.trim(),
     stock_name: createForm.value.stock_name.trim(),
     sector: createForm.value.sector.trim() || null,
-    short_name: createForm.value.short_name.trim() || null,
+    // v46+ short-name-auto: short_name 字段已移除 (后端根据 stock_name 自动生成)
     is_t0_able: createForm.value.is_t0_able,
     min_buy_qty: createForm.value.min_buy_qty,
     trade_unit: createForm.value.trade_unit
