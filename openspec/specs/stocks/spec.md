@@ -10,6 +10,7 @@ EvTrade 当前缺股票基础信息(行业/市值/PE/PB/公司简介)。本 capa
 3. 同步任务生命周期(REQ-STOCK-003)
 4. 同步进度推送协议(REQ-STOCK-004)
 5. 东方财富数据源适配契约(REQ-STOCK-005)
+6. admin 手动添加证券(REQ-STOCK-006, v46)
 
 数据流:Admin 点击 "开始同步" → 后台爬虫 → 增量 upsert MySQL → WS 推送前端更新缓存。
 
@@ -155,6 +156,84 @@ EvTrade 当前缺股票基础信息(行业/市值/PE/PB/公司简介)。本 capa
 - **WHEN** runner 推 `stock_synced` 消息
 - **THEN** `data` 字段仅含 `stock_code` / `stock_name` / `sector`(3 字段)
 - **AND** 不含 `industry` / `market` / `intro` 等 v21 字段(已删除)
+
+## REQ-STOCK-006: admin 手动添加证券（v46 stock-info-create）
+
+**Endpoint**: `POST /api/stocks`  
+**Auth**: admin only（`Depends(require_admin)`）  
+**Status**: 201 Created  
+**Purpose**: 让 admin 在爬虫未覆盖时手动录入股票（如 ETF、可转债、港股通、B 股、新上市标的）
+
+**字段白名单**（`StockCreateRequest`, Pydantic `extra=forbid`）：
+
+| 字段 | 类型 | 必填 | 默认 | 约束 |
+|---|---|---|---|---|
+| `stock_code` | str | ✅ | — | 正则 `^\d{6}\.(SH\|SZ\|BJ)$`（如 `600519.SH`） |
+| `stock_name` | str | ✅ | — | max 64 |
+| `sector` | Optional[str] | ❌ | null | max 64 |
+| `short_name` | Optional[str] | ❌ | null | max 16 |
+| `is_t0_able` | bool | ❌ | false | — |
+| `min_buy_qty` | int | ❌ | 100 | ge 1 |
+| `trade_unit` | int | ❌ | 1 | ge 1 |
+
+**响应**：
+
+```json
+{
+  "code": 0,
+  "msg": "ok",
+  "data": {
+    "stock_code": "600519.SH",
+    "stock_name": "贵州茅台",
+    "sector": "消费-白酒",
+    "short_name": "茅台",
+    "is_t0_able": false,
+    "min_buy_qty": 100,
+    "trade_unit": 1
+  }
+}
+```
+
+**错误码**：
+
+- **422**: 字段校验失败（Pydantic 自动处理，前端 element-plus form rules 同等校验）
+- **409**: `stock_code` 已存在 → `{"detail": "stock 600519.SH already exists"}`
+- **401**: 无 token 或 token 无效
+- **403**: token 有效但 role≠admin（`require_admin` 触发）
+
+**实现要点**：
+
+- `stocks_repo.create_by_admin(db, data)`：先查 `stock_code` 重复 → 有则返 None → API 层抛 409
+- 与 `upsert` 区别：upsert 是爬虫 7 天阈值跳过；create 是 admin 强制新增
+- 不开放 `delete` 接口（v22 已决策，admin 误删不可逆）
+- v46 严格白名单：v22 旧字段 `industry` / `market` / `intro` 在 Pydantic 层即抛 422
+
+#### Scenario: admin 添加合法股票
+
+- **GIVEN** admin 已登录，`999999.SH` 不存在
+- **WHEN** POST `/api/stocks` with `{"stock_code":"999999.SH","stock_name":"测试证券1号","sector":"测试","is_t0_able":false,"min_buy_qty":100,"trade_unit":1}`
+- **THEN** 响应 201，body 含完整 7 字段
+- **AND** 数据库 `stocks` 表新增一行
+- **AND** GET `/api/stocks/999999.SH` 返回相同数据
+
+#### Scenario: stock_code 已存在返回 409
+
+- **GIVEN** `600519.SH` 已存在（来自爬虫或上次添加）
+- **WHEN** admin POST `/api/stocks` 重复 stock_code
+- **THEN** 响应 409，body `{"detail":"stock 600519.SH already exists"}`
+- **AND** 数据库不变
+
+#### Scenario: stock_code 格式错误返回 422
+
+- **GIVEN** admin 提供 `stock_code="99999"`（缺后缀）
+- **WHEN** POST `/api/stocks`
+- **THEN** 响应 422，Pydantic 校验错 `string does not match regex "^\\d{6}\\.(SH|SZ|BJ)$"`
+
+#### Scenario: viewer 用户尝试添加
+
+- **GIVEN** viewer 用户（role=viewer）已登录，token 有效
+- **WHEN** POST `/api/stocks`
+- **THEN** 响应 403（`require_admin` 拦截）
 
 ## Non-Functional Requirements
 

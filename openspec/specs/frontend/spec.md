@@ -1286,3 +1286,67 @@ The system SHALL render `client/src/components/StockCodeAutocomplete.vue` 为左
 - **WHEN** 用户 ws 断开（refreshAll 已弹错）
 - **THEN** handleInit 同步刷新路径保证持仓页更新
 - **AND** 下次 ws 重连后 init_completed 不会重放（fire-and-forget，无重试）
+
+### REQ-FE-STOCK-CREATE: 证券信息设置支持添加证券 (v46 stock-info-create)
+
+**位置**: `/admin/stock-config` 页面 (`client/src/views/AdminStockConfig.vue`)  
+**入口**: panel-header 新增 `添加证券` 按钮（Primary type，紧邻 `刷新` 按钮）  
+**可见性**: 仅 admin 角色可见（菜单层 + `require_admin` API 拦截双保险）
+
+**对话框契约**（`el-dialog title="添加证券" width="520px"`）：
+
+| Form 字段 | 控件 | 校验规则 |
+|---|---|---|
+| `stock_code` | `el-input` | 必填 + regex `^\d{6}\.(SH|SZ\|BJ)$`（与后端 Pydantic 对齐） |
+| `stock_name` | `el-input` | 必填，max 64 |
+| `sector` | `el-input` | 可选，max 64 |
+| `short_name` | `el-input` | 可选，max 16 |
+| `is_t0_able` | `el-switch` | 默认 false（`T+1`） |
+| `min_buy_qty` | `el-input-number` | 默认 100，ge 1 |
+| `trade_unit` | `el-input-number` | 默认 1，ge 1 |
+
+**提交流程**（`onCreateSave`）：
+
+1. `await createFormRef.value?.validate()` — element-plus 行内校验
+2. 空字符串转 `null`（后端 Optional 字段友好）
+3. `store.createStock(payload)` — 调用 `stocksApi.create` POST `/api/stocks`
+4. **成功**: `ElMessage.success("已添加 999999.SH 测试证券1号")` + 关闭 dialog
+5. **失败**: `ElMessage.error(r.msg)`（覆盖 422 / 409 / 500 全部场景）
+
+**Store 同步**（`useStocksStore().createStock`）：
+
+- `cache.value.unshift(data)` — 缓存头部插入（autocomplete 立即可用）
+- `total.value += 1` — 顶部"全量缓存 N 条"和分页器"共 N 条"同步 +1
+- 若 `page.value === 1`：`pageRows.value.unshift(data)` — 当前页立即显示
+- `createLoading.value` 绑定到 dialog 添加按钮 loading 态
+
+**关键设计**：
+
+- **独立 dialog**: 与编辑 dialog 解耦，`createDialogVisible` 与 `dialogVisible` 分开
+- **每次打开重置**: `emptyCreateForm()` + `createFormRef.clearValidate()`，防止上次的脏数据残留
+- **`extra=forbid` 对齐**: v22 旧字段 `industry` / `market` / `intro` 在 Pydantic 即抛 422，前端不会发送
+- **不开放删除**: v22 已决策，admin 误删不可逆。只能添加 + 编辑现有
+
+#### Scenario: 成功添加证券
+
+- **GIVEN** admin 已登录，`/admin/stock-config` 页面打开
+- **WHEN** 点击 `添加证券` 按钮 → 填写 `999998.SH` + 名称 + 板块 + T+0 + 最小买入 → 点击 `添加`
+- **THEN** 对话框自动关闭
+- **AND** 表格第 1 行显示新加的 999998.SH
+- **AND** 顶部"全量缓存 N 条"和分页器"共 N 条"都 +1
+- **AND** `ElMessage.success` 提示"已添加 999998.SH ..."
+
+#### Scenario: 重复 stock_code 走 409
+
+- **GIVEN** `999998.SH` 已存在（来自上次添加或爬虫）
+- **WHEN** admin 再次填相同 stock_code 并提交
+- **THEN** 对话框保持打开（不关闭）
+- **AND** `ElMessage.error` 提示 "stock 999998.SH already exists"
+- **AND** 表格不变，total 不变
+
+#### Scenario: 格式校验不通过
+
+- **GIVEN** admin 输入 `stock_code="99999"`（缺后缀）
+- **WHEN** blur 输入框（触发校验）
+- **THEN** 输入框红色高亮 + 下方红字"格式必须是 6 位数字 + .SH/.SZ/.BJ"
+- **AND** 添加按钮即使点击也走不到后端（element-plus validate 拦截）
