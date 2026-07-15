@@ -18,7 +18,7 @@
 
   衍生字段 (client-side 计算):
     - 均价 / 振幅 / 涨停 / 跌停
-    - 后端未支持字段 (现手 / 量比 / 市值 / 费率) 显示 `—`
+    - 已移除字段 (现手/量比/涨跌/涨幅/金额/总手/市值/费率)
 -->
 <template>
   <div class="quote-panel content-card">
@@ -75,7 +75,7 @@
       </div>
     </div>
 
-    <!-- ⑤ v33: 16 格 → 12 格 stats grid (删 涨跌/涨幅/现手/量比; 最高/最低移到第 2 行 原涨跌位置) -->
+    <!-- ⑤ v33.2: 16→8 格 stats grid (删 涨跌/涨幅/现手/量比 + 金额/总手/市值/费率; 最高/最低移到第 2 行 原涨跌位置) -->
     <div class="qp-stats-grid">
       <!-- Row 1: 昨收 / 开盘 -->
       <div
@@ -109,11 +109,7 @@
         @click="emitApply(avgPrice)"
       ><span class="qp-cell-label">均价</span><span class="qp-cell-value">{{ avgPriceText }}</span></div>
 
-      <!-- Row 4: 金额 / 总手 -->
-      <div class="qp-stats-cell"><span class="qp-cell-label">金额</span><span class="qp-cell-value">{{ formatBigNum(quote?.fields?.[F.AMOUNT]) }}</span></div>
-      <div class="qp-stats-cell"><span class="qp-cell-label">总手</span><span class="qp-cell-value">{{ formatBigNum(quote?.fields?.[F.VOLUME]) }}</span></div>
-
-      <!-- Row 5: 涨停 / 跌停 -->
+      <!-- Row 4: 涨停 / 跌停 -->
       <div
         class="qp-stats-cell is-clickable"
         :title="limitUp != null ? '点击带入委托价' : ''"
@@ -125,10 +121,7 @@
         @click="emitApply(limitDown)"
       ><span class="qp-cell-label">跌停</span><span class="qp-cell-value text-down">{{ limitDownText }}</span></div>
 
-      <!-- Row 6: 市值 / 费率 — 后端未支持, 显示 — -->
-      <div class="qp-stats-cell"><span class="qp-cell-label">市值</span><span class="qp-cell-value">—</span></div>
-      <div class="qp-stats-cell"><span class="qp-cell-label">费率</span><span class="qp-cell-value">—</span></div>
-    </div>
+      </div>
 
     <!-- 未订阅提示 -->
     <div v-if="!code" class="qp-empty">输入股票代码订阅行情</div>
