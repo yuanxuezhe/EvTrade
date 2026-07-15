@@ -374,6 +374,9 @@ onBeforeUnmount(() => {
 
 .panel {
   padding: var(--space-5);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
 }
 
 .panel-header {
@@ -548,5 +551,16 @@ onBeforeUnmount(() => {
 @media (max-width: 1280px) {
   .stats-grid { grid-template-columns: repeat(2, 1fr); }
   .overview-grid, .lower-grid { grid-template-columns: 1fr; }
+}
+
+/* 仪表盘内嵌表格加 height:100%，与 Trade.vue 持仓/委托/成交面板行为一致
+   仅作用域内 .panel 下生效：scoped 隔离避免影响全局其他 el-table */
+.panel :deep(.el-table) {
+  width: 100%;
+  height: 100%;
+  font-size: 12px;
+}
+.panel :deep(.el-table .el-table__cell) {
+  padding: 4px 0;
 }
 </style>
