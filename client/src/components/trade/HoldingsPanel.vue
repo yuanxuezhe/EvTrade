@@ -149,23 +149,20 @@ const quoteStore = useQuoteStore()
 // v53: 持仓行 dblclick → emit apply-to-order (REQ-FE-HOLDINGS-DBLCLICK)
 //   父组件 (Trade.vue) 监听此事件 → 写入 quickStock → OrderForm 自动更新代码
 // v55: 加 select-stock emit (单击), 让 T0Trade.vue 添加任务 dialog 能直接回填 stock_code
-//   - 单击与 dblclick 互不触发: flag + 250ms 节流, 避免 dblclick 第一击误识别为 click
+//   - 单击与 dblclick 互不触发: 用 dblclickFlag 标记最近 250ms 内是否触发过 dblclick,
+//     如果是 → 本次 click 视为 dblclick 第一击, 不触发 select-stock
 const emit = defineEmits(['apply-to-order', 'select-stock'])
-let lastClickTs = 0
+let lastDblclickTs = 0
 function onRowDblclick(row) {
   if (!row || !row.stock_code) return
   const name = stockName(row.stock_code) || row.stock_name || ''
   emit('apply-to-order', { stock_code: row.stock_code, stock_name: name })
+  lastDblclickTs = Date.now()
 }
 function onRowClick(row) {
   if (!row || !row.stock_code) return
-  const now = Date.now()
-  // 节流: 250ms 内的 click 视为 dblclick 第一击, 不触发 select-stock
-  if (now - lastClickTs < 250) {
-    lastClickTs = now
-    return
-  }
-  lastClickTs = now
+  // 若 300ms 内刚发生过 dblclick, 跳过本次 click (避免 dblclick 残留事件触发 select-stock)
+  if (Date.now() - lastDblclickTs < 300) return
   const name = stockName(row.stock_code) || row.stock_name || ''
   emit('select-stock', { stock_code: row.stock_code, stock_name: name })
 }
