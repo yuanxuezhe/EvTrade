@@ -1,40 +1,47 @@
+<!--
+  T0Trade.vue — 快速做T 主页面 (v55 切到 task 视角)
+
+  架构变更：
+    v54 前: 主表 holdings 视角 (每行 = 1 持仓标的) + drawer T0TaskList + dialog T0TaskCreateDialog
+    v55:   主表 task 视角 (每行 = 1 做T 任务) + 删 drawer T0TaskList + "添加任务" 按钮 → dialog (左 HoldingsPanel + 右 T0TaskCreateDialog)
+
+  数据源: t0TasksStore.tasks (一 task 一行)
+  持仓:   useHoldingsStore().positions (供 HoldingsPanel 嵌入 dialog 用)
+  行情:   useQuoteStore()
+
+  v55 主表 8 列:
+    1. 状态 (el-tag)
+    2. 任务编号 (#${task.id})
+    3. 标的 (代码 + 名称)
+    4. 底仓+目标 (= base_volume + target_volume)
+    5. 当前持仓 (task.summary.position_vol)
+    6. 做T盈亏 (task.summary.realized_pnl, 红涨绿跌)
+    7. 做T收益率% (calcT0ReturnRate)
+    8. 操作 (详情 / 配平 / 平仓)
+
+  v55 "添加任务" dialog (900px wide):
+    ┌──────────────────┬──────────────────────────┐
+    │ HoldingsPanel    │ T0TaskCreateDialog        │
+    │ (左 350px)       │ (右 520px)                │
+    │ - 单击 → select-stock → 回填 stock_code │
+    └──────────────────┴──────────────────────────┘
+-->
 <template>
   <div class="t0-trade fade-in-up">
-    <!-- Header + 设置条: 标题 + 仓位% + 价格档 + 刷新 + task 入口 -->
+    <!-- Header: 标题 + 仓位% + 价格档 + 任务快速选择 + 添加任务按钮 + 刷新 -->
     <div class="t0-header">
       <span class="t0-title">⚡ 快速做T</span>
       <div class="qs-row">
-        <span class="qs-label">仓位</span>
-        <el-radio-group v-model="quickPct" size="small">
-          <el-radio-button
-            v-for="p in PCT_OPTIONS"
-            :key="p"
-            :value="p"
-            :label="String(p) + '%'"
-          />
-        </el-radio-group>
-        <span class="qs-divider">|</span>
-        <span class="qs-label">价格档</span>
-        <el-radio-group v-model="quickPriceType" size="small">
-          <el-radio-button
-            v-for="opt in PRICE_TYPE_OPTIONS"
-            :key="opt.value"
-            :value="opt.value"
-            :label="opt.label"
-          />
-        </el-radio-group>
-        <span class="qs-divider">|</span>
-        <!-- v54: task 快速选择器（精简无 quota 框架, 移到这里） -->
-        <el-tooltip content="选择/取消当前做T归属的 task；新建请用管理任务入口" placement="top">
+        <el-tooltip content="选择/取消当前做T归属的 task；新建请用添加任务入口" placement="top">
           <el-select
             v-model="selectedTaskId"
-            placeholder="归属 task (可选)"
-            clearable
+            placeholder="选 task"
             size="small"
+            clearable
             filterable
-            class="t0-task-quick-select"
-            @clear="selectedTaskId = null"
-            no-data-text="暂无活跃 task，请新建"
+            class="qs-task-select"
+            style="width: 200px"
+            @change="onTaskChange"
           >
             <el-option
               v-for="t in filteredActiveTasks"
@@ -44,238 +51,258 @@
             />
           </el-select>
         </el-tooltip>
-        <el-button size="small" link type="primary" @click="onManageTasks">管理任务</el-button>
-        <el-button size="small" @click="holdingsStore.refreshPositions()" :loading="refreshing">刷新</el-button>
+        <el-button type="primary" size="small" :icon="Plus" @click="onAddTaskOpen">添加任务</el-button>
+        <el-button size="small" @click="onRefresh" :loading="refreshing">刷新</el-button>
       </div>
     </div>
 
-    <!-- 主表: 11 列精简布局 (v54 quick-t0-revamp) -->
+    <!-- 主表 8 列 (v55 task 视角) -->
     <el-table
-      :data="sortedRows"
+      :data="taskRows"
       :row-class-name="ptRowClass"
       @sort-change="onSortChange"
-      class="position-table"
-      empty-text="暂无持仓"
+      class="task-table"
+      empty-text="暂无 T0 任务，点击「添加任务」按钮创建"
       size="default"
     >
-      <!-- 1. 代码 (100) -->
-      <el-table-column prop="stock_code" label="代码" width="100" />
-
-      <!-- 2. 名称 (100) -->
-      <el-table-column label="名称" width="100">
-        <template #default="{ row }">{{ stockName(row.stock_code) || row.stock_code }}</template>
-      </el-table-column>
-
-      <!-- 3. 持仓 (100, sortable) -->
-      <el-table-column prop="vol" label="持仓" align="right" width="100" sortable="custom">
-        <template #default="{ row }">{{ formatNumber(row.vol) }}</template>
-      </el-table-column>
-
-      <!-- 4. 最新价(涨跌幅%) (130, sortable, 单列合并 v54 Q7) -->
-      <el-table-column prop="last_price" label="最新价(涨跌幅%)" align="right" width="130" sortable="custom">
+      <!-- 1. 状态 (100) -->
+      <el-table-column prop="status" label="状态" width="100">
         <template #default="{ row }">
-          <span :class="quoteStore.getChangePct(row.stock_code) >= 0 ? 'up' : 'down'">
-            {{ formatPriceAuto(quoteStore.getLastPrice(row.stock_code)) }}
-            ({{ quoteStore.getChangePct(row.stock_code) >= 0 ? '+' : '' }}{{ quoteStore.getChangePct(row.stock_code)?.toFixed(2) }}%)
+          <el-tag :type="statusTagType(row.status)" size="small">{{ statusLabel(row.status) }}</el-tag>
+        </template>
+      </el-table-column>
+
+      <!-- 2. 任务编号 (90) -->
+      <el-table-column prop="id" label="任务编号" width="90">
+        <template #default="{ row }">
+          <span class="text-mono">#{{ row.id }}</span>
+        </template>
+      </el-table-column>
+
+      <!-- 3. 标的 (180: 代码 100 + 名称 80) -->
+      <el-table-column label="标的" min-width="180">
+        <template #default="{ row }">
+          <span class="text-mono tp-stock-code">{{ row.stock_code }}</span>
+          <span class="text-secondary" style="margin-left: 6px">{{ stockName(row.stock_code) || '—' }}</span>
+        </template>
+      </el-table-column>
+
+      <!-- 4. 底仓+目标 (140, sortable) -->
+      <el-table-column prop="balance_target" label="底仓+目标" align="right" width="140" sortable="custom">
+        <template #default="{ row }">
+          <span class="text-mono">
+            {{ formatNumber(row.base_volume || 0) }} + {{ formatNumber(row.target_volume || 0) }}
+            = <b>{{ formatNumber((row.base_volume || 0) + (row.target_volume || 0)) }}</b>
           </span>
         </template>
       </el-table-column>
 
-      <!-- 5. 期初配额 (100) — last_vol (原有持仓, 不递减) -->
-      <el-table-column prop="last_vol" label="期初" align="right" width="100">
+      <!-- 5. 当前持仓 (100, sortable) -->
+      <el-table-column prop="position_vol" label="当前持仓" align="right" width="100" sortable="custom">
         <template #default="{ row }">
-          <span class="text-mono" :class="formatNumber(row.last_vol) >= 1000 ? '' : 'muted'">
-            {{ formatNumber(row.last_vol || 0) }}
+          <span class="text-mono">{{ formatNumber(row.summary?.position_vol ?? 0) }}</span>
+        </template>
+      </el-table-column>
+
+      <!-- 6. 做T盈亏 (110, sortable) -->
+      <el-table-column prop="t0_pnl" label="做T盈亏" align="right" width="110" sortable="custom">
+        <template #default="{ row }">
+          <span class="text-mono" :class="(row.summary?.realized_pnl ?? 0) >= 0 ? 'up' : 'down'">
+            {{ (row.summary?.realized_pnl ?? 0) >= 0 ? '+' : '' }}{{ formatAmount(row.summary?.realized_pnl ?? 0) }}
           </span>
         </template>
       </el-table-column>
 
-      <!-- 6. 可买 (100, sortable) — calcInitialQuota.maxBuyable 基于 last_vol - 已成交买 -->
-      <el-table-column prop="max_buyable" label="可买" align="right" width="100" sortable="custom">
+      <!-- 7. 做T收益率% (120, sortable) -->
+      <el-table-column prop="t0_return_rate" label="做T收益率%" align="right" width="120" sortable="custom">
         <template #default="{ row }">
-          <span class="text-mono quota-cell" :class="`quota-${quotaLevel(rowInitialQuota(row).maxBuyable)}`">
-            {{ formatNumber(rowInitialQuota(row).maxBuyable) }}
-          </span>
-        </template>
-      </el-table-column>
-
-      <!-- 7. 可卖 (100, sortable) — calcInitialQuota.maxSellable 基于 last_vol - 已成交卖 -->
-      <el-table-column prop="max_sellable" label="可卖" align="right" width="100" sortable="custom">
-        <template #default="{ row }">
-          <span class="text-mono quota-cell" :class="`quota-${quotaLevel(rowInitialQuota(row).maxSellable)}`">
-            {{ formatNumber(rowInitialQuota(row).maxSellable) }}
-          </span>
-        </template>
-      </el-table-column>
-
-      <!-- 8. 做T盈亏 (100, sortable) — calcT0Pnl = sell_amount - buy_amount -->
-      <el-table-column prop="t0_pnl" label="做T盈亏" align="right" width="100" sortable="custom">
-        <template #default="{ row }">
-          <template v-if="t0StatsMap[row.stock_code]">
-            <span :class="t0PnlForRow(row) >= 0 ? 'up' : 'down'">
-              {{ (t0PnlForRow(row) >= 0 ? '+' : '') + formatAmount(t0PnlForRow(row)) }}
-            </span>
-          </template>
-          <span v-else class="muted">--</span>
-        </template>
-      </el-table-column>
-
-      <!-- 9. 做T收益率% (110, sortable) — calcT0ReturnRate = pnl / (last_vol * cost_price) -->
-      <el-table-column prop="t0_return_rate" label="做T收益率%" align="right" width="110" sortable="custom">
-        <template #default="{ row }">
-          <span :class="t0ReturnRateForRow(row) >= 0 ? 'up' : 'down'">
+          <span class="text-mono" :class="t0ReturnRateForRow(row) >= 0 ? 'up' : 'down'">
             {{ (t0ReturnRateForRow(row) * 100).toFixed(2) }}%
           </span>
         </template>
       </el-table-column>
 
-      <!-- 10. 浮盈% (100, sortable, 保留旧 v53) -->
-      <el-table-column prop="return_rate" label="浮盈%" align="right" width="100" sortable="custom">
-        <template #default="{ row }">
-          <span :class="holdingsStore.getReturnRate(row.stock_code) >= 0 ? 'up' : 'down'">
-            {{ (holdingsStore.getReturnRate(row.stock_code) * 100).toFixed(2) }}%
-          </span>
-        </template>
-      </el-table-column>
-
-      <!-- 11. 操作 (180 fixed right) — 4 按钮 (买/卖/配平/详情) -->
-      <el-table-column label="操作" align="center" width="180" fixed="right">
+      <!-- 8. 操作 (240 fixed right) — 详情 / 配平 / 平仓 -->
+      <el-table-column label="操作" align="center" width="240" fixed="right">
         <template #default="{ row }">
           <div class="op-col">
-            <el-tooltip :content="buyState(row).tip" placement="top">
-              <el-button type="primary" size="small" :disabled="buyState(row).disabled" @click.stop="onQuickBuy(row)" class="op-btn-buy">
-                买{{ quickPct }}%
-              </el-button>
-            </el-tooltip>
-            <el-tooltip :content="sellState(row).tip" placement="top">
-              <el-button type="danger" size="small" :disabled="sellState(row).disabled" @click.stop="onQuickSell(row)" class="op-btn-sell">
-                卖{{ quickPct }}%
-              </el-button>
-            </el-tooltip>
-            <el-tooltip :content="balanceState(row).tip" placement="top">
-              <el-button
-                type="warning"
-                size="small"
-                :disabled="balanceState(row).disabled"
-                @click.stop="onQuickBalance(row)"
-                class="op-btn-balance"
-              >
-                {{ getBalanceLabel(row) }}
-              </el-button>
-            </el-tooltip>
-            <el-tooltip content="查看做T历史明细" placement="top">
-              <el-button type="primary" link size="small" @click.stop="onOpenDrawer(row)" class="op-btn-detail">
-                详情
-              </el-button>
-            </el-tooltip>
+            <el-button type="primary" link size="small" @click="onOpenTaskDetail(row.id)">详情</el-button>
+            <el-button
+              v-if="row.status === 'active'"
+              type="warning"
+              link
+              size="small"
+              @click="onBalanceTask(row.id)"
+            >配平</el-button>
+            <el-button
+              v-if="row.status === 'active'"
+              type="danger"
+              link
+              size="small"
+              @click="onCloseTask(row.id)"
+            >平仓</el-button>
+            <el-button
+              v-if="row.status !== 'archived'"
+              type="info"
+              link
+              size="small"
+              @click="onArchiveTask(row.id)"
+            >归档</el-button>
           </div>
         </template>
       </el-table-column>
     </el-table>
 
-    <!-- v54: T0Task 管理抽屉 (保留) -->
-    <el-drawer v-model="tasksDrawerVisible" title="T0 任务管理" size="70%" direction="rtl"
-      :close-on-click-modal="false">
-      <T0TaskList
-        :visible="tasksDrawerVisible"
-        embedding="drawer"
-        @detail="onOpenTaskDetail"
-        @balance="onBalanceTask"
-        @close="onCloseTask"
-        @create="createDialogVisible = true"
-      />
-    </el-drawer>
+    <!-- 添加任务 dialog (900px, 左 HoldingsPanel + 右 T0TaskCreateDialog) -->
+    <el-dialog
+      v-model="createDialogVisible"
+      title="添加做T任务"
+      width="900px"
+      :close-on-click-modal="false"
+      align-center
+      @open="onAddTaskDialogOpen"
+    >
+      <div class="add-task-grid">
+        <!-- 左侧: 持仓面板 (HoldingsPanel) -->
+        <div class="add-task-left">
+          <div class="left-hint">
+            <el-icon><InfoFilled /></el-icon>
+            <span>单击持仓行自动填充右侧股票代码</span>
+          </div>
+          <HoldingsPanel @select-stock="onHoldingSelected" />
+        </div>
 
+        <!-- 右侧: 创建任务表单 -->
+        <div class="add-task-right">
+          <T0TaskCreateDialog
+            v-if="createDialogVisible"
+            :visible="createDialogVisible"
+            :loading="createDialogLoading"
+            :default-stock-code="stockCode || ''"
+            :external-stock-code="externalStockCode"
+            @update:visible="createDialogVisible = $event"
+            @submit="onCreateTaskSubmit"
+          />
+        </div>
+      </div>
+    </el-dialog>
+
+    <!-- task 详情 drawer (保留 v54) -->
     <el-drawer v-model="tasksDetailVisible" :title="`task #${viewingTaskId} 详情`" size="55%" direction="rtl"
       :close-on-click-modal="false">
       <T0TaskDetail v-if="tasksDetailVisible" :task-id="viewingTaskId" embedding="drawer" />
     </el-drawer>
-
-    <T0TaskCreateDialog
-      v-model="createDialogVisible"
-      :loading="createDialogLoading"
-      :default-stock-code="stockCode"
-      @submit="onCreateTaskSubmit"
-    />
   </div>
 </template>
 
 <script setup>
 import { ref, computed, watch, onMounted } from 'vue'
+import { Plus, InfoFilled } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { storeToRefs } from 'pinia'
 import { useHoldingsStore } from '../stores/holdings'
 import { useQuoteStore } from '../stores/quote'
-import { useOrderStore } from '../stores/order'
-import { useAssetStore } from '../stores/asset'
-import {
-  PCT_OPTIONS, PRICE_TYPE_OPTIONS,
-  loadQuickDefaults, saveQuickDefaults,
-  isBuyDisabled, buildQuickOrder,
-} from '../composables/useQuickT0'
-import {
-  buyBtnState, sellBtnState, balanceBtnState,
-} from '../composables/useT0TradeButtons'
-import { useT0Stats } from '../composables/useT0Stats'
-import { useT0Keybindings } from '../composables/useT0Keybindings'
-// v54: 直接 import quotaLevel (用于可买/可卖颜色), 不依赖 useT0Quota() 整体 hook
-import { quotaLevel } from '../composables/useT0Quota'
-// v54: 新增 5 纯函数 — 做T盈亏/敞口/期初配额/收益率/配平对手盘价
-import {
-  calcT0Pnl,
-  calcInitialQuota,
-  calcT0ReturnRate,
-  resolveBalancePrice,
-} from '../lib/t0-calc'
-import { useUiStore } from '../stores/ui'
-import { t0StatsApi } from '../api/t0_stats'
 import { useT0TasksStore } from '../stores/t0_tasks'
-import T0TaskList from '../components/trade/T0TaskList.vue'
 import T0TaskDetail from '../components/trade/T0TaskDetail.vue'
 import T0TaskCreateDialog from '../components/trade/T0TaskCreateDialog.vue'
-import { t0TasksApi } from '../api/t0_tasks'
-import { formatNumber, formatAmount, formatPriceAuto } from '../utils/format'
+import HoldingsPanel from '../components/trade/HoldingsPanel.vue'
+import { formatNumber, formatAmount } from '../utils/format'
 import { stockName } from '../utils/stockNames'
-import { useT0OrderSubmit } from '../composables/useT0OrderSubmit'
+import { calcT0ReturnRate } from '../lib/t0-calc'
 import { makeLogger } from '../utils/logger'
 
 const log = makeLogger('T0Trade')
 
 const holdingsStore = useHoldingsStore()
-const orderStore = useOrderStore()
 const quoteStore = useQuoteStore()
-const assetStore = useAssetStore()
-const uiStore = useUiStore()
 const t0TasksStore = useT0TasksStore()
 const { positions } = storeToRefs(holdingsStore)
-const { asset: assetData } = storeToRefs(assetStore)
 
 const stockCode = ref(null)
-const submitting = ref(false)
 const refreshing = ref(false)
 
 // task 管理
 const selectedTaskId = ref(null)
-const tasksDrawerVisible = ref(false)
 const tasksDetailVisible = ref(false)
 const viewingTaskId = ref(null)
+
+// 添加任务 dialog
 const createDialogVisible = ref(false)
 const createDialogLoading = ref(false)
+const externalStockCode = ref('')  // HoldingsPanel 选中 → 驱动 dialog 表单
 
 const filteredActiveTasks = computed(() => {
   const all = t0TasksStore.activeTasks || []
   if (!stockCode.value) return all
   return all.filter((t) => t.stock_code === stockCode.value)
 })
+
 watch([stockCode, filteredActiveTasks], ([code, list]) => {
   if (selectedTaskId.value && !list.find((t) => t.id === selectedTaskId.value)) {
     selectedTaskId.value = null
   }
 })
 
-async function onManageTasks() {
-  tasksDrawerVisible.value = true
-  await t0TasksStore.loadTasks()
+// ---- 主表数据源 (v55 task 视角) ----
+const taskRows = computed(() => t0TasksStore.tasks || [])
+
+function ptRowClass({ row }) {
+  const classes = []
+  if (row.id === selectedTaskId.value) classes.push('is-selected')
+  return classes.join(' ')
+}
+
+// ---- 排序 (简化: 只支持 做T盈亏 / 做T收益率% / 当前持仓 3 列) ----
+const sortBy = ref(null)
+const sortOrder = ref(null)
+function onSortChange({ prop, order }) {
+  sortBy.value = order ? prop : null
+  sortOrder.value = order || null
+}
+function _taskSortValue(row, key) {
+  switch (key) {
+    case 'position_vol': return Number(row.summary?.position_vol) || 0
+    case 't0_pnl': return Number(row.summary?.realized_pnl) || 0
+    case 't0_return_rate': return t0ReturnRateForRow(row)
+    default: return 0
+  }
+}
+const sortedTaskRows = computed(() => {
+  const list = [...taskRows.value]
+  if (!sortBy.value || !sortOrder.value) return list
+  const dir = sortOrder.value === 'ascending' ? 1 : -1
+  list.sort((a, b) => (_taskSortValue(a, sortBy.value) - _taskSortValue(b, sortBy.value)) * dir)
+  return list
+})
+
+// ---- 状态 helpers ----
+function statusLabel(s) {
+  return s === 'active' ? '活跃' : s === 'closed' ? '已平仓' : s === 'archived' ? '已归档' : s || '—'
+}
+function statusTagType(s) {
+  if (s === 'active') return 'primary'
+  if (s === 'closed') return 'info'
+  return 'danger'
+}
+
+// ---- 收益率 (v54 复用 calcT0ReturnRate 纯函数) ----
+function t0ReturnRateForRow(row) {
+  // task 没有直接的 last_vol/cost_price, 用 base_volume 代替底仓 (近似);
+  //   真实"持仓成本价" 留作 v56 task cost 字段扩展
+  const baseVol = row.base_volume || 0
+  return calcT0ReturnRate(
+    { last_vol: baseVol, cost_price: 1 },  // 占位 cost_price=1, 实际意义 v56 调整
+    { today_buy_amount: 0, today_sell_amount: row.summary?.realized_pnl || 0 },
+  )
+}
+
+// ---- task 操作 ----
+function onTaskChange(taskId) {
+  selectedTaskId.value = taskId
+  if (taskId) {
+    const t = t0TasksStore.tasksById[taskId]
+    if (t) stockCode.value = t.stock_code
+  }
 }
 function onOpenTaskDetail(taskId) {
   viewingTaskId.value = taskId
@@ -286,15 +313,46 @@ async function onBalanceTask(taskId) {
     const r = await t0TasksStore.balanceTask(taskId)
     const dir = r.action === 'BUY' ? '买入' : r.action === 'SELL' ? '卖出' : '无需操作'
     ElMessage.info(`task #${taskId} 配平建议：${dir} ${r.volume} 股 — ${r.reason}`)
-  } catch (e) {}
+  } catch (e) { /* ElMessage 已被 axios 拦截器弹出 */ }
 }
 async function onCloseTask(taskId) {
-  if (!confirm(`确认一键平仓 task #${taskId} 到 base_volume？将生成平仓委托`)) return
+  try {
+    await ElMessageBox.confirm(
+      `确认一键平仓 task #${taskId} 到 base_volume？将生成平仓委托`,
+      '一键平仓', { confirmButtonText: '确认', cancelButtonText: '取消', type: 'warning' }
+    )
+  } catch (e) { return }
   try {
     const r = await t0TasksStore.closeTask(taskId)
     ElMessage.success(`task #${taskId} 已平仓：${r.action} ${r.volume} 股`)
     await t0TasksStore.loadTasks()
-  } catch (e) {}
+  } catch (e) { /* ElMessage 已被 axios 拦截器弹出 */ }
+}
+async function onArchiveTask(taskId) {
+  try {
+    await ElMessageBox.confirm(
+      `确认归档 task #${taskId}?`,
+      '归档 task', { confirmButtonText: '确认归档', cancelButtonText: '取消', type: 'warning' }
+    )
+  } catch (e) { return }
+  try {
+    await t0TasksStore.archiveTask(taskId)
+    ElMessage.success(`task #${taskId} 已归档`)
+  } catch (e) { /* ElMessage 已被 axios 拦截器弹出 */ }
+}
+
+// ---- 添加任务 dialog ----
+function onAddTaskOpen() {
+  externalStockCode.value = ''
+  createDialogVisible.value = true
+}
+function onAddTaskDialogOpen() {
+  // dialog 打开后清空 externalStockCode, 让 HoldingsPanel 单击能驱动
+  externalStockCode.value = ''
+}
+function onHoldingSelected({ stock_code, stock_name }) {
+  externalStockCode.value = stock_code
+  ElMessage.info(`已选中 ${stock_code} ${stock_name || ''}，请在右侧填写任务参数`)
 }
 async function onCreateTaskSubmit(form) {
   createDialogLoading.value = true
@@ -302,252 +360,31 @@ async function onCreateTaskSubmit(form) {
     const t = await t0TasksStore.createTask(form)
     if (t && t.id) {
       ElMessage.success(`task #${t.id} 创建成功，自动选中`)
-      if (t.stock_code === stockCode.value) {
-        selectedTaskId.value = t.id
-      }
+      selectedTaskId.value = t.id
+      if (t.stock_code) stockCode.value = t.stock_code
+      createDialogVisible.value = false
     }
-    createDialogVisible.value = false
   } finally {
     createDialogLoading.value = false
   }
 }
 
-// ---- 做T明细抽屉 (保留基础功能, 不动) ----
-const drawerVisible = ref(false)
-const drawerLoading = ref(false)
-const drawerStats = ref({ order_count: 0, trade_count: 0, realized_pnl: 0, unrealized_pnl: 0, total_pnl: 0, today_buy_volume: 0, today_sell_volume: 0, today_buy_amount: 0, today_sell_amount: 0 })
-const drawerHistory = ref(null)
-const drawerDays = ref(30)
-function onOpenDrawer(row) {
-  if (!row || !row.stock_code) return
-  const code = row.stock_code
-  stockCode.value = code
-  drawerVisible.value = true
-  drawerLoading.value = true
-  Promise.all([
-    t0StatsApi.get(code).catch((e) => { log.warn('drawer t0 stats failed', e); return null }),
-    t0StatsApi.getHistory(code, drawerDays.value).catch((e) => { log.warn('drawer t0 history failed', e); return null }),
-  ]).then(([stats, hist]) => {
-    if (stats) drawerStats.value = stats
-    drawerHistory.value = hist
-  }).finally(() => { drawerLoading.value = false })
-}
-function onDrawerChangeDays(days) {
-  drawerDays.value = days
-  if (!stockCode.value) return
-  t0StatsApi.getHistory(stockCode.value, days).then((h) => { drawerHistory.value = h }).catch(() => {})
-}
-
-function ptRowClass({ row }) {
-  const classes = []
-  if (row.stock_code === stockCode.value) classes.push('is-selected')
-  if (row.stock_code === selectedRowCode.value) classes.push('is-focused')
-  return classes.join(' ')
-}
-
-// ---- 快速做T 全局设置 ----
-const _quickDefaults = loadQuickDefaults()
-const quickPct = ref(_quickDefaults.pct)
-const quickPriceType = ref(_quickDefaults.priceType)
-watch([quickPct, quickPriceType], ([p, pt]) => {
-  saveQuickDefaults(p, pt)
-})
-
-// ---- 持仓列表 ----
-const holdingsPositions = computed(() => positions.value)
-
-// ---- 排序 + 选中行 (保留 v53) ----
-const sortBy = ref(null)
-const sortOrder = ref(null)
-const selectedRowCode = ref(null)
-function onSortChange({ prop, order }) {
-  sortBy.value = order ? prop : null
-  sortOrder.value = order || null
-}
-function _rowSortValue(row, key) {
-  if (!key) return 0
-  switch (key) {
-    case 'vol': return Number(row.vol) || 0
-    case 'last_price': return quoteStore.getLastPrice(row.stock_code) || 0
-    case 'max_buyable': return rowInitialQuota(row).maxBuyable
-    case 'max_sellable': return rowInitialQuota(row).maxSellable
-    case 't0_pnl': return t0PnlForRow(row)
-    case 't0_return_rate': return t0ReturnRateForRow(row)
-    case 'return_rate': return holdingsStore.getReturnRate(row.stock_code) || 0
-    default: return 0
+// ---- 刷新 ----
+async function onRefresh() {
+  refreshing.value = true
+  try {
+    await t0TasksStore.loadTasks()
+  } finally {
+    refreshing.value = false
   }
 }
-const sortedRows = computed(() => {
-  const list = [...holdingsPositions.value]
-  if (!sortBy.value || !sortOrder.value) return list
-  const dir = sortOrder.value === 'ascending' ? 1 : -1
-  list.sort((a, b) => {
-    const va = _rowSortValue(a, sortBy.value)
-    const vb = _rowSortValue(b, sortBy.value)
-    return (va - vb) * dir
-  })
-  return list
-})
-function _moveSelection(delta) {
-  const list = sortedRows.value
-  if (list.length === 0) return
-  const curIdx = list.findIndex(r => r.stock_code === selectedRowCode.value)
-  let next = curIdx + delta
-  if (next < 0) next = 0
-  if (next >= list.length) next = list.length - 1
-  selectedRowCode.value = list[next].stock_code
-}
-function _selectedRow() {
-  return sortedRows.value.find(r => r.stock_code === selectedRowCode.value)
-}
-
-// ---- t0StatsMap: 每个持仓的今日统计 ----
-const t0StatsMap = ref({})
-async function loadAllT0Stats() {
-  const codes = holdingsPositions.value?.map(p => p.stock_code) || []
-  const map = await useT0Stats.loadAll(codes)
-  t0StatsMap.value = map
-}
-async function loadDiffT0Stats(newCodes, oldCodes) {
-  const oldSet = new Set(oldCodes || [])
-  const added = newCodes.filter(c => !oldSet.has(c))
-  if (added.length === 0) return
-  const addedMap = await useT0Stats.loadAll(added)
-  t0StatsMap.value = { ...t0StatsMap.value, ...addedMap }
-}
-
-// ---- v54: 纯函数 row 包装 ----
-function rowInitialQuota(row) {
-  const stats = t0StatsMap.value[row.stock_code]
-  return calcInitialQuota(
-    { last_vol: row.last_vol ?? row.vol ?? 0 },
-    { today_buy_volume: stats?.today_buy_volume ?? 0, today_sell_volume: stats?.today_sell_volume ?? 0 }
-  )
-}
-function t0PnlForRow(row) {
-  return calcT0Pnl(t0StatsMap.value[row.stock_code])
-}
-function t0ReturnRateForRow(row) {
-  return calcT0ReturnRate(
-    { last_vol: row.last_vol ?? row.vol ?? 0, cost_price: row.cost_price ?? 0 },
-    { today_buy_amount: t0StatsMap.value[row.stock_code]?.today_buy_amount ?? 0, today_sell_amount: t0StatsMap.value[row.stock_code]?.today_sell_amount ?? 0 }
-  )
-}
-
-// ---- v54: 净敞口仍需用（配平按钮文本与 quick 配平）, 但 columns 隐藏 ----
-function netExposure(row) {
-  const s = t0StatsMap.value[row.stock_code]
-  if (!s) return 0
-  return (s.today_buy_volume || 0) - (s.today_sell_volume || 0)
-}
-
-// ---- v54: 配平按钮 — 价格改用 resolveBalancePrice (买→ask1 / 卖→bid1, Q3) ----
-function getBalanceQty(row) {
-  const net = netExposure(row)
-  return net === 0 ? null : Math.abs(net)
-}
-function getBalanceLabel(row) {
-  const net = netExposure(row)
-  if (net === 0) return '配平'
-  return `配${net > 0 ? '-' : '+'}${Math.abs(net)}`
-}
-function _rowBalance(row) {
-  const net = netExposure(row)
-  if (net === 0) return null
-  return { side: net > 0 ? 'sell' : 'buy', qty: Math.abs(net) }
-}
-
-// ---- 按钮状态 ----
-function buyState(row) {
-  return buyBtnState(row, {
-    pct: quickPct.value,
-    cash: assetData.value?.cash,
-    price: quoteStore.getLastPrice(row.stock_code),
-    submitting: submitting.value,
-  })
-}
-function sellState(row) {
-  return sellBtnState(row, { pct: quickPct.value, submitting: submitting.value })
-}
-function balanceState(row) {
-  return balanceBtnState(row, {
-    balance: _rowBalance(row),
-    cash: assetData.value?.cash,
-    price: quoteStore.getLastPrice(row.stock_code),
-    submitting: submitting.value,
-  })
-}
-
-// ---- 下单 ----
-const priceType = ref('latest')
-const balanceCoeff = ref(1.0)
-const { submitOrder } = useT0OrderSubmit({
-  stockCode, priceType, balanceCoeff, submitting,
-  orderStore,
-  onAfterSuccess: () => loadAllT0Stats(),
-})
-
-function onQuickBuy(row) {
-  if (isBuyDisabled(row)) return ElMessage.warning(`${row.stock_code} 持仓为 0, 无法按比例买`)
-  const r = buildQuickOrder(row, 'buy', quickPct.value, quickPriceType.value)
-  if (r.error) return ElMessage.warning(r.error)
-  ElMessageBox.confirm(
-    `${row.stock_code} 买 ${r.qty} 股 (${r.label})`,
-    '一键买入', { confirmButtonText: '确认买入', cancelButtonText: '取消', type: 'info' }
-  ).then(() => submitOrder({ orderType: '23', volume: r.qty, price: r.price, taskId: selectedTaskId.value }))
-    .catch(() => {})
-}
-function onQuickSell(row) {
-  const r = buildQuickOrder(row, 'sell', quickPct.value, quickPriceType.value)
-  if (r.error) return ElMessage.warning(r.error)
-  ElMessageBox.confirm(
-    `${row.stock_code} 卖 ${r.qty} 股 (${r.label})`,
-    '一键卖出', { confirmButtonText: '确认卖出', cancelButtonText: '取消', type: 'warning' }
-  ).then(() => submitOrder({ orderType: '24', volume: r.qty, price: r.price, taskId: selectedTaskId.value }))
-    .catch(() => {})
-}
-function onQuickBalance(row) {
-  const bal = getBalanceQty(row)
-  if (bal === null) return ElMessage.warning('已配平, 无需操作')
-  const side = _rowBalance(row).side
-  // v54 Q3: 配平价格 = 对手盘价 (买→ask1 / 卖→bid1)
-  const quote = quoteStore.get(row.stock_code)
-  const { price: balancePrice, fallback } = resolveBalancePrice({ stock_code: row.stock_code }, side, quote)
-  if (fallback) ElMessage.warning(`${row.stock_code} 对手盘价无效, 回退最新价 ¥${formatPriceAuto(balancePrice)}`)
-  if (!selectedTaskId.value) {
-    ElMessage.warning('未选 task，配平操作不会被归类。建议先在上方选 task。')
-  }
-  ElMessageBox.confirm(
-    `${row.stock_code} ${side === 'buy' ? '买入' : '卖出'} ${bal} 股 配平 (净额归零, ${fallback ? '回退最新价' : '对手盘价'})`,
-    '一键配平', { confirmButtonText: '确认配平', cancelButtonText: '取消', type: 'info' }
-  ).then(() => submitOrder({ orderType: side === 'buy' ? '23' : '24', volume: bal, price: balancePrice, taskId: selectedTaskId.value }))
-    .catch(() => {})
-}
-
-// ---- 快捷键 ----
-useT0Keybindings({
-  isEnabled: () => uiStore.t0Keybindings && !drawerVisible.value,
-  onBuy: () => { const r = _selectedRow(); if (r && !buyState(r).disabled) onQuickBuy(r) },
-  onSell: () => { const r = _selectedRow(); if (r && !sellState(r).disabled) onQuickSell(r) },
-  onBalance: () => { const r = _selectedRow(); if (r && !balanceState(r).disabled) onQuickBalance(r) },
-  onSelectPrev: () => _moveSelection(-1),
-  onSelectNext: () => _moveSelection(1),
-  onEnter: () => { const r = _selectedRow(); if (r) onOpenDrawer(r) },
-})
 
 // ---- 初始化 ----
 onMounted(async () => {
-  await loadAllT0Stats()
-  t0TasksStore.loadTasks().catch(() => {})
-  if (!stockCode.value && holdingsPositions.value.length > 0) {
-    stockCode.value = holdingsPositions.value[0].stock_code
+  await t0TasksStore.loadTasks()
+  if (!stockCode.value && taskRows.value.length > 0) {
+    stockCode.value = taskRows.value[0].stock_code
   }
-})
-
-// 持仓变化 → 差量补 stats
-watch(() => holdingsPositions.value.map(p => p.stock_code), async (newCodes, oldCodes) => {
-  if (!oldCodes) return
-  await loadDiffT0Stats(newCodes, oldCodes)
 })
 </script>
 
@@ -557,110 +394,64 @@ watch(() => holdingsPositions.value.map(p => p.stock_code), async (newCodes, old
   display: flex;
   flex-direction: column;
   gap: 0;
-  height: 100%;
 }
-
-/* Header + 设置条 */
 .t0-header {
   display: flex;
   align-items: center;
-  gap: 16px;
-  padding: 8px 12px;
-  background: var(--el-fill-color-light);
-  border-bottom: 1px solid var(--el-border-color-lighter);
-  flex-wrap: wrap;
+  justify-content: space-between;
+  margin-bottom: 12px;
 }
 .t0-title {
-  font-size: 16px;
+  font-size: 18px;
   font-weight: 700;
+  color: var(--el-text-color-primary, #303133);
 }
 .qs-row {
   display: flex;
-  align-items: center;
   gap: 8px;
-  flex-wrap: wrap;
+  align-items: center;
 }
-.qs-label {
-  font-size: 12px;
-  color: var(--el-text-color-secondary);
-  font-weight: 500;
+.task-table {
+  width: 100%;
 }
-.qs-divider {
-  color: var(--el-border-color);
-}
-.t0-task-quick-select {
-  width: 180px;
-}
-
-/* 主表 — 11 列 */
-.position-table {
-  flex: 1;
-  min-height: 0;
-}
-.position-table :deep(.el-table__header-wrapper) {
-  position: sticky;
-  top: 0;
-  z-index: 2;
-  background: var(--el-fill-color-light);
-}
-.position-table :deep(tr) {
-  cursor: pointer;
-}
-.position-table :deep(tr.is-selected td) {
-  background-color: var(--el-color-primary-light-9) !important;
-}
-.position-table :deep(tr.is-focused td) {
-  box-shadow: inset 3px 0 0 var(--el-color-primary);
-}
-
-/* 操作列 */
 .op-col {
   display: flex;
   gap: 4px;
-  align-items: center;
   justify-content: center;
-  flex-wrap: nowrap;
 }
-.op-col :deep(.el-button) {
-  padding: 4px 6px !important;
-  font-size: 12px !important;
-  font-weight: 600;
-}
-.op-btn-buy :deep(span), .op-btn-sell :deep(span), .op-btn-balance :deep(span) {
-  color: #fff !important;
-}
-.op-btn-detail {
-  padding: 0 !important;
-  font-size: 12px !important;
-}
+.up { color: var(--el-color-danger, #f56c6c); }
+.down { color: var(--el-color-success, #67c23a); }
+.muted { color: var(--el-text-color-placeholder, #c0c4cc); }
 
-/* quota 单元格颜色 (复用 v53 quotaLevel) */
-.quota-cell { font-weight: 600; }
-.quota-high { color: #67c23a; }
-.quota-mid  { color: #e6a23c; }
-.quota-low  { color: #f56c6c; }
-.quota-none { color: var(--el-color-info); }
-
-/* 颜色 */
-.up { color: #f56c6c; }
-.down { color: #67c23a; }
-.muted { color: var(--el-color-info); }
-.text-mono { font-family: var(--mono-font); }
-
-/* 移动端 */
-@media (max-width: 1100px) {
-  .t0-task-quick-select {
-    width: 140px;
-  }
+/* v55 添加任务 dialog 2 列布局 */
+.add-task-grid {
+  display: grid;
+  grid-template-columns: 380px 1fr;
+  gap: 16px;
+  height: 480px;
 }
-@media (max-width: 768px) {
-  .t0-header {
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 8px;
-  }
-  .position-table {
-    font-size: 12px;
-  }
+.add-task-left,
+.add-task-right {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+.add-task-left {
+  border-right: 1px solid var(--el-border-color-light, #ebeef5);
+  padding-right: 12px;
+}
+.left-hint {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--el-text-color-secondary, #909399);
+  margin-bottom: 8px;
+  flex-shrink: 0;
+}
+.add-task-right :deep(.el-dialog) {
+  /* dialog 内部嵌套消除二次 dialog 包裹 */
+  margin: 0;
 }
 </style>
