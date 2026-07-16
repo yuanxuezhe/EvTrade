@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.concurrency import run_in_threadpool
 from fastapi.security import OAuth2PasswordRequestForm
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -49,13 +50,27 @@ class UpdateProfileRequest(BaseModel):
 
 
 @router.post("/login", response_model=TokenResponse)
-def login(
+async def login(
     form: OAuth2PasswordRequestForm = Depends(),
     db: Session = Depends(get_db),
 ):
-    """Username + password → JWT token."""
+    """Username + password → JWT token.
+
+    async + run_in_threadpool: bcrypt.checkpw 是 CPU bound (rounds=12 ~250ms)，
+    在 sync endpoint 会阻塞 Starlette threadpool（40 线程）→ 与 DB pool 形成
+    复合死锁（threadpool 满 → DB session 不归还 → futex_wait_queue 僵死）。
+    run_in_threadpool 把 bcrypt 扔到 anyio threadpool，不阻塞 event loop 与
+    DB session 释放。
+    """
     user = db.query(User).filter(User.username == form.username).first()
-    if not user or not verify_password(form.password, user.password_hash):
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="用户名或密码错误",
+        )
+    # bcrypt in threadpool (CPU bound, blocking)
+    ok = await run_in_threadpool(verify_password, form.password, user.password_hash)
+    if not ok:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="用户名或密码错误",
@@ -96,18 +111,21 @@ def update_profile(
 
 
 @router.post("/change-password")
-def change_password(
+async def change_password(
     payload: ChangePasswordRequest,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    if not verify_password(payload.old_password, current_user.password_hash):
+    """Change password — bcrypt verify + hash 都走 threadpool (CPU bound)."""
+    ok = await run_in_threadpool(verify_password, payload.old_password, current_user.password_hash)
+    if not ok:
         raise HTTPException(status_code=400, detail="原密码错误")
     if len(payload.new_password) < 6:
         raise HTTPException(status_code=400, detail="新密码长度需至少 6 位")
     if payload.new_password == payload.old_password:
         raise HTTPException(status_code=400, detail="新密码不能与原密码相同")
-    current_user.password_hash = hash_password(payload.new_password)
+    # hash_password rounds=12 更慢 (~300ms)，必走 threadpool
+    current_user.password_hash = await run_in_threadpool(hash_password, payload.new_password)
     current_user.must_change_password = False
     db.commit()
     return {"success": True, "message": "密码修改成功"}
