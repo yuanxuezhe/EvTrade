@@ -190,7 +190,7 @@ class StockCreateRequest(BaseModel):
     v46 严格白名单:`extra=forbid` 让 industry/market/intro 等 v22 旧字段
     在 Pydantic 层即抛 422(防数据脏)
     """
-    stock_code: str = Field(..., regex=STOCK_CODE_REGEX, max_length=16)
+    stock_code: str = Field(..., pattern=STOCK_CODE_REGEX, max_length=16)
     stock_name: str = Field(..., min_length=1, max_length=64)
     sector: Optional[str] = Field(None, max_length=64)
     is_t0_able: bool = False
