@@ -313,6 +313,23 @@ const createDialogVisible = ref(false)
 const createDialogLoading = ref(false)
 const externalStockCode = ref('')  // HoldingsPanel 选中 → 驱动 dialog 表单
 
+// v55.1 配平: useT0OrderSubmit 实例化（mark 'market' + balanceCoeff=1）
+const balancePriceType = ref('market')    // 市价 = priceTypeCode 44
+const balanceCoeff = ref(1)               // 配平系数（固定 1）
+const balanceSubmitting = ref(false)
+const balanceStockCode = computed(() => {
+  const t = selectedTaskId.value && t0TasksStore.tasksById[selectedTaskId.value]
+  return t?.stock_code || ''
+})
+const { submitOrder: submitBalanceOrder } = useT0OrderSubmit({
+  stockCode: balanceStockCode,
+  priceType: balancePriceType,
+  balanceCoeff: balanceCoeff,
+  submitting: balanceSubmitting,
+  orderStore,
+  onAfterSuccess: null,
+})
+
 const filteredActiveTasks = computed(() => {
   const all = t0TasksStore.activeTasks || []
   if (!stockCode.value) return all
@@ -467,11 +484,25 @@ function onOpenTaskDetail(taskId) {
   viewingTaskId.value = taskId
   tasksDetailVisible.value = true
 }
+// v55.1 配平按钮: 前端算差值 + 调用 useT0OrderSubmit 下市价单
 async function onBalanceTask(taskId) {
+  const diff = _taskNetDiff(taskId)
+  if (diff === 0) {
+    ElMessage.info(`task #${taskId} 已平衡，无需操作`)
+    return
+  }
+  const orderType = diff > 0 ? '24' : '23'  // 反向: 多买则卖, 多卖则买
+  const volume = Math.abs(diff)
   try {
-    const r = await t0TasksStore.balanceTask(taskId)
-    const dir = r.action === 'BUY' ? '买入' : r.action === 'SELL' ? '卖出' : '无需操作'
-    ElMessage.info(`task #${taskId} 配平建议：${dir} ${r.volume} 股 — ${r.reason}`)
+    await ElMessageBox.confirm(
+      `task #${taskId} 实时差 ${diff} 股，将下市价单 ${orderType === '23' ? '买' : '卖'} ${volume} 股`,
+      '一键配平', { confirmButtonText: '确认', cancelButtonText: '取消', type: 'warning' }
+    )
+  } catch (e) { return }
+  try {
+    await submitBalanceOrder({ orderType, volume, price: 0, taskId })
+    // useT0OrderSubmit 内部已 ElMessage.success
+    await t0TasksStore.loadTasks()  // 刷新主表（task summary 更新）
   } catch (e) { /* ElMessage 已被 axios 拦截器弹出 */ }
 }
 async function onCloseTask(taskId) {
