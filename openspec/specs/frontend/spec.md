@@ -1494,3 +1494,82 @@ The system SHALL 重做 `client/src/views/T0Trade.vue` 主表布局，从"quota 
 - `client/src/views/T0Trade.vue`（大重做 +155/-665 = 净减 510 行）
 - `client/src/utils/format.js`（复用 `formatPriceAuto`，已存在）
 - `client/src/composables/useT0Quota.js`（仅复用 `quotaLevel` 函数，删除整 hook 调用）
+
+---
+
+## REQ-FE-230: T0Trade 切到任务视角 + 添加任务 dialog 集成 HoldingsPanel
+
+The system SHALL 重做 `client/src/views/T0Trade.vue` 从"持仓视角"（v54 11 列 holdings 表）切到"任务视角"（8 列 task 表 + 添加任务 dialog 嵌入 HoldingsPanel）。
+
+### Scenario: 主表 8 列任务视角 (必含列)
+
+- **GIVEN** user ...[truncated] 合计 8 列
+
+### Scenario: 添加任务 dialog 嵌入 HoldingsPanel 联动
+
+- **GIVEN** user 点 "添加任务" (header Primary 按钮)
+- **AND** dialog v-model=visible=true，width=900px
+- **WHEN** dialog renders
+- **THEN** dialog body MUST 分 2 列 grid（左 .add-task-left 350px 嵌 HoldingsPanel，右 .add-task-right 520px 嵌 T0TaskCreateDialog inline）
+- **AND** 左侧 HoldingsPanel MUST 提示"单击持仓行自动填充右侧股票代码"
+- **AND** 数据源 MUST 复用 `useHoldingsStore().positions`（与 Trade.vue 同源）
+
+### Scenario: HoldingsPanel 单击 select-stock 联动
+
+- **GIVEN** dialog 已开 + HoldingsPanel 渲染持仓行
+- **WHEN** user 单击某行 (e.g. row for 600030.SH 中信证券)
+- **THEN** HoldingsPanel emits `select-stock` with `{ stock_code, stock_name }`
+- **AND** T0Trade onHoldingSelected handler MUST 更新 `selectedStockCode.value = stock_code`
+- **AND** 传给 `<T0TaskCreateDialog :external-stock-code="selectedStockCode">`
+- **AND** T0TaskCreateDialog watch MUST 写入 `form.stock_code` + 触发 `StockCodePicker` 联动显示 stock_name
+- **AND** ElMessage.info MUST 弹出 "已选中 600030.SH"（250ms 节流避免与 dblclick 冲突）
+
+### Scenario: 双击保持原 v53 apply-to-order 语义
+
+- **GIVEN** HoldingsPanel 同时挂了 `@row-click` (v55 新) 和 `@row-dblclick` (v53 原有)
+- **WHEN** user 双击某行
+- **THEN** Trade.vue 父组件 MUST 仍收到 `apply-to-order` event（v53 REQ-FE-HOLDINGS-DBLCLICK 不破坏）
+- **AND** 第 2 次 click MUST 跳过 emit（lastDblclickTs 节流 250ms 窗口）
+
+### Scenario: 创建成功后主表新增 task 行
+
+- **GIVEN** user 提交 T0TaskCreateDialog inline 表单
+- **WHEN** store.createTask() 调用 /api/t0-tasks POST → 后端生成 `task.id` + 返回 task obj
+- **THEN** 新 task MUST 自动出现在主表（t0TasksStore.tasks 已 push）
+- **AND** NOT 重新 fetchPage（保持 store 单写入入口）
+- **AND** Dialog MUST 自动关闭 (visible=false) + 提示成功
+
+### Scenario: T0TaskDetail / T0TaskCreateDialog inline 共存
+
+- **GIVEN** T0TaskCreateDialog 在 v55 commit.1 加了 `inline` prop
+- **WHEN** inline=true
+- **THEN** MUST 跳过外层 `<el-dialog>` 渲染，仅渲染 el-form 块（避免 el-dialog 嵌套导致 Teleport 错乱 + HoldingsPanel mounted hook 抛错）
+- **AND** MUST emit `cancel` (新增) 而非 `submit` with null（语义清晰）
+- **AND** T0Trade.vue MUST 监听 `@cancel="hideDialog"` + `@submit="onCreateSubmit"`
+
+### Scenario: 删除 (Non-Goals)
+
+下列功能**不**在 REQ-FE-230 范围内（新需求**不**回退）：
+- v54 REQ-FE-220 的 lib/t0-calc.js 5 函数保留（`calcT0Pnl`/`calcExposure`/`calcInitialQuota`/`calcT0ReturnRate`/`resolveBalancePrice`）— 即使主表不再 holdings 视角仍可能被详情页/操作逻辑复用
+- v54 主表 11 列（持仓视角）已永久删除
+- v54 drawer T0TaskList 抽屉已永久删除
+- v18 的 store.archiveTask 仍调用 api.remove (DELETE) 的历史 bug 不在本次范围（UI 标"归档"实际 DELETE，违和但不影响新增流程）
+- HoldingsPanel `@row-dblclick` 保持 v53 apply-to-order 语义不变
+
+### 风险与验收
+
+| 风险 | 验收 |
+|---|---|
+| el-dialog 嵌套导致 Teleport 错乱 + HoldingsPanel mounted hook 抛错 | T0TaskCreateDialog 加 inline prop；父 dialog body 才用 inline=true |
+| 单击与 dblclick 触发冲突（250ms 窗口） | HoldingsPanel 用 lastDblclickTs 节流：单击除非紧接 dblclick 才 emit select-stock |
+| task.id 在前端 ID 类型可能是 number/string | 主表用 template 默认 toString() 转文本展示 |
+| 任务创建后主表不刷新 | store 单写入（tasks.push + total +1），避免双写 |
+| HoldingsPanel 单击后 StockCodePicker 不显示 stock_name | StockCodePicker 接收到 stock_code 后默认从 stocksStore 查名称 |
+
+### 相关文件
+
+- `client/src/views/T0Trade.vue`（v55 commit.3 主体改写 +511/-231 = 净 -180 行；hotfix 1 增 4 行）
+- `client/src/components/trade/T0TaskCreateDialog.vue`（v55 commit.1 +1 prop +1 emit +watch；hotfix 2 +inline 模式 94/-30）
+- `client/src/components/trade/HoldingsPanel.vue`（v55 commit.2 +select-stock emit +onRowClick；hotfix 3 节流修正 +6/-9）
+- `client/src/stores/t0_tasks.js`（无改动，复用 createTask / activeTasks）
+- `client/src/api/t0_tasks.js`（无改动）
