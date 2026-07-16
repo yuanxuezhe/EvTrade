@@ -98,6 +98,7 @@ EvTrade 部署在 Windows（开发/QMT 柜台）+ Linux（前后端服务），�
 | `EVTRADE_DB_MAX_OVERFLOW` | `10` | 超额连接上限 |
 | `EVTRADE_DB_POOL_RECYCLE` | `1800` | 连接回收秒数（防止 MySQL 8 wait_timeout 主动断开） |
 | `EVTRADE_DB_POOL_PRE_PING` | `true` | 断连自动重连（防 wait_timeout 后 stale connection） |
+| `EVTRADE_DB_POOL_TIMEOUT` | `10` | **v51 起** Pool 等连接超时（秒）。默认 10s（SQLAlchemy 默认 30s）。**v52 复盘**：30s 太长，触发 futex_wait_queue 后主进程僵死；10s 快速失败 → 5xx → 客户端重试，避免雪崩 |
 
 - **driver 唯一**：pymysql（纯 Python）— 已写进 `requirements.txt` + 已装到 host Python 3.13
 - **v20 强制 MySQL-only 永久标准**：
@@ -111,6 +112,21 @@ EvTrade 部署在 Windows（开发/QMT 柜台）+ Linux（前后端服务），�
 - **池配置**：MySQL 走 `QueuePool + pool_size/max_overflow/recycle/pre_ping`
 - **legacy 兼容常量**：`BASE_DIR` 保留在 `infra/db.py` 供 `migrations/` 用，`DB_PATH` **永久下线**（`server/db.py` facade 移除该 re-export）
 - **历史工具**：`server/migrations/sqlite-to-mysql-migrate.py` 保留（一次性历史工具，不参与日常启动）
+
+### REQ-CFG-011: futex 僵死 "根治 vs 预防" 双保险（v52 立）
+
+futex 僵死累计复发 3 次（v46 + v50 + v51），v52 复盘后明确分工：
+
+| 维度 | 根治 (commit 22f515f) | 预防 (commit 51fcb9c) |
+|---|---|---|
+| 落点 | sync endpoint → async + bcrypt 走 `run_in_threadpool` | `pool_timeout=10s` + `pool_pre_ping=true` |
+| 目标 | 释放 Starlette threadpool → DB session 立即归还 | 极端情况下快速 5xx，不让主进程僵死 |
+| 必要性 | ✅ 必做（结构性消除） | ✅ 必做（兜底保险） |
+
+- **新 endpoint 规范**：任何 sync CPU bound (bcrypt/hash/pinyin/计算) 都必须 `async def` + 走 threadpool
+- **代码评审检查点**：sync def + `bcrypt.*` / `hashlib.*` / `pypinyin.*` 调用 → 必须 reject
+- **spec 落点**：`server/infra/db.py::_pool_kwargs` docstring 完整记录 7 步死锁链 + v52 修复路径
+- **Known Issue**：40+ 并发 login 仍会触发 pool 满（容量 5+10=15），但不会触发 futex 僵死（health endpoint 仍响应）
 
 ### REQ-CFG-010: 双用户最小权限（v14 MySQL 安全姿态）
 

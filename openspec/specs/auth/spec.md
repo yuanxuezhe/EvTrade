@@ -17,6 +17,7 @@ EvTrade 是多用户交易平台，必须区分：
 - 失败：401，msg 形如"用户名或密码错误"（不区分两种错误，防枚举）
 - 成功：200，返回 `{access_token, token_type: "bearer", user: UserInfo}`
 - 密码用 bcrypt 哈希，存 SQLite
+- **v52 起必须 `async def`**（futex 僵死根治）：bcrypt 走 `run_in_threadpool`，不阻塞 Starlette anyio threadpool
 
 ### REQ-AUTH-002: 路由守卫
 
@@ -78,6 +79,7 @@ EvTrade 是多用户交易平台，必须区分：
   - `must_change_password = False`（首次登录强改密提示清除）
   - 返回 `{success: true, message: "密码修改成功"}`
 - **不**主动失效旧 token（JWT 是无状态的，过期前仍可用 — 这是一个 Known Issue，参见下方）
+- **v52 起必须 `async def`**（futex 僵死根治）：bcrypt verify + hash 都走 `run_in_threadpool`
 - 实现位置：`server/api/auth.py::change_password`（line 98）
 
 ### REQ-AUTH-009: must_change_password 强改密流程
