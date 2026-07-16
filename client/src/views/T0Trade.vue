@@ -176,12 +176,13 @@
         <div class="add-task-right">
           <T0TaskCreateDialog
             v-if="createDialogVisible"
+            inline
             :visible="createDialogVisible"
             :loading="createDialogLoading"
             :default-stock-code="stockCode || ''"
             :external-stock-code="externalStockCode"
-            @update:visible="createDialogVisible = $event"
             @submit="onCreateTaskSubmit"
+            @cancel="createDialogVisible = false"
           />
         </div>
       </div>
