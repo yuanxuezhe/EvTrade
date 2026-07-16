@@ -3,16 +3,17 @@
  *
  * 📖 详见 `openspec/specs/trading/spec.md` §REQ-TRADE-013~018
  *
- * 端点（8 个）：
+ * 端点（7 个）：
  *   POST   /t0-tasks                    创建
  *   GET    /t0-tasks                    列表
  *   GET    /t0-tasks/overview           整体/单券双视图
  *   GET    /t0-tasks/{id}               详情（含 summary）
  *   PATCH  /t0-tasks/{id}               更新 note/coefficient/target_volume/status
  *   DELETE /t0-tasks/{id}               归档（soft-delete）
- *   POST   /t0-tasks/{id}/balance       配平建议（不真下单）
  *   POST   /t0-tasks/{id}/close         一键平仓到 base_volume
  *   GET    /t0-tasks/{id}/stats         详细统计（含 daily / by_stock）
+ *
+ *   注: v55.1 起删除 POST /t0-tasks/{id}/balance（前端在 T0Trade.vue 直接读 holdings.orders 算差值 + 调 /orders/place 下市价单）
  */
 import { http } from './index'
 
@@ -90,18 +91,6 @@ export const t0TasksApi = {
    */
   async remove(taskId) {
     const { data } = await http.delete(`/t0-tasks/${taskId}`)
-    return data
-  },
-
-  /**
-   * 配平建议（不真实下单；返回 action + volume）
-   * @param {number} taskId
-   * @param {boolean} [dryRun=true] 默认 true 只看建议；false 会真生成平衡委托（设计留口）
-   */
-  async balance(taskId, dryRun = true) {
-    const { data } = await http.post(`/t0-tasks/${taskId}/balance`, {
-      dry_run: dryRun,
-    })
     return data
   },
 

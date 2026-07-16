@@ -114,14 +114,6 @@ export const useT0TasksStore = defineStore('t0_tasks', () => {
   }
 
   /**
-   * 配平建议（不实际下单）
-   * @param {number} taskId
-   */
-  async function balanceTask(taskId) {
-    return await t0TasksApi.balance(taskId, true)
-  }
-
-  /**
    * 一键平仓（实际下单）
    * @param {number} taskId
    * @returns {Promise<Object>} {action, volume, ...}
@@ -156,7 +148,6 @@ export const useT0TasksStore = defineStore('t0_tasks', () => {
     createTask,
     updateTask,
     archiveTask,
-    balanceTask,
     closeTask,
     clearCache,
   }

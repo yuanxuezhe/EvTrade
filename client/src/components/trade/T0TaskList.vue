@@ -8,7 +8,6 @@
   Emits:
     select(taskId)   — 用户点击查看详情（外层路由到 T0TaskDetail）
     create()         — 触发新建弹窗
-    balance(taskId)  — 触发配平（外层调 store.balanceTask）
     close(taskId)    — 触发一键平仓（外层调 store.closeTask）
 
   行为：
@@ -101,7 +100,6 @@
 
       <el-table-column label="操作" width="100" fixed="right">
         <template #default="{ row }">
-          <el-button v-if="row.status === 'active'" size="small" link @click="$emit('balance', row.id)">配平</el-button>
           <el-button v-if="row.status === 'active'" size="small" link @click="$emit('close', row.id)">平仓</el-button>
           <el-button size="small" link @click="onEditNote(row)">编辑</el-button>
           <el-button v-if="row.status !== 'archived'" size="small" link type="danger" @click="onArchive(row)">归档</el-button>
@@ -129,7 +127,7 @@ const props = defineProps({
   embedding: { type: String, default: 'inline' }, // 'inline' | 'drawer'
   statusFilter: { type: String, default: '' },    // '' = all, 'active', 'closed', 'archived'
 })
-const emit = defineEmits(['create', 'balance', 'close', 'select'])
+const emit = defineEmits(['create', 'close', 'select'])
 
 const store = useT0TasksStore()
 const loading = computed(() => store.loading)

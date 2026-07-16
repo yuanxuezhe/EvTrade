@@ -9,7 +9,6 @@ t0_tasks.py — T0Task REST API (REQ-TRADE-014 + 018)
 - GET    /api/t0-tasks/{id}         详情
 - PATCH  /api/t0-tasks/{id}         改 note / coefficient / target_volume / status
 - DELETE /api/t0-tasks/{id}         仅 archived 可删
-- POST   /api/t0-tasks/{id}/balance 一键配平
 - POST   /api/t0-tasks/{id}/close   关任务 (强制配平到 base_volume)
 - POST   /api/t0-tasks/{id}/archive 归档 (closed → archived)
 - GET    /api/t0-tasks/{id}/stats   完整统计
@@ -331,26 +330,6 @@ async def delete_task(
     if not ok:
         raise HTTPException(status_code=404, detail="task 不存在或无权访问")
     return {"success": True, "deleted": task_id}
-
-
-@router.post("/{task_id}/balance", response_model=BalanceResponse)
-async def balance_task(
-    task_id: int,
-    user: User = Depends(require_trader),
-    db: Session = Depends(get_db),
-):
-    """一键配平 (按 task 净敞口 - base_volume)."""
-    try:
-        r = t0_tasks_service.balance_task(
-            db, task_id=task_id, user_id=user.id, is_admin=_user_is_admin(user),
-        )
-    except ValueError as e:
-        raise HTTPException(status_code=409, detail=str(e))
-    if r.get('action') == 'NONE' and r.get('volume') == 0:
-        # task 不存在 / 状态不允许
-        detail = r.get('reason', 'task 不允许配平')
-        raise HTTPException(status_code=400, detail=detail)
-    return BalanceResponse(**r)
 
 
 @router.post("/{task_id}/close", response_model=CloseResponse)

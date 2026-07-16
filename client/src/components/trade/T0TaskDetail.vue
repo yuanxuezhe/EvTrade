@@ -26,7 +26,6 @@
         </el-tag>
       </span>
       <div class="ttd-ops">
-        <el-button v-if="detail?.status === 'active'" size="small" @click="onBalance">配平建议</el-button>
         <el-button v-if="detail?.status === 'active'" size="small" type="danger" @click="onClose">一键平仓</el-button>
         <el-button v-if="detail?.status !== 'archived'" size="small" type="danger" plain @click="onArchive">归档</el-button>
       </div>
@@ -172,13 +171,6 @@ async function loadAll() {
 
 watch(() => props.taskId, () => loadAll(), { immediate: true })
 
-async function onBalance() {
-  try {
-    const r = await store.balanceTask(props.taskId)
-    const dir = r.action === 'BUY' ? '买入' : r.action === 'SELL' ? '卖出' : '无需操作'
-    alert(`配平建议：${dir} ${r.volume} 股\n理由：${r.reason}`)
-  } catch (e) { /* ElMessage 已被拦截器弹出 */ }
-}
 async function onClose() {
   if (!confirm('确认一键平仓到 base_volume？将生成平仓委托。')) return
   try {
