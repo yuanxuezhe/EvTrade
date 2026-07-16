@@ -1400,3 +1400,97 @@ The system SHALL render `client/src/components/StockCodeAutocomplete.vue` 为左
 - **WHEN** 添加成功
 - **THEN** 表格新行显示名称列"\*st康佳"（**保留原名大小写**）
 - **AND** 表格不展示 short_name 但服务端 GET `/api/stocks/{code}` 返回 `short_name="*STKJ"`（自动归一）
+
+---
+
+## REQ-FE-220: T0Trade 主表重构（做T盈亏 / 敞口 / 期初配额 / 做T收益率%）
+
+The system SHALL 重做 `client/src/views/T0Trade.vue` 主表布局，从"quota frame 账户级 5 pill + 副行展开 + drawer 抽屉 + 底部曲线"重构为"11 列精简单表 + 4 按钮操作列"。
+
+### Scenario: 11 列结构（必含）
+
+- **GIVEN** user enters `/quick-t0` view
+- **WHEN** the page renders the position table
+- **THEN** the table MUST contain exactly 11 columns in order:
+  1. 代码 (width 100)
+  2. 名称 (width 100)
+  3. 持仓 (width 100, sortable on `vol`)
+  4. **最新价(涨跌幅%)** (width 130, sortable on `last_price`) — 单列合并原"现价 + 涨跌"两列；`formatPriceAuto` 显示最多 4 位小数去尾 0
+  5. **期初** (width 100) — 显示 `row.last_vol`
+  6. **可买** (width 100, sortable) — `calcInitialQuota({last_vol}, {today_buy_volume}).maxBuyable`
+  7. **可卖** (width 100, sortable) — `calcInitialQuota({last_vol}, {today_sell_volume}).maxSellable`
+  8. **做T盈亏** (width 100, sortable) — `calcT0Pnl(today_buy_amount, today_sell_amount)`
+  9. **做T收益率%** (width 110, sortable) — `calcT0ReturnRate({last_vol, cost_price}, {today_buy_amount, today_sell_amount})`
+  10. **浮盈%** (width 100, sortable) — `holdingsStore.getReturnRate(code)` 保留（v53 兼容）
+  11. **操作** (width 180 fixed right) — 4 按钮：买N% / 卖N% / 配平 / 详情
+
+### Scenario: 可买 / 可卖基于期初持仓递减
+
+- **GIVEN** a position with `last_vol=1000`
+- **AND** user has bought `today_buy_volume=300` and sold `today_sell_volume=200`
+- **WHEN** the table renders the row
+- **THEN** 可买 = `max(0, 1000 - 300) = 700`
+- **AND** 可卖 = `max(0, 1000 - 200) = 800`
+- **AND** 已成交部分 (300 / 200) 自动减占用
+
+### Scenario: 配平价格 = 对手盘价 (买→ask1, 卖→bid1)
+
+- **GIVEN** row's `today_buy_volume - today_sell_volume = +200` （净买入敞口）
+- **AND** quote has `ask_prices[0]=11.5` (卖1价) `bid_prices[0]=10.5` (买1价) `last_price=10`
+- **WHEN** user clicks "配平" button
+- **THEN** `resolveBalancePrice(row, 'sell', quote) = {price: 10.5, fallback: false}` 卖1价用于抵消多头敞口
+- **AND** `quote.ask_prices[0]` 无效 (0/NaN) → fallback 到 `last_price` 并提示用户
+
+### Scenario: 价格小数位最多 4 位去尾 0
+
+- **GIVEN** row's last_price = `1.142` (3位小数 ETF)
+- **WHEN** the latest price cell renders
+- **THEN** display string is `"1.142"` （非 `"1.1420"`） 非 `toFixed(2)`
+- **AND** 同样适用于 ETF `513050.SH` `0.909` 与 `002736.SZ` `10.27`
+
+### Scenario: 做T盈亏 = 卖成交额 - 买成交额
+
+- **GIVEN** today's stats: `today_buy_amount=1000`, `today_sell_amount=1500`
+- **WHEN** the 做T盈亏 cell renders
+- **THEN** display value = `+500` （正值红 / 负值绿）
+
+### Scenario: 做T收益率% = 做T盈亏 / (期初持仓 × 持仓成本价)
+
+- **GIVEN** `last_vol=1000`, `cost_price=10`, 卖 1500 - 买 1000 = +500
+- **WHEN** the 做T收益率% cell renders
+- **THEN** rate = `500 / (1000 * 10) = 0.05 = 5.00%`
+
+### Scenario: 浮盈% 列保留 (v53 兼容)
+
+- **GIVEN** Dashboard / Trade card 等位置需要 `holdingsStore.getReturnRate`
+- **WHEN** `/quick-t0` 页面渲染
+- **THEN** 浮盈% 列仍展示，与做T收益率% 共存 2 列
+- **AND** `getReturnRate(code)` API 不变
+
+### Scenario: 删除 (Non-Goals)
+
+下列功能**不**在 REQ-FE-220 范围内（新需求**不**回退）：
+- quota frame (5 个账户级 pill: 现金余量 / 冻结 / T+0 可用 / 今日盈亏 / 持仓市值) 已删除
+- 副行 (`type="expand"`) + 30 天 popover 已删除
+- 底部 `cumHistory` 曲线已删除
+- 右侧 `drawer` 做T明细 (实时统计) 已删除（详情按钮从抽屉入口转移为最小功能）
+- `<el-table-column prop="net_exposure" label="净敞口">` 列已删除
+- `<el-table-column label="可买" prop="max_buyable">` 列改为基于 `last_vol` 递减算法（不再依赖 `useT0Quota.rowQuota`）
+- `<el-table-column label="可卖" prop="max_sellable">` 同上
+
+### 风险与验收
+
+| 风险 | 验收 |
+|---|---|
+| `last_vol` 字段不存在于某些持仓（如旧 mock） | `formatNumber(row.last_vol ?? row.vol ?? 0)` 兜底 |
+| `quote.bid_prices/ask_prices` 缺失 | `resolveBalancePrice` 内部 `?.` 链 + fallback `last_price` |
+| 旧 `realized_pnl` 引用 | REQ-FE-220 不破坏 `server/api/t0_stats.py` 返回值，旧列在 Dashboard/Trade 等位置仍读 `t0StatsMap.code.realized_pnl`（API 未改） |
+| `formatPriceAuto` 显示精度突变 | 已 unit-tested 6+ 用例（`client/tests/lib/t0-calc.test.js`） |
+
+### 相关文件
+
+- `client/src/lib/t0-calc.js`（新增 5 纯函数: `calcT0Pnl` / `calcExposure` / `calcInitialQuota` / `calcT0ReturnRate` / `resolveBalancePrice`）
+- `client/src/lib/t0-calc.test.js`（新增 35 个单测用例覆盖 5 函数）
+- `client/src/views/T0Trade.vue`（大重做 +155/-665 = 净减 510 行）
+- `client/src/utils/format.js`（复用 `formatPriceAuto`，已存在）
+- `client/src/composables/useT0Quota.js`（仅复用 `quotaLevel` 函数，删除整 hook 调用）
