@@ -154,3 +154,133 @@ export function calcInsufficientPosition({ side, qty = 0, currentVolume = 0 } = 
 export function resolvePriceTypeCode(priceType) {
   return PRICE_TYPE_CODE_MAP[priceType] ?? 11
 }
+
+
+// ============== v54 quick-t0-revamp: 做T盈亏/敞口/期初配额/做T收益率/配平对手盘价 ==============
+//
+// 背景: 用户反馈 T0Trade.vue 4 类问题 — 做T盈亏口径错位 / 配平价格档错位 / 可买可卖基数错 / 价格 2 位精度硬卡
+// 落点: 本文件新增 5 纯函数, T0Trade.vue 主表重做时调用, 不依赖 store
+// change: 2026-07-16-quick-t0-revamp, REQ-FE-220
+
+
+/**
+ * 做T盈亏（trader 直觉口径, 不含成本基准/费用）
+ * = SUM(卖出成交 vol*price) - SUM(买入成交 vol*price)
+ * = stats.today_sell_amount - stats.today_buy_amount
+ *
+ * 与 v6 realized_pnl (基于 cost_basis + 费用) **语义不同**:
+ *   - t0 PnL: 纯流量差 (trader 直觉)
+ *   - realized_pnl: 持仓视角已实现 (含成本基准 + 交易费用)
+ * 两者共存, 前端用 t0 PnL 做"做T盈亏"列, 后端 realized_pnl 仍按 v6 给 Dashboard/Trade 用
+ *
+ * @param {{today_buy_amount?: number, today_sell_amount?: number}} stats — t0-stats/{code} 单条
+ * @returns {number} 做T盈亏 (正数=盈利, 负数=亏损, 0/NaN/缺字段 → 0)
+ */
+export function calcT0Pnl(stats) {
+  if (!stats || typeof stats !== 'object') return 0
+  const buy = Number(stats.today_buy_amount) || 0
+  const sell = Number(stats.today_sell_amount) || 0
+  return sell - buy
+}
+
+
+/**
+ * 当前敞口（持仓视角）
+ * = 期初持仓 (last_vol) + 今日净买 (today_buy - today_sell)
+ *   > 0 → 多头敞口 (已超期初, 需卖)
+ *   < 0 → 空头敞口 (已卖超期初, 需买)
+ *   = 0 → 已配平
+ *
+ * @param {{last_vol?: number}} row — 持仓行 (含 last_vol)
+ * @param {{today_buy_volume?: number, today_sell_volume?: number}} stats
+ * @returns {number} 敞口 (正数=多, 负数=空)
+ */
+export function calcExposure(row, stats) {
+  const lastVol = Number(row?.last_vol) || 0
+  const buyVol = Number(stats?.today_buy_volume) || 0
+  const sellVol = Number(stats?.today_sell_volume) || 0
+  return lastVol + (buyVol - sellVol)
+}
+
+
+/**
+ * 期初配额 — 可买/可卖, 按 last_vol 递减已成交
+ *   maxBuyable  = max(0, last_vol - today_buy_volume)
+ *   maxSellable = max(0, last_vol - today_sell_volume)
+ *
+ * 与 useT0Quota.rowQuota (cash/avl_vol) 语义不同:
+ *   - 这里是做T 视角, 受限于期初持仓
+ *   - useT0Quota 是账户视角, 受限于资金/可用持仓
+ *
+ * @param {{last_vol?: number}} row
+ * @param {{today_buy_volume?: number, today_sell_volume?: number}} stats
+ * @returns {{maxBuyable: number, maxSellable: number}}
+ */
+export function calcInitialQuota(row, stats) {
+  const lastVol = Number(row?.last_vol) || 0
+  const buyVol = Number(stats?.today_buy_volume) || 0
+  const sellVol = Number(stats?.today_sell_volume) || 0
+  return {
+    maxBuyable: Math.max(0, lastVol - buyVol),
+    maxSellable: Math.max(0, lastVol - sellVol),
+  }
+}
+
+
+/**
+ * 做T收益率（小数, 0.005 = 0.5%）
+ * = calcT0Pnl(stats) / (last_vol * cost_price)
+ *
+ * 边界: last_vol ≤ 0 或 cost_price ≤ 0 或非有限数 → 0 (避免除零)
+ *
+ * @param {{last_vol?: number, cost_price?: number}} row
+ * @param {Object} stats — t0-stats 单条 (含 today_buy_amount, today_sell_amount)
+ * @returns {number} 收益率小数
+ */
+export function calcT0ReturnRate(row, stats) {
+  const lastVol = Number(row?.last_vol) || 0
+  const cost = Number(row?.cost_price) || 0
+  if (lastVol <= 0 || cost <= 0) return 0
+  const denom = lastVol * cost
+  if (!Number.isFinite(denom) || denom <= 0) return 0
+  const pnl = calcT0Pnl(stats)
+  if (!Number.isFinite(pnl)) return 0
+  return pnl / denom
+}
+
+
+/**
+ * 配平对手盘价（独立于 quick 价格档）
+ * = buy 敞口 → ask_prices[0] (卖1价)
+ * = sell 敞口 → bid_prices[0] (买1价)
+ *
+ * 取不到 (ask/bid 为空/无效) → fallback last_price, 返回 fallback=true 让 UI 提示
+ * 都没有 → price=0, 让 useT0OrderSubmit 走 broker priceTypeCode 撮合 (priceTypeCode=11)
+ *
+ * @param {{stock_code?: string}} row
+ * @param {('buy'|'sell')} side — 配平方向 (买=补仓, 卖=锁仓)
+ * @param {Object|null|undefined} quote — quote store 单条 {last_price, ask_prices, bid_prices, ...}
+ * @returns {{price: number, fallback: boolean}}
+ */
+export function resolveBalancePrice(row, side, quote) {
+  const q = quote || {}
+  const lastPrice = Number(q.last_price) || 0
+
+  if (side === 'buy') {
+    // 买敞口 → 卖1价
+    const ask1 = Number(q.ask_prices?.[0]) || 0
+    if (ask1 > 0 && Number.isFinite(ask1)) return { price: ask1, fallback: false }
+    if (lastPrice > 0) return { price: lastPrice, fallback: true }
+    return { price: 0, fallback: true }
+  }
+
+  if (side === 'sell') {
+    // 卖敞口 → 买1价
+    const bid1 = Number(q.bid_prices?.[0]) || 0
+    if (bid1 > 0 && Number.isFinite(bid1)) return { price: bid1, fallback: false }
+    if (lastPrice > 0) return { price: lastPrice, fallback: true }
+    return { price: 0, fallback: true }
+  }
+
+  return { price: lastPrice, fallback: false }
+}

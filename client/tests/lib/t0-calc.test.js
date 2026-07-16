@@ -19,6 +19,12 @@ import {
   calcInsufficientCash,
   calcInsufficientPosition,
   resolvePriceTypeCode,
+  // v54 quick-t0-revamp 新增
+  calcT0Pnl,
+  calcExposure,
+  calcInitialQuota,
+  calcT0ReturnRate,
+  resolveBalancePrice,
 } from '../../src/lib/t0-calc'
 
 
@@ -206,5 +212,216 @@ describe('resolvePriceTypeCode', () => {
     expect(resolvePriceTypeCode('')).toBe(11)
     expect(resolvePriceTypeCode(undefined)).toBe(11)
     expect(resolvePriceTypeCode(null)).toBe(11)
+  })
+})
+
+
+// ============== v54 quick-t0-revamp: 新增 5 函数单测 ==============
+
+describe('calcT0Pnl (做T盈亏)', () => {
+  it('正常: 卖 1500 - 买 1000 = +500', () => {
+    expect(calcT0Pnl({ today_buy_amount: 1000, today_sell_amount: 1500 })).toBe(500)
+  })
+  it('正常: 卖 800 - 买 1200 = -400', () => {
+    expect(calcT0Pnl({ today_buy_amount: 1200, today_sell_amount: 800 })).toBe(-400)
+  })
+  it('无成交: 0', () => {
+    expect(calcT0Pnl({})).toBe(0)
+    expect(calcT0Pnl({ today_buy_amount: 0, today_sell_amount: 0 })).toBe(0)
+  })
+  it('null/undefined/非对象: 0', () => {
+    expect(calcT0Pnl(null)).toBe(0)
+    expect(calcT0Pnl(undefined)).toBe(0)
+    expect(calcT0Pnl('foo')).toBe(0)
+  })
+  it('NaN/字符串: 0', () => {
+    expect(calcT0Pnl({ today_buy_amount: 'foo', today_sell_amount: NaN })).toBe(0)
+  })
+  it('边界: 大数', () => {
+    expect(calcT0Pnl({ today_buy_amount: 1e9, today_sell_amount: 1e9 + 1234 })).toBe(1234)
+  })
+})
+
+
+describe('calcExposure (敞口)', () => {
+  it('净买: 期初 1000 + 买 300 - 卖 0 = +1300 多头敞口', () => {
+    expect(calcExposure(
+      { last_vol: 1000 },
+      { today_buy_volume: 300, today_sell_volume: 0 }
+    )).toBe(1300)
+  })
+  it('净卖: 期初 1000 + 买 0 - 卖 1200 = -200 空头敞口', () => {
+    expect(calcExposure(
+      { last_vol: 1000 },
+      { today_buy_volume: 0, today_sell_volume: 1200 }
+    )).toBe(-200)
+  })
+  it('已配平: 买 = 卖 = 期初', () => {
+    expect(calcExposure(
+      { last_vol: 1000 },
+      { today_buy_volume: 500, today_sell_volume: 500 }
+    )).toBe(1000)  // 配平 = 还持有 1000 (因为买 500 卖 500, 持仓回到 1000)
+  })
+  it('缺字段: 0', () => {
+    expect(calcExposure({}, {})).toBe(0)
+    expect(calcExposure(null, null)).toBe(0)
+    expect(calcExposure(undefined, undefined)).toBe(0)
+  })
+  it('NaN → 0', () => {
+    expect(calcExposure({ last_vol: NaN }, { today_buy_volume: 100 })).toBe(100)
+    expect(calcExposure({ last_vol: 1000 }, { today_buy_volume: NaN })).toBe(1000)
+  })
+  it('典型 T0 场景: 期初 1000, 买 300, 卖 100 → +1200 (持仓视角)', () => {
+    expect(calcExposure(
+      { last_vol: 1000 },
+      { today_buy_volume: 300, today_sell_volume: 100 }
+    )).toBe(1200)
+  })
+})
+
+
+describe('calcInitialQuota (期初配额)', () => {
+  it('期初 1000, 买 300, 卖 200 → 可买 700 / 可卖 800', () => {
+    expect(calcInitialQuota(
+      { last_vol: 1000 },
+      { today_buy_volume: 300, today_sell_volume: 200 }
+    )).toEqual({ maxBuyable: 700, maxSellable: 800 })
+  })
+  it('无成交: 可买 = 可卖 = 期初', () => {
+    expect(calcInitialQuota(
+      { last_vol: 1000 },
+      {}
+    )).toEqual({ maxBuyable: 1000, maxSellable: 1000 })
+  })
+  it('已超额: max(0, last - 已成交)', () => {
+    // 买 1500 > 期初 1000 → maxBuyable = 0
+    expect(calcInitialQuota(
+      { last_vol: 1000 },
+      { today_buy_volume: 1500 }
+    )).toEqual({ maxBuyable: 0, maxSellable: 1000 })
+    // 卖 1500 > 期初 1000 → maxSellable = 0
+    expect(calcInitialQuota(
+      { last_vol: 1000 },
+      { today_sell_volume: 1500 }
+    )).toEqual({ maxBuyable: 1000, maxSellable: 0 })
+  })
+  it('缺字段: 0', () => {
+    expect(calcInitialQuota({}, {})).toEqual({ maxBuyable: 0, maxSellable: 0 })
+    expect(calcInitialQuota(null, null)).toEqual({ maxBuyable: 0, maxSellable: 0 })
+  })
+  it('典型 T0 配平后: 期初 1000, 买 300, 卖 300 → 还可买 700 / 还可卖 700', () => {
+    expect(calcInitialQuota(
+      { last_vol: 1000 },
+      { today_buy_volume: 300, today_sell_volume: 300 }
+    )).toEqual({ maxBuyable: 700, maxSellable: 700 })
+  })
+})
+
+
+describe('calcT0ReturnRate (做T收益率)', () => {
+  it('典型: 期初 1000 @ 10, 卖 1500 - 买 1000 = +500 / 10000 = 0.05 (5%)', () => {
+    expect(calcT0ReturnRate(
+      { last_vol: 1000, cost_price: 10 },
+      { today_buy_amount: 1000, today_sell_amount: 1500 }
+    )).toBe(0.05)
+  })
+  it('亏损: 卖 800 - 买 1200 = -400 / 10000 = -0.04 (-4%)', () => {
+    expect(calcT0ReturnRate(
+      { last_vol: 1000, cost_price: 10 },
+      { today_buy_amount: 1200, today_sell_amount: 800 }
+    )).toBe(-0.04)
+  })
+  it('边界: 期初 0 → 0', () => {
+    expect(calcT0ReturnRate(
+      { last_vol: 0, cost_price: 10 },
+      { today_buy_amount: 1000, today_sell_amount: 1500 }
+    )).toBe(0)
+  })
+  it('边界: 成本 0 → 0', () => {
+    expect(calcT0ReturnRate(
+      { last_vol: 1000, cost_price: 0 },
+      { today_buy_amount: 1000, today_sell_amount: 1500 }
+    )).toBe(0)
+  })
+  it('无成交: 0', () => {
+    expect(calcT0ReturnRate(
+      { last_vol: 1000, cost_price: 10 },
+      {}
+    )).toBe(0)
+  })
+  it('小数股: 期初 100 @ 0.5, 卖 60 - 买 50 = +10 / 50 = 0.2 (20%)', () => {
+    expect(calcT0ReturnRate(
+      { last_vol: 100, cost_price: 0.5 },
+      { today_buy_amount: 50, today_sell_amount: 60 }
+    )).toBeCloseTo(0.2, 10)
+  })
+  it('缺字段: 0', () => {
+    expect(calcT0ReturnRate({}, {})).toBe(0)
+    expect(calcT0ReturnRate(null, null)).toBe(0)
+  })
+})
+
+
+describe('resolveBalancePrice (配平对手盘价)', () => {
+  it('买敞口 → ask1 (卖1价)', () => {
+    expect(resolveBalancePrice(
+      { stock_code: '000001.SZ' },
+      'buy',
+      { last_price: 10, ask_prices: [11.5, 11.6], bid_prices: [10.5, 10.4] }
+    )).toEqual({ price: 11.5, fallback: false })
+  })
+  it('卖敞口 → bid1 (买1价)', () => {
+    expect(resolveBalancePrice(
+      { stock_code: '000001.SZ' },
+      'sell',
+      { last_price: 10, ask_prices: [11.5, 11.6], bid_prices: [10.5, 10.4] }
+    )).toEqual({ price: 10.5, fallback: false })
+  })
+  it('买敞口: ask1 无效 → fallback 最新价', () => {
+    expect(resolveBalancePrice(
+      { stock_code: '000001.SZ' },
+      'buy',
+      { last_price: 10, ask_prices: [0, null, undefined] }
+    )).toEqual({ price: 10, fallback: true })
+  })
+  it('卖敞口: bid1 无效 → fallback 最新价', () => {
+    expect(resolveBalancePrice(
+      { stock_code: '000001.SZ' },
+      'sell',
+      { last_price: 10, bid_prices: [] }
+    )).toEqual({ price: 10, fallback: true })
+  })
+  it('无任何价: price=0 fallback=true', () => {
+    expect(resolveBalancePrice(
+      { stock_code: '000001.SZ' },
+      'buy',
+      { last_price: 0 }
+    )).toEqual({ price: 0, fallback: true })
+    expect(resolveBalancePrice(
+      { stock_code: '000001.SZ' },
+      'sell',
+      null
+    )).toEqual({ price: 0, fallback: true })
+  })
+  it('quote 为 undefined: 兜底 0', () => {
+    expect(resolveBalancePrice(
+      { stock_code: '000001.SZ' },
+      'buy',
+      undefined
+    )).toEqual({ price: 0, fallback: true })
+  })
+  it('未知 side: 返 last_price 不 fallback', () => {
+    expect(resolveBalancePrice(
+      { stock_code: '000001.SZ' },
+      'unknown',
+      { last_price: 10 }
+    )).toEqual({ price: 10, fallback: false })
+  })
+  it('边界: ask_prices[0] = NaN → fallback 最新价', () => {
+    expect(resolveBalancePrice(
+      { stock_code: '000001.SZ' },
+      'buy',
+      { last_price: 10, ask_prices: [NaN, 11.5] }
+    )).toEqual({ price: 10, fallback: true })
   })
 })
