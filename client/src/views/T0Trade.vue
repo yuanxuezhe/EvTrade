@@ -1,34 +1,37 @@
 <!--
-  T0Trade.vue — 快速做T 主页面 (v55 切到 task 视角)
+  T0Trade.vue — 快速做T 主页面
 
-  架构变更：
-    v54 前: 主表 holdings 视角 (每行 = 1 持仓标的) + drawer T0TaskList + dialog T0TaskCreateDialog
-    v55:   主表 task 视角 (每行 = 1 做T 任务) + 删 drawer T0TaskList + "添加任务" 按钮 → dialog (左 HoldingsPanel + 右 T0TaskCreateDialog)
+  v55 (commit 24c7b07): 主表 task 视角 (每行 = 1 做T 任务) + 900px 添加任务 dialog 集成 HoldingsPanel + T0TaskCreateDialog
 
-  数据源: t0TasksStore.tasks (一 task 一行)
-  持仓:   useHoldingsStore().positions (供 HoldingsPanel 嵌入 dialog 用)
-  行情:   useQuoteStore()
+  v55.1 (本轮): 上下分区布局
+    ┌──────────────────────────────┐
+    │ Header (标题/选择/添加/刷新)     │
+    ├──────────────────────────────┤
+    │ 上半: 主表 8 列 (task 视角)     │
+    ├──────────────────────────────┤
+    │ 下半: 当前 task 的实时委托表     │
+    │   - 7 列 (委托号/方向/价格/数量/  │
+    │     状态/下单时间/备注)           │
+    │   - 数据源: holdings.orders     │
+    │     .filter(o => o.task_id===id)│
+    └──────────────────────────────┘
 
-  v55 主表 8 列:
-    1. 状态 (el-tag)
-    2. 任务编号 (#${task.id})
-    3. 标的 (代码 + 名称)
-    4. 底仓+目标 (= base_volume + target_volume)
-    5. 当前持仓 (task.summary.position_vol)
-    6. 做T盈亏 (task.summary.realized_pnl, 红涨绿跌)
-    7. 做T收益率% (calcT0ReturnRate)
-    8. 操作 (详情 / 配平 / 平仓)
+  v55.1 数据流:
+    主表行选中 / el-select 选 task
+      → selectedTaskId.value 变化
+      → lowerArea filteredTaskOrders 自动响应
+      → computeSelectedTaskDiff() 实时算差 → 配平按钮文案 + disabled 状态
 
-  v55 "添加任务" dialog (900px wide):
-    ┌──────────────────┬──────────────────────────┐
-    │ HoldingsPanel    │ T0TaskCreateDialog        │
-    │ (左 350px)       │ (右 520px)                │
-    │ - 单击 → select-stock → 回填 stock_code │
-    └──────────────────┴──────────────────────────┘
+  v55.1 配平按钮 (前端计算 + 下市价单):
+    - 算: holdings.orders.filter(o=>o.task_id===id)
+        .reduce((d, o) => d + (order_type==='23'?+1:-1) * (traded_volume||0), 0)
+    - 方向: diff>0 多买 → SELL; diff<0 多卖 → BUY; diff===0 按钮 disabled
+    - 下单: useT0OrderSubmit.submitOrder({orderType, volume: |diff|, price:0,
+             priceType:'market' (priceTypeCode=44), taskId})
 -->
 <template>
   <div class="t0-trade fade-in-up">
-    <!-- Header: 标题 + 仓位% + 价格档 + 任务快速选择 + 添加任务按钮 + 刷新 -->
+    <!-- Header: 标题 + 任务快速选择 + 添加任务按钮 + 刷新 -->
     <div class="t0-header">
       <span class="t0-title">⚡ 快速做T</span>
       <div class="qs-row">
@@ -56,15 +59,22 @@
       </div>
     </div>
 
-    <!-- 主表 8 列 (v55 task 视角) -->
-    <el-table
-      :data="taskRows"
-      :row-class-name="ptRowClass"
-      @sort-change="onSortChange"
-      class="task-table"
-      empty-text="暂无 T0 任务，点击「添加任务」按钮创建"
-      size="default"
-    >
+    <!-- v55.1 上下分区: 上半主表 + 下半委托表 -->
+    <div class="t0-split">
+      <section class="t0-upper">
+        <div class="area-hint">
+          <el-icon><List /></el-icon><span>做T任务（共 {{ taskRows.length }} 条）</span>
+        </div>
+        <!-- 主表 8 列 (v55 task 视角) -->
+        <el-table
+          :data="taskRows"
+          :row-class-name="ptRowClass"
+          @sort-change="onSortChange"
+          class="task-table"
+          empty-text="暂无 T0 任务，点击「添加任务」按钮创建"
+          size="default"
+          @row-click="onTaskRowClick"
+        >
       <!-- 1. 状态 (100) -->
       <el-table-column prop="status" label="状态" width="100">
         <template #default="{ row }">
@@ -132,8 +142,9 @@
               type="warning"
               link
               size="small"
+              :disabled="computeRowBalanceDiff(row.id) === 0"
               @click="onBalanceTask(row.id)"
-            >配平</el-button>
+            >{{ balanceBtnLabel(row.id) }}</el-button>
             <el-button
               v-if="row.status === 'active'"
               type="danger"
@@ -152,6 +163,73 @@
         </template>
       </el-table-column>
     </el-table>
+      </section>
+
+      <!-- 下半: 当前选中 task 的实时委托表 -->
+      <section class="t0-lower">
+        <div class="area-hint">
+          <el-icon><Document /></el-icon>
+          <span>
+            <template v-if="selectedTaskId">
+              task #{{ selectedTaskId }}
+              <template v-if="selectedTaskDiff !== 0">
+                （实时差 <b :class="selectedTaskDiff > 0 ? 'up' : 'down'">
+                  {{ selectedTaskDiff > 0 ? '+' : '' }}{{ selectedTaskDiff }}
+                </b> 股 — {{ selectedTaskDiff > 0 ? '需卖' : '需买' }}）
+              </template>
+              <template v-else>（已平衡）</template>
+              ，共 {{ filteredTaskOrders.length }} 笔委托
+            </template>
+            <template v-else>请先在上方主表选择 1 个 task，下方展示其委托与实时配平数量</template>
+          </span>
+        </div>
+        <el-table
+          :data="filteredTaskOrders"
+          class="order-table"
+          empty-text="该 task 暂无委托"
+          size="default"
+        >
+          <el-table-column prop="order_no" label="委托号" width="100">
+            <template #default="{ row }">
+              <span class="text-mono">{{ row.order_no }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column prop="order_type" label="方向" width="60" align="center">
+            <template #default="{ row }">
+              <el-tag :type="row.order_type === '23' ? 'danger' : 'success'" size="small">
+                {{ row.order_type === '23' ? '买' : '卖' }}
+              </el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column prop="price" label="价格" width="90" align="right">
+            <template #default="{ row }">
+              <span class="text-mono">{{ formatPrice(row.price) }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column prop="volume" label="数量" width="80" align="right">
+            <template #default="{ row }">
+              <span class="text-mono">{{ formatNumber(row.volume) }}</span>
+              <span class="text-secondary" style="margin-left: 4px">/{{ formatNumber(row.traded_volume || 0) }}成</span>
+            </template>
+          </el-table-column>
+          <el-table-column prop="status" label="状态" width="100" align="center">
+            <template #default="{ row }">
+              <el-tag :type="orderStatusTagType(row.status)" size="small">{{ orderStatusLabel(row.status) }}</el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column prop="order_time" label="下单时间" width="90" align="center">
+            <template #default="{ row }">
+              <span class="text-mono">{{ (row.order_time || '').slice(0, 8) }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column prop="user_def" label="备注" min-width="120">
+            <template #default="{ row }">
+              <span class="text-secondary">{{ row.user_def || '—' }}</span>
+            </template>
+          </el-table-column>
+        </el-table>
+      </section>
+    </div>
 
     <!-- 添加任务 dialog (900px, 左 HoldingsPanel + 右 T0TaskCreateDialog) -->
     <el-dialog
@@ -198,16 +276,18 @@
 
 <script setup>
 import { ref, computed, watch, onMounted } from 'vue'
-import { Plus, InfoFilled } from '@element-plus/icons-vue'
+import { List, Document, Plus, InfoFilled } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { storeToRefs } from 'pinia'
 import { useHoldingsStore } from '../stores/holdings'
 import { useQuoteStore } from '../stores/quote'
 import { useT0TasksStore } from '../stores/t0_tasks'
+import { useOrderStore } from '../stores/order'
 import T0TaskDetail from '../components/trade/T0TaskDetail.vue'
 import T0TaskCreateDialog from '../components/trade/T0TaskCreateDialog.vue'
 import HoldingsPanel from '../components/trade/HoldingsPanel.vue'
-import { formatNumber, formatAmount } from '../utils/format'
+import { useT0OrderSubmit } from '../composables/useT0OrderSubmit'
+import { formatNumber, formatAmount, formatPrice } from '../utils/format'
 import { stockName } from '../utils/stockNames'
 import { calcT0ReturnRate } from '../lib/t0-calc'
 import { makeLogger } from '../utils/logger'
@@ -217,6 +297,7 @@ const log = makeLogger('T0Trade')
 const holdingsStore = useHoldingsStore()
 const quoteStore = useQuoteStore()
 const t0TasksStore = useT0TasksStore()
+const orderStore = useOrderStore()
 const { positions } = storeToRefs(holdingsStore)
 
 const stockCode = ref(null)
@@ -243,6 +324,83 @@ watch([stockCode, filteredActiveTasks], ([code, list]) => {
     selectedTaskId.value = null
   }
 })
+
+// ---- v55.1 上下分区: 下半委托表 + 实时配平 ----
+// storeToRefs 是 pinia 解构 ref 必备
+const { orders: holdingsOrders } = storeToRefs(holdingsStore)
+
+// 下半委托表: 实时按 task_id 过滤 holdings.orders, 按 order_time desc
+const filteredTaskOrders = computed(() => {
+  if (!selectedTaskId.value) return []
+  return holdingsOrders.value
+    .filter((o) => Number(o.task_id) === Number(selectedTaskId.value))
+    .slice()
+    .sort((a, b) => String(b.order_time || '').localeCompare(String(a.order_time || '')))
+})
+
+// 核心: 实时算 task 净成交差 (已成交部分 traded_volume)
+//   diff = sum(buy.traded_volume) - sum(sell.traded_volume)
+//   > 0 → 多买了，应反向 SELL
+//   < 0 → 多卖了，应反向 BUY
+//   = 0 → 已平衡
+function _taskNetDiff(taskId) {
+  if (!taskId) return 0
+  let buy = 0, sell = 0
+  for (const o of holdingsOrders.value) {
+    if (Number(o.task_id) !== Number(taskId)) continue
+    const tv = Number(o.traded_volume) || 0
+    if (o.order_type === '23') buy += tv
+    else if (o.order_type === '24') sell += tv
+  }
+  return buy - sell
+}
+
+// 主表"配平"按钮文案 (动态)
+function balanceBtnLabel(taskId) {
+  const diff = _taskNetDiff(taskId)
+  if (diff === 0) return '已平衡'
+  if (diff > 0) return `补卖 ${diff}`
+  return `补买 ${-diff}`
+}
+
+// 主表"配平"按钮 disabled 条件 (diff=0)
+function computeRowBalanceDiff(taskId) {
+  return _taskNetDiff(taskId)
+}
+
+// 当前选中 task 的差值 (下半 header hint 用)
+const selectedTaskDiff = computed(() => _taskNetDiff(selectedTaskId.value))
+
+// 委托状态格式化 (摘 v53/v55 已有约定)
+function orderStatusLabel(s) {
+  if (s === '50') return '已报'
+  if (s === '51') return '已成交'
+  if (s === '52') return '部成'
+  if (s === '53') return '已撤'
+  if (s === '54') return '已撤(全)'
+  if (s === '55') return '废单'
+  if (s === '56') return '已撤(部)'
+  return String(s || '—')
+}
+function orderStatusTagType(s) {
+  if (s === '51') return 'success'
+  if (s === '50' || s === '52') return 'primary'
+  if (s === '55' || s === '54' || s === '53') return 'info'
+  if (s === '56') return 'warning'
+  return 'default'
+}
+
+// 主表行单击 → 选中/取消选中 task (联动下半表)
+function onTaskRowClick(row) {
+  // 单击 row: 若已选中则取消；否则选中
+  if (selectedTaskId.value === row.id) {
+    selectedTaskId.value = null
+  } else {
+    selectedTaskId.value = row.id
+    const t = t0TasksStore.tasksById[row.id]
+    if (t && t.stock_code) stockCode.value = t.stock_code
+  }
+}
 
 // ---- 主表数据源 (v55 task 视角) ----
 const taskRows = computed(() => t0TasksStore.tasks || [])
@@ -454,5 +612,50 @@ onMounted(async () => {
 .add-task-right :deep(.el-dialog) {
   /* dialog 内部嵌套消除二次 dialog 包裹 */
   margin: 0;
+}
+
+/* v55.1 上下分区布局: 上半主表 + 下半委托表, 1:1 flex column */
+.t0-split {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  flex: 1;
+  min-height: 0;
+}
+.t0-upper,
+.t0-lower {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 50%;
+  min-height: 0;
+  border: 1px solid var(--el-border-color-lighter, #ebeef5);
+  border-radius: 6px;
+  background: var(--el-fill-color-blank, #fff);
+  overflow: hidden;
+}
+.t0-upper { flex-basis: 50%; }
+.t0-lower { flex-basis: 50%; }
+.area-hint {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  font-size: 12px;
+  color: var(--el-text-color-secondary, #909399);
+  background: var(--el-fill-color-light, #f5f7fa);
+  border-bottom: 1px solid var(--el-border-color-lighter, #ebeef5);
+  flex-shrink: 0;
+}
+.task-table,
+.order-table {
+  width: 100%;
+  flex: 1;
+  min-height: 0;
+}
+.task-table :deep(.el-table__body-wrapper),
+.order-table :deep(.el-table__body-wrapper) {
+  /* 让 el-table 内部滚动条工作 */
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 </style>
