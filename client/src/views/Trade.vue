@@ -37,7 +37,7 @@
 
       <!-- 右上 (1,2) = HoldingsPanel -->
       <div class="trade-cell trade-cell-holdings">
-        <HoldingsPanel />
+        <HoldingsPanel @apply-to-order="onApplyHolding" />
       </div>
 
       <!-- 右下 (2,2) = TodayOrdersPanel (内含委托/成交 tab) -->
@@ -56,6 +56,7 @@ import TodayOrdersPanel from '../components/trade/TodayOrdersPanel.vue'
 import HoldingsPanel from '../components/trade/HoldingsPanel.vue'
 import { useOrderStore } from '../stores/order'
 import { useUiStore } from '../stores/ui'
+import { ElMessage } from 'element-plus'
 
 const orderStore = useOrderStore()
 const uiStore = useUiStore()
@@ -114,6 +115,24 @@ function onApplyPrice(price) {
   if (orderFormRef.value?.onExternalApply) {
     orderFormRef.value.onExternalApply(price)
   }
+}
+
+// v53: 持仓行 dblclick → 写入 OrderForm 代码输入框 (REQ-FE-HOLDINGS-DBLCLICK)
+//   走 expose API (OrderForm 不 watch props.defaultStockCode, 必须主动 setter)
+function onApplyHolding({ stock_code, stock_name }) {
+  if (!stock_code) return
+  if (orderFormRef.value?.onExternalApplyStockCode) {
+    orderFormRef.value.onExternalApplyStockCode(stock_code)
+  } else {
+    quickStock.value = stock_code  // 兜底: prop 通路留给未来扩展
+  }
+  const label = stock_name ? `${stock_name} (${stock_code})` : stock_code
+  ElMessage({
+    message: `已带入 ${label} 到下单面板`,
+    type: 'info',
+    duration: 1800,
+    grouping: true,
+  })
 }
 </script>
 

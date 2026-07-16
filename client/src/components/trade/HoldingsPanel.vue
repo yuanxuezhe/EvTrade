@@ -42,8 +42,9 @@
         :show-overflow-tooltip="true"
         stripe
         size="small"
-        class="tp-table"
+        class="tp-table hp-row-dblclick"
         :cell-class-name="cellClassName"
+        @row-dblclick="onRowDblclick"
       >
         <!-- v31.1: 10 列布局, 列宽压缩适应窄列 mini panel (目标总宽 ~720px fit 856 viewport)
              v37 移动端: cell-class-name 给每个 <td> 加 col-{label} class, main.css .is-mobile 模式下展示字段名 -->
@@ -135,6 +136,15 @@ import { useHoldingsStore } from '../../stores/holdings'
 
 const holdingsStore = useHoldingsStore()
 const quoteStore = useQuoteStore()
+
+// v53: 持仓行 dblclick → emit apply-to-order (REQ-FE-HOLDINGS-DBLCLICK)
+//   父组件 (Trade.vue) 监听此事件 → 写入 quickStock → OrderForm 自动更新代码
+const emit = defineEmits(['apply-to-order'])
+function onRowDblclick(row) {
+  if (!row || !row.stock_code) return
+  const name = stockName(row.stock_code) || row.stock_name || ''
+  emit('apply-to-order', { stock_code: row.stock_code, stock_name: name })
+}
 
 // v33: 持仓 codes 走 store (App.vue bootstrap 已自动订阅)
 //   push → triggerRef(byCode) → getMarketValue/getProfit/getReturnRate computed 自动重算 → UI 立即更新
@@ -238,6 +248,13 @@ function formatPercent(v) {
   height: 100%;
   min-height: 0;
   overflow: hidden;
+}
+/* v53: 行 dblclick 视觉提示 (REQ-FE-HOLDINGS-DBLCLICK) */
+:deep(.hp-row-dblclick .el-table__row) {
+  cursor: pointer;
+}
+:deep(.hp-row-dblclick .el-table__row:hover > td.el-table__cell) {
+  background-color: var(--el-color-primary-light-9, #ecf5ff) !important;
 }
 .hp-count {
   font-size: 12px;

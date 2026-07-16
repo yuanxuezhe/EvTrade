@@ -270,7 +270,15 @@ function onExternalApply(price) {
   if (form.price_type !== PriceType.FIX_PRICE) form.price_type = PriceType.FIX_PRICE
   form.price = Number(price)
 }
-defineExpose({ onExternalApply })
+
+// v53: 外部双击持仓带入 stock_code (REQ-FE-HOLDINGS-DBLCLICK)
+//   与 onExternalApply 对偶, 同时暴露出来让父组件可调用
+function onExternalApplyStockCode(code) {
+  const c = String(code || '').trim().toUpperCase()
+  form.stock_code = c
+  emit('update:stock-code', c)
+}
+defineExpose({ onExternalApply, onExternalApplyStockCode })
 
 function formatVolume(v) {
   return v >= 10000 ? `${v / 10000}万` : String(v)
