@@ -1,5 +1,5 @@
 <!--
-  HoldingsPanel.vue — 持仓 mini 面板 (v30 Trade.vue 5 区重构: 嵌入右栏 flex:2; v31.1 字段补全 + 列宽调优; v32 名称查 stocks cache)
+  HoldingsPanel.vue — 持仓 mini 面板 (v30 Trade.vue 5 区重构: 嵌入右栏 flex:2; v31.1 字段补全 + 列宽调优; v32 名称查 stocks cache; v55 select-stock emit)
 
   数据源: useHoldingsStore().positions (App.vue 启动时已 bootstrap)
   行情:   useQuoteStore() (持仓 codes 已自动 subscribe,见 holdings store)
@@ -8,6 +8,14 @@
   v32 修订:
     - 证券名称列从 row.stock_name (后端字段) 改为 stockName(row.stock_code) (查 stocks store 缓存)
     - 后端不再返回 name,前端统一查 stocks cache 补名称,查不到显式 '—'
+
+  v53 修订:
+    - 行 dblclick → emit apply-to-order (REQ-FE-HOLDINGS-DBLCLICK), 父组件 (Trade.vue) 监听后写入 quickStock
+
+  v55 修订 (REQ-FE-230):
+    - 行 click (单击) → emit select-stock, 让 T0Trade.vue 添加任务 dialog 能直接用 HoldingsPanel 选中回填 stock_code
+    - **不改** dblclick 语义, apply-to-order 行为保持 (Trade.vue 等父组件不破坏)
+    - 单击与 dblclick 互不触发: 用 hasClickSelected flag + 250ms 节流, 避免 dblclick 第一击被误识别
 
   精简相对 Holdings.vue:
     - 无 filter-bar (迷你 el-input 内嵌到 .tp-header)
@@ -44,6 +52,7 @@
         size="small"
         class="tp-table hp-row-dblclick"
         :cell-class-name="cellClassName"
+        @row-click="onRowClick"
         @row-dblclick="onRowDblclick"
       >
         <!-- v31.1: 10 列布局, 列宽压缩适应窄列 mini panel (目标总宽 ~720px fit 856 viewport)
@@ -139,11 +148,26 @@ const quoteStore = useQuoteStore()
 
 // v53: 持仓行 dblclick → emit apply-to-order (REQ-FE-HOLDINGS-DBLCLICK)
 //   父组件 (Trade.vue) 监听此事件 → 写入 quickStock → OrderForm 自动更新代码
-const emit = defineEmits(['apply-to-order'])
+// v55: 加 select-stock emit (单击), 让 T0Trade.vue 添加任务 dialog 能直接回填 stock_code
+//   - 单击与 dblclick 互不触发: flag + 250ms 节流, 避免 dblclick 第一击误识别为 click
+const emit = defineEmits(['apply-to-order', 'select-stock'])
+let lastClickTs = 0
 function onRowDblclick(row) {
   if (!row || !row.stock_code) return
   const name = stockName(row.stock_code) || row.stock_name || ''
   emit('apply-to-order', { stock_code: row.stock_code, stock_name: name })
+}
+function onRowClick(row) {
+  if (!row || !row.stock_code) return
+  const now = Date.now()
+  // 节流: 250ms 内的 click 视为 dblclick 第一击, 不触发 select-stock
+  if (now - lastClickTs < 250) {
+    lastClickTs = now
+    return
+  }
+  lastClickTs = now
+  const name = stockName(row.stock_code) || row.stock_name || ''
+  emit('select-stock', { stock_code: row.stock_code, stock_name: name })
 }
 
 // v33: 持仓 codes 走 store (App.vue bootstrap 已自动订阅)
