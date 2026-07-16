@@ -53,17 +53,43 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))  # server/infra/
 
 # ─────────────── Pool 配置（v20 MySQL-only）──
 def _pool_kwargs(url: str) -> dict:
-    """v20 只支持 MySQL，返回固定 pool_kwargs。"""
+    """v20 只支持 MySQL，返回固定 pool_kwargs。
+
+    pool_timeout 默认 10s（SQLAlchemy 默认 30s）。
+
+    根治 vs 预防（v52 futex 僵死事件复盘）：
+    ┌─────────────────────────────────────────────────────────────┐
+    │ 预防（已落 v51）：pool_timeout=10 + pre_ping，限爆炸半径     │
+    │ 根治（已落 v52）：sync endpoint → async + bcrypt 走 threadpool │
+    └─────────────────────────────────────────────────────────────┘
+
+    futex 僵死完整链路（v52 修复后已破）：
+      ① 旧 login endpoint 是 sync def，bcrypt.checkpw (~250ms) 阻塞
+      ② Starlette anyio threadpool 默认 40 线程被 bcrypt 耗光
+      ③ 其他 sync endpoint (fetch_user / load_trades) 也都抢同一池
+      ④ DB session 在 handler 内 db.commit() 后未归还
+      ⑤ Pool 5+10=15 耗尽 → 新请求 30s 等连接 → 业务逻辑崩
+      ⑥ 部分 session 泄漏（异常路径未走 finally）
+      ⑦ 任何 io 触发 futex_wait_queue → 主进程永久僵死
+
+    v52 根治：login/change-password 改 async，bcrypt 走 run_in_threadpool
+    → 释放 anyio threadpool → DB session 立即归还 → pool 不爆 → futex 不触发。
+
+    pool_timeout=10 仍保留作为兜底：极端情况下仍超时则快速 5xx，
+    而不是让主进程卡 30s + 僵死。
+    """
     assert url.startswith("mysql"), f"_pool_kwargs called with non-MySQL URL: {url[:80]}"
     size = int(os.environ.get("EVTRADE_DB_POOL_SIZE", "5"))
     ofl = int(os.environ.get("EVTRADE_DB_MAX_OVERFLOW", "10"))
     rec = int(os.environ.get("EVTRADE_DB_POOL_RECYCLE", "1800"))
     pre_ping = os.environ.get("EVTRADE_DB_POOL_PRE_PING", "true").lower() == "true"
+    timeout = int(os.environ.get("EVTRADE_DB_POOL_TIMEOUT", "10"))
     return {
         "pool_size": size,
         "max_overflow": ofl,
         "pool_recycle": rec,
         "pool_pre_ping": pre_ping,
+        "pool_timeout": timeout,
     }
 
 
@@ -101,10 +127,27 @@ Base = declarative_base()
 
 
 def get_db():
-    """FastAPI dependency: yields a database session and closes it after use."""
+    """FastAPI dependency: yields a database session and closes it after use.
+
+    v52 futex 僵死复盘：
+      旧 sync endpoint (login) 阻塞 Starlette threadpool → DB session 在
+      handler 内 db.commit() 后无法走到 finally → 连接泄漏 → pool 满 → 僵死。
+
+    现在的兜底机制（即便 endpoint 误用 sync 阻塞）：
+      - try/finally 保证 close() 被调用
+      - 异常时 rollback + close（防止 session 半挂状态）
+      - 上游 _pool_kwargs pool_timeout=10 兜底防 futex
+    """
     db = SessionLocal()
     try:
         yield db
+    except Exception:
+        # 异常路径：rollback 后再 close，避免半挂连接
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        raise
     finally:
         db.close()
 
