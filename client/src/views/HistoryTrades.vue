@@ -86,27 +86,28 @@
         style="width: 100%"
         :default-sort="{ prop: 'trade_time', order: 'descending' }"
       >
-        <el-table-column prop="trd_date" label="交易日" width="100" sortable>
+        <!-- v72: 10 列走 COL 常量 -->
+        <el-table-column prop="trd_date" label="交易日" sortable v-bind="COL.STOCK_CODE">
           <template #default="{ row }">
             <span class="text-mono text-secondary">{{ row.trd_date }}</span>
           </template>
         </el-table-column>
-        <el-table-column prop="trade_time" label="成交时间" width="100">
+        <el-table-column prop="trade_time" label="成交时间" v-bind="COL.TIME">
           <template #default="{ row }">
             <span class="text-mono text-secondary">{{ row.trade_time }}</span>
           </template>
         </el-table-column>
-        <el-table-column prop="stock_code" label="股票代码" width="100">
+        <el-table-column prop="stock_code" label="股票代码" v-bind="COL.STOCK_CODE">
           <template #default="{ row }">
             <span class="stock-code">{{ row.stock_code }}</span>
           </template>
         </el-table-column>
-        <el-table-column prop="stock_name" label="名称" width="100" show-overflow-tooltip>
+        <el-table-column prop="stock_name" label="名称" show-overflow-tooltip v-bind="COL.STOCK_CODE">
           <template #default="{ row }">
             <span class="text-secondary">{{ stockName(row.stock_code) || '—' }}</span>
           </template>
         </el-table-column>
-        <el-table-column prop="order_type" label="方向" width="100">
+        <el-table-column prop="order_type" label="方向" v-bind="COL.makeDict('direction', { width: 100, align: 'center', headerAlign: 'center' })">
           <template #default="{ row }">
             <span class="dir-chip" :class="row.order_type === '23' ? 'buy' : 'sell'">
               {{ row.order_type === '23' ? '买入' : '卖出' }}
@@ -119,22 +120,22 @@
             <span v-else class="text-secondary">成交</span>
           </template>
         </el-table-column>
-        <el-table-column prop="volume" label="成交数量" align="right" width="100" sortable>
+        <el-table-column prop="volume" label="成交数量" sortable v-bind="COL.NUMBER">
           <template #default="{ row }">
             <span class="text-mono">{{ formatNumber(row.volume) }}</span>
           </template>
         </el-table-column>
-        <el-table-column prop="price" label="成交价格" align="right" width="100" sortable>
+        <el-table-column prop="price" label="成交价格" sortable v-bind="COL.MONEY">
           <template #default="{ row }">
             <span class="text-mono">{{ formatMoney(row.price) }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="成交金额" align="right" width="100">
+        <el-table-column label="成交金额" v-bind="COL.MONEY">
           <template #default="{ row }">
             <span class="text-mono">¥{{ formatMoney(localAmount(row)) }}</span>
           </template>
         </el-table-column>
-        <el-table-column prop="trade_id" label="成交编号" min-width="100" show-overflow-tooltip>
+        <el-table-column prop="trade_id" label="成交编号" show-overflow-tooltip v-bind="COL.makeDict('id', { minWidth: 100 })">
           <template #default="{ row }">
             <span class="text-mono text-secondary">{{ row.trade_id }}</span>
           </template>
@@ -167,6 +168,7 @@ import { Search, Refresh, Download } from '@element-plus/icons-vue'
 import { api } from '../api'
 import { formatMoney, formatNumber } from '../utils/format'
 import { stockName } from '../utils/stockNames'
+import { COL } from '../utils/tableColumns'
 import { shiftDateStr } from '../utils/date'
 
 /**
