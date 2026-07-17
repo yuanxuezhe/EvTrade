@@ -262,7 +262,7 @@ function formatPercent(v) {
 </script>
 
 <style scoped>
-/* 复用 TodayOrdersPanel/TodayTradesPanel 的 .tp-* 类 (Trade.vue 内 trade-panels-col 已覆盖) */
+/* 复用 TodayOrdersPanel 的 .tp-* 类 (Trade.vue 内 trade-panels-col 已覆盖) */
 .hp-shell {
   display: flex;
   flex-direction: column;
