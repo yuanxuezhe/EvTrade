@@ -90,6 +90,7 @@ def register_place(router):
             status="48", status_msg="待报",
             order_time=format_ts(tz='local'),  # v10: "YYYY-MM-DD HH:MM:SS.fff"
             task_id=req.task_id,  # v18: 关联做T任务 (None = 游离单)
+            strategy_type=req.strategy_type,  # v66: REQ-TRADE-026; 0=普通单(Trade.vue) 1=快速做T(T0Trade.vue)
         )
         db.add(order)
         db.commit()

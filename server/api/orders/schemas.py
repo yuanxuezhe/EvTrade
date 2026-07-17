@@ -9,7 +9,7 @@ schemas.py — orders API 的 Pydantic schemas + Order→OrderOut helper
 - CancelResponse: DELETE /{order_no} 响应（含 v9 cancel_order 本地代理行）
 - _to_order_out: Order → OrderOut 转换 helper（消除 3 处重复）
 """
-from typing import List, Optional
+from typing import List, Literal, Optional
 
 from pydantic import BaseModel
 
@@ -25,6 +25,7 @@ class PlaceOrderRequest(BaseModel):
     volume: int
     t0_coefficient: float = 1.0
     task_id: Optional[int] = None  # v18: 关联 t0_tasks.id (None = 游离单)
+    strategy_type: Literal[0, 1] = 0  # v66: REQ-TRADE-026; 0=普通单(Trade.vue) 1=快速做T(T0Trade.vue)
 
 
 class OrderOut(BaseModel):
@@ -47,6 +48,7 @@ class OrderOut(BaseModel):
     order_time: str
     raw_id: Optional[str] = None  # v13 NEW: cancel-row 写 = 原 order_no；普通行 None
     task_id: Optional[int] = None  # v18 NEW: 关联 t0_tasks.id (None = 游离单)
+    strategy_type: int = 0  # v66 NEW: REQ-TRADE-026; 0=普通单 1=快速做T
 
 
 class PlaceOrderResponse(BaseModel):
@@ -94,4 +96,5 @@ def _to_order_out(o):
         status_msg=o.status_msg, order_time=o.order_time,
         raw_id=o.raw_id,  # v13 NEW: cancel-row 透传；普通行为 None
         task_id=o.task_id,  # v18 NEW: 透传到前端 task 视图
+        strategy_type=o.strategy_type or 0,  # v66 NEW: REQ-TRADE-026; 兜底 0 防 None
     )

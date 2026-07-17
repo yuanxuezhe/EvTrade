@@ -57,6 +57,9 @@ def _order_to_out_dict(order) -> Optional[dict]:
         "order_time": _str(order.order_time or ''),
         # v63: task_id 字段 (供 T0Trade 委托筛选, 之前为 null)
         "task_id": _int(order.task_id) if order.task_id is not None else None,
+        # v66: strategy_type 字段 (REQ-TRADE-026; 0=普通单 1=快速做T)
+        #   兜底 0: 历史单 ORM 列刚加, query 出 None 也按 0 处理
+        "strategy_type": _int(order.strategy_type) if order.strategy_type is not None else 0,
     }
 
 
