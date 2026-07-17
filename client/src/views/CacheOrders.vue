@@ -24,6 +24,7 @@ const ordersRef = computed({
 
 const fields = [
   { key: 'order_no', label: '委托编号', width: 140, required: true },
+  { key: 'task_id', label: 'T0任务ID', width: 100, type: 'number' },
   { key: 'trd_date', label: '交易日', width: 140 },
   { key: 'stock_code', label: '股票代码', width: 140 },
   { key: 'order_type', label: '买卖', width: 130, type: 'select', options: ['23', '24'] },

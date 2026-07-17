@@ -63,6 +63,11 @@
             <span class="text-secondary">{{ stockName(row.stock_code) || '—' }}</span>
           </template>
         </el-table-column>
+        <el-table-column prop="task_id" label="T0任务" width="80" align="right" show-overflow-tooltip>
+          <template #default="{ row }">
+            <span :class="row.task_id != null ? 'text-mono text-secondary' : 'text-muted'">{{ row.task_id ?? '—' }}</span>
+          </template>
+        </el-table-column>
         <el-table-column label="方向" width="100">
           <template #default="{ row }">
             <span class="tp-dir-chip" :class="row.order_type === '23' ? 'buy' : 'sell'">
