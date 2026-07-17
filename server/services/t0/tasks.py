@@ -326,21 +326,78 @@ def close_task(db: Session, task_id: int, user_id: int, is_admin: bool = False) 
 # ───────────────────── 统计 (REQ-TRADE-015) ─────────────────────
 
 def aggregate_task_stats(db: Session, task_id: int) -> Dict:
-    """task 维度统计: realized + unrealized + win_rate + trading_days + daily[]"""
+    """task 维度统计: realized + unrealized + win_rate + trading_days + daily[]
+
+    v62 (REQ-TRADE-022): realized_pnl 算法改为按 Order 委托口径
+      - 已成交部分: 用 Order.price (委托价)
+      - 未成交部分: 买入用 ask1_price (卖一价), 卖出用 bid1_price (买一价)
+      - 配平后: (avg_sell - avg_buy) * paired_vol - fee - tax
+    """
     t = db.query(T0Task).filter(T0Task.id == task_id).first()
     if not t:
         return {}
 
     fee_cfg = get_fee_config()
 
-    # task 内所有成交
-    order_nos = db.query(Order.order_no).filter(
+    # v62: 取 task 内所有 Order (跨日累积, 不限 trd_date)
+    orders = db.query(Order).filter(
         Order.task_id == task_id,
-        Order.trd_date == t.created_trd_date,  # 简化: 跨多日取所有
     ).all()
-    order_no_set = {o[0] for o in order_nos}
 
-    # 取 task 关联的 trades (order_no in set)
+    # v62: 取最新 ask1/bid1 (兜底配平价)
+    from server.models.orm import QuoteSnapshot
+    snap = db.query(QuoteSnapshot).filter_by(stock_code=t.stock_code).order_by(QuoteSnapshot.ts.desc()).first()
+    ask1 = float(snap.ask1_price or 0) if snap and snap.ask1_price else 0.0
+    bid1 = float(snap.bid1_price or 0) if snap and snap.bid1_price else 0.0
+
+    # v62: 按 Order 委托口径算 effective buy/sell vol + amt
+    # 已成交部分用 Order.price, 未成交部分按方向用 bid1/ask1
+    eff_buy_vol, eff_buy_amt = 0, 0.0
+    eff_sell_vol, eff_sell_amt = 0, 0.0
+    for o in orders:
+        # 撤单类 (51/52/53/54) 不参与计算
+        if o.status in ('51', '52', '53', '54'):
+            continue
+        vol = int(o.volume or 0)
+        traded = int(o.traded_volume or 0)
+        if traded > 0:
+            unfilled = vol - traded
+        else:
+            # 委托还没成交: 全按未成交市价配平
+            unfilled = vol
+            traded = 0
+        price = float(o.price or 0)
+        if o.order_type == "23":  # 买
+            eff_buy_amt += price * traded
+            eff_buy_vol += traded
+            if unfilled > 0:
+                fill_price = ask1 if ask1 > 0 else price
+                eff_buy_amt += fill_price * unfilled
+                eff_buy_vol += unfilled
+        elif o.order_type == "24":  # 卖
+            eff_sell_amt += price * traded
+            eff_sell_vol += traded
+            if unfilled > 0:
+                fill_price = bid1 if bid1 > 0 else price
+                eff_sell_amt += fill_price * unfilled
+                eff_sell_vol += unfilled
+
+    # v62: 配平后算 realized
+    paired_vol = min(eff_buy_vol, eff_sell_vol)
+    total_realized = 0.0
+    total_commission = 0.0
+    total_stamp_tax = 0.0
+    if paired_vol > 0:
+        avg_buy = eff_buy_amt / eff_buy_vol if eff_buy_vol > 0 else 0.0
+        avg_sell = eff_sell_amt / eff_sell_vol if eff_sell_vol > 0 else 0.0
+        gross = (avg_sell - avg_buy) * paired_vol
+        commission, stamp_tax = calc_commission_and_tax(avg_sell * paired_vol, fee_cfg, "SELL")
+        total_realized = _q2(gross - commission - stamp_tax)
+        total_commission = _q2(commission)
+        total_stamp_tax = _q2(stamp_tax)
+
+    # v62: 按日分组 (daily) — 保留旧逻辑做时间序列展示
+    order_no_set = {o.order_no for o in orders if o.traded_volume and int(o.traded_volume) > 0}
     trades = []
     if order_no_set:
         trades = db.query(Trade).filter(
@@ -371,48 +428,40 @@ def aggregate_task_stats(db: Session, task_id: int) -> Dict:
             sell_trades_by_day[d].append(tr)
         by_day[d]['trade_count'] += 1
 
-    # 算每日 realized_pnl (cost_basis = 当日买入均价)
-    total_realized = 0.0
-    total_commission = 0.0
-    total_stamp_tax = 0.0
+    # 算每日 realized_pnl (cost_basis = 当日买入均价, 仅用于 daily 时间序列展示)
     daily_list = []
     winning_days = 0
     for d in sorted(by_day.keys()):
         day = by_day[d]
         if day['sell_vol'] > 0 and buy_trades_by_day.get(d):
-            # cost_basis = 当日买入均价
             buy_amt = day['buy_amt']
             buy_vol = day['buy_vol']
             cb = buy_amt / buy_vol if buy_vol > 0 else 0.0
         else:
             cb = 0.0
-            # 用当前持仓成本 (fallback)
             pos = db.query(Position).filter_by(stock_code=t.stock_code).first()
             cb = float(pos.cost_price) if pos else 0.0
 
         if sell_trades_by_day.get(d):
-            realized, commission, stamp_tax = calc_realized_pnl(
+            daily_realized, daily_commission, daily_stamp_tax = calc_realized_pnl(
                 sell_trades_by_day[d], cb, fee_cfg
             )
         else:
-            realized, commission, stamp_tax = 0.0, 0.0, 0.0
-        day['realized_pnl'] = realized
-        day['commission'] = commission
-        day['stamp_tax'] = stamp_tax
-        total_realized += realized
-        total_commission += commission
-        total_stamp_tax += stamp_tax
-        if realized > 0:
+            daily_realized, daily_commission, daily_stamp_tax = 0.0, 0.0, 0.0
+        day['realized_pnl'] = daily_realized
+        day['commission'] = daily_commission
+        day['stamp_tax'] = daily_stamp_tax
+        if daily_realized > 0:
             winning_days += 1
         daily_list.append(day)
 
-    # cum_pnl
+    # cum_pnl (daily 时间序列)
     cum = 0.0
     for d in daily_list:
         cum += d['realized_pnl']
         d['cum_pnl'] = _q2(cum)
 
-    # unrealized
+    # unrealized (v62 沿用旧逻辑: 净敞口 × 最新价差)
     task_net_volume = _calc_task_net_volume(db, task_id)
     pos = db.query(Position).filter_by(stock_code=t.stock_code).first()
     cost_basis = float(pos.cost_price) if pos else 0.0
@@ -421,7 +470,7 @@ def aggregate_task_stats(db: Session, task_id: int) -> Dict:
 
     # trade/order count
     trade_count = len(trades)
-    order_count = len(order_no_set)
+    order_count = len(orders)
     trading_days = len(daily_list)
     win_rate = _q4(winning_days / trading_days) if trading_days > 0 else 0.0
 

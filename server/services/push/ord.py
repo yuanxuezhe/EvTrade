@@ -1,11 +1,15 @@
 """
-push_handler_ord.py — ord_cfm 处理（v10: broker 原字段名 + order_time 写库）
+push_handler_ord.py — ord_cfm 处理（v10: broker 原字段名 + order_time 写库 + v59 委托确认规则）
 
 行为：
 - 用 broker.remark（= 本地 order_no）匹配本地 Order
 - 写入 broker_order_id
 - 累加 cancelled_volume（兼容 cancelled_volume / cancel_volume / withdrawn_volume 字段名）
-- 用 _infer_order_status 本地推断 status（不直接抄 broker）
+- v59 委托确认规则 (用户给定):
+  - 状态不是已撤/废单 (52/54/57 + 51 已报待撤 53 部成部撤) → set row.status = 已报 (50)
+  - 状态是撤单类 (52/53/54/57) → 用 broker_status 直接写 (与 broker 字典对齐)
+  - 不再让 _infer_order_status 把 broker_status 当信号重推断 (防 broker_status='55' 误把已部成当已撤)
+- 成交累计 (trd_cfm) 仍走 _infer_order_status 推断 (基于 cumulative)
 - v10 字段对齐：读 broker 原字段 `order_status`（不再 alias `status`）、`order_time`、`order_volume`
 """
 from typing import Any, Dict, Optional
@@ -72,10 +76,12 @@ def handle_ord_cfm(db: Session, row: Dict[str, Any], ts: str) -> Optional[Dict[s
             new_cancelled = order.volume
         order.cancelled_volume = new_cancelled
     else:
-        # change system-delegation-price-fill-calc: R2b broker 未推 cancelled_volume + broker_status 落在 broker 全部终态 → 本地兜底抹平到 volume (v11 broker 终态口径)
-        # v58 bug fix: 56(已成) + 57 应剔除。broker 56=全成 表示 cum_traded=vol, cancelled 应保持 0
-        #              留 52/53/54/55 (撤单类全集: 已报待撤/已撤/部成部撤/部撤)
-        if broker_status in ('52', '53', '54', '55') and (order.cancelled_volume or 0) < (order.volume or 0):
+        # change system-delegation-price-fill-calc: R2b broker 未推 cancelled_volume + broker_status 落在 broker 撤单类 → 本地兜底抹平到 volume
+        # v59 bug fix: 仅 52/53/54 触发 flatten (broker 撤单类全集, 不含 51/55)
+        #   - 51 (已报待撤) 是过程态, 不一定真撤, flatten 会过早标记已撤
+        #   - 55 (部成) 是成交过程态, 永远不该 flatten (55 → cancelled=vol → infer → 54 已撤, 错)
+        #   - 57 (废单) 单独处理: 直接写 status=57, 不 flatten
+        if broker_status in ('52', '53', '54') and (order.cancelled_volume or 0) < (order.volume or 0):
             order.cancelled_volume = order.volume
 
     # v10: 覆盖 order_volume（broker 改单后真实委托数）
@@ -83,9 +89,16 @@ def handle_ord_cfm(db: Session, row: Dict[str, Any], ts: str) -> Optional[Dict[s
     if broker_volume > 0 and broker_volume != order.volume:
         order.volume = broker_volume
 
-    # 委托 status 由 _infer_order_status 本地推断
-    # (broker_status 临时喂进去:52/53/54 视为撤单类信号)
-    order.status = _infer_order_status(order, broker_status=broker_status or None)
+    # v59: 委托确认按用户规则
+    #   - 撤单类 (52/53/54/57) → 用 broker_status 直接写 (与 broker 字典对齐)
+    #   - 非撤单类 (48/49/50/51/55/56/255) → set row.status = 已报 (50)
+    #     注意 51 (已报待撤) 按用户"不是已撤/废单就 set 已报" 规则 → 50
+    #     排除 57 (废单) 单独 → 57
+    CANCEL_LIKE_STATUSES = ('52', '53', '54', '57')
+    if broker_status in CANCEL_LIKE_STATUSES:
+        order.status = broker_status
+    else:
+        order.status = '50'  # 已报
     order.status_msg = _str(row.get('status_msg', '')) or _status_msg(order.status)
 
     # v10: 写入 order_time（v10 起, parse_broker_ts 统一为标准格式 "YYYY-MM-DD HH:MM:SS.fff"）

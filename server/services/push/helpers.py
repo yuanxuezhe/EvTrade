@@ -55,6 +55,8 @@ def _order_to_out_dict(order) -> Optional[dict]:
         "status": _str(order.status),
         "status_msg": _str(order.status_msg or ''),
         "order_time": _str(order.order_time or ''),
+        # v63: task_id 字段 (供 T0Trade 委托筛选, 之前为 null)
+        "task_id": _int(order.task_id) if order.task_id is not None else None,
     }
 
 
