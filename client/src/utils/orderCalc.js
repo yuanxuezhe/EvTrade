@@ -46,6 +46,11 @@ export function recomputeOrderFromTrade(order, trade) {
  * ws order_update 合并: 仅覆盖 PK + 元数据, ref 的累计字段全部保留
  * (traded_volume / traded_amount / avg_price / cancelled_volume 不被 row 覆盖)
  * 但 status 用 row.status 作 broker_status 信号调 inferOrderStatus 重推断
+ *
+ * v65 (REQ-TRADE-025): 补 task_id 字段透传.
+ *   之前 metaMerge 漏 task_id, 导致 T0 下单后 _upsertToHoldings(order) → applyOrderPush
+ *   → metaMerge 丢 task_id (merged.task_id=undefined). 重刷 bootstrap 才会回填.
+ *   修复: row.task_id ?? ref.task_id ?? null 写回 merged.
  */
 export function metaMerge(row, ref = {}) {
   const merged = {
@@ -61,6 +66,9 @@ export function metaMerge(row, ref = {}) {
     price: Number(row.price ?? ref.price ?? 0),
     volume: Number(row.volume ?? ref.volume ?? 0),
     status_msg: row.status_msg ?? ref.status_msg ?? '',
+    // v65 (REQ-TRADE-025): 透传 task_id 供 T0Trade 委托明细 filter + cache 列展示.
+    // 之前 metaMerge 漏, 导致 T0 下单后 _upsertToHoldings → applyOrderPush → metaMerge 丢 task_id.
+    task_id: row.task_id ?? ref.task_id ?? null,
   }
   merged.status = inferOrderStatus(merged, row.status || null)
   return merged
@@ -70,7 +78,7 @@ export function metaMerge(row, ref = {}) {
  * cancel-row 反向抹平: 由 user_def='CANCEL:{orig_order_no}' 找到原委托,
  * 把 orig.cancelled_volume = orig.volume (R1/R2a 语义) + 重推断 status
  *
- * @returns {Array} 受影响原委托数组 (便于调用方触发响应式更新)
+ * @returns {Array} 受影响原委托数组（便于调用方触发响应式更新）
  */
 export function flattenCancelledByRow(row, list) {
   const userDef = String(row.user_def || '')
