@@ -73,7 +73,9 @@ def handle_ord_cfm(db: Session, row: Dict[str, Any], ts: str) -> Optional[Dict[s
         order.cancelled_volume = new_cancelled
     else:
         # change system-delegation-price-fill-calc: R2b broker 未推 cancelled_volume + broker_status 落在 broker 全部终态 → 本地兜底抹平到 volume (v11 broker 终态口径)
-        if broker_status in ('52', '53', '54', '55', '56', '57') and (order.cancelled_volume or 0) < (order.volume or 0):
+        # v58 bug fix: 56(已成) + 57 应剔除。broker 56=全成 表示 cum_traded=vol, cancelled 应保持 0
+        #              留 52/53/54/55 (撤单类全集: 已报待撤/已撤/部成部撤/部撤)
+        if broker_status in ('52', '53', '54', '55') and (order.cancelled_volume or 0) < (order.volume or 0):
             order.cancelled_volume = order.volume
 
     # v10: 覆盖 order_volume（broker 改单后真实委托数）
