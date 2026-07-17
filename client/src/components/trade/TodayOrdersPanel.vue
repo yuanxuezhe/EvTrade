@@ -61,14 +61,11 @@
             <span v-else class="text-secondary">委托</span>
           </template>
         </el-table-column>
-        <el-table-column prop="stock_code" label="代码" width="100">
+        <!-- v68: 标的列 (仿 T0Trade.vue 标的列) — 代码 mono + 名称 secondary, 间距 6px -->
+        <el-table-column prop="stock_code" label="标的" min-width="180" sortable>
           <template #default="{ row }">
-            <span class="tp-stock-code">{{ row.stock_code }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column prop="stock_name" label="名称" width="100" show-overflow-tooltip>
-          <template #default="{ row }">
-            <span class="text-secondary">{{ stockName(row.stock_code) || '—' }}</span>
+            <span class="text-mono tp-stock-code">{{ row.stock_code }}</span>
+            <span class="text-secondary" style="margin-left: 6px">{{ stockName(row.stock_code) || '—' }}</span>
           </template>
         </el-table-column>
         <el-table-column label="方向" width="100">
