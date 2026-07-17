@@ -8,8 +8,9 @@
     style="width: 100%"
     size="default"
   >
+    <!-- v73: 7 列接入 COL 常量 -->
     <el-table-column type="index" label="#" width="50" align="center" />
-    <el-table-column prop="stock_code" label="股票代码" width="140">
+    <el-table-column prop="stock_code" label="股票代码" v-bind="COL.makeDict('stock', { minWidth: 140 })">
       <template #default="{ row }">
         <div class="stock-cell">
           <div class="stock-code">{{ row.stock_code }}</div>
@@ -17,17 +18,17 @@
         </div>
       </template>
     </el-table-column>
-    <el-table-column prop="last_vol" label="期初" width="110" align="right">
+    <el-table-column prop="last_vol" label="期初" v-bind="COL.NUMBER">
       <template #default="{ row }">
         <span class="text-mono">{{ formatNumber(row.last_vol) }}</span>
       </template>
     </el-table-column>
-    <el-table-column prop="avl_vol" label="可用" width="110" align="right">
+    <el-table-column prop="avl_vol" label="可用" v-bind="COL.NUMBER">
       <template #default="{ row }">
         <span class="text-mono">{{ formatNumber(row.avl_vol) }}</span>
       </template>
     </el-table-column>
-    <el-table-column prop="vol" label="总持仓" width="110" align="right">
+    <el-table-column prop="vol" label="总持仓" v-bind="COL.NUMBER">
       <template #default="{ row }">
         <span class="text-mono total-cell">{{ formatNumber(row.vol) }}</span>
       </template>
@@ -57,6 +58,7 @@
 
 <script setup>
 import { formatNumber } from '../utils/format'
+import { COL } from '../utils/tableColumns'
 
 const props = defineProps({
   positions: { type: Array, default: () => [] },

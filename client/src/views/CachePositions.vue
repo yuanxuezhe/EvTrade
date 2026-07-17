@@ -48,43 +48,44 @@
         height="calc(100vh - 360px)"
         empty-text="数据为空 (Pinia 内存)"
       >
-        <el-table-column prop="stock_code" label="股票代码" min-width="100" show-overflow-tooltip />
-        <el-table-column label="股票名称" min-width="100" show-overflow-tooltip>
+        <!-- v73: 10 列接入 COL 常量 -->
+        <el-table-column prop="stock_code" label="股票代码" show-overflow-tooltip v-bind="COL.STOCK_CODE" />
+        <el-table-column label="股票名称" show-overflow-tooltip v-bind="COL.STOCK_CODE">
           <template #default="{ row }">
             <span class="text-secondary">{{ stockName(row.stock_code) || '—' }}</span>
           </template>
         </el-table-column>
-        <el-table-column prop="last_vol" label="期初" min-width="100" align="right">
+        <el-table-column prop="last_vol" label="期初" v-bind="COL.NUMBER">
           <template #default="{ row }">
             <span class="text-mono">{{ formatNumber(row.last_vol) }}</span>
           </template>
         </el-table-column>
-        <el-table-column prop="avl_vol" label="可用" min-width="100" align="right">
+        <el-table-column prop="avl_vol" label="可用" v-bind="COL.NUMBER">
           <template #default="{ row }">
             <span class="text-mono">{{ formatNumber(row.avl_vol) }}</span>
           </template>
         </el-table-column>
-        <el-table-column prop="vol" label="总持仓" min-width="100" align="right">
+        <el-table-column prop="vol" label="总持仓" v-bind="COL.NUMBER">
           <template #default="{ row }">
             <span class="text-mono">{{ formatNumber(row.vol) }}</span>
           </template>
         </el-table-column>
-        <el-table-column prop="cost_price" label="成本价" min-width="100" align="right">
+        <el-table-column prop="cost_price" label="成本价" v-bind="COL.MONEY">
           <template #default="{ row }">
             <span class="text-mono">{{ formatMoney(row.cost_price) }}</span>
           </template>
         </el-table-column>
-        <el-table-column prop="market_value" label="市值" min-width="100" align="right">
+        <el-table-column prop="market_value" label="市值" v-bind="COL.MONEY">
           <template #default="{ row }">
             <span class="text-mono">{{ formatMoney(row.market_value) }}</span>
           </template>
         </el-table-column>
-        <el-table-column prop="synced_at" label="同步时间" min-width="100" show-overflow-tooltip>
+        <el-table-column prop="synced_at" label="同步时间" show-overflow-tooltip v-bind="COL.TIME">
           <template #default="{ row }">
             <span class="text-mono text-secondary">{{ row.synced_at || '-' }}</span>
           </template>
         </el-table-column>
-        <el-table-column prop="synced_from" label="来源" min-width="100">
+        <el-table-column prop="synced_from" label="来源" width="100">
           <template #default="{ row }">
             <el-tag v-if="row.synced_from === 'manual'" type="warning" size="small">manual</el-tag>
             <el-tag v-else-if="row.synced_from" size="small">{{ row.synced_from }}</el-tag>
@@ -173,6 +174,7 @@ import { useHoldingsStore } from '../stores/holdings'
 import { api } from '../api'
 import { formatMoney, formatNumber } from '../utils/format'
 import { stockName } from '../utils/stockNames'
+import { COL } from '../utils/tableColumns'
 
 const holdingsStore = useHoldingsStore()
 const positions = computed(() => holdingsStore.positions)

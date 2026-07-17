@@ -68,8 +68,9 @@
           </div>
         </el-tab-pane>
         <el-tab-pane label="表格" name="table">
+          <!-- v73: 6 列接入 COL 常量 -->
           <el-table :data="orderTradeList" size="small" style="width: 100%" max-height="400">
-            <el-table-column prop="time" label="时间" width="100" />
+            <el-table-column prop="time" label="时间" v-bind="COL.TIME" />
             <el-table-column prop="type" label="类型" width="100">
               <template #default="{ row }">
                 <el-tag :type="row.type === '委托' ? 'info' : 'success'" size="small" effect="light">
@@ -77,20 +78,20 @@
                 </el-tag>
               </template>
             </el-table-column>
-            <el-table-column prop="order_type" label="方向" width="100">
+            <el-table-column prop="order_type" label="方向" v-bind="COL.makeDict('direction', { width: 100, align: 'center', headerAlign: 'center' })">
               <template #default="{ row }">
                 <span class="dir-chip" :class="row.order_type === '23' ? 'buy' : 'sell'">
                   {{ row.order_type === '23' ? '买' : '卖' }}
                 </span>
               </template>
             </el-table-column>
-            <el-table-column prop="volume" label="数量" align="right" width="100" />
-            <el-table-column prop="price" label="价格" align="right" width="100">
+            <el-table-column prop="volume" label="数量" v-bind="COL.NUMBER" />
+            <el-table-column prop="price" label="价格" v-bind="COL.MONEY">
               <template #default="{ row }">
                 <span class="text-mono">{{ row.price.toFixed(2) }}</span>
               </template>
             </el-table-column>
-            <el-table-column prop="statusLabel" label="状态" width="100">
+            <el-table-column prop="statusLabel" label="状态" v-bind="COL.STATUS">
               <template #default="{ row }">
                 <OrderStatusBadge v-if="row.statusKey" :status="row.statusKey" :remark="row.remark" :status_msg="row.status_msg" />
                 <span v-else class="text-secondary">—</span>
@@ -107,6 +108,7 @@
 import { computed, ref } from 'vue'
 import OrderStatusBadge from './OrderStatusBadge.vue'
 import { STATUS_LABEL } from '../utils/format'
+import { COL } from '../utils/tableColumns'
 
 const props = defineProps({
   orders: { type: Array, default: () => [] },
