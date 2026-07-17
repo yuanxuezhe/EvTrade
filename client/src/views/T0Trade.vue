@@ -97,20 +97,31 @@
         </template>
       </el-table-column>
 
-      <!-- 4. 底仓+目标 (140, sortable) -->
-      <el-table-column prop="balance_target" label="底仓+目标" align="right" width="140" sortable="custom">
+      <!-- 4. 期初持仓 (90, sortable) — 数据源 holdingsStore.positions.last_vol -->
+      <el-table-column prop="initial_position" label="期初持仓" align="right" width="90" sortable="custom">
         <template #default="{ row }">
-          <span class="text-mono">
-            {{ formatNumber(row.base_volume || 0) }} + {{ formatNumber(row.target_volume || 0) }}
-            = <b>{{ formatNumber((row.base_volume || 0) + (row.target_volume || 0)) }}</b>
-          </span>
+          <span class="text-mono">{{ formatNumber(holdingsStore.positions?.find(p=>p.stock_code===row.stock_code)?.last_vol ?? 0) }}</span>
         </template>
       </el-table-column>
 
-      <!-- 5. 当前持仓 (100, sortable) -->
-      <el-table-column prop="position_vol" label="当前持仓" align="right" width="100" sortable="custom">
+      <!-- 5. 当前持仓 (80, sortable) — 数据源 holdingsStore.positions.vol -->
+      <el-table-column prop="current_position" label="当前持仓" align="right" width="80" sortable="custom">
         <template #default="{ row }">
-          <span class="text-mono">{{ formatNumber(row.summary?.position_vol ?? 0) }}</span>
+          <span class="text-mono">{{ formatNumber(holdingsStore.positions?.find(p=>p.stock_code===row.stock_code)?.vol ?? 0) }}</span>
+        </template>
+      </el-table-column>
+
+      <!-- 6. 最新价(涨跌幅) (140, sortable) — 数据源 quoteStore.getLastPrice + getChangePct -->
+      <el-table-column prop="last_price" label="最新价(涨跌幅)" align="right" width="140" sortable="custom">
+        <template #default="{ row }">
+          <span class="text-mono">{{ formatPrice(quoteStore.getLastPrice(row.stock_code)) }}</span>
+          <span :class="(quoteStore.getChangePct(row.stock_code) ?? 0) >= 0 ? 'up' : 'down'" class="col-change"
+            style="margin-left: 4px; font-size: 12px">
+            <template v-if="quoteStore.getChangePct(row.stock_code) != null">
+              {{ (quoteStore.getChangePct(row.stock_code) ?? 0) >= 0 ? '+' : '' }}{{ (quoteStore.getChangePct(row.stock_code)).toFixed(2) }}%
+            </template>
+            <template v-else>—</template>
+          </span>
         </template>
       </el-table-column>
 
@@ -132,11 +143,11 @@
         </template>
       </el-table-column>
 
-      <!-- 8. 操作 (240 fixed right) — 详情 / 配平 / 平仓 -->
+      <!-- 9. 操作 (240 fixed right) — 详情 / 配平 / 平仓 / 归档 -->
+      <!-- v57 commit.1: 删"详情"按钮 (任务不再关注内部状态, 操作栏只保留外部行为) -->
       <el-table-column label="操作" align="center" width="240" fixed="right">
         <template #default="{ row }">
           <div class="op-col">
-            <el-button type="primary" link size="small" @click="onOpenTaskDetail(row.id)">详情</el-button>
             <el-button
               v-if="row.status === 'active'"
               type="warning"
@@ -687,6 +698,6 @@ onMounted(async () => {
 .order-table :deep(.el-table__body-wrapper) {
   /* 让 el-table 内部滚动条工作 */
   overflow-y: auto;
-  overflow-x: hidden;
+  overflow-x: auto; /* v57 commit.1: 主表 9 列宽 1150px > 容器 1010px, 允许横滚 (操作列 fixed 浮动) */
 }
 </style>
