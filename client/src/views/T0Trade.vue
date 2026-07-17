@@ -724,6 +724,7 @@ async function _submitOrder(p) {
       price: p.priceType === 'market' ? 0 : p.price,  // 市价 price 传 0
       volume: p.volume,
       user_def: 'T0',
+      strategy_type: 1,  // v66: REQ-TRADE-026; T0Trade.vue 下单 = 快速做T
       ...(p.taskId ? { task_id: p.taskId } : {}),
     })
     ElMessage.success(`${p.direction}单已报：${p.stockCode} ${p.volume} 股 @ ${p.priceType === 'market' ? '市价' : '¥' + formatPrice(p.price)}`)

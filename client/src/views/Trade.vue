@@ -103,8 +103,11 @@ const formStockCode = computed(() => quickStock.value || '')
 
 async function handleOrderSubmit(orderData) {
   try {
+    // v66: REQ-TRADE-026; Trade.vue 下单 = 普通单 strategy_type=0
+    //   (后端 Pydantic Literal[0,1] 默认 0, 此处显式传避免隐式默认被未来默认值改动影响)
+    const payload = { ...orderData, strategy_type: 0 }
     // placeOrder 内部已 _upsertToHoldings 写缓存(等 WS 推送二次确认)
-    await orderStore.placeOrder(orderData)
+    await orderStore.placeOrder(payload)
   } catch (e) {
     // 错误已由 axios 拦截器统一弹 ElMessage.error
   }

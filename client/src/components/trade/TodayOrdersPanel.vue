@@ -68,6 +68,13 @@
             <span :class="row.task_id != null ? 'text-mono text-secondary' : 'text-muted'">{{ row.task_id ?? '—' }}</span>
           </template>
         </el-table-column>
+        <!-- v66 (REQ-TRADE-026): 策略类型 chip, 0=普通单 1=快速做T -->
+        <el-table-column label="策略" width="100">
+          <template #default="{ row }">
+            <el-tag v-if="Number(row.strategy_type) === 1" type="danger" size="small">做T</el-tag>
+            <span v-else class="text-muted">普通</span>
+          </template>
+        </el-table-column>
         <el-table-column label="方向" width="100">
           <template #default="{ row }">
             <span class="tp-dir-chip" :class="row.order_type === '23' ? 'buy' : 'sell'">
