@@ -28,6 +28,7 @@ from server.api.orders.schemas import (
     PlaceOrderResponse,
     _to_order_out,
 )
+from server.services.push.helpers import _order_to_out_dict
 
 log = logging.getLogger(__name__)
 
@@ -134,20 +135,10 @@ def register_place(router):
         db.refresh(order)
 
         # 7. 推 WS
-        # v8 增: payload 加 trd_date + order_no + remark,前端 holdings 推送守门用
+        # v64 (REQ-TRADE-024): 改用 _order_to_out_dict(order) 替代手写 dict, 保证 task_id 等全部字段透传.
+        # 旧手写 dict 漏了 task_id, 导致 T0 委托下单后缓存里 task_id=null, T0Trade 委托明细 filter 失效.
         try:
-            await ws_manager.broadcast("order_update", {
-                "trd_date": order.trd_date,
-                "order_no": order.order_no,
-                "remark": order.order_no,
-                "order_id": order.order_id or "",
-                "stock_code": order.stock_code,
-                "status": order.status,
-                "status_msg": order.status_msg,
-                "volume": order.volume,
-                "traded_volume": order.traded_volume,
-                "task_id": order.task_id,  # v18 NEW: 前端 holdings 推送守门用
-            })
+            await ws_manager.broadcast("order_update", _order_to_out_dict(order))
         except Exception as e:
             log.warning("WS push failed: %s", e)
 
