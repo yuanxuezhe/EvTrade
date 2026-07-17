@@ -146,7 +146,7 @@
       <el-table-column prop="t0_pnl" label="做T盈亏" align="right" width="110" sortable="custom">
         <template #default="{ row }">
           <span class="text-mono" :class="(row.summary?.realized_pnl ?? 0) >= 0 ? 'up' : 'down'">
-            {{ (row.summary?.realized_pnl ?? 0) >= 0 ? '+' : '' }}{{ formatAmount(row.summary?.realized_pnl ?? 0) }}
+            {{ (row.summary?.realized_pnl ?? 0) >= 0 ? '+' : '' }}{{ formatMoney(row.summary?.realized_pnl ?? 0) }}
           </span>
         </template>
       </el-table-column>
@@ -257,7 +257,7 @@
           </el-table-column>
           <el-table-column prop="traded_amount" label="成交金额" width="95" align="right">
             <template #default="{ row }">
-              <span class="text-mono">{{ row.traded_volume > 0 ? formatAmount(row.traded_amount) : '—' }}</span>
+              <span class="text-mono">{{ row.traded_volume > 0 ? formatMoney(row.traded_amount) : '—' }}</span>
             </template>
           </el-table-column>
           <el-table-column prop="cancelled_volume" label="撤单量" width="75" align="right">
@@ -394,7 +394,8 @@ import T0TaskDetail from '../components/trade/T0TaskDetail.vue'
 import T0TaskCreateDialog from '../components/trade/T0TaskCreateDialog.vue'
 import HoldingsPanel from '../components/trade/HoldingsPanel.vue'
 import { useT0OrderSubmit } from '../composables/useT0OrderSubmit'
-import { formatNumber, formatAmount, formatPrice } from '../utils/format'
+import { formatNumber, formatAmount, formatMoney, formatPrice } from '../utils/format'
+import { STATUS_LABEL, STATUS_TYPE } from '../utils/format'
 import { stockName } from '../utils/stockNames'
 import { calcT0ReturnRate } from '../lib/t0-calc'
 import { makeLogger } from '../utils/logger'
@@ -506,24 +507,12 @@ function computeRowBalanceDiff(taskId) {
 // 当前选中 task 的差值 (下半 header hint 用)
 const selectedTaskDiff = computed(() => _taskNetDiff(selectedTaskId.value))
 
-// 委托状态格式化 (摘 v53/v55 已有约定)
-function orderStatusLabel(s) {
-  if (s === '50') return '已报'
-  if (s === '51') return '已成交'
-  if (s === '52') return '部成'
-  if (s === '53') return '已撤'
-  if (s === '54') return '已撤(全)'
-  if (s === '55') return '废单'
-  if (s === '56') return '已撤(部)'
-  return String(s || '—')
-}
-function orderStatusTagType(s) {
-  if (s === '51') return 'success'
-  if (s === '50' || s === '52') return 'primary'
-  if (s === '55' || s === '54' || s === '53') return 'info'
-  if (s === '56') return 'warning'
-  return 'default'
-}
+// 委托状态格式化 (v63: 与下单页 / 历史委托统一用 STATUS_LABEL 字典)
+// 删除旧私有 orderStatusLabel (L510) + orderStatusTagType (L520), 它们映射错:
+// 旧 '51' = '已成交' 应是 '已报待撤', '56' = '已撤(部)' 应是 '已成' 等.
+// 现统一从 format.js STATUS_LABEL / STATUS_TYPE 取, 与 Trade.vue / HistoryOrders.vue 一致.
+const orderStatusLabel = (s) => STATUS_LABEL[s] || String(s || '—')
+const orderStatusTagType = (s) => STATUS_TYPE[s] || 'default'
 
 // v57 commit.2: 全局配置下拉框选项
 const pctOptions = [
