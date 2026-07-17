@@ -27,6 +27,13 @@
     </div>
 
     <!-- tab=委托: 委托表格 + 撤单按钮 -->
+    <!--
+      列顺序 (v67 调整):
+        交易日 → 委托编号 → 类型 → 代码 → 名称 → 方向 → 委托量/价/成交量/均价/金额/撤单量 → 状态 → 下单时间 → 操作
+      隐藏: T0任务/策略 (T0Trade.vue 内嵌面板仍可见)
+      下单时间 width=165: 容纳 String(23) "YYYY-MM-DD HH:MM:SS.fff" 全显
+      :default-sort order_time descending: 最新在下, 与 HistoryOrders 一致
+    -->
     <div v-if="activeTab === 'orders'" class="tp-body">
       <el-table
         ref="ordersTableRef"
@@ -36,15 +43,16 @@
         stripe
         size="small"
         class="tp-table"
+        :default-sort="{ prop: 'order_time', order: 'descending' }"
       >
+        <el-table-column prop="trd_date" label="交易日" width="100" sortable>
+          <template #default="{ row }">
+            <span class="text-mono text-secondary">{{ row.trd_date }}</span>
+          </template>
+        </el-table-column>
         <el-table-column prop="order_no" label="委托编号" width="100" show-overflow-tooltip>
           <template #default="{ row }">
             <span class="text-mono text-secondary">{{ row.order_no }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column prop="order_time" label="时间" width="100">
-          <template #default="{ row }">
-            <span class="text-mono text-secondary">{{ row.order_time }}</span>
           </template>
         </el-table-column>
         <el-table-column label="类型" width="100">
@@ -61,18 +69,6 @@
         <el-table-column prop="stock_name" label="名称" width="100" show-overflow-tooltip>
           <template #default="{ row }">
             <span class="text-secondary">{{ stockName(row.stock_code) || '—' }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column prop="task_id" label="T0任务" width="80" align="right" show-overflow-tooltip>
-          <template #default="{ row }">
-            <span :class="row.task_id != null ? 'text-mono text-secondary' : 'text-muted'">{{ row.task_id ?? '—' }}</span>
-          </template>
-        </el-table-column>
-        <!-- v66 (REQ-TRADE-026): 策略类型 chip, 0=普通单 1=快速做T -->
-        <el-table-column label="策略" width="100">
-          <template #default="{ row }">
-            <el-tag v-if="Number(row.strategy_type) === 1" type="danger" size="small">做T</el-tag>
-            <span v-else class="text-muted">普通</span>
           </template>
         </el-table-column>
         <el-table-column label="方向" width="100">
@@ -116,6 +112,11 @@
         <el-table-column label="状态" width="100">
           <template #default="{ row }">
             <OrderStatusBadge :status="row.status" :remark="row.remark" :status_msg="row.status_msg" />
+          </template>
+        </el-table-column>
+        <el-table-column prop="order_time" label="下单时间" width="165" sortable>
+          <template #default="{ row }">
+            <span class="text-mono text-secondary">{{ row.order_time }}</span>
           </template>
         </el-table-column>
         <el-table-column label="操作" width="100" fixed="right">
