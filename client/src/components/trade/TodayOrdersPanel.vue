@@ -27,10 +27,12 @@
     </div>
 
     <!-- tab=委托: 委托表格 + 撤单按钮 -->
-    <div v-show="activeTab === 'orders'" class="tp-body">
+    <div v-if="activeTab === 'orders'" class="tp-body">
       <el-table
+        ref="ordersTableRef"
         :data="pagedOrders"
         :show-overflow-tooltip="true"
+        height="100%"
         stripe
         size="small"
         class="tp-table"
@@ -91,7 +93,7 @@
         </el-table-column>
         <el-table-column label="成交金额" align="right" width="105">
           <template #default="{ row }">
-            <span class="text-mono">{{ row.traded_volume > 0 ? formatAmount(row.traded_amount) : '—' }}</span>
+            <span class="text-mono">{{ row.traded_volume > 0 ? formatMoney(row.traded_amount) : '—' }}</span>
           </template>
         </el-table-column>
         <el-table-column prop="cancelled_volume" label="撤单量" align="right" width="85" sortable>
@@ -139,10 +141,12 @@
     </div>
 
     <!-- v30.1: tab=成交 表格 (从 TodayTradesPanel v13.2 内嵌) -->
-    <div v-show="activeTab === 'trades'" class="tp-body">
+    <div v-if="activeTab === 'trades'" class="tp-body">
       <el-table
+        ref="tradesTableRef"
         :data="pagedTrades"
         :show-overflow-tooltip="true"
+        height="100%"
         stripe
         size="small"
         class="tp-table"
@@ -233,7 +237,7 @@
  *   - 内嵌 trade 表格 (原 TodayTradesPanel 逻辑)
  *   - 标题: tab=委托→"今日委托 N 笔" / tab=成交→"今日成交 N 笔"
  */
-import { computed, nextTick, ref } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { formatMoney, formatNumber } from '../../utils/format'
 import { stockName } from '../../utils/stockNames'
@@ -246,6 +250,15 @@ const orderStore = useOrderStore()
 
 // v30.1: panel-local tab state, 默认 'orders' (委托查询)
 const activeTab = ref('orders')
+
+// v59: tab 切换后触发 el-table 重算 layout (rows offsetHeight=0 修复)
+const ordersTableRef = ref()
+const tradesTableRef = ref()
+watch(activeTab, async () => {
+  await nextTick()
+  const ref = activeTab.value === 'orders' ? ordersTableRef.value : tradesTableRef.value
+  ref?.doLayout?.()
+})
 
 // 当日委托: trd_date === activeTrdDate + 排除 cancel-row (volume=0 会污染统计口径)
 const todayOrders = computed(() => {
@@ -382,8 +395,25 @@ function onPageChange() {
 .tp-body {
   flex: 1 1 0;
   min-height: 0;
-  overflow: auto;
+  overflow: hidden;
   padding: 0 var(--space-3);
+}
+
+/* v59: el-table 占满 .tp-body 高度, 激活内部垂直滚动条 (与 Dashboard 持仓查询 .panel :deep(.el-table) 一致)
+   之前 el-table 高度 = 内容撑高, 数据多时撑出 panel 被 .tp-shell overflow:hidden 裁切
+   现在 .tp-table height:100% → el-table__body-wrapper 继承高度 → 行数>可视区时自动出垂直滚动条
+   scoped 隔离: 仅 TodayOrdersPanel 内 .tp-table 生效, 不污染其他 el-table */
+:deep(.tp-body .el-table) {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+:deep(.tp-body .el-table .el-table__body-wrapper) {
+  flex: 1 1 0;
+  min-height: 0;
+  /* Element Plus el-table body-wrapper 默认 overflow-y: hidden + max-height 由父算, 此处强制激活垂直滚动 */
+  overflow-y: auto;
 }
 
 .tp-table {
