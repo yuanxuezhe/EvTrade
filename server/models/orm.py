@@ -69,6 +69,12 @@ class Order(Base):
       与 user_def='T0' 共存：有 task 的单同时写 user_def='T0' AND task_id=<id>；
       无 task 的旧 T0 单保持 user_def='T0' AND task_id=NULL（向后兼容 REQ-TRADE-006）
       加 ix_orders_task_id 索引（task 维度聚合 + balance 配平查询）
+    v66 NEW schema 改动（orders-strategy-type）：
+    - 加 strategy_type 字段（TINYINT，NOT NULL DEFAULT 0）
+      REQ-TRADE-026 业务契约：0=普通单（Trade.vue 下单），1=快速做T（T0Trade.vue 下单）
+      历史数据不回填（user_def='T0' 单保持 strategy_type=0，向后兼容 v18 task_id 同策略）
+      加 ix_orders_strategy_type 索引（缓存过滤 + 未来策略维度报表）
+      DB 迁移：server/migrations/2026-07-17-add-orders-strategy-type.py
     """
     __tablename__ = "orders"
     __table_args__ = (
@@ -77,6 +83,7 @@ class Order(Base):
         Index("ix_orders_stock", "stock_code"),
         Index("ix_orders_user_def", "user_def"),  # change strategy_trade: 支撑策略关联查询
         Index("ix_orders_task_id", "task_id"),    # change t0-task-management: REQ-TRADE-013 task 维度聚合
+        Index("ix_orders_strategy_type", "strategy_type"),  # change orders-strategy-type: REQ-TRADE-026 缓存过滤 + 策略维度聚合
     )
 
     trd_date = Column(String(8), primary_key=True, nullable=False)  # 交易日
@@ -98,6 +105,7 @@ class Order(Base):
     order_time = Column(String(23), nullable=False, default="")  # v10: "YYYY-MM-DD HH:MM:SS.fff"
     raw_id = Column(String(8), nullable=True)  # v13 NEW: cancel-row 写 = 原 order_no；普通行 NULL
     task_id = Column(Integer, nullable=True)    # v18 NEW: 关联 t0_tasks.id；NULL = 无显式 task
+    strategy_type = Column(Integer, nullable=False, default=0)  # v66 NEW: REQ-TRADE-026; 0=普通单 1=快速做T
     created_at = Column(DateTime, nullable=False, default=_utcnow)
     updated_at = Column(
         DateTime, nullable=False, default=_utcnow, onupdate=_utcnow
