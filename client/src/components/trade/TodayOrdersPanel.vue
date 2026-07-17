@@ -68,9 +68,15 @@
             </span>
           </template>
         </el-table-column>
+        <!-- v58 fix: 委托表列改 - 委托价 + 委托量/成交量/均价/金额/撤单量 分列 -->
         <el-table-column prop="volume" label="委托量" align="right" width="100" sortable>
           <template #default="{ row }">
             <span class="text-mono">{{ formatNumber(row.volume) }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column prop="price" label="委托价" align="right" width="100" sortable>
+          <template #default="{ row }">
+            <span class="text-mono">{{ formatMoney(row.price) }}</span>
           </template>
         </el-table-column>
         <el-table-column prop="traded_volume" label="成交量" align="right" width="100" sortable>
@@ -78,14 +84,19 @@
             <span class="text-mono">{{ formatNumber(row.traded_volume || 0) }}</span>
           </template>
         </el-table-column>
-        <el-table-column prop="price" label="价" align="right" width="100" sortable>
+        <el-table-column prop="avg_price" label="成交均价" align="right" width="100" sortable>
           <template #default="{ row }">
-            <span class="text-mono">{{ formatMoney(row.price) }}</span>
+            <span class="text-mono">{{ row.traded_volume > 0 ? formatMoney(row.avg_price) : '—' }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="金额" align="right" width="100">
+        <el-table-column label="成交金额" align="right" width="105">
           <template #default="{ row }">
-            <span class="text-mono">¥{{ formatMoney(orderAmount(row)) }}</span>
+            <span class="text-mono">{{ row.traded_volume > 0 ? formatAmount(row.traded_amount) : '—' }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column prop="cancelled_volume" label="撤单量" align="right" width="85" sortable>
+          <template #default="{ row }">
+            <span class="text-mono">{{ formatNumber(row.cancelled_volume || 0) }}</span>
           </template>
         </el-table-column>
         <el-table-column label="状态" width="100">

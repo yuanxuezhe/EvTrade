@@ -143,9 +143,19 @@
             <span class="text-mono">{{ formatNumber(row.traded_volume) }}</span>
           </template>
         </el-table-column>
+        <el-table-column prop="avg_price" label="成交均价" align="right" width="100">
+          <template #default="{ row }">
+            <span class="text-mono">{{ row.traded_volume > 0 ? formatMoney(row.avg_price) : '—' }}</span>
+          </template>
+        </el-table-column>
         <el-table-column label="成交金额" align="right" width="100">
           <template #default="{ row }">
-            <span class="text-mono">{{ formatAmount(row.traded_amount) }}</span>
+            <span class="text-mono">{{ row.traded_volume > 0 ? formatAmount(row.traded_amount) : '—' }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column prop="cancelled_volume" label="撤单量" align="right" width="85">
+          <template #default="{ row }">
+            <span class="text-mono">{{ formatNumber(row.cancelled_volume || 0) }}</span>
           </template>
         </el-table-column>
         <el-table-column prop="status" label="状态" width="100">
