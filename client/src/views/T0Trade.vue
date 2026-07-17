@@ -330,7 +330,14 @@
           <span class="label">数量:</span>
           <span class="value">
             {{ confirmDialogPayload.volume.toLocaleString() }} 股
-            <span class="hint">({{ confirmDialogPayload.qtyBase }} × {{ (confirmDialogPayload.pct * 100).toFixed(0) }}%)</span>
+            <span class="hint">
+              ({{ confirmDialogPayload.qtyBase }} × {{ (confirmDialogPayload.pct * 100).toFixed(0) }}%
+              <template v-if="confirmDialogPayload.tradeUnit > 1 || confirmDialogPayload.minBuyQty > 0">,
+                raw {{ Math.round(confirmDialogPayload.raw).toLocaleString() }} →
+                按 unit={{ confirmDialogPayload.tradeUnit }} 取整 →
+                ≥ min={{ confirmDialogPayload.minBuyQty.toLocaleString() }}
+              </template>)
+            </span>
           </span>
         </div>
         <div class="confirm-row">
@@ -360,6 +367,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { storeToRefs } from 'pinia'
 import { useHoldingsStore } from '../stores/holdings'
 import { useQuoteStore } from '../stores/quote'
+import { useStocksStore } from '../stores/stocks'
 import { useT0TasksStore } from '../stores/t0_tasks'
 import { useOrderStore } from '../stores/order'
 import T0TaskDetail from '../components/trade/T0TaskDetail.vue'
@@ -375,6 +383,7 @@ const log = makeLogger('T0Trade')
 
 const holdingsStore = useHoldingsStore()
 const quoteStore = useQuoteStore()
+const stocksStore = useStocksStore()   // v57 commit.4: 取 min_buy_qty/trade_unit
 const t0TasksStore = useT0TasksStore()
 const orderStore = useOrderStore()
 const { positions } = storeToRefs(holdingsStore)
@@ -513,13 +522,25 @@ const qtyBaseOptions = [
   { value: 'last_vol', label: '期初持仓' },
 ]
 
-// v57: vol 计算 — 按 globalQtyBase × globalPct 算出下单股数
+// v57 commit.4: vol 计算 — 按 globalQtyBase × globalPct + 按 trade_unit 取整 + ≥ min_buy_qty
+//   数据源:
+//     - base: holdingsStore.positions[stockCode][globalQtyBase]  (实时)
+//     - trade_unit/min_buy_qty: stocksStore.stocks (按 stock_code 实时匹配)
+//   取整规则: floor(raw / unit) * unit  (浮点→整数倍)
+//   下界: max(unit_adjusted, min_buy_qty)  (允许小幅超出 raw 一档 unit)
 function computeOrderVolume(stockCode) {
-  if (!stockCode) return 0
+  if (!stockCode) return { volume: 0, raw: 0, trade_unit: 1, min_buy_qty: 100 }
   const pos = (holdingsStore.positions || []).find(p => p.stock_code === stockCode)
-  if (!pos) return 0
+  if (!pos) return { volume: 0, raw: 0, trade_unit: 1, min_buy_qty: 100 }
+  const stock = (stocksStore.cache || []).find(s => s.stock_code === stockCode) || {}
+  const trade_unit = Number(stock.trade_unit) || 1
+  const min_buy_qty = Number(stock.min_buy_qty) || 100
   const base = Number(pos[globalQtyBase.value]) || 0
-  return Math.floor(base * Number(globalPct.value))
+  const pct = Number(globalPct.value) || 0
+  const raw = base * pct
+  const unit_adjusted = Math.floor(raw / trade_unit) * trade_unit
+  const volume = Math.max(unit_adjusted, min_buy_qty)
+  return { volume, raw, trade_unit, min_buy_qty, base, pct }
 }
 
 // v57: 价格获取 — 'latest' → quoteStore.getLastPrice, 'market' → 后端实际是柜台撮合价 (前端展示为最新价作参考)
@@ -635,8 +656,8 @@ function canOpRow(row) {
 // v57: 买/卖按钮 (走全局配置: pct × qtyBase → vol, latest/market → price)
 function _prepareOrderPayload(row, direction) {
   const stockCode = row.stock_code
-  const volume = computeOrderVolume(stockCode)
-  if (!volume || volume <= 0) {
+  const volInfo = computeOrderVolume(stockCode)   // v57 commit.4: {volume, raw, trade_unit, min_buy_qty, base, pct}
+  if (!volInfo || !volInfo.volume || volInfo.volume <= 0) {
     ElMessage.warning(`${row.stock_code} 按当前配置算不出可下单数量（可能持仓为空或 0%）`)
     return null
   }
@@ -647,11 +668,16 @@ function _prepareOrderPayload(row, direction) {
   }
   const orderType = direction === '买' ? '23' : '24'
   return {
-    direction, stockCode, price, volume, orderType,
+    direction, stockCode, price, volume: volInfo.volume,
     taskId: row.id,
     qtyBase: globalQtyBase.value,
     pct: globalPct.value,
     priceType: globalPriceType.value,
+    // v57 commit.4: 取整提示信息 (供 dialog 显示)
+    base: volInfo.base,
+    raw: volInfo.raw,
+    tradeUnit: volInfo.trade_unit,
+    minBuyQty: volInfo.min_buy_qty,
   }
 }
 async function onBuyTask(row) {
