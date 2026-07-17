@@ -59,6 +59,23 @@
       </div>
     </div>
 
+    <!-- v57 commit.2: 全局操作配置 row (4 select + 1 checkbox, 影响所有主表"买/卖"按钮) -->
+    <!-- v57 实测: 全局配置不依赖 selectedTaskId, 配置可独立设; 操作列按钮按 row.stock_code 读配置 -->
+    <div class="t0-config-bar">
+      <span class="t0-config-label">做T配置:</span>
+      <el-select v-model="globalPct" size="small" style="width: 90px">
+        <el-option v-for="o in pctOptions" :key="o.value" :value="o.value" :label="o.label" />
+      </el-select>
+      <el-select v-model="globalPriceType" size="small" style="width: 100px">
+        <el-option v-for="o in priceTypeOptions" :key="o.value" :value="o.value" :label="o.label" />
+      </el-select>
+      <el-select v-model="globalQtyBase" size="small" style="width: 110px">
+        <el-option v-for="o in qtyBaseOptions" :key="o.value" :value="o.value" :label="o.label" />
+      </el-select>
+      <el-checkbox v-model="requireConfirm" size="small">下单前二次确认</el-checkbox>
+      <span class="t0-config-hint">（按行触发"买/卖"，数量 = 持仓×百分比，价格按所选类型）</span>
+    </div>
+
     <!-- v55.1 上下分区: 上半主表 + 下半委托表 -->
     <div class="t0-split">
       <section class="t0-upper">
@@ -143,11 +160,23 @@
         </template>
       </el-table-column>
 
-      <!-- 9. 操作 (240 fixed right) — 详情 / 配平 / 平仓 / 归档 -->
-      <!-- v57 commit.1: 删"详情"按钮 (任务不再关注内部状态, 操作栏只保留外部行为) -->
-      <el-table-column label="操作" align="center" width="240" fixed="right">
+      <!-- 9. 操作 (280 fixed right) — 买 / 卖 / 配平 / 归档 -->
+      <!-- v57 commit.2: 改 4 按钮 (买/卖/配平/归档), 详细说明见下方 -->
+      <el-table-column label="操作" align="center" width="280" fixed="right">
         <template #default="{ row }">
           <div class="op-col">
+            <el-button
+              type="success"
+              size="small"
+              :disabled="!canOpRow(row)"
+              @click="onBuyTask(row)"
+            >买</el-button>
+            <el-button
+              type="danger"
+              size="small"
+              :disabled="!canOpRow(row)"
+              @click="onSellTask(row)"
+            >卖</el-button>
             <el-button
               v-if="row.status === 'active'"
               type="warning"
@@ -156,13 +185,6 @@
               :disabled="computeRowBalanceDiff(row.id) === 0"
               @click="onBalanceTask(row.id)"
             >{{ balanceBtnLabel(row.id) }}</el-button>
-            <el-button
-              v-if="row.status === 'active'"
-              type="danger"
-              link
-              size="small"
-              @click="onCloseTask(row.id)"
-            >平仓</el-button>
             <el-button
               v-if="row.status !== 'archived'"
               type="info"
@@ -282,6 +304,52 @@
       :close-on-click-modal="false">
       <T0TaskDetail v-if="tasksDetailVisible" :task-id="viewingTaskId" embedding="drawer" />
     </el-drawer>
+
+    <!-- v57 commit.2: 二次确认 dialog — 用户勾选☑二次确认 后按下"买/卖" 才弹出此 dialog -->
+    <el-dialog
+      v-model="confirmDialogVisible"
+      :title="confirmDialogPayload ? `二次确认下单（${confirmDialogPayload.direction}单）` : '二次确认下单'"
+      width="460px"
+      :close-on-click-modal="false"
+      class="confirm-order-dialog"
+    >
+      <div v-if="confirmDialogPayload" class="confirm-detail">
+        <div class="confirm-row">
+          <span class="label">标的:</span>
+          <span class="value">{{ confirmDialogPayload.stockCode }}</span>
+        </div>
+        <div class="confirm-row">
+          <span class="label">方向:</span>
+          <span class="value" :class="confirmDialogPayload.direction === '买' ? 'up' : 'down'">
+            <el-tag :type="confirmDialogPayload.direction === '买' ? 'success' : 'danger'" size="small">
+              {{ confirmDialogPayload.direction }}
+            </el-tag>
+          </span>
+        </div>
+        <div class="confirm-row">
+          <span class="label">数量:</span>
+          <span class="value">
+            {{ confirmDialogPayload.volume.toLocaleString() }} 股
+            <span class="hint">({{ confirmDialogPayload.qtyBase }} × {{ (confirmDialogPayload.pct * 100).toFixed(0) }}%)</span>
+          </span>
+        </div>
+        <div class="confirm-row">
+          <span class="label">价格:</span>
+          <span class="value">
+            {{ confirmDialogPayload.priceType === 'market' ? '市价' : '¥' + formatPrice(confirmDialogPayload.price) }}
+            <span class="hint">({{ confirmDialogPayload.priceType === 'market' ? '柜台撮合价' : '最新价' }})</span>
+          </span>
+        </div>
+        <div v-if="confirmDialogPayload.taskId" class="confirm-row">
+          <span class="label">关联 task:</span>
+          <span class="value">#{{ confirmDialogPayload.taskId }}</span>
+        </div>
+      </div>
+      <template #footer>
+        <el-button @click="onConfirmCancel">取消</el-button>
+        <el-button type="primary" @click="onConfirmOk">确认下单</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -318,6 +386,16 @@ const refreshing = ref(false)
 const selectedTaskId = ref(null)
 const tasksDetailVisible = ref(false)
 const viewingTaskId = ref(null)
+
+// v57: 操作列改造 — 全局配置 (页面顶部 row 共用)
+const globalPct = ref(0.25)                 // 百分比 25%
+const globalPriceType = ref('latest')       // 价格 'latest' (最新价 11) | 'market' (市价 44)
+const globalQtyBase = ref('vol')            // 数量基数 'vol' (当前) | 'avl_vol' (可用) | 'last_vol' (期初)
+const requireConfirm = ref(false)           // 二次确认开关 (勾选 → 弹 dialog 二次确认)
+
+// 二次确认 dialog state
+const confirmDialogVisible = ref(false)
+const confirmDialogPayload = ref(null)      // {direction: '买'|'卖', stockCode, price, volume, taskId, action: 'submit'|'配平'}
 
 // 添加任务 dialog
 const createDialogVisible = ref(false)
@@ -418,6 +496,38 @@ function orderStatusTagType(s) {
   return 'default'
 }
 
+// v57 commit.2: 全局配置下拉框选项
+const pctOptions = [
+  { value: 0.25, label: '25%' },
+  { value: 0.50, label: '50%' },
+  { value: 0.75, label: '75%' },
+  { value: 1.00, label: '100%' },
+]
+const priceTypeOptions = [
+  { value: 'latest', label: '最新价' },
+  { value: 'market', label: '市价' },
+]
+const qtyBaseOptions = [
+  { value: 'vol', label: '当前持仓' },
+  { value: 'avl_vol', label: '可用持仓' },
+  { value: 'last_vol', label: '期初持仓' },
+]
+
+// v57: vol 计算 — 按 globalQtyBase × globalPct 算出下单股数
+function computeOrderVolume(stockCode) {
+  if (!stockCode) return 0
+  const pos = (holdingsStore.positions || []).find(p => p.stock_code === stockCode)
+  if (!pos) return 0
+  const base = Number(pos[globalQtyBase.value]) || 0
+  return Math.floor(base * Number(globalPct.value))
+}
+
+// v57: 价格获取 — 'latest' → quoteStore.getLastPrice, 'market' → 后端实际是柜台撮合价 (前端展示为最新价作参考)
+function computeOrderPrice(stockCode) {
+  const p = quoteStore.getLastPrice(stockCode)
+  return Number(p) || 0
+}
+
 // 主表行单击 → 选中/取消选中 task (联动下半表)
 function onTaskRowClick(row) {
   // 单击 row: 若已选中则取消；否则选中
@@ -515,6 +625,91 @@ async function onBalanceTask(taskId) {
     // useT0OrderSubmit 内部已 ElMessage.success
     await t0TasksStore.loadTasks()  // 刷新主表（task summary 更新）
   } catch (e) { /* ElMessage 已被 axios 拦截器弹出 */ }
+}
+
+// v57: 主表 row 操作按钮可用性 — archived task 任何按钮都不能用
+function canOpRow(row) {
+  return row.status !== 'archived' && !!row.stock_code
+}
+
+// v57: 买/卖按钮 (走全局配置: pct × qtyBase → vol, latest/market → price)
+function _prepareOrderPayload(row, direction) {
+  const stockCode = row.stock_code
+  const volume = computeOrderVolume(stockCode)
+  if (!volume || volume <= 0) {
+    ElMessage.warning(`${row.stock_code} 按当前配置算不出可下单数量（可能持仓为空或 0%）`)
+    return null
+  }
+  const price = computeOrderPrice(stockCode)
+  if (globalPriceType.value === 'latest' && (!price || price <= 0)) {
+    ElMessage.warning(`未取得 ${row.stock_code} 最新价，请等待行情推送`)
+    return null
+  }
+  const orderType = direction === '买' ? '23' : '24'
+  return {
+    direction, stockCode, price, volume, orderType,
+    taskId: row.id,
+    qtyBase: globalQtyBase.value,
+    pct: globalPct.value,
+    priceType: globalPriceType.value,
+  }
+}
+async function onBuyTask(row) {
+  if (!canOpRow(row)) return
+  const payload = _prepareOrderPayload(row, '买')
+  if (!payload) return
+  if (requireConfirm.value) {
+    confirmDialogPayload.value = payload
+    confirmDialogVisible.value = true
+    return
+  }
+  await _submitOrder(payload)
+}
+async function onSellTask(row) {
+  if (!canOpRow(row)) return
+  const payload = _prepareOrderPayload(row, '卖')
+  if (!payload) return
+  if (requireConfirm.value) {
+    confirmDialogPayload.value = payload
+    confirmDialogVisible.value = true
+    return
+  }
+  await _submitOrder(payload)
+}
+
+// 二次确认 dialog 用户点"确认下单" 才真正下单
+async function _submitOrder(p) {
+  try {
+    const priceTypeCode = p.priceType === 'market' ? 44 : 11
+    const res = await orderStore.placeOrder({
+      stock_code: p.stockCode,
+      order_type: p.orderType,
+      price_type: priceTypeCode,
+      price: p.priceType === 'market' ? 0 : p.price,  // 市价 price 传 0
+      volume: p.volume,
+      user_def: 'T0',
+      ...(p.taskId ? { task_id: p.taskId } : {}),
+    })
+    ElMessage.success(`${p.direction}单已报：${p.stockCode} ${p.volume} 股 @ ${p.priceType === 'market' ? '市价' : '¥' + formatPrice(p.price)}`)
+    return res
+  } catch (e) {
+    const detail = e?.response?.data?.detail
+    ElMessage.error(detail?.msg || e.message || '下单失败')
+    return null
+  }
+}
+
+function onConfirmCancel() {
+  confirmDialogVisible.value = false
+  confirmDialogPayload.value = null
+}
+async function onConfirmOk() {
+  const p = confirmDialogPayload.value
+  confirmDialogVisible.value = false
+  confirmDialogPayload.value = null
+  if (!p) return
+  await _submitOrder(p)
+  await t0TasksStore.loadTasks()
 }
 async function onCloseTask(taskId) {
   try {
@@ -656,6 +851,43 @@ onMounted(async () => {
   margin: 0;
 }
 
+/* v57 commit.2: 二次确认 dialog 内部样式 */
+.confirm-order-dialog .confirm-detail {
+  padding: 0 8px;
+}
+.confirm-order-dialog .confirm-row {
+  display: flex;
+  align-items: center;
+  padding: 10px 0;
+  border-bottom: 1px dashed var(--el-border-color-lighter, #ebeef5);
+}
+.confirm-order-dialog .confirm-row:last-child {
+  border-bottom: none;
+}
+.confirm-order-dialog .confirm-row .label {
+  width: 100px;
+  color: var(--el-text-color-secondary, #909399);
+  font-size: 13px;
+}
+.confirm-order-dialog .confirm-row .value {
+  flex: 1;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--el-text-color-primary, #303133);
+}
+.confirm-order-dialog .confirm-row .value .hint {
+  font-weight: 400;
+  color: var(--el-text-color-secondary, #909399);
+  font-size: 12px;
+  margin-left: 6px;
+}
+.confirm-order-dialog .confirm-row .value.up {
+  color: var(--el-color-success, #67c23a);
+}
+.confirm-order-dialog .confirm-row .value.down {
+  color: var(--el-color-danger, #f56c6c);
+}
+
 /* v55.1 上下分区布局: 上半主表 + 下半委托表, 1:1 flex column */
 .t0-split {
   display: flex;
@@ -663,6 +895,29 @@ onMounted(async () => {
   gap: 12px;
   flex: 1;
   min-height: 0;
+}
+/* v57 commit.2: 做T全局配置 row — 4 select + 1 checkbox */
+.t0-config-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: var(--el-fill-color-light, #f5f7fa);
+  border: 1px solid var(--el-border-color-lighter, #ebeef5);
+  border-radius: 4px;
+  margin: 0 0 8px 0;
+  font-size: 12px;
+  flex-wrap: wrap;
+}
+.t0-config-bar .t0-config-label {
+  font-weight: 600;
+  color: var(--el-text-color-primary, #303133);
+  margin-right: 4px;
+}
+.t0-config-bar .t0-config-hint {
+  color: var(--el-text-color-secondary, #909399);
+  font-size: 11px;
+  margin-left: 8px;
 }
 .t0-upper,
 .t0-lower {
