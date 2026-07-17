@@ -1681,3 +1681,123 @@ The system SHALL 重做 `client/src/views/T0Trade.vue` 从"持仓视角"（v54 1
 - `client/src/components/trade/T0TaskDetail.vue`（v56 commit.3 删 `onBalance()` 函数 8 行）
 - `client/src/components/trade/T0TaskList.vue`（v56 commit.3 删 `配平`按钮 +emit 注册 +2 行）
 - `server/api/t0_tasks.py`（v56 commit.3 删 `/balance` endpoint -2 行）
+
+---
+
+## REQ-FE-233: T0Trade 主表 9 列布局 + 持仓/行情从 store 实时取 (v57 commit.1)
+
+### 目标
+
+T0Trade 主表 (上半区) 由 8 列扩展为 9 列, 列布局符合 v57 设计:
+1. 状态 / 2. 任务编号 / 3. 标的 / 4. **期初持仓** (110→90) / 5. **当前持仓** (100→80) / 6. **最新价(涨跌幅)** (新增 130→140) / 7. 做T盈亏 / 8. 做T收益率% / 9. 操作 (240→280)
+
+### 数据源 (实时匹配, 不存 task 表)
+
+| 列 | 数据源 | 备注 |
+|---|---|---|
+| 期初持仓 | `holdingsStore.positions[code].last_vol` | holdings.py L22 # 期初 |
+| 当前持仓 | `holdingsStore.positions[code].vol` | 当前持仓总数 |
+| 最新价 | `quoteStore.getLastPrice(code)` | 实时推送 |
+| 涨跌幅 | `quoteStore.getChangePct(code)` | 实时推送 |
+
+### Task 表 base_volume / target_volume 字段
+
+**保留** (保守做法): 服务端 `close_task` / `service.balance_task` 算法仍消费这两个字段; 前端主表**不展示**, 数据**全部从缓存匹配** (用户原话: "任务不需要关注这些")
+
+### Scenario 1: 首屏加载数据延迟
+
+- **GIVEN** 用户 reload 页面
+- **WHEN** T0Trade.vue 渲染首屏
+- **THEN** 列 4/5/6 初始显示 `0` (holdingsStore 异步加载)
+- **AND** holdingsStore/quoteStore reactive 推送到位后 (≈1.5s) 列 4=last_vol / 列 5=vol / 列 6=last_price + change_pct
+
+### Scenario 2: 列宽自适应
+
+- **GIVEN** 9 列布局总宽 1160px > 容器 1010px
+- **THEN** el-table 自动横滚 (CSS `overflow-x: auto`)
+- **AND** 操作列 280px fixed right 浮于右侧
+
+---
+
+## REQ-FE-234: T0Trade 操作列 4 按钮 + 页顶做T配置 + 二次确认 dialog (v57 commit.2)
+
+### 操作列按钮 (4 个)
+
+| 按钮 | 颜色 | 行为 |
+|---|---|---|
+| 买 | success 绿 | 按 row.stock_code + 全局配置算 vol/price + (勾确认→弹 dialog / 不勾→立即下单) |
+| 卖 | danger 红 | 同上, 方向=卖 |
+| 配平 | warning 橙 | (v56 保留逻辑) 前端算 diff + 下市价单 |
+| 归档 | info 灰 | (现有) 调 archiveTask action |
+
+**删除**: 详情按钮 (用户原话 4 个按钮未列) + 平仓按钮 (用户原话 4 个按钮未列)
+
+### 页顶配置 row (`t0-config-bar`)
+
+4 select + 1 checkbox, 影响所有主表"买/卖"按钮:
+
+| 控件 | 默认值 | 选项 |
+|---|---|---|
+| 百分比 | 25% | 25% / 50% / 75% / 100% |
+| 价格 | 最新价 | 最新价 / 市价 |
+| 数量基数 | 当前持仓 | 当前持仓 (vol) / 可用持仓 (avl_vol) / 期初持仓 (last_vol) |
+| 二次确认 | off | on/off checkbox |
+
+### vol 计算公式
+
+```
+volume = floor(positions[stock_code][qty_base_field] × pct)
+```
+
+price_type 选择:
+- `latest` (最新价): placeOrder(price=last_price, price_type=11 限价)
+- `market` (市价): placeOrder(price=0, price_type=44 市价)
+
+### 二次确认 dialog
+
+勾 checkbox 时, 按"买/卖"立刻弹 el-dialog 显示 5 行:
+1. 标的 (stock_code)
+2. 方向 (买/卖 colored tag)
+3. 数量 (vol + hint "qtyBase × pct")
+4. 价格 (¥x.xx 最新价 / "市价 (柜台撮合价)")
+5. 关联 task (task #N)
+
+底部 2 按钮: 取消 (不单) / 确认下单
+
+### Scenario 1: 25% + 最新价下单
+
+- **GIVEN** task #2 行, 持仓 vol=19,600, 最新价=10.77
+- **WHEN** 按"买"按钮 (不勾确认)
+- **THEN** 立即 placeOrder(volume=4900, price=10.77, price_type=11)
+- **AND** toast "新委托: 000001.SZ 买 4900@10.77"
+
+### Scenario 2: 二次确认弹 dialog
+
+- **GIVEN** 勾二次确认 checkbox
+- **WHEN** 按"买"按钮
+- **THEN** 弹 dialog 显示: 标的=000001.SZ, 方向=买, 数量=4,900 股 (vol × 25%), 价格=¥10.77 (最新价), task=#2
+
+### Scenario 3: 50% + 最新价
+
+- **GIVEN** pct=50%, priceType=latest
+- **WHEN** 按"买"按钮 (勾确认)
+- **THEN** dialog 显示数量=9,800 股 (vol × 50%) + 价格=¥10.77
+
+### Scenario 4: 25% + 市价
+
+- **GIVEN** pct=25%, priceType=market
+- **WHEN** 按"买"按钮 (勾确认)
+- **THEN** dialog 显示数量=4,900 股 + 价格="市价 (柜台撮合价)"
+
+### Scenario 5: dialog 取消不单
+
+- **WHEN** dialog 内点"取消"
+- **THEN** 不调 placeOrder, dialog 关闭, 无 toast
+
+---
+
+## REQ-FE-234 Why
+
+- 用户原话: "操作栏按钮改为: 买入 卖出 配平 归档"; "增加下拉框选择百分比+价格+做T任务"; "勾选了点击下单的时候，会弹出来下单的标的、数量、价格和买入、卖出按钮，点击了才能下出去"
+- v56 之前主表只有 编辑/归档, 缺 买/卖/配平 (要做T 必须从主表出发)
+- 二次确认 dialog 防误触 (特别是按"卖"按钮时, 卖错损失大)
