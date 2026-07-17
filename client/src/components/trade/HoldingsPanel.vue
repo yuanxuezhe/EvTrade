@@ -55,39 +55,38 @@
         @row-click="onRowClick"
         @row-dblclick="onRowDblclick"
       >
-        <!-- v31.1: 10 列布局, 列宽压缩适应窄列 mini panel (目标总宽 ~720px fit 856 viewport)
-             v37 移动端: cell-class-name 给每个 <td> 加 col-{label} class, main.css .is-mobile 模式下展示字段名 -->
-        <el-table-column prop="stock_code" label="代码" width="100" fixed="left">
+        <!-- v70: 10 列走 COL 常量 (持仓 mini panel 列宽压缩 100/100, 总宽 ~720 fit 856 viewport) -->
+        <el-table-column prop="stock_code" label="代码" fixed="left" v-bind="COL.STOCK_CODE">
           <template #default="{ row }">
             <span class="tp-stock-code">{{ row.stock_code }}</span>
           </template>
         </el-table-column>
-        <el-table-column prop="stock_name" label="名称" width="100" show-overflow-tooltip>
+        <el-table-column prop="stock_name" label="名称" show-overflow-tooltip v-bind="COL.STOCK_CODE">
           <template #default="{ row }">
             <span class="text-secondary">{{ stockName(row.stock_code) || '—' }}</span>
           </template>
         </el-table-column>
-        <el-table-column prop="last_vol" label="期初" align="right" width="100">
+        <el-table-column prop="last_vol" label="期初" v-bind="COL.NUMBER">
           <template #default="{ row }">
             <span class="text-mono">{{ formatNumber(row.last_vol) }}</span>
           </template>
         </el-table-column>
-        <el-table-column prop="vol" label="持仓" align="right" width="100">
+        <el-table-column prop="vol" label="持仓" v-bind="COL.NUMBER">
           <template #default="{ row }">
             <span class="text-mono">{{ formatNumber(row.vol) }}</span>
           </template>
         </el-table-column>
-        <el-table-column prop="avl_vol" label="可用" align="right" width="100">
+        <el-table-column prop="avl_vol" label="可用" v-bind="COL.NUMBER">
           <template #default="{ row }">
             <span class="text-mono">{{ formatNumber(row.avl_vol) }}</span>
           </template>
         </el-table-column>
-        <el-table-column prop="cost_price" label="成本" align="right" width="100">
+        <el-table-column prop="cost_price" label="成本" v-bind="COL.MONEY">
           <template #default="{ row }">
             <span class="text-mono">{{ row.cost_price != null ? formatMoney(row.cost_price) : '—' }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="最新" align="right" width="100">
+        <el-table-column label="最新" v-bind="COL.MONEY">
           <template #default="{ row }">
             <span
               v-if="getLastPrice(row.stock_code) != null"
@@ -99,7 +98,7 @@
             <span v-else class="text-muted">—</span>
           </template>
         </el-table-column>
-        <el-table-column label="市值" align="right" width="100">
+        <el-table-column label="市值" v-bind="COL.MONEY">
           <template #default="{ row }">
             <span v-if="getMarketValue(row) != null" class="text-mono">
               {{ formatMoney(getMarketValue(row)) }}
@@ -107,7 +106,7 @@
             <span v-else class="text-muted">—</span>
           </template>
         </el-table-column>
-        <el-table-column label="浮动盈亏" align="right" width="100">
+        <el-table-column label="浮动盈亏" v-bind="COL.MONEY">
           <template #default="{ row }">
             <template v-if="getProfit(row) != null">
               <span class="text-mono" :class="profitClass(getProfit(row))">
@@ -117,7 +116,7 @@
             <span v-else class="text-muted">—</span>
           </template>
         </el-table-column>
-        <el-table-column label="收益率" align="right" width="100" fixed="right">
+        <el-table-column label="收益率" fixed="right" v-bind="COL.makeDict('percent', { width: 100, align: 'right', headerAlign: 'right' })">
           <template #default="{ row }">
             <template v-if="getReturnRate(row) != null">
               <span class="text-mono" :class="profitClass(getReturnRate(row))">
@@ -140,6 +139,7 @@
 import { computed, ref } from 'vue'
 import { formatNumber, formatMoney } from '../../utils/format'
 import { stockName } from '../../utils/stockNames'
+import { COL } from '../../utils/tableColumns'
 import { useQuoteStore } from '../../stores/quote'
 import { useHoldingsStore } from '../../stores/holdings'
 
