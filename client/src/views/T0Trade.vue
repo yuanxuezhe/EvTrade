@@ -234,15 +234,35 @@
               </el-tag>
             </template>
           </el-table-column>
-          <el-table-column prop="price" label="价格" width="90" align="right">
+          <!-- v58 fix: 委托表列改 - 价格改为委托价格, 委托量/成交量/均价/金额/撤单量 分列 -->
+          <el-table-column prop="price" label="委托价格" width="90" align="right">
             <template #default="{ row }">
               <span class="text-mono">{{ formatPrice(row.price) }}</span>
             </template>
           </el-table-column>
-          <el-table-column prop="volume" label="数量" width="80" align="right">
+          <el-table-column prop="volume" label="委托量" width="80" align="right">
             <template #default="{ row }">
               <span class="text-mono">{{ formatNumber(row.volume) }}</span>
-              <span class="text-secondary" style="margin-left: 4px">/{{ formatNumber(row.traded_volume || 0) }}成</span>
+            </template>
+          </el-table-column>
+          <el-table-column prop="traded_volume" label="成交量" width="80" align="right">
+            <template #default="{ row }">
+              <span class="text-mono">{{ formatNumber(row.traded_volume || 0) }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column prop="avg_price" label="成交均价" width="80" align="right">
+            <template #default="{ row }">
+              <span class="text-mono">{{ row.traded_volume > 0 ? formatPrice(row.avg_price) : '—' }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column prop="traded_amount" label="成交金额" width="95" align="right">
+            <template #default="{ row }">
+              <span class="text-mono">{{ row.traded_volume > 0 ? formatAmount(row.traded_amount) : '—' }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column prop="cancelled_volume" label="撤单量" width="75" align="right">
+            <template #default="{ row }">
+              <span class="text-mono">{{ formatNumber(row.cancelled_volume || 0) }}</span>
             </template>
           </el-table-column>
           <el-table-column prop="status" label="状态" width="100" align="center">
