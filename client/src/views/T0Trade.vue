@@ -669,6 +669,7 @@ function _prepareOrderPayload(row, direction) {
   const orderType = direction === '买' ? '23' : '24'
   return {
     direction, stockCode, price, volume: volInfo.volume,
+    orderType,                                       // v58 commit.5 fix: 后端 Pydantic 必填, 之前漏掉 → 422
     taskId: row.id,
     qtyBase: globalQtyBase.value,
     pct: globalPct.value,
