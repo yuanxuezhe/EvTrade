@@ -1,6 +1,14 @@
 <!--
   T0Trade.vue — 快速做T 主页面
 
+  v74 (本轮): 委托表 11→15 列对齐今日委托
+    - 加列: 交易日 / 类型(委托/撤单) / 标的(代码+名称合并) / 操作(撤单按钮)
+    - 改: 委托号→委托编号(label); 状态列 el-tag→OrderStatusBadge(对齐今日委托);
+         下单时间 (90 + slice(0,8)) → (185 全显)
+    - 接入 COL 常量: STOCK_CODE/TARGET/NUMBER/MONEY/STATUS/TIME/2×makeDict
+    - 撤单: canCancel(row) 守卫 + handleCancel(row) 调 orderStore.cancelOrder
+    - 不动: 上半主表(task 视角 8 列)/ 配平逻辑/ 备注列(放最后)
+
   v55 (commit 24c7b07): 主表 task 视角 (每行 = 1 做T 任务) + 900px 添加任务 dialog 集成 HoldingsPanel + T0TaskCreateDialog
 
   v55.1 (本轮): 上下分区布局
@@ -222,64 +230,93 @@
           empty-text="该 task 暂无委托"
           size="default"
         >
-          <el-table-column prop="order_no" label="委托号" width="100">
-            <template #default="{ row }">
-              <span class="text-mono">{{ row.order_no }}</span>
-            </template>
-          </el-table-column>
-          <el-table-column prop="order_type" label="方向" width="60" align="center">
-            <template #default="{ row }">
-              <el-tag :type="row.order_type === '23' ? 'danger' : 'success'" size="small">
-                {{ row.order_type === '23' ? '买' : '卖' }}
-              </el-tag>
-            </template>
-          </el-table-column>
-          <!-- v58 fix: 委托表列改 - 价格改为委托价格, 委托量/成交量/均价/金额/撤单量 分列 -->
-          <el-table-column prop="price" label="委托价格" width="90" align="right">
-            <template #default="{ row }">
-              <span class="text-mono">{{ formatPrice(row.price) }}</span>
-            </template>
-          </el-table-column>
-          <el-table-column prop="volume" label="委托量" width="80" align="right">
-            <template #default="{ row }">
-              <span class="text-mono">{{ formatNumber(row.volume) }}</span>
-            </template>
-          </el-table-column>
-          <el-table-column prop="traded_volume" label="成交量" width="80" align="right">
-            <template #default="{ row }">
-              <span class="text-mono">{{ formatNumber(row.traded_volume || 0) }}</span>
-            </template>
-          </el-table-column>
-          <el-table-column prop="avg_price" label="成交均价" width="80" align="right">
-            <template #default="{ row }">
-              <span class="text-mono">{{ row.traded_volume > 0 ? formatPrice(row.avg_price) : '—' }}</span>
-            </template>
-          </el-table-column>
-          <el-table-column prop="traded_amount" label="成交金额" width="95" align="right">
-            <template #default="{ row }">
-              <span class="text-mono">{{ row.traded_volume > 0 ? formatMoney(row.traded_amount) : '—' }}</span>
-            </template>
-          </el-table-column>
-          <el-table-column prop="cancelled_volume" label="撤单量" width="75" align="right">
-            <template #default="{ row }">
-              <span class="text-mono">{{ formatNumber(row.cancelled_volume || 0) }}</span>
-            </template>
-          </el-table-column>
-          <el-table-column prop="status" label="状态" width="100" align="center">
-            <template #default="{ row }">
-              <el-tag :type="orderStatusTagType(row.status)" size="small">{{ orderStatusLabel(row.status) }}</el-tag>
-            </template>
-          </el-table-column>
-          <el-table-column prop="order_time" label="下单时间" width="90" align="center">
-            <template #default="{ row }">
-              <span class="text-mono">{{ (row.order_time || '').slice(0, 8) }}</span>
-            </template>
-          </el-table-column>
-          <el-table-column prop="user_def" label="备注" min-width="120">
-            <template #default="{ row }">
-              <span class="text-secondary">{{ row.user_def || '—' }}</span>
-            </template>
-          </el-table-column>
+          <!-- v74: 15 列对齐今日委托 (交易日/类型/标的/操作 4 列新增, 状态改 OrderStatusBadge, 下单时间去 slice 全显) -->
+        <el-table-column prop="trd_date" label="交易日" v-bind="COL.STOCK_CODE">
+          <template #default="{ row }">
+            <span class="text-mono text-secondary">{{ row.trd_date }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column prop="order_no" label="委托编号" show-overflow-tooltip v-bind="COL.STOCK_CODE">
+          <template #default="{ row }">
+            <span class="text-mono">{{ row.order_no }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="类型" width="100">
+          <template #default="{ row }">
+            <el-tag v-if="Number(row.order_flag) === 1" type="warning" size="small">撤单</el-tag>
+            <span v-else class="text-secondary">委托</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="标的" v-bind="COL.STOCK_TARGET">
+          <template #default="{ row }">
+            <span class="text-mono tp-stock-code">{{ row.stock_code }}</span>
+            <span class="text-secondary" style="margin-left: 6px">{{ stockName(row.stock_code) || '—' }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column prop="order_type" label="方向" v-bind="COL.makeDict('direction', { width: 100, align: 'center', headerAlign: 'center' })">
+          <template #default="{ row }">
+            <el-tag :type="row.order_type === '23' ? 'danger' : 'success'" size="small">
+              {{ row.order_type === '23' ? '买' : '卖' }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column prop="volume" label="委托量" v-bind="COL.NUMBER">
+          <template #default="{ row }">
+            <span class="text-mono">{{ formatNumber(row.volume) }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column prop="price" label="委托价" v-bind="COL.MONEY">
+          <template #default="{ row }">
+            <span class="text-mono">{{ formatPrice(row.price) }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column prop="traded_volume" label="成交量" v-bind="COL.NUMBER">
+          <template #default="{ row }">
+            <span class="text-mono">{{ formatNumber(row.traded_volume || 0) }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column prop="avg_price" label="成交均价" v-bind="COL.MONEY">
+          <template #default="{ row }">
+            <span class="text-mono">{{ row.traded_volume > 0 ? formatPrice(row.avg_price) : '—' }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column prop="traded_amount" label="成交金额" v-bind="COL.MONEY">
+          <template #default="{ row }">
+            <span class="text-mono">{{ row.traded_volume > 0 ? formatMoney(row.traded_amount) : '—' }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column prop="cancelled_volume" label="撤单量" v-bind="COL.makeDict('number', { width: 85, align: 'right', headerAlign: 'right' })">
+          <template #default="{ row }">
+            <span class="text-mono">{{ formatNumber(row.cancelled_volume || 0) }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="状态" v-bind="COL.STATUS">
+          <template #default="{ row }">
+            <OrderStatusBadge :status="row.status" :status_msg="row.status_msg" :remark="row.user_def" />
+          </template>
+        </el-table-column>
+        <el-table-column prop="order_time" label="下单时间" v-bind="COL.TIME">
+          <template #default="{ row }">
+            <span class="text-mono">{{ row.order_time || '—' }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="100" fixed="right" align="center">
+          <template #default="{ row }">
+            <el-button
+              v-if="canCancel(row)"
+              link
+              type="danger"
+              size="small"
+              :loading="orderStore.cancelling && cancellingOrderNo === row.order_no"
+              @click="handleCancel(row)"
+            >撤</el-button>
+          </template>
+        </el-table-column>
+        <el-table-column prop="user_def" label="备注" min-width="120">
+          <template #default="{ row }">
+            <span class="text-secondary">{{ row.user_def || '—' }}</span>
+          </template>
+        </el-table-column>
         </el-table>
       </section>
     </div>
@@ -397,8 +434,10 @@ import { useT0OrderSubmit } from '../composables/useT0OrderSubmit'
 import { formatNumber, formatAmount, formatMoney, formatPrice } from '../utils/format'
 import { STATUS_LABEL, STATUS_TYPE } from '../utils/format'
 import { stockName } from '../utils/stockNames'
+import { COL } from '../utils/tableColumns'
 import { calcT0ReturnRate } from '../lib/t0-calc'
 import { makeLogger } from '../utils/logger'
+import OrderStatusBadge from '../components/OrderStatusBadge.vue'
 
 const log = makeLogger('T0Trade')
 
@@ -513,6 +552,29 @@ const selectedTaskDiff = computed(() => _taskNetDiff(selectedTaskId.value))
 // 现统一从 format.js STATUS_LABEL / STATUS_TYPE 取, 与 Trade.vue / HistoryOrders.vue 一致.
 const orderStatusLabel = (s) => STATUS_LABEL[s] || String(s || '—')
 const orderStatusTagType = (s) => STATUS_TYPE[s] || 'default'
+
+// ---- v74: T0Trade 委托表加撤单按钮 ----
+// 终态集 (与 TodayOrdersPanel 一致): 51=已报待撤, 52=已撤, 53=部撤待撤, 54=部撤, 55=废单, 56=已成, 57=已撤(部)
+// 可撤单: 非 cancel-row + 非终态
+const TERMINAL_STATUSES = new Set(['51', '52', '53', '54', '55', '56', '57'])
+const cancellingOrderNo = ref('')
+function canCancel(row) {
+  if (!row) return false
+  if (Number(row.order_flag) === 1) return false  // 本地代理撤单委托行,不能再撤
+  return !TERMINAL_STATUSES.has(String(row.status))
+}
+async function handleCancel(row) {
+  if (!row || !canCancel(row)) return
+  cancellingOrderNo.value = row.order_no
+  try {
+    await orderStore.cancelOrder(row.order_no, row.trd_date)
+    ElMessage.success(`已发起撤单 #${row.order_no}`)
+  } catch (e) {
+    ElMessage.error('撤单失败：' + (e?.message || String(e)))
+  } finally {
+    cancellingOrderNo.value = ''
+  }
+}
 
 // v57 commit.2: 全局配置下拉框选项
 const pctOptions = [
