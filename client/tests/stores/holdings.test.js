@@ -176,7 +176,10 @@ describe('holdings.applyTradePush', () => {
 
   // ──── change system-delegation-price-fill-calc: applyOrderPush metaMerge ────
 
-  it('applyOrderPush 普通 row 走 metaMerge: 累计字段保留 ref, 仅更新元数据', () => {
+  // v76 (REQ-TRADE-027): broker 推 ord_cfm 走 server ws broadcast, server 端
+  //   push/helpers.py:50-53 一定含 4 字段真实累计值, row 优先 (与 v65/v66 一致).
+  //   业务语义: broker 累计值就是真实值 (不是覆盖), 必须采纳.
+  it('applyOrderPush 普通 row 走 metaMerge: row 累计优先 (server ws broadcast 真实累计)', () => {
     const store = useHoldingsStore()
     const today = '20260702'
     store.orders.push({
@@ -188,24 +191,27 @@ describe('holdings.applyTradePush', () => {
       status: '50'
     })
 
-    // broker 推 ord_cfm: 只填 broker 字段 + 试图覆盖累计
+    // broker 推 ord_cfm: 含完整 4 字段真实累计 (traded 60/100)
     store.applyOrderPush({
       order_no: '10000003', trd_date: today,
       order_id: 'BROKER-OID-X',
       order_time: '09:30:00',
-      traded_volume: 999,    // broker 想覆盖, 不采纳
-      traded_amount: 99999,  // broker 想覆盖, 不采纳
-      status: '53'           // broker 推废单
+      traded_volume: 60,    // broker 真实累计 (前一笔成交 30 + 这一笔 30 = 60)
+      traded_amount: 600,   // 60 × 10 = 600
+      avg_price: 10,
+      cancelled_volume: 0,
+      status: '55'           // broker 推部成
     })
 
     const o = store.orders[0]
     expect(o.order_id).toBe('BROKER-OID-X')     // broker 字段采纳
     expect(o.order_time).toBe('09:30:00')
-    expect(o.traded_volume).toBe(30)             // 累计保留 ref
-    expect(o.traded_amount).toBe(300)
+    expect(o.traded_volume).toBe(60)            // row 累计采纳 (broker 真实累计)
+    expect(o.traded_amount).toBe(600)
     expect(o.avg_price).toBe(10)
-    // ref 累计 30/100 + broker_status=53 → rule 3: 0 < cum < vol → '53'(broker 部成部撤)
-    expect(o.status).toBe('53')
+    expect(o.cancelled_volume).toBe(0)
+    // ref 累计 60/100 + broker_status=55 → broker 部成 (55)
+    expect(o.status).toBe('55')
   })
 
   it('applyOrderPush cancel-row 短路 + 反向抹平原委托 cancelled_volume', () => {

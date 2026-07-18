@@ -103,17 +103,19 @@ describe('metaMerge', () => {
     cancelled_volume: 0, status: '50',
   }
 
-  it('keeps ref accumulator fields unchanged', () => {
+  // v76 (REQ-TRADE-027): row 含 4 累计字段时 row 优先 (broker 推完整累计值用最新).
+  //   历史注释 "ref 保留" 是设计意图但实现漏字段; 现在改为 row ?? ref ?? 0 与 v65/v66 一致.
+  it('uses row accumulator values when both row and ref have them (broker full update)', () => {
     const row = {
       order_no: '10000003', order_id: 'BROKER-OID-X',
       traded_volume: 999, traded_amount: 99999, avg_price: 999,
       cancelled_volume: 999, status: '53',
     }
     const merged = metaMerge(row, ref)
-    expect(merged.traded_volume).toBe(30)   // ref 保留
-    expect(merged.traded_amount).toBe(300)  // ref 保留
-    expect(merged.avg_price).toBe(10)       // ref 保留
-    expect(merged.cancelled_volume).toBe(0) // ref 保留
+    expect(merged.traded_volume).toBe(999)       // row 优先
+    expect(merged.traded_amount).toBe(99999)     // row 优先
+    expect(merged.avg_price).toBe(999)           // row 优先
+    expect(merged.cancelled_volume).toBe(999)    // row 优先
   })
 
   it('overwrites PK + metadata fields from row', () => {
@@ -155,6 +157,61 @@ describe('metaMerge', () => {
     const merged = metaMerge(empty, ref)
     expect(merged.stock_code).toBe('600030.SH')  // from ref
     expect(merged.price).toBe(10)                 // from ref
+  })
+
+  // v76 (REQ-TRADE-027): 下单后 _upsertToHoldings 走 ref=undefined (空 ref = {})，
+  //   row 必含 4 累计字段 (server 端 OrderOut 一定返), merged 必须保留 row 值不能丢.
+  //   修复前 bug: metaMerge 漏 4 行透传 → 成交量/成交金额/均价/撤单量列全部 0,
+  //   只得等下次 ws push (broker ord_cfm) 覆盖 → 用户感知"下单后委托不刷新".
+  describe('v76: passes through accumulator fields from row on first open', () => {
+    const orderRow = {
+      order_no: '10000005', trd_date: '20260718',
+      stock_code: '600519.SH', price: 1800, volume: 100,
+      traded_volume: 0, traded_amount: 0, avg_price: 0,
+      cancelled_volume: 0, status: '50',
+    }
+    it('ref=undefined 走默认 {} 时透传 row 累计字段', () => {
+      const merged = metaMerge(orderRow)
+      expect(merged.traded_volume).toBe(0)
+      expect(merged.traded_amount).toBe(0)
+      expect(merged.avg_price).toBe(0)
+      expect(merged.cancelled_volume).toBe(0)
+    })
+    it('ref={} 空对象时同上 (applyOrderPush open 路径)', () => {
+      const merged = metaMerge(orderRow, {})
+      expect(merged.traded_volume).toBe(0)
+      expect(merged.traded_amount).toBe(0)
+      expect(merged.avg_price).toBe(0)
+      expect(merged.cancelled_volume).toBe(0)
+    })
+    it('ref 有累计值, row 不含 4 字段时保留 ref (broker ord_cfm 增量推送)', () => {
+      const cfmRow = { order_no: '10000003', status: '55' } // 模拟 broker ord_cfm 只推 status
+      const localRef = {
+        order_no: '10000003',
+        traded_volume: 30, traded_amount: 300, avg_price: 10,
+        cancelled_volume: 0,
+      }
+      const merged = metaMerge(cfmRow, localRef)
+      expect(merged.traded_volume).toBe(30)
+      expect(merged.traded_amount).toBe(300)
+      expect(merged.avg_price).toBe(10)
+      expect(merged.cancelled_volume).toBe(0)
+    })
+    it('row+ref 都含 4 字段时 row 优先 (broker 推完整累计值)', () => {
+      const rowFull = {
+        order_no: '10000006',
+        traded_volume: 50, traded_amount: 5000, avg_price: 100,
+        cancelled_volume: 0, status: '55',
+      }
+      const refStale = {
+        order_no: '10000006',
+        traded_volume: 30, traded_amount: 3000, avg_price: 100,
+        cancelled_volume: 0,
+      }
+      const merged = metaMerge(rowFull, refStale)
+      expect(merged.traded_volume).toBe(50)
+      expect(merged.traded_amount).toBe(5000)
+    })
   })
 })
 
