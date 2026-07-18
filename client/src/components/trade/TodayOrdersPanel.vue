@@ -33,6 +33,7 @@
       隐藏: T0任务/策略 (T0Trade.vue 内嵌面板仍可见)
       下单时间 width=185: 容纳 String(23) "YYYY-MM-DD HH:MM:SS.fff" 全显
       :default-sort order_time descending: 最新在下, 与 HistoryOrders 一致
+      v75: 成交 tab 9→8 列: 代码+名称合并成标的(v68 风格); 量→成交量; 价→成交价; 接入 COL 常量
     -->
     <div v-if="activeTab === 'orders'" class="tp-body">
       <el-table
@@ -161,12 +162,12 @@
         size="small"
         class="tp-table"
       >
-        <el-table-column prop="trade_time" label="时间" width="100">
+        <el-table-column prop="trade_time" label="时间" sortable v-bind="COL.TIME">
           <template #default="{ row }">
             <span class="text-mono text-secondary">{{ row.trade_time }}</span>
           </template>
         </el-table-column>
-        <el-table-column prop="trade_id" label="成交编号" min-width="100" show-overflow-tooltip>
+        <el-table-column prop="trade_id" label="成交编号" show-overflow-tooltip v-bind="COL.makeDict('id', { minWidth: 100 })">
           <template #default="{ row }">
             <span class="text-mono text-secondary">{{ row.trade_id }}</span>
           </template>
@@ -177,36 +178,33 @@
             <span v-else class="text-secondary">成交</span>
           </template>
         </el-table-column>
-        <el-table-column prop="stock_code" label="代码" width="100">
+        <!-- v75: 标的列 (代码+名称合并, 与 v68 委托 tab 对齐) -->
+        <el-table-column prop="stock_code" label="标的" sortable v-bind="COL.STOCK_TARGET">
           <template #default="{ row }">
-            <span class="tp-stock-code">{{ row.stock_code }}</span>
+            <span class="text-mono tp-stock-code">{{ row.stock_code }}</span>
+            <span class="text-secondary" style="margin-left: 6px">{{ stockName(row.stock_code) || '—' }}</span>
           </template>
         </el-table-column>
-        <el-table-column prop="stock_name" label="名称" width="100" show-overflow-tooltip>
-          <template #default="{ row }">
-            <span class="text-secondary">{{ stockName(row.stock_code) || '—' }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="方向" width="100">
+        <el-table-column label="方向" v-bind="COL.makeDict('direction', { width: 100, align: 'center', headerAlign: 'center' })">
           <template #default="{ row }">
             <span class="tp-dir-chip" :class="row.order_type === '23' ? 'buy' : 'sell'">
               {{ row.order_type === '23' ? '买' : '卖' }}
             </span>
           </template>
         </el-table-column>
-        <el-table-column prop="volume" label="量" align="right" width="100" sortable>
+        <el-table-column prop="volume" label="成交量" sortable v-bind="COL.NUMBER">
           <template #default="{ row }">
             <span class="text-mono">{{ formatNumber(row.volume) }}</span>
           </template>
         </el-table-column>
-        <el-table-column prop="price" label="价" align="right" width="100" sortable>
+        <el-table-column prop="price" label="成交价" sortable v-bind="COL.MONEY">
           <template #default="{ row }">
             <span class="text-mono">{{ formatMoney(row.price) }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="金额" align="right" min-width="100">
+        <el-table-column label="金额" v-bind="COL.MONEY">
           <template #default="{ row }">
-            <span class="text-mono">¥{{ formatMoney(localAmount(row)) }}</span>
+            <span class="text-mono">{{ formatMoney(localAmount(row)) }}</span>
           </template>
         </el-table-column>
         <template #empty>
