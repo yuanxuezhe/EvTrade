@@ -106,7 +106,10 @@ def test_first_ack_writes_50_and_broadcasts(db, fake_broadcast):
 
 
 def test_second_ack_after_already_reported_returns_none(db, fake_broadcast):
-    """v78 核心: 已报后续 → handler 返 None → dispatcher 跳过"""
+    """v79 (REQ-TRADE-032): 50 在 PUSH_STATUSES → broker 重复推 50 仍推
+    v78-b 旧设计是"已报后续不推"，现在改成"只推 50/57",
+    重复 50 是合法推送 (DB 写入幂等, 前端仍显示"已报").
+    """
     o = _make_order(db, status="50")  # 当前已是已报
 
     row = {
@@ -117,33 +120,34 @@ def test_second_ack_after_already_reported_returns_none(db, fake_broadcast):
     result = handle_ord_cfm(db, row, ts="2026-07-18T09:30:05")
     db.commit()
 
-    assert result is None, "已报后续 ord_cfm 应该返 None, 触发 dispatcher 跳过"
+    assert result is not None, "v79: 50 在 PUSH_STATUSES, broker 推 50 必须返回 dict"
+    assert result["status"] == "50"
 
 
-def test_cancel_class_breaks_skip(db, fake_broadcast):
-    """v78 边界: broker_status 撤单类 (52/53/54/57) 必须穿透, 不跳过
+def test_cancel_class_not_pushed(db, fake_broadcast):
+    """v79 (REQ-TRADE-032): 撤单类 (52/53/54) 不在 PUSH_STATUSES → return None
 
-    场景: 已报状态, broker 报 status=53 (部撤) → 必须写入并广播, 让前端立即看到"部撤"
+    撤单由 api/orders/cancel.py 主动 INSERT cancel-trade (trade_type=1)
+    走 trd_cfm 路径推送, 前端通过成交通知感知撤单完成.
     """
     o = _make_order(db, status="50")  # 已报
 
     row = {
         "order_id": "OID-1",
         "remark": o.order_no,
-        "order_status": "53",  # broker 报部撤, 撤单类必须穿透
+        "order_status": "53",  # broker 报部撤, 不在 PUSH_STATUSES → 跳过
     }
     result = handle_ord_cfm(db, row, ts="2026-07-18T09:30:10")
     db.commit()
 
-    assert result is not None, "撤单类穿透, 不应跳过"
-    assert result["status"] == "53", "broker_status=53 应直接写入"
+    assert result is None, "v79: 53 不在 PUSH_STATUSES, broker 推部撤应跳过"
 
 
-def test_partial_filled_status_breaks_skip(db, fake_broadcast):
-    """v78 边界: status=55 (部成) 已算"出过事件", 后续 broker 非撤单 → 跳过
+def test_partial_filled_status_pushed_on_50(db, fake_broadcast):
+    """v79 (REQ-TRADE-032): 当前=55 部成, broker 再推 50 → 仍推 (50 在 PUSH_STATUSES)
 
-    用户语义: "若是已报状态, 后续的委托确认就不处理了" — 55 算"已出过",
-    后续不应再被 broker 推 ack 干扰 (累计交给 trd_cfm 推断).
+    旧 v78-b 设计 55 后跳 50 是为"防止覆盖累计", 现在改成"只推 50/57",
+    broker 推 50 总是推 (前端显示已报), 累计靠 trd_cfm 推断, 不怕覆盖.
     """
     o = _make_order(db, status="55")  # 部成, 累计推断已落
 
@@ -155,7 +159,8 @@ def test_partial_filled_status_breaks_skip(db, fake_broadcast):
     result = handle_ord_cfm(db, row, ts="2026-07-18T09:30:15")
     db.commit()
 
-    assert result is None, "55 部成后续 ord_cfm 应跳过 (避免覆盖累计推断)"
+    assert result is not None, "v79: 50 在 PUSH_STATUSES, broker 推 50 必须返回 dict"
+    assert result["status"] == "50", "v79: broker_status=50 → order.status=50 (非 55)"
 
 
 def test_first_time_ack_does_not_skip(db, fake_broadcast):

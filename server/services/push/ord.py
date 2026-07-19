@@ -89,22 +89,21 @@ def handle_ord_cfm(db: Session, row: Dict[str, Any], ts: str) -> Optional[Dict[s
     if broker_volume > 0 and broker_volume != order.volume:
         order.volume = broker_volume
 
-    # v78 (REQ-TRADE-029): 已报后续不处理
-    #   - 当前 status 已在 ALREADY_REPORTED_STATUSES (50/51/55) → broker 再推同委托确认
-    #     (增量 order_id/cancelled_volume 等) → return None, dispatcher 跳过 ws 广播
-    #     避免前端重复刷新
-    #   - 当 broker_status 落入 CANCEL_LIKE_STATUSES (52/53/54/57 撤单类) → 必须继续,
-    #     让撤单终态覆盖 (v59 已对, 不变)
-    # v59 旧规则保留做兜底:
+    # v79 (REQ-TRADE-032): ord_cfm 只推 2 类状态 — broker 首次 ack (50) + 废单 (57)
+    #   - 50 (已报): broker 确认收到委托, 前端首次弹窗
+    #   - 57 (废单): broker 拒收委托, 前端弹窗提示
+    #   - 其他 (51/52/53/54/55/56): 全部 return None, dispatcher 跳过 ws 广播
+    #     - 撤单类 52/53/54: 撤单由 api/orders/cancel.py 主动 INSERT cancel-trade (trade_type=1),
+    #       trd_cfm 路径推送, 前端通过成交通知感知撤单完成
+    #     - 部成/已成 55/56: 累计由 trd_cfm 推 (每次成交都推), 不需要 ord_cfm 二次 ack
+    PUSH_STATUSES = ('50', '57')
+    if broker_status not in PUSH_STATUSES:
+        return None
+
+    # v59 旧规则保留做兜底 (保留 DB 写入, 即便不推 ws):
     #   CANCEL_LIKE_STATUSES = (52/53/54/57)  → order.status = broker_status
     #   其他 broker_status                  → order.status = '50' (已报)
     CANCEL_LIKE_STATUSES = ('52', '53', '54', '57')
-    ALREADY_REPORTED_STATUSES = ('50', '51', '55')  # 已报 / 已报待撤 / 部成 → 不再处理同委托 ord_cfm
-
-    if order.status in ALREADY_REPORTED_STATUSES and broker_status not in CANCEL_LIKE_STATUSES:
-        # v78: 已经"出过"状态事件, 增量信息 (cancelled_volume/order_id) DB 已落但不再 ws 广播.
-        # broker 撤单信号必须穿透 (让 cancel-row/部撤/废单 立即生效).
-        return None
 
     if broker_status in CANCEL_LIKE_STATUSES:
         order.status = broker_status
