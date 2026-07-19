@@ -203,12 +203,9 @@ def _h_ord_stk(pkt: MsgPacket) -> HandlerReturn:
 
 @handler("cxl_ord")
 def _h_cxl_ord(pkt: MsgPacket) -> HandlerReturn:
-    """cancel order (no market in pkt, infer from stock_code suffix)"""
+    """cancel order (xtquant API takes only acc + order_id, no market/stock_code)"""
     order_id = pkt.get_value_str("order_id")
-    # market not read from pkt; infer from stock_code suffix (.SH -> SH, else SZ)
-    stock_code = pkt.get_value_str("stock_code") or ""
-    market = xtconstant.SH_MARKET if stock_code.endswith(".SH") else xtconstant.SZ_MARKET
-    result = state.xt_trader.cancel_order_stock_async(state.xt_acc, market, order_id)
+    result = state.xt_trader.cancel_order_stock_async(state.xt_acc, order_id)
     return "00000", "ok", [{"result": result}]
 
 
