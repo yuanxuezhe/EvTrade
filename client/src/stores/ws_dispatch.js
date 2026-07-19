@@ -127,6 +127,21 @@ function _onOrderCfm(row) {
     return
   }
 
+  // v32 (REQ-TRADE-031): 弹窗去重 — push 前后对比 status / traded_volume / cancelled_volume
+  //   只要任一字段变化才弹通知. 同状态/同累计的重复 ws 推送不再骚扰用户.
+  let prevSnap = null
+  try {
+    const holdings = useHoldingsStore()
+    const prev = (holdings.orders || []).find((o) => o.order_no === row.order_no)
+    if (prev) {
+      prevSnap = {
+        status: prev.status,
+        traded_volume: prev.traded_volume,
+        cancelled_volume: prev.cancelled_volume,
+      }
+    }
+  } catch (_) { /* 拿不到 prev 就当 null, 视为变化（fall-through to notify） */ }
+
   // v13: 拿 applyOrderPush 返回的 final status (merged.status / row.status)
   //   之前用 row.status (broker 原始) 与表格显示 (merged.status 推断) 不一致
   //   守门/跳过返 null, 不发通知
@@ -138,9 +153,26 @@ function _onOrderCfm(row) {
     log.error('_onOrderCfm applyOrderPush failed:', e)
   }
 
-  if (finalStatus != null) {
-    _notifyOrder(row.stock_code, finalStatus, row)
+  if (finalStatus == null) return
+
+  // v32 (REQ-TRADE-031): 比对推送后字段 vs prev, 仅变化才弹
+  //   - status 变化（48→50, 50→55, 55→56, 等等）
+  //   - traded_volume / cancelled_volume 累计变化（部成累计增量）
+  //   - 三者全等 → 视为重复 ack（broker 增量 order_id/cancelled_volume 等），不弹
+  const newSnap = {
+    status: finalStatus,
+    traded_volume: Number(row.traded_volume) || 0,
+    cancelled_volume: Number(row.cancelled_volume) || 0,
   }
+  if (prevSnap
+      && prevSnap.status === newSnap.status
+      && prevSnap.traded_volume === newSnap.traded_volume
+      && prevSnap.cancelled_volume === newSnap.cancelled_volume) {
+    log.debug(`委托推送无变化, 跳过通知: ${row.stock_code} ${row.order_no} status=${newSnap.status}`)
+    return
+  }
+
+  _notifyOrder(row.stock_code, finalStatus, row)
 }
 
 function _onTradeCfm(row) {
@@ -179,7 +211,7 @@ function _notifyOrder(code, status, row) {
   else if (s === '55' || s === '52') { nType = 'warning'; msg = `${code} 部成 ${filled}/${volume}` }
   else if (s === '57') { nType = 'error'; msg = `${code} 废单${row.status_msg ? '：' + row.status_msg : ''}` }
   else if (s === '54' || s === '53') { nType = 'info'; msg = `${code} 已撤单` }
-  else if (s === '50') { nType = 'warning'; msg = `${code} 部成 ${filled}/${volume}` }
+  else if (s === '50') { nType = 'info'; msg = `${code} 已报 ${filled}/${volume}` }
   else if (s === '49') { nType = 'info'; msg = `${code} 已报` }
 
   ElNotification({ title: '委托更新', message: msg, type: nType, duration: 3500 })
