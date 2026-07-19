@@ -57,7 +57,10 @@ export function recomputeOrderFromTrade(order, trade) {
  *   必须 row.strategy_type ?? ref.strategy_type ?? 0 写回 merged, 否则 T0Trade 缓存 filter 失效.
  *   后端 Pydantic Literal[0,1] default 0 + ORM NOT NULL DEFAULT 0, 前端兜底 0.
  */
-export function metaMerge(row, ref = {}) {
+export function metaMerge(row, ref) {
+  // v77: ref 可能被显式传 null (ws push 阶段 B 异步竞态), 默认参数 {} 仅对 undefined 生效.
+  // 必须 ?? {} 兜底, 否则 ref.task_id 等字段触发 Cannot read properties of null.
+  ref = ref ?? {}
   const merged = {
     ...ref,
     order_no: row.order_no || ref.order_no || '',

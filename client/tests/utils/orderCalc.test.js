@@ -184,6 +184,16 @@ describe('metaMerge', () => {
       expect(merged.avg_price).toBe(0)
       expect(merged.cancelled_volume).toBe(0)
     })
+    // v77 (REQ-TRADE-028): ws push 阶段 B 异步竞态 (commit 9-A 后)，ref 可能显式传 null.
+    //   v76 默认参数 {}= ref={} 时没问题，但 ref=null 时 ref.task_id 触发
+    //   "Cannot read properties of null" 崩溃. 必须 ?? {} 兜底.
+    it('ref=null 显式 null 时不能崩 (vs76 兼容 ws_dispatch 异步竞态)', () => {
+      expect(() => metaMerge(orderRow, null)).not.toThrow()
+      const merged = metaMerge(orderRow, null)
+      expect(merged.traded_volume).toBe(0)
+      expect(merged.task_id).toBeNull()
+      expect(merged.strategy_type).toBe(0)
+    })
     it('ref 有累计值, row 不含 4 字段时保留 ref (broker ord_cfm 增量推送)', () => {
       const cfmRow = { order_no: '10000003', status: '55' } // 模拟 broker ord_cfm 只推 status
       const localRef = {
