@@ -90,10 +90,10 @@ async def ord_stk(
 
 
 async def cancel_order(order_id: str) -> Dict[str, Any]:
-    """撤单 cancel_ord（柜台协议：order_id 走 values）"""
+    """撤单 cxl_ord（柜台协议：仅 order_id，无 market）"""
     client = await get_rpc_client()
     pkt = await client.call(
-        "cancel_ord",
+        "cxl_ord",
         headers="order_id",
         values={"order_id": order_id},
     )
