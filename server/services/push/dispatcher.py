@@ -131,12 +131,20 @@ class PushDispatcher:
     ) -> None:
         """ord_cfm / trd_cfm：用 handler 结果或 fallback 行数据广播。
 
+        v78 (REQ-TRADE-029): handler_result is None → 直接跳过 ws 广播.
+        这是 "已报后续不处理" 的另一半 — handler 已决定不再处理, dispatcher 不 fallback
+        enriched_row (否则会发空变更, 前端无意义重复刷新).
+
         内部调用 ws_manager.broadcast 返回 coroutine，
         用 asyncio.ensure_future 调度，不阻塞后续行的处理。
         """
         from server.ws.manager import ws_manager
 
-        broadcast_data = handler_result if handler_result is not None else enriched_row
+        # v78: handler 显式 None → 跳过广播 (避免 ws 噪声)
+        if handler_result is None:
+            return
+
+        broadcast_data = handler_result
         payload = _log_push_broadcast(
             channel, broadcast_data, ts, func, active_trd_date, push_trace,
         )

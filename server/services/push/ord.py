@@ -89,12 +89,23 @@ def handle_ord_cfm(db: Session, row: Dict[str, Any], ts: str) -> Optional[Dict[s
     if broker_volume > 0 and broker_volume != order.volume:
         order.volume = broker_volume
 
-    # v59: 委托确认按用户规则
-    #   - 撤单类 (52/53/54/57) → 用 broker_status 直接写 (与 broker 字典对齐)
-    #   - 非撤单类 (48/49/50/51/55/56/255) → set row.status = 已报 (50)
-    #     注意 51 (已报待撤) 按用户"不是已撤/废单就 set 已报" 规则 → 50
-    #     排除 57 (废单) 单独 → 57
+    # v78 (REQ-TRADE-029): 已报后续不处理
+    #   - 当前 status 已在 ALREADY_REPORTED_STATUSES (50/51/55) → broker 再推同委托确认
+    #     (增量 order_id/cancelled_volume 等) → return None, dispatcher 跳过 ws 广播
+    #     避免前端重复刷新
+    #   - 当 broker_status 落入 CANCEL_LIKE_STATUSES (52/53/54/57 撤单类) → 必须继续,
+    #     让撤单终态覆盖 (v59 已对, 不变)
+    # v59 旧规则保留做兜底:
+    #   CANCEL_LIKE_STATUSES = (52/53/54/57)  → order.status = broker_status
+    #   其他 broker_status                  → order.status = '50' (已报)
     CANCEL_LIKE_STATUSES = ('52', '53', '54', '57')
+    ALREADY_REPORTED_STATUSES = ('50', '51', '55')  # 已报 / 已报待撤 / 部成 → 不再处理同委托 ord_cfm
+
+    if order.status in ALREADY_REPORTED_STATUSES and broker_status not in CANCEL_LIKE_STATUSES:
+        # v78: 已经"出过"状态事件, 增量信息 (cancelled_volume/order_id) DB 已落但不再 ws 广播.
+        # broker 撤单信号必须穿透 (让 cancel-row/部撤/废单 立即生效).
+        return None
+
     if broker_status in CANCEL_LIKE_STATUSES:
         order.status = broker_status
     else:
