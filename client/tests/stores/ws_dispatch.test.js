@@ -1,197 +1,193 @@
 /**
- * ws_dispatch.js _onOrderCfm 单测 (REQ-TRADE-031)
+ * ws_dispatch.js _onOrderCfm + _onTradeCfm 单测 (REQ-TRADE-032)
  *
  * 覆盖:
- *  1. status=50 文案: 之前误说"部成 0/100", 现在说"已报 0/100"
- *  2. 弹窗去重: 相同 status/traded_volume/cancelled_volume 不重复弹
- *  3. 弹窗触发: status 变化 或 累计变化 任一字段变化都弹
- *  4. 新委托 (prev 不存在) → 弹一次
- *
- * 测试方法: 通过 dispatchPayload({type:'ord_cfm', data}) 触发, mock holdings store 控制 prev+applyOrderPush 返值
+ *  1. 委托弹窗文案: trd_date order_no code label (后端只推 50/57, 无多分支)
+ *  2. 成交弹窗文案: trd_date order_no code volume@price status
+ *  3. 控制台日志: 委托 + 成交 都 log.info
+ *  4. 前端不做去重: 重复 ws 推送也弹 (后端已守门只推 50/57)
+ *  5. applyOrderPush 返 null → 不弹
+ *  6. row 缺 order_no/trade_id → 跳过
  */
-import { setActivePinia, createPinia } from 'pinia'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-// mock 整个 holdings store + element-plus
-const applyOrderPushMock = vi.fn()
+import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest'
+
+// Mock logger: 收集 info 调用用于断言日志
+const infoCalls = []
+vi.mock('../../src/utils/logger', () => ({
+  makeLogger: () => ({
+    warn: vi.fn(),
+    error: vi.fn(),
+    info: (...args) => infoCalls.push(args),
+    debug: () => {},
+    log: () => {},
+  }),
+  default: { warn: () => {}, error: () => {}, info: () => {}, debug: () => {}, log: () => {} },
+}))
+
+// Mock ElNotification: 收集弹窗调用
+const notifications = []
+vi.mock('element-plus', () => ({
+  ElNotification: (opts) => notifications.push(opts),
+}))
+
+// Mock STATUS_LABEL from format.js
+vi.mock('../../src/utils/format', () => ({
+  STATUS_LABEL: {
+    '48': '未报', '49': '待报', '50': '已报', '51': '已报待撤',
+    '52': '部成待撤', '53': '部撤', '54': '已撤', '55': '部成',
+    '56': '已成', '57': '废单',
+  },
+}))
+
+// Mock holdings store
 const ordersRef = []
 const tradesRef = []
+const applyOrderPushMock = vi.fn()
+const applyTradePushMock = vi.fn()
 vi.mock('../../src/stores/holdings', () => ({
   useHoldingsStore: () => ({
-    get orders() { return ordersRef },
-    get trades() { return tradesRef },
+    orders: ordersRef,
+    trades: tradesRef,
     applyOrderPush: applyOrderPushMock,
+    applyTradePush: applyTradePushMock,
   }),
 }))
 
-const notifications = []
-vi.mock('element-plus', () => ({
-  ElNotification: (opts) => { notifications.push(opts) },
-  ElMessage: { success: () => {}, error: () => {}, warning: () => {}, info: () => {} },
-}))
+import { dispatchPayload } from '../../src/stores/ws_dispatch'
 
-vi.mock('../../src/utils/logger', () => ({
-  makeLogger: () => ({ warn: () => {}, error: () => {}, info: () => {}, debug: () => {}, log: () => {} }),
-  default: { warn: () => {}, error: () => {}, info: () => {}, debug: () => {} },
-}))
+const ordCfm = (overrides = {}) => ({
+  order_no: 'A1',
+  trd_date: '20260719',
+  stock_code: '000001.SZ',
+  status: '50',
+  ...overrides,
+})
 
-// mock 间接依赖: ws_dispatch → quote → api (避免 api 真加载触发完整链路)
-vi.mock('../../src/api', () => ({
-  api: { get: vi.fn(), post: vi.fn() },
-}))
+const trdCfm = (overrides = {}) => ({
+  trade_id: 'T1',
+  trd_date: '20260719',
+  order_no: 'A1',
+  stock_code: '000001.SZ',
+  volume: 100,
+  price: 10.5,
+  order_type: '23',
+  ...overrides,
+})
 
-import { dispatchPayload } from '../../src/stores/ws_dispatch.js'
+describe('ws_dispatch _onOrderCfm (REQ-TRADE-032)', () => {
+  beforeEach(() => {
+    notifications.length = 0
+    infoCalls.length = 0
+    ordersRef.length = 0
+    applyOrderPushMock.mockReset()
+  })
 
-/** 构造订单推送 payload */
-function ordCfm({
-  order_no = 'A1',
-  stock_code = '000001',
-  status = '50',
-  volume = 100,
-  price = 10.5,
-  traded_volume = 0,
-  cancelled_volume = 0,
-}) {
-  return {
-    type: 'ord_cfm',
-    data: { order_no, stock_code, status, volume, price, traded_volume, cancelled_volume },
-  }
-}
-
-/** 重置 holdings mock + 通知列表 */
-function reset(prevOrder = null) {
-  setActivePinia(createPinia())
-  notifications.length = 0
-  ordersRef.length = 0
-  tradesRef.length = 0
-  if (prevOrder) ordersRef.push({ ...prevOrder })
-  applyOrderPushMock.mockReset()
-}
-
-describe('ws_dispatch _onOrderCfm (REQ-TRADE-031)', () => {
-  beforeEach(() => reset())
-
-  describe('弹窗文案', () => {
-    it('status=50 弹"已报 0/100" (非"部成")', () => {
-      reset({ order_no: 'A1', stock_code: '000001', status: '48', traded_volume: 0, cancelled_volume: 0 })
+  describe('弹窗文案 (新格式: trd_date order_no code label)', () => {
+    it('status=50 弹"20260719 A1 000001.SZ 已报"', () => {
       applyOrderPushMock.mockReturnValue('50')
-
-      dispatchPayload(ordCfm({ status: '50', traded_volume: 0 }))
-
+      dispatchPayload({ type: 'ord_cfm', data: ordCfm({ status: '50' }) })
       expect(notifications).toHaveLength(1)
-      expect(notifications[0].title).toBe('委托更新')
-      expect(notifications[0].message).toContain('已报')
-      expect(notifications[0].message).not.toContain('部成')
-      expect(notifications[0].message).toContain('0/100')
-      expect(notifications[0].type).toBe('info')  // 已报不是 warning
+      expect(notifications[0].title).toBe('委托确认')
+      expect(notifications[0].message).toBe('20260719 A1 000001.SZ 已报')
     })
 
-    it('status=55 弹"部成 N/V" warning', () => {
-      reset({ order_no: 'A2', stock_code: '000002', status: '50', traded_volume: 0, cancelled_volume: 0 })
-      applyOrderPushMock.mockReturnValue('55')
-
-      dispatchPayload(ordCfm({ order_no: 'A2', stock_code: '000002', status: '55', traded_volume: 30 }))
-
-      expect(notifications).toHaveLength(1)
-      expect(notifications[0].message).toContain('部成')
-      expect(notifications[0].message).toContain('30/100')
-      expect(notifications[0].type).toBe('warning')
-    })
-
-    it('status=57 弹"废单" error', () => {
-      reset({ order_no: 'A3', stock_code: '000003', status: '50', traded_volume: 0, cancelled_volume: 0 })
+    it('status=57 弹"20260719 A1 000001.SZ 废单"', () => {
       applyOrderPushMock.mockReturnValue('57')
-
-      dispatchPayload(ordCfm({ order_no: 'A3', stock_code: '000003', status: '57' }))
-
-      expect(notifications).toHaveLength(1)
-      expect(notifications[0].message).toContain('废单')
-      expect(notifications[0].type).toBe('error')
-    })
-
-    it('status=56 弹"已成交 100/100" success', () => {
-      reset({ order_no: 'A4', stock_code: '000004', status: '55', traded_volume: 50, cancelled_volume: 0 })
-      applyOrderPushMock.mockReturnValue('56')
-
-      dispatchPayload(ordCfm({ order_no: 'A4', stock_code: '000004', status: '56', traded_volume: 100 }))
-
-      expect(notifications).toHaveLength(1)
-      expect(notifications[0].message).toContain('已成交')
-      expect(notifications[0].type).toBe('success')
+      dispatchPayload({ type: 'ord_cfm', data: ordCfm({ status: '57' }) })
+      expect(notifications[0].message).toBe('20260719 A1 000001.SZ 废单')
     })
   })
 
-  describe('弹窗去重 (status/traded_volume/cancelled_volume 三者全等才跳过)', () => {
-    it('status 不变 + 累计不变 → 不弹 (重复 ack)', () => {
-      reset({ order_no: 'A1', stock_code: '000001', status: '50', traded_volume: 0, cancelled_volume: 0 })
+  describe('前端不做去重 (REQ-TRADE-032)', () => {
+    it('同状态重复 ws 推送 → 仍弹 (后端已守门只推 50/57, 收到即通知)', () => {
       applyOrderPushMock.mockReturnValue('50')
-
-      // 第一次: prev=50 cum=0, push 50 cum=0 → 三者全等 → 不弹 (user 已报后再 ack)
-      dispatchPayload(ordCfm({ status: '50', traded_volume: 0, cancelled_volume: 0 }))
-      expect(notifications).toHaveLength(0)  // prev=50 new=50 → 去重
-
-      // 模拟 applyOrderPush 后 prev 已更新到 50 (mock ordersRef 也反映出来)
-      ordersRef[0] = { ...ordersRef[0], status: '50', traded_volume: 0, cancelled_volume: 0 }
-
-      // 第二次: status=50 cum=0 cum_cancelled=0 → 三者全等 → 不弹
-      dispatchPayload(ordCfm({ status: '50', traded_volume: 0, cancelled_volume: 0 }))
-      expect(notifications).toHaveLength(0)  // 仍是 0
+      // 模拟同一订单 ws 推 2 次 (broker 增量 ack)
+      dispatchPayload({ type: 'ord_cfm', data: ordCfm({ status: '50' }) })
+      dispatchPayload({ type: 'ord_cfm', data: ordCfm({ status: '50' }) })
+      // 两次都弹, 不去重
+      expect(notifications).toHaveLength(2)
     })
+  })
 
-    it('status 不变但 traded_volume 增加 → 弹 (部成累计)', () => {
-      reset({ order_no: 'A2', stock_code: '000002', status: '55', traded_volume: 30, cancelled_volume: 0 })
-      applyOrderPushMock.mockReturnValue('55')
-
-      dispatchPayload(ordCfm({ order_no: 'A2', stock_code: '000002', status: '55', traded_volume: 50 }))
-
-      expect(notifications).toHaveLength(1)
-      expect(notifications[0].message).toContain('部成')
-      expect(notifications[0].message).toContain('50/100')
-    })
-
-    it('status 不变但 cancelled_volume 增加 → 弹 (撤单累计)', () => {
-      reset({ order_no: 'A3', stock_code: '000003', status: '54', traded_volume: 0, cancelled_volume: 30 })
-      applyOrderPushMock.mockReturnValue('54')
-
-      dispatchPayload(ordCfm({ order_no: 'A3', stock_code: '000003', status: '54', traded_volume: 0, cancelled_volume: 60 }))
-
-      expect(notifications).toHaveLength(1)
-      expect(notifications[0].message).toContain('已撤单')
-    })
-
-    it('status 变化 (55→56) → 弹', () => {
-      reset({ order_no: 'A4', stock_code: '000004', status: '55', traded_volume: 50, cancelled_volume: 0 })
-      applyOrderPushMock.mockReturnValue('56')
-
-      dispatchPayload(ordCfm({ order_no: 'A4', stock_code: '000004', status: '56', traded_volume: 100 }))
-
-      expect(notifications).toHaveLength(1)
-      expect(notifications[0].message).toContain('已成交')
+  describe('控制台日志', () => {
+    it('委托推送打 log.info 含 trd_date/order_no/code/status', () => {
+      applyOrderPushMock.mockReturnValue('50')
+      dispatchPayload({ type: 'ord_cfm', data: ordCfm({ status: '50' }) })
+      const ordLogs = infoCalls.filter(c => c[0]?.includes?.('[ord_cfm]'))
+      expect(ordLogs).toHaveLength(1)
+      expect(ordLogs[0][0]).toContain('trd_date=20260719')
+      expect(ordLogs[0][0]).toContain('order_no=A1')
+      expect(ordLogs[0][0]).toContain('code=000001.SZ')
+      expect(ordLogs[0][0]).toContain('status=50')
     })
   })
 
   describe('边界', () => {
-    it('prev 不存在 (新委托) → 弹一次', () => {
-      // reset 不传 prevOrder → ordersRef = []
-      applyOrderPushMock.mockReturnValue('50')
-
-      dispatchPayload(ordCfm({ status: '50' }))
-
-      expect(notifications).toHaveLength(1)
-    })
-
-    it('applyOrderPush 返 null (守门跳过) → 不弹', () => {
-      reset({ order_no: 'A1', stock_code: '000001', status: '50', traded_volume: 0, cancelled_volume: 0 })
-      applyOrderPushMock.mockReturnValue(null)  // 模拟 v8 trd_date 守门返 null
-
-      dispatchPayload(ordCfm({ status: '50' }))
-
+    it('applyOrderPush 返 null → 不弹 (v13 守门)', () => {
+      applyOrderPushMock.mockReturnValue(null)
+      dispatchPayload({ type: 'ord_cfm', data: ordCfm() })
       expect(notifications).toHaveLength(0)
     })
 
     it('row 缺 order_no → 跳过', () => {
-      dispatchPayload({ type: 'ord_cfm', data: { stock_code: '000001', status: '50' } })
+      dispatchPayload({ type: 'ord_cfm', data: ordCfm({ order_no: undefined }) })
       expect(notifications).toHaveLength(0)
+      expect(applyOrderPushMock).not.toHaveBeenCalled()
+    })
+  })
+})
+
+describe('ws_dispatch _onTradeCfm (REQ-TRADE-032)', () => {
+  beforeEach(() => {
+    notifications.length = 0
+    infoCalls.length = 0
+    ordersRef.length = 0
+    tradesRef.length = 0
+    applyTradePushMock.mockReset()
+  })
+
+  describe('弹窗文案 (新格式: trd_date order_no code volume@price status)', () => {
+    it('订单状态=55 部成 → 弹"20260719 A1 000001.SZ 100@10.5 部成"', () => {
+      ordersRef.push({ order_no: 'A1', status: '55' })
+      dispatchPayload({ type: 'trd_cfm', data: trdCfm({ volume: 100, price: 10.5 }) })
+      expect(notifications).toHaveLength(1)
+      expect(notifications[0].title).toBe('成交通知')
+      expect(notifications[0].message).toBe('20260719 A1 000001.SZ 100@10.5 部成')
+    })
+
+    it('订单状态=56 已成 → 弹"20260719 A1 000001.SZ 100@10.5 已成"', () => {
+      ordersRef.push({ order_no: 'A1', status: '56' })
+      dispatchPayload({ type: 'trd_cfm', data: trdCfm() })
+      expect(notifications[0].message).toBe('20260719 A1 000001.SZ 100@10.5 已成')
+    })
+
+    it('找不到原订单 (race) → 状态兜底 -', () => {
+      ordersRef.length = 0
+      dispatchPayload({ type: 'trd_cfm', data: trdCfm() })
+      expect(notifications[0].message).toBe('20260719 A1 000001.SZ 100@10.5 -')
+    })
+  })
+
+  describe('控制台日志', () => {
+    it('成交推送打 log.info 含 trd_date/order_no/code/volume@price/status', () => {
+      ordersRef.push({ order_no: 'A1', status: '55' })
+      dispatchPayload({ type: 'trd_cfm', data: trdCfm() })
+      const trdLogs = infoCalls.filter(c => c[0]?.includes?.('[trd_cfm]'))
+      expect(trdLogs).toHaveLength(1)
+      expect(trdLogs[0][0]).toContain('trd_date=20260719')
+      expect(trdLogs[0][0]).toContain('order_no=A1')
+      expect(trdLogs[0][0]).toContain('000001.SZ')
+      expect(trdLogs[0][0]).toContain('100@10.5')
+      expect(trdLogs[0][0]).toContain('status=部成')
+    })
+  })
+
+  describe('边界', () => {
+    it('row 缺 trade_id → 跳过', () => {
+      dispatchPayload({ type: 'trd_cfm', data: trdCfm({ trade_id: undefined }) })
+      expect(notifications).toHaveLength(0)
+      expect(applyTradePushMock).not.toHaveBeenCalled()
     })
   })
 })

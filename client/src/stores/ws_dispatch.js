@@ -127,24 +127,10 @@ function _onOrderCfm(row) {
     return
   }
 
-  // v32 (REQ-TRADE-031): 弹窗去重 — push 前后对比 status / traded_volume / cancelled_volume
-  //   只要任一字段变化才弹通知. 同状态/同累计的重复 ws 推送不再骚扰用户.
-  let prevSnap = null
-  try {
-    const holdings = useHoldingsStore()
-    const prev = (holdings.orders || []).find((o) => o.order_no === row.order_no)
-    if (prev) {
-      prevSnap = {
-        status: prev.status,
-        traded_volume: prev.traded_volume,
-        cancelled_volume: prev.cancelled_volume,
-      }
-    }
-  } catch (_) { /* 拿不到 prev 就当 null, 视为变化（fall-through to notify） */ }
-
   // v13: 拿 applyOrderPush 返回的 final status (merged.status / row.status)
   //   之前用 row.status (broker 原始) 与表格显示 (merged.status 推断) 不一致
   //   守门/跳过返 null, 不发通知
+  // v79 (REQ-TRADE-032): 前端不做去重过滤, 后端只推 50/57, 收到即通知
   let finalStatus = null
   try {
     const holdings = useHoldingsStore()
@@ -155,22 +141,8 @@ function _onOrderCfm(row) {
 
   if (finalStatus == null) return
 
-  // v32 (REQ-TRADE-031): 比对推送后字段 vs prev, 仅变化才弹
-  //   - status 变化（48→50, 50→55, 55→56, 等等）
-  //   - traded_volume / cancelled_volume 累计变化（部成累计增量）
-  //   - 三者全等 → 视为重复 ack（broker 增量 order_id/cancelled_volume 等），不弹
-  const newSnap = {
-    status: finalStatus,
-    traded_volume: Number(row.traded_volume) || 0,
-    cancelled_volume: Number(row.cancelled_volume) || 0,
-  }
-  if (prevSnap
-      && prevSnap.status === newSnap.status
-      && prevSnap.traded_volume === newSnap.traded_volume
-      && prevSnap.cancelled_volume === newSnap.cancelled_volume) {
-    log.debug(`委托推送无变化, 跳过通知: ${row.stock_code} ${row.order_no} status=${newSnap.status}`)
-    return
-  }
+  // v79 (REQ-TRADE-032): 控制台日志 — 委托确认: 交易日、委托编号、证券代码、状态
+  log.info(`[ord_cfm] 委托确认: trd_date=${row.trd_date || '-'} order_no=${row.order_no} code=${row.stock_code} status=${finalStatus}`)
 
   _notifyOrder(row.stock_code, finalStatus, row)
 }
@@ -190,31 +162,42 @@ function _onTradeCfm(row) {
   }
 
   const dir = String(row.order_type) === '24' ? '卖' : '买'
+  // 状态: 累计成交后从订单表取 status (部成/已成), trd_cfm 本身不直接给 status
+  //   用 holdings.orders 找原订单取 status_msg 或 status
+  let orderStatus = '-'
+  let orderStatusLabel = '-'
+  try {
+    const holdings = useHoldingsStore()
+    const ord = (holdings.orders || []).find((o) => o.order_no === row.order_no)
+    if (ord) {
+      orderStatus = ord.status || '-'
+      orderStatusLabel = STATUS_LABEL[orderStatus] || orderStatus
+    }
+  } catch (_) { /* 取不到状态兜底 */ }
+
+  // v79 (REQ-TRADE-032): 控制台日志 — 成交推送: 交易日、委托编号、证券代码、成交数量@成交价格、状态
+  log.info(`[trd_cfm] 成交推送: trd_date=${row.trd_date || '-'} order_no=${row.order_no} code=${row.stock_code} ${row.volume}@${row.price} status=${orderStatusLabel}`)
+
   ElNotification({
     title: '成交通知',
-    message: `${row.stock_code} ${dir} ${row.volume}@${row.price}`,
+    message: `${row.trd_date || '-'} ${row.order_no} ${row.stock_code} ${row.volume}@${row.price} ${orderStatusLabel}`,
     type: 'success',
     duration: 4000
   })
 }
 
 function _notifyOrder(code, status, row) {
-  // 柜台数字：48 未报 / 49 待报 / 50 已报 / 51 已报待撤 / 52 部成待撤
-  //           53 部撤 / 54 已撤 / 55 部成 / 56 已成 / 57 废单 / 255 未知
+  // v79 (REQ-TRADE-032): 文案统一 — 交易日、委托编号、证券代码、状态
+  //   后端 ord_cfm 只推 50 (已报) / 57 (废单), 前端不做 4 类状态判断
+  //   之前 line 210-215 的 56/55/52/57/54/53/50/49 分支全部不再触发
   const s = String(status || '')
   const label = STATUS_LABEL[s] || s || '已报'
-  const filled = Number(row.traded_volume) || 0
-  const volume = Number(row.volume) || 0
+  const trdDate = row.trd_date || '-'
+  const orderNo = row.order_no || '-'
   let nType = 'info'
-  let msg = `${code} 状态：${label}`
-  if (s === '56') { nType = 'success'; msg = `${code} 已成交 ${volume}@${row.price || ''}` }
-  else if (s === '55' || s === '52') { nType = 'warning'; msg = `${code} 部成 ${filled}/${volume}` }
-  else if (s === '57') { nType = 'error'; msg = `${code} 废单${row.status_msg ? '：' + row.status_msg : ''}` }
-  else if (s === '54' || s === '53') { nType = 'info'; msg = `${code} 已撤单` }
-  else if (s === '50') { nType = 'info'; msg = `${code} 已报 ${filled}/${volume}` }
-  else if (s === '49') { nType = 'info'; msg = `${code} 已报` }
+  let msg = `${trdDate} ${orderNo} ${code} ${label}`
 
-  ElNotification({ title: '委托更新', message: msg, type: nType, duration: 3500 })
+  ElNotification({ title: '委托确认', message: msg, type: nType, duration: 3500 })
 }
 
 /**
