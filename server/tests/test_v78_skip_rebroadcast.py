@@ -34,6 +34,10 @@ def db():
     s.execute(text("DELETE FROM orders"))
     s.commit()
     yield s
+    # v-future (REQ-TRADE-030): finalizer 兜底清 t_* 测试用户, 防 admin/trader seed 永久丢失
+    #   判定: LOCATE('_', username) > 0 (含下划线 = 测试用户名约定) 且排除真实用户 admin/trader
+    s.execute(text("DELETE FROM users WHERE LOCATE('_', username) > 0 AND username NOT IN ('admin', 'trader')"))
+    s.commit()
     s.close()
 
 

@@ -45,12 +45,16 @@ def db():
     s.execute(text("ALTER TABLE orders AUTO_INCREMENT = 1"))
     s.commit()
     yield s
+    # v-future (REQ-TRADE-030): finalizer 兜底清 t_* 测试用户, 防 admin/trader seed 永久丢失
+    #   判定: LOCATE('_', username) > 0 (含下划线 = 测试用户名约定) 且排除真实用户 admin/trader
+    s.execute(text("DELETE FROM users WHERE LOCATE('_', username) > 0 AND username NOT IN ('admin', 'trader')"))
+    s.commit()
     s.close()
 
 
 @pytest.fixture
 def trader(db):
-    """trader 用户 + 已激活交易日"""
+    """trader 用户 + 已激活交易日 (v-future REQ-TRADE-030: db fixture finalizer 自动清理 t_*)"""
     db.query(User).filter_by(username="t_place_v77").delete()
     u = User(username="t_place_v77", password_hash=hash_password("x"), role="trader")
     db.add(u)
