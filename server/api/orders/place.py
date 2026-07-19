@@ -2,7 +2,7 @@
 place.py — POST /api/orders/place 下单端点
 
 v77 (REQ-TRADE-028) 两阶段下单架构:
-- 阶段 A: DB INSERT status=48 待报 → ws push + 立即 HTTP 应答 (含 status=48 OrderOut)
+- 阶段 A: DB INSERT status=49 待报 → ws push + 立即 HTTP 应答 (含 status=49 OrderOut)
 - 阶段 B: RPC 后台 task → DB UPDATE status=50/57 + ws push
   - RPC 成功 (ack.code==0): UPDATE status=50 + 写 broker_order_id + ws push
   - RPC 失败 (ack.code!=0): UPDATE status=57 + cancelled_volume=volume + ws push
@@ -10,8 +10,8 @@ v77 (REQ-TRADE-028) 两阶段下单架构:
 
 设计意图 (v77 变更前为同步阻塞):
 - 旧: DB INSERT → RPC 阻塞 → DB UPDATE → ws push → HTTP 应答. broker 慢 → 应答慢 → 前端等.
-- 新: DB INSERT → ws push status=48 → 立即 HTTP 应答. RPC 后台 fire-and-forget.
-  - 前端拿到 status=48 立即渲染 "待回报"; ws 后续推 status=50/57 覆盖
+- 新: DB INSERT → ws push status=49 → 立即 HTTP 应答. RPC 后台 fire-and-forget.
+  - 前端拿到 status=49 立即渲染 "待回报"; ws 后续推 status=50/57 覆盖
   - broker 慢/超时不影响 HTTP 应答 (axios 15s timeout 仍兜底)
   - RPC 异常吞掉会丢委托, 必须 try/except + ws push + log.exception
 
@@ -88,7 +88,7 @@ def register_place(router):
                             "msg": f"task 的 stock_code={task.stock_code} 与下单 {req.stock_code} 不符"}
                 )
 
-        # 4. INSERT status=48（待报）
+        # 4. INSERT status=49（待报）
         order_no = next_order_no(db)
         order = Order(
             trd_date=trd_date,
@@ -97,7 +97,7 @@ def register_place(router):
             stock_code=req.stock_code, order_type=req.order_type,
             price_type=req.price_type, price=req.price, volume=adjusted,
             traded_volume=0, traded_amount=0.0, avg_price=0.0,
-            status="48", status_msg="待报",
+            status="49", status_msg="待报",
             order_time=format_ts(tz='local'),  # v10: "YYYY-MM-DD HH:MM:SS.fff"
             task_id=req.task_id,  # v18: 关联做T任务 (None = 游离单)
             strategy_type=req.strategy_type,  # v66: REQ-TRADE-026; 0=普通单(Trade.vue) 1=快速做T(T0Trade.vue)
@@ -106,13 +106,13 @@ def register_place(router):
         db.commit()
         db.refresh(order)
 
-        # 5. v77: 阶段 A — 立即 ws push status=48 (前端立即显示 "待回报")
+        # 5. v77: 阶段 A — 立即 ws push status=49 (前端立即显示 "待回报")
         #   先 ws 后 HTTP 应答: 前端 ws 收到 + axios 拿到 response 都立即 _upsertToHoldings
-        #   metaMerge (v76 修复) 保证 4 累计字段透传, 表格立即正确显示 status=48 待报委托.
+        #   metaMerge (v76 修复) 保证 4 累计字段透传, 表格立即正确显示 status=49 待报委托.
         try:
             asyncio.ensure_future(ws_manager.broadcast("order_update", _order_to_out_dict(order)))
         except Exception as e:
-            log.warning("ws push (status=48) failed: %s", e)
+            log.warning("ws push (status=49) failed: %s", e)
 
         # 6. v77: 阶段 B — RPC 后台 task (fire-and-forget)
         #   asyncio.create_task 不会阻塞 HTTP 应答; broker 慢/超时不影响前端.
@@ -122,7 +122,7 @@ def register_place(router):
         _captured_trd_date = trd_date
         asyncio.create_task(_submit_rpc_async(order_no, _captured_trd_date))
 
-        # 7. v77: 立即 HTTP 应答 (含 status=48 OrderOut)
+        # 7. v77: 立即 HTTP 应答 (含 status=49 OrderOut)
         #   code=0 表示"DB 写入成功, RPC 已调度" (前端 v77 兼容: 此时代码=48 委托还未被 broker 确认)
         #   msg 明确告知前端 "DB 已写入, broker 回报中" 区别于 code=1 broker 拒单.
         return PlaceOrderResponse(

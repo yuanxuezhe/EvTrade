@@ -296,7 +296,7 @@ async def test_submit_rpc_payload_includes_task_id_and_strategy(trader, fake_ord
     assert last_push["strategy_type"] == 1
 
 
-# ─────────────── 阶段 A 单测: 立即应答 + ws push status=48 ───────────────
+# ─────────────── 阶段 A 单测: 立即应答 + ws push status=49 ───────────────
 
 # 阶段 A 测试需要调 place_order endpoint (FastAPI Depends), 单独走 TestClient 路径
 # 此处简化: 验证 _submit_rpc_async 不会被阶段 A 同步等待 (endpoint 内 asyncio.create_task)
@@ -305,7 +305,7 @@ async def test_submit_rpc_payload_includes_task_id_and_strategy(trader, fake_ord
 async def test_endpoint_creates_task_and_returns_immediately(trader, fake_ord_stk, fake_broadcast, db, monkeypatch):
     """
     v77 两阶段下单端到端: POST /api/orders/place 立即返回 (<0.05s 不等 RPC),
-    阶段 A ws push status=48, 阶段 B 后台跑完后 ws push status=50.
+    阶段 A ws push status=49, 阶段 B 后台跑完后 ws push status=50.
 
     用 httpx AsyncClient + ASGITransport (TestClient 是同步, 不支持后台 task).
     """
@@ -361,16 +361,16 @@ async def test_endpoint_creates_task_and_returns_immediately(trader, fake_ord_st
             assert elapsed < 2.0, "endpoint 必须 <2s 内返回 (httpx + ASGI lifespan 启动开销), 实际 %.3fs" % elapsed
 
             data = resp.json()
-            # 2. code=0 + status=48 (v77 DB 写完即返)
+            # 2. code=0 + status=49 (v77 DB 写完即返; broker xtconstant 49=待报)
             assert data["code"] == 0, "code=%s msg=%s" % (data.get("code"), data.get("msg"))
-            assert data["order"]["status"] == "48"
+            assert data["order"]["status"] == "49"
             assert data["order"]["status_msg"] == "待报"
 
-            # 3. 阶段 A ws push status=48 已发
+            # 3. 阶段 A ws push status=49 已发
             await asyncio.sleep(0.02)
             push_payloads = [p for c, p in fake_broadcast.calls if c == "order_update"]
-            assert any(p["status"] == "48" for p in push_payloads), \
-                "阶段 A 必须 ws push status=48, 实际: %s" % [p.get("status") for p in push_payloads]
+            assert any(p["status"] == "49" for p in push_payloads), \
+                "阶段 A 必须 ws push status=49, 实际: %s" % [p.get("status") for p in push_payloads]
 
             # 4. 等 RPC 后台跑完 (slow_call 0.05s + commit), 验证阶段 B ws push status=50
             await asyncio.sleep(0.3)
