@@ -89,12 +89,16 @@ async def ord_stk(
     return _parse_order_ack(pkt)
 
 
-async def cancel_order(order_id: str) -> Dict[str, Any]:
-    """撤单 cxl_ord（柜台协议：仅 order_id，无 market）"""
+async def cancel_order(order_id: str, stock_code: str) -> Dict[str, Any]:
+    """撤单 cxl_ord（柜台协议：order_id + stock_code, 无 market）
+
+    v__ (REQ-TRADE-033): market 由柜台 handler 内部从 stock_code 后缀推断,
+    服务端 RPC 层只送 stock_code (含 .SZ/.SH 后缀).
+    """
     client = await get_rpc_client()
     pkt = await client.call(
         "cxl_ord",
-        headers="order_id",
-        values={"order_id": order_id},
+        headers="order_id|stock_code",
+        values={"order_id": order_id, "stock_code": stock_code},
     )
     return _parse_order_ack(pkt)

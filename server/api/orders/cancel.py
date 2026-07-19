@@ -85,7 +85,7 @@ def register_cancel(router):
         ack = None
         rpc_error = None
         try:
-            ack = await rpc_cancel_order(order_id=order.order_id)
+            ack = await rpc_cancel_order(order_id=order.order_id, stock_code=order.stock_code)
             ack_code = int(ack.get("code", -1))
         except Exception as e:
             log.exception("cancel_order RPC exception: orig_order_no=%s err=%s", order_no, e)
