@@ -242,7 +242,7 @@ def insert_pending_order(
         price=price,
         volume=volume,
         traded_volume=0, traded_amount=0.0, avg_price=0.0,
-        status="48", status_msg="待报",
+        status="48", status_msg="未报",
         order_time=format_ts(tz='local'),
     )
     db.add(order)
