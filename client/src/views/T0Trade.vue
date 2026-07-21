@@ -504,6 +504,9 @@ watch([stockCode, filteredActiveTasks], ([code, list]) => {
 // change 2026-07-21-t0-default-select-first: 进入页面/taskRows 变化时, 默认选中第一条
 //   修复配平 stock_code=空 bug: balanceStockCode 依赖 selectedTaskId, 无选中时返回 ''
 //   后端 place.py:84 校验 task.stock_code != req.stock_code → 报错
+// v75 (fix): taskRows 必须在 watch 之前定义 — TDZ ReferenceError 否则整个 setup 抛错,
+//   整个 T0Trade 页面渲染空白. 修复: 把 const taskRows 提升到此 watch 之前 (复用为下方的 taskRows).
+const taskRows = computed(() => t0TasksStore.tasks || [])
 watch(taskRows, (rows) => {
   if (!selectedTaskId.value && rows && rows.length > 0) {
     selectedTaskId.value = rows[0].id
@@ -643,7 +646,8 @@ function onTaskRowClick(row) {
 }
 
 // ---- 主表数据源 (v55 task 视角) ----
-const taskRows = computed(() => t0TasksStore.tasks || [])
+// v75 (fix): taskRows 已提前至 watch 之前定义 — TDZ 修复, 见上方 watch 上方注释.
+// const taskRows = computed(() => t0TasksStore.tasks || [])   ← 已前移, 移除此重复声明
 
 function ptRowClass({ row }) {
   const classes = []
