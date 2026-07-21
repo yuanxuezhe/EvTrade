@@ -379,9 +379,63 @@ export function createBootstrap({
     }
   }
 
+  /**
+   * change 2026-07-21-system-init-page-refresh: 日初成功后 force re-bootstrap
+   *
+   * 为什么需要:
+   *   - 后端 init_trading_day 成功后 activeTrdDate 已切换新日, 但前端 holdings store
+   *     的 activeTrdDate.value 仍是昨日 → 推送守门、Position.vue netChange、T0Trade 当前日
+   *     全部错位
+   *   - 同时 orders/trades IDB 缓存的 key 还是昨日, 需 clearDate 清掉 (否则下次 bootstrap
+   *     IDB 命中昨日数据, 覆盖新日空状态)
+   *   - 旧 refreshAll 不重置 activeTrdDate, 不清 IDB, 不重置 bootstrapped 标志,
+   *     所以即便缓存里有昨日数据也无法重拉
+   *
+   * 行为:
+   *   1) 清 IDB 昨日的 orders/trades (跨日避免命中陈旧缓存)
+   *   2) 清 positions/orders/trades/cachedAsset 内存缓存 (避免旧日数据短暂闪现)
+   *   3) 重置 bootstrapped=false (强制走完整 bootstrap 路径, 不会用 IDB 跳过)
+   *   4) 调 bootstrap(wsConnect) — ws 已经连着, wsConnect 是幂等的
+   *   5) bootstrap 内部 _resolveActiveDay 会主动拉新的 activeTrdDate
+   *
+   * 与 refreshAll 的区别:
+   *   refreshAll 只重拉当前日 RPC, 不切日; resetForNewDay 切日 + 清缓存 + 完整重 bootstrap
+   *
+   * @param {Function} [wsConnect]  可选: ws 连接回调 (holdings.js bootstrap 时注入的 _startWs)
+   *                                不传时跳过 ws connect (假设 ws 已连 — 实际场景日初时一定已连)
+   */
+  async function resetForNewDay(wsConnect) {
+    log('info', '用户', 'day-init', '日初完成: 切交易日 + force re-bootstrap')
+    const prevDay = activeTrdDate.value
+    // 1) 清 IDB 昨日数据 (失败忽略 — IDB 不可用时降级 RPC 拉取)
+    try {
+      if (prevDay) {
+        const { clearDate } = await import('./holdings_idb')
+        await clearDate(prevDay)
+        log('info', '缓存', 'idb', `clearDate(${prevDay}) 完成 (避免新日 IDB 命中陈旧)`)
+      }
+    } catch (e) {
+      log('warn', '缓存', 'idb', `clearDate 失败 (降级): ${e?.message || e}`)
+    }
+    // 2) 清内存缓存 (清空引用, 不等 RPC, 用户看到 loading 状态)
+    positions.value = []
+    orders.value = []
+    trades.value = []
+    cachedAsset.value = { cash: 0, frozen_cash: 0, market_value: 0, total_asset: 0 }
+    refCounts.value = { asset: 'idle', positions: 'idle', orders: 'idle', trades: 'idle' }
+    // 3) 重置 bootstrap 状态
+    bootstrapped.value = false
+    loading.value = false
+    lastUpdated.value = 0
+    // 4) 完整重 bootstrap (含 _resolveActiveDay 拉新 activeTrdDate + IDB miss → RPC 4 路)
+    return bootstrap(wsConnect)
+  }
+
   return {
     bootstrap, refreshAll, refreshPositions, refreshAsset,
     // v32: quote 订阅同步控制 (App.vue 卸载时调 _stopQuoteAutoSub)
     _startQuoteAutoSub, _stopQuoteAutoSub, _syncQuoteSubs,
+    // change 2026-07-21-system-init-page-refresh: 日初后 force re-bootstrap
+    resetForNewDay,
   }
 }

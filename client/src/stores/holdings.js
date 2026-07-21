@@ -75,6 +75,8 @@ export const useHoldingsStore = defineStore('holdings', () => {
     // v32: quote 自动订阅控制
     _startQuoteAutoSub: _autoSubStart,
     _stopQuoteAutoSub: _autoSubStop,
+    // change 2026-07-21-system-init-page-refresh: 日初成功后 force re-bootstrap (切交易日)
+    resetForNewDay: _resetForNewDay,
   } = createBootstrap({
     positions, orders, trades, cachedAsset,
     activeTrdDate, activeDayStatus,
@@ -92,6 +94,15 @@ export const useHoldingsStore = defineStore('holdings', () => {
     // v32: bootstrap 完成后启动 watch (后续 positions 增量同步)
     _autoSubStart()
     return r
+  }
+
+  /**
+   * change 2026-07-21-system-init-page-refresh: 日初成功后 force re-bootstrap
+   *   包装 _resetForNewDay, 注入 ws connect 回调 (bootstrap 内部会再调一次, 幂等)
+   *   供 ws_dispatch._onInitCompleted 调
+   */
+  async function resetForNewDay() {
+    return _resetForNewDay(_startWs)
   }
 
   // ---- watcher：quote 变 → 写回 cachedAsset（实时市值）-------------
@@ -126,7 +137,7 @@ export const useHoldingsStore = defineStore('holdings', () => {
     // computed
     liveMarketValue, liveTotalAsset, positionCodes,
     // actions
-    bootstrap, refreshAll,
+    bootstrap, refreshAll, resetForNewDay,
     refreshPositions, refreshAsset,
     getLivePrice, getMarketValue, getProfit, getReturnRate,
     applyOrderPush, applyTradePush, applyQuote,
