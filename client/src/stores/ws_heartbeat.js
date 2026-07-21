@@ -18,7 +18,12 @@ import { makeLogger } from '../utils/logger'
 
 const log = makeLogger('ws')
 
-export const CHANNELS = ['order_update', 'trade_update', 'quote_update', 'strategy_update']
+// change 2026-07-21-system-init-page-refresh: 加 system_update 频道
+//   - 后端 init_trading_day 成功后会通过 ws_manager.broadcast('system_update', {...})
+//     推送 type=init_completed 事件 (server/api/admin/sys_status.py:118)
+//   - 前端 ws_dispatch._onInitCompleted 接收后做：active day 切换 + force bootstrap
+//   - 之前 ws_dispatch._onInitCompleted 写了但永远收不到 (CHANNELS 没列)，导致日初后页面不切日
+export const CHANNELS = ['order_update', 'trade_update', 'quote_update', 'strategy_update', 'system_update']
 
 // v7 改: WS 重连从固定 3s 改为指数退避
 //   delay = min(1000 * 2^retryCount, 30000)

@@ -149,6 +149,12 @@ import { useAssetStore } from '../stores/asset'
 import { usePositionStore } from '../stores/position'
 // change 2026-07-15-system-init-broadcast end
 
+// change 2026-07-21-system-init-page-refresh: 监听 ws 系统事件 'evtrade:day-init-completed'
+//   - 其他 tab 或本 tab 通过 ws 收到 init_completed 时, 当前页面"当前交易日"卡片自动刷新
+//   - 用 CustomEvent 解耦 (ws_dispatch 不直接 import view)
+//   - 与 handleInit 内部 loadCurrent 形成双保险: handleInit 是同 tab 同步路径,
+//     ws 事件是异步路径 (覆盖多 tab / 跨用户场景)
+
 const loading = reactive({
   current: false,
   init: false,
@@ -226,11 +232,18 @@ async function handleInit() {
       loadReports()
       // change 2026-07-15-system-init-broadcast: 双保险 — 即便 ws init_completed 推送丢失/未连, 也能立即刷新
       //   ws 是主路径（多 tab 自动同步）, 此处是兜底（同 tab 立即可见）
+      // change 2026-07-21-system-init-page-refresh: 升级用 resetForNewDay (切日 + 清 IDB + 重 bootstrap)
+      //   - 旧 refreshAll 不切 activeTrdDate 不清 IDB, 导致 Position.vue netChange / T0Trade 当前日
+      //     仍显示昨日; 新路径完整切日
       try {
         const hs = useHoldingsStore()
-        hs.refreshAll()
-        useAssetStore().fetchAsset()
-        usePositionStore().fetchPositions()
+        if (typeof hs.resetForNewDay === 'function') {
+          hs.resetForNewDay()
+        } else {
+          hs.refreshAll()
+          useAssetStore().fetchAsset()
+          usePositionStore().fetchPositions()
+        }
       } catch (_e) { /* store 未就绪时忽略, 不影响 HTTP 200 路径 */ }
     } else {
       ElMessage.error(`日初失败：${result.msg || '未知错误'}（报告 #${result.report_id}）`)
@@ -274,14 +287,32 @@ async function viewReport(row) {
   }
 }
 
+// change 2026-07-21-system-init-page-refresh: ws 'evtrade:day-init-completed' 事件 handler
+//   - 触发时机: ws_dispatch._onInitCompleted 收到后端 system_update 推送后
+//   - 行为: loadCurrent 重拉当前交易日卡片, loadReports 重拉历史报告 (新报告刚生成)
+//   - 不依赖 handleInit 同步路径 (即使用户从别的 tab 或直接由后端触发也能刷新)
+function _onDayInitCompleted(e) {
+  loadCurrent()
+  loadReports()
+  // ElMessage 已在 handleInit 成功路径上弹过, 这里静默刷新避免重复
+}
+
 onMounted(() => {
   loadCurrent()
   loadReports()
   tickClock()
   _tickHandle = setInterval(tickClock, 1000)
+  // change 2026-07-21-system-init-page-refresh: 注册 ws 系统事件监听
+  if (typeof window !== 'undefined') {
+    window.addEventListener('evtrade:day-init-completed', _onDayInitCompleted)
+  }
 })
 onUnmounted(() => {
   if (_tickHandle) clearInterval(_tickHandle)
+  // change 2026-07-21-system-init-page-refresh: 注销 ws 系统事件监听
+  if (typeof window !== 'undefined') {
+    window.removeEventListener('evtrade:day-init-completed', _onDayInitCompleted)
+  }
 })
 </script>
 

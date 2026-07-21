@@ -279,23 +279,45 @@ function _onStockSynced(data) {
 }
 
 // ============================================================
-// change 2026-07-15-system-init-broadcast: 收到后端 init_completed
-//   → 全量刷新 holdings/asset/position store (与 AppHeader 刷新按钮行为一致)
-//   → 不弹 toast / Notification, 静默更新 (用户期望与点刷新按钮同体验)
-//   → ws 推失败时由 SystemInit.vue handleInit 同步刷新路径兜底
+// change 2026-07-21-system-init-page-refresh: 收到后端 init_completed
+//   1) 切交易日 + force re-bootstrap (重置 activeTrdDate, 清 IDB, 拉新日 RPC 4 路)
+//   2) 通知 SystemInit.vue 当前交易日卡片刷新 (window CustomEvent 解耦, 避免循环依赖)
+//   3) 不弹 toast / Notification, 静默更新 (用户期望与点刷新按钮同体验)
+//   4) ws 推失败时由 SystemInit.vue handleInit 同步刷新路径兜底
+//   change 2026-07-15-system-init-broadcast: 此函数原本只 refreshAll 缓存, 不切日
+//   change 2026-07-21-system-init-page-refresh: 升级为 force re-bootstrap (holdings.resetForNewDay)
 // ============================================================
 function _onInitCompleted(data) {
   if (!data) return
   log.info('init_completed 收到:', data.trd_date, 'status=', data.status, 'report_id=', data.report_id)
+  // 1) 切交易日 + 重置缓存 + 重拉 RPC (主路径)
+  //   - bootstrap 内部会调 _resolveActiveDay 拉新 activeTrdDate
+  //   - WS 推送守门、Position.vue netChange、T0Trade 当前日判断全部跟随新日
   try {
     const hs = useHoldingsStore()
-    // refreshAll 内部已用 Promise.allSettled 并行 + refCounts 守门
-    hs.refreshAll()
-    // 兼容老 view (Position.vue / Asset.vue 通过 store.fetch* 拿数据)
-    useAssetStore().fetchAsset()
-    usePositionStore().fetchPositions()
+    if (typeof hs.resetForNewDay === 'function') {
+      hs.resetForNewDay()
+    } else {
+      // 兜底: 旧版本 store 暴露没 resetForNewDay, 降级 refreshAll
+      log.warn('holdings.resetForNewDay 缺失, 降级 refreshAll')
+      hs.refreshAll()
+      useAssetStore().fetchAsset()
+      usePositionStore().fetchPositions()
+    }
   } catch (e) {
-    log.warn('_onInitCompleted refresh failed:', e?.message)
+    log.warn('_onInitCompleted resetForNewDay failed:', e?.message)
+  }
+  // 2) 通知 SystemInit.vue 当前交易日卡片刷新 (loadCurrent 重新拉 /api/system/active)
+  //   - 用 CustomEvent 而非直接 import SystemInit: 解耦 + 避免 ws_dispatch 反向依赖 view
+  //   - SystemInit.vue onMounted 时 addEventListener, onUnmounted removeEventListener
+  try {
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('evtrade:day-init-completed', {
+        detail: { trd_date: data.trd_date, status: data.status, report_id: data.report_id }
+      }))
+    }
+  } catch (e) {
+    log.warn('_onInitCompleted dispatchEvent failed:', e?.message)
   }
 }
 
