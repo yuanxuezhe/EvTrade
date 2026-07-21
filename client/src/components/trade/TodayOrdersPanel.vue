@@ -62,8 +62,8 @@
             <span v-else class="text-secondary">委托</span>
           </template>
         </el-table-column>
-        <!-- v68: 标的列 (仿 T0Trade.vue 标的列) — 代码 mono + 名称 secondary, 间距 6px -->
-        <el-table-column prop="stock_code" label="标的" sortable v-bind="COL.STOCK_TARGET">
+        <!-- change 2026-07-21-stock-target-col-width: 固定 width=160 + show-overflow-tooltip 防止名称撑宽 -->
+        <el-table-column prop="stock_code" label="标的" sortable width="160" show-overflow-tooltip v-bind="COL.STOCK_TARGET">
           <template #default="{ row }">
             <span class="text-mono tp-stock-code">{{ row.stock_code }}</span>
             <span class="text-secondary" style="margin-left: 6px">{{ stockName(row.stock_code) || '—' }}</span>
@@ -151,7 +151,7 @@
       />
     </div>
 
-    <!-- v30.1: tab=成交 表格 (从 TodayTradesPanel v13.2 内嵌) -->
+    <!-- change 2026-07-21-trades-tab-column-reorder: 列序对齐委托 tab — 交易日/委托编号.../时间(最后) -->
     <div v-if="activeTab === 'trades'" class="tp-body">
       <el-table
         ref="tradesTableRef"
@@ -162,14 +162,14 @@
         size="small"
         class="tp-table"
       >
-        <el-table-column prop="trade_time" label="时间" sortable v-bind="COL.TIME">
+        <el-table-column prop="trd_date" label="交易日" sortable v-bind="COL.STOCK_CODE">
           <template #default="{ row }">
-            <span class="text-mono text-secondary">{{ row.trade_time }}</span>
+            <span class="text-mono text-secondary">{{ row.trd_date }}</span>
           </template>
         </el-table-column>
-        <el-table-column prop="trade_id" label="成交编号" show-overflow-tooltip v-bind="COL.makeDict('id', { minWidth: 100 })">
+        <el-table-column prop="order_no" label="委托编号" show-overflow-tooltip v-bind="COL.STOCK_CODE">
           <template #default="{ row }">
-            <span class="text-mono text-secondary">{{ row.trade_id }}</span>
+            <span class="text-mono text-secondary">{{ row.order_no }}</span>
           </template>
         </el-table-column>
         <el-table-column label="类型" width="100">
@@ -178,8 +178,8 @@
             <span v-else class="text-secondary">成交</span>
           </template>
         </el-table-column>
-        <!-- v75: 标的列 (代码+名称合并, 与 v68 委托 tab 对齐) -->
-        <el-table-column prop="stock_code" label="标的" sortable v-bind="COL.STOCK_TARGET">
+        <!-- change 2026-07-21-stock-target-col-width: 与委托 tab 标的列同步 (width=160) -->
+        <el-table-column prop="stock_code" label="标的" sortable width="160" show-overflow-tooltip v-bind="COL.STOCK_TARGET">
           <template #default="{ row }">
             <span class="text-mono tp-stock-code">{{ row.stock_code }}</span>
             <span class="text-secondary" style="margin-left: 6px">{{ stockName(row.stock_code) || '—' }}</span>
@@ -205,6 +205,12 @@
         <el-table-column label="金额" v-bind="COL.MONEY">
           <template #default="{ row }">
             <span class="text-mono">{{ formatMoney(localAmount(row)) }}</span>
+          </template>
+        </el-table-column>
+        <!-- change 2026-07-21-trades-tab-column-reorder: 时间挪到最后一列 -->
+        <el-table-column prop="trade_time" label="时间" sortable v-bind="COL.TIME">
+          <template #default="{ row }">
+            <span class="text-mono text-secondary">{{ row.trade_time }}</span>
           </template>
         </el-table-column>
         <template #empty>
