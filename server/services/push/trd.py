@@ -79,12 +79,17 @@ def handle_trd_cfm(db: Session, row: Dict[str, Any], ts: str) -> Optional[Dict[s
     price = _float(row.get('traded_price', 0))         # v10: 原字段名
     volume = _int(row.get('traded_volume', 0))         # v10: 原字段名
     amount = round(price * volume, 2) if volume else 0.0
+    # change fix-trades-direction-server-side: broker trd_cfm 漏推 order_type (xtquant_api.py:275),
+    #   之前透传空串到 Trade.order_type='' 导致前端判定 '卖' 反了.
+    #   修复: 用本函数上文 (line 72) 已查到的 Order.order_type 反查填充, broker 传了则优先用 broker.
+    broker_order_type = _str(row.get('order_type', ''))
+    final_order_type = broker_order_type or (order.order_type if order else '')
     trade = Trade(
         trd_date=trd_date,
         order_no=broker_remark,
         trade_id=trade_id,
         stock_code=_str(row.get('stock_code', '')),
-        order_type=_str(row.get('order_type', '')),
+        order_type=final_order_type,
         price=price,
         volume=volume,
         amount=amount,
