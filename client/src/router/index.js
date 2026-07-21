@@ -68,7 +68,7 @@ const routes = [
   },
   { path: '/profile', name: 'Profile', component: Profile, meta: { title: '个人资料' } },
   { path: '/system-init', name: 'SystemInit', component: SystemInit, meta: { title: '系统初始化', requiresAdmin: true } },
-  { path: '/system-config', name: 'SystemConfig', component: SystemConfig, meta: { title: '系统配置', requiresAdmin: true } },
+  { path: '/system-config', name: 'SystemConfig', component: SystemConfig, meta: { title: '系统配置' } },  // v78: 允许普通用户查看 (写权限 UI 层控制)
   { path: '/t0-trade', name: 'T0Trade', component: T0Trade, meta: { title: '快速做T' } },
   // admin-only: IDB 4 张业务表的 CRUD 查看器
   { path: '/admin/cache/asset', name: 'CacheAsset', component: CacheAsset, meta: { title: '缓存: 资金', requiresAdmin: true } },

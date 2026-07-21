@@ -1,31 +1,42 @@
 /**
  * api/sysconfig.js — 统一配置 CRUD (v78)
+ *
+ * http instance baseURL='/api', 这里只写 path 后缀 (不要带 /api 前缀, 会拼成 /api/api/...)
+ * 返回 res.data 而不是 res (admin.js 等其他 api 都是这么写的)
  */
-import http from './http'
+import { http } from './index'
 
 export const sysconfigApi = {
   /** 列出配置 (当前用户 + 继承默认) */
-  list(user) {
-    const url = user ? `/api/sysconfig?user=${encodeURIComponent(user)}` : '/api/sysconfig'
-    return http.get(url)
+  async list(user) {
+    const url = user ? `/sysconfig?user=${encodeURIComponent(user)}` : '/sysconfig'
+    const res = await http.get(url)
+    return res.data
   },
   /** 读单个 */
-  get(cfg_key, user) {
-    const url = user ? `/api/sysconfig/${cfg_key}?user=${encodeURIComponent(user)}` : `/api/sysconfig/${cfg_key}`
-    return http.get(url)
+  async get(cfg_key, user) {
+    let url = `/sysconfig/${encodeURIComponent(cfg_key)}`
+    if (user) url += `?user=${encodeURIComponent(user)}`
+    const res = await http.get(url)
+    return res.data
   },
   /** 新增或更新 */
-  upsert({ user, cfg_key, cfg_val, desc }) {
-    return http.post('/api/sysconfig', { user, cfg_key, cfg_val, desc })
+  async upsert({ user, cfg_key, cfg_val, desc }) {
+    const res = await http.post('/sysconfig', { user, cfg_key, cfg_val, desc })
+    return res.data
   },
   /** 更新 (PUT) */
-  update(cfg_key, { user, cfg_val, desc }) {
-    const url = user ? `/api/sysconfig/${cfg_key}?user=${encodeURIComponent(user)}` : `/api/sysconfig/${cfg_key}`
-    return http.put(url, { cfg_key, cfg_val, desc })
+  async update(cfg_key, { user, cfg_val, desc }) {
+    let url = `/sysconfig/${encodeURIComponent(cfg_key)}`
+    if (user) url += `?user=${encodeURIComponent(user)}`
+    const res = await http.put(url, { user, cfg_val, desc })
+    return res.data
   },
   /** 删除 */
-  remove(cfg_key, user) {
-    const url = user ? `/api/sysconfig/${cfg_key}?user=${encodeURIComponent(user)}` : `/api/sysconfig/${cfg_key}`
-    return http.delete(url)
+  async remove(cfg_key, user) {
+    let url = `/sysconfig/${encodeURIComponent(cfg_key)}`
+    if (user) url += `?user=${encodeURIComponent(user)}`
+    const res = await http.delete(url)
+    return res.data
   },
 }
