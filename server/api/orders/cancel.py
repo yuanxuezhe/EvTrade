@@ -42,6 +42,21 @@ from server.api.orders.schemas import (
 
 log = logging.getLogger(__name__)
 
+# v77.4 fix: status_msg 列是 String(255), 撤单失败时 broker 可能返回含
+#   xtquant 内部对象 repr 的长字符串 (例如 "<xtpythonclient.CancelOrderStockReq object at 0x...>")
+#   写入时直接 1406 Data too long → API 500. 集中截断到 250 字符 (保留 5 字符余量)
+_MSG_MAX_LEN = 250
+
+
+def _safe_status_msg(s, limit: int = _MSG_MAX_LEN) -> str:
+    """截断 status_msg 到 DB 列允许长度, 避免 DataError 1406 让撤单 API 500."""
+    if s is None:
+        return ""
+    s = str(s)
+    if len(s) <= limit:
+        return s
+    return s[: limit - 1] + "…"  # 末尾加省略号, 总长恰好 limit
+
 
 def register_cancel(router):
     """注册 DELETE /{order_no} 端点到 FastAPI router。"""
@@ -129,7 +144,7 @@ def register_cancel(router):
         else:
             # 失败 (ack.code != 0 或 RPC 异常) → broker 57 废单(审计保留,不插 trade, v11 替代本地码 55)
             cancel_row.status = "57"
-            cancel_row.status_msg = (
+            cancel_row.status_msg = _safe_status_msg(
                 (ack.get("msg") if ack else None) or rpc_error or "撤单失败"
             )
             cancel_row.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
