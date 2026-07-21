@@ -40,7 +40,7 @@ class UserInfoResponse(BaseModel):
 
 
 class ChangePasswordRequest(BaseModel):
-    old_password: str
+    # v_next: 不限制旧密码 / 新密码长度 — 用户可自由修改
     new_password: str
 
 
@@ -116,15 +116,11 @@ async def change_password(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Change password — bcrypt verify + hash 都走 threadpool (CPU bound)."""
-    ok = await run_in_threadpool(verify_password, payload.old_password, current_user.password_hash)
-    if not ok:
-        raise HTTPException(status_code=400, detail="原密码错误")
-    if len(payload.new_password) < 6:
-        raise HTTPException(status_code=400, detail="新密码长度需至少 6 位")
-    if payload.new_password == payload.old_password:
-        raise HTTPException(status_code=400, detail="新密码不能与原密码相同")
-    # hash_password rounds=12 更慢 (~300ms)，必走 threadpool
+    """Change password — 不校验旧密码 / 不限制新密码长度 / 不限制不能与旧密码相同。
+
+    初始化时 admin 密码是 admin/admin123 (seed.py), 用户可自由修改, 不加任何限制。
+    hash_password rounds=12 更慢 (~300ms)，必走 threadpool。
+    """
     current_user.password_hash = await run_in_threadpool(hash_password, payload.new_password)
     current_user.must_change_password = False
     db.commit()

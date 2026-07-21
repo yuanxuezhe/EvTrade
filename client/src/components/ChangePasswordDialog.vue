@@ -13,20 +13,12 @@
       label-position="top"
       size="default"
     >
-      <el-form-item label="原密码" prop="old_password">
-        <el-input
-          v-model="form.old_password"
-          type="password"
-          show-password
-          placeholder="请输入当前密码"
-        />
-      </el-form-item>
       <el-form-item label="新密码" prop="new_password">
         <el-input
           v-model="form.new_password"
           type="password"
           show-password
-          placeholder="至少 6 位"
+          placeholder="请输入新密码"
         />
       </el-form-item>
       <el-form-item label="确认新密码" prop="confirm">
@@ -63,16 +55,14 @@ const formRef = ref(null)
 const authStore = useAuthStore()
 
 const form = reactive({
-  old_password: '',
   new_password: '',
   confirm: ''
 })
 
+// v_next: 不限制密码长度 / 不要求与旧密码不同 — 简化表单
 const rules = {
-  old_password: [{ required: true, message: '请输入原密码', trigger: 'blur' }],
   new_password: [
-    { required: true, message: '请输入新密码', trigger: 'blur' },
-    { min: 6, message: '密码长度至少 6 位', trigger: 'blur' }
+    { required: true, message: '请输入新密码', trigger: 'blur' }
   ],
   confirm: [
     { required: true, message: '请再次输入新密码', trigger: 'blur' },
@@ -94,7 +84,6 @@ watch(
 )
 
 function reset() {
-  form.old_password = ''
   form.new_password = ''
   form.confirm = ''
   formRef.value?.clearValidate()
@@ -106,7 +95,7 @@ async function handleSubmit() {
   if (!valid) return
   loading.value = true
   try {
-    await authStore.changePassword(form.old_password, form.new_password)
+    await authStore.changePassword('', form.new_password)
     ElMessage.success('密码已修改，请重新登录')
     visible.value = false
     emit('success')

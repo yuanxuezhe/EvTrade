@@ -243,9 +243,9 @@ export const authApi = {
     const res = await http.patch('/auth/me', payload)
     return res.data
   },
-  async changePassword(oldPassword, newPassword) {
+  async changePassword(_oldPassword, newPassword) {
+    // v_next: 后端不校验旧密码、不限制长度 — 前端只发新密码
     const res = await http.post('/auth/change-password', {
-      old_password: oldPassword,
       new_password: newPassword
     })
     return res.data

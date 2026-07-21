@@ -89,7 +89,6 @@
 
           <div class="form-row">
             <el-checkbox v-model="remember">记住用户名</el-checkbox>
-            <span class="form-tip">默认账号 admin / admin123</span>
           </div>
 
           <el-button
