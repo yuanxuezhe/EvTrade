@@ -22,7 +22,7 @@ from sqlalchemy.orm import Session
 from server.models.orm import Asset, Order, Position, T0Task, Trade
 from server.services.t0.core import get_fee_config, round_to_lot
 from server.services.t0.pnl import calc_realized_pnl
-from server.services.t0.fees import _q2, _q4
+from server.services.t0.fees import _q2, _q4, calc_commission_and_tax
 import logging
 
 log = logging.getLogger(__name__)

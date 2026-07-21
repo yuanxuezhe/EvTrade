@@ -150,16 +150,16 @@
         </template>
       </el-table-column>
 
-      <!-- 6. 做T盈亏 (110, sortable) -->
+      <!-- 6. 做T盈亏 (110, sortable) — realized + 实时 unrealized (ws 推送最新价) -->
       <el-table-column prop="t0_pnl" label="做T盈亏" align="right" width="110" sortable="custom">
         <template #default="{ row }">
-          <span class="text-mono" :class="(row.summary?.realized_pnl ?? 0) >= 0 ? 'up' : 'down'">
-            {{ (row.summary?.realized_pnl ?? 0) >= 0 ? '+' : '' }}{{ formatMoney(row.summary?.realized_pnl ?? 0) }}
+          <span class="text-mono" :class="t0PnlForRow(row) >= 0 ? 'up' : 'down'">
+            {{ t0PnlForRow(row) >= 0 ? '+' : '' }}{{ formatMoney(t0PnlForRow(row)) }}
           </span>
         </template>
       </el-table-column>
 
-      <!-- 7. 做T收益率% (120, sortable) -->
+      <!-- 7. 做T收益率% (120, sortable) — PnL / (cost_basis × |task_net_volume|) -->
       <el-table-column prop="t0_return_rate" label="做T收益率%" align="right" width="120" sortable="custom">
         <template #default="{ row }">
           <span class="text-mono" :class="t0ReturnRateForRow(row) >= 0 ? 'up' : 'down'">
@@ -436,7 +436,6 @@ import { formatNumber, formatAmount, formatMoney, formatPrice } from '../utils/f
 import { STATUS_LABEL, STATUS_TYPE } from '../utils/format'
 import { stockName } from '../utils/stockNames'
 import { COL } from '../utils/tableColumns'
-import { calcT0ReturnRate } from '../lib/t0-calc'
 import { makeLogger } from '../utils/logger'
 import OrderStatusBadge from '../components/OrderStatusBadge.vue'
 
@@ -665,10 +664,93 @@ function onSortChange({ prop, order }) {
 function _taskSortValue(row, key) {
   switch (key) {
     case 'position_vol': return Number(row.summary?.position_vol) || 0
-    case 't0_pnl': return Number(row.summary?.realized_pnl) || 0
+    case 't0_pnl': return t0PnlForRow(row)            // v77: 纯委托+实时盘口口径
     case 't0_return_rate': return t0ReturnRateForRow(row)
     default: return 0
   }
+}
+
+// v77: 纯委托+实时盘口 PnL — 实现放在 setup 内 (上方注释见)
+function t0PnlForRow(row) {
+  if (!row) return 0
+  const code = row.stock_code
+  const taskId = row.id
+  const orders = (holdingsStore.orders || []).filter(
+    o => o.stock_code === code
+      && Number(o.task_id) === Number(taskId)  // v77.1: 必须按 task_id 过滤, 同一票多 task 不串数据
+      && o.order_flag !== 1
+  )
+  let buyAmt = 0, buyVol = 0, sellAmt = 0, sellVol = 0
+  for (const o of orders) {
+    const tv = Number(o.traded_volume) || 0
+    if (tv <= 0) continue
+    const ap = Number(o.avg_price) || 0
+    if (!ap) continue
+    if (o.order_type === '23') {         // 买
+      buyAmt += ap * tv
+      buyVol += tv
+    } else if (o.order_type === '24') {  // 卖
+      sellAmt += ap * tv
+      sellVol += tv
+    }
+  }
+  const realized = sellAmt - buyAmt
+  const cur = buyVol - sellVol
+  const base = Number(row.base_volume) || 0
+  const tgv = Number(row.target_volume) || 0
+  const target = base + tgv
+  const diff = target - cur
+  if (diff === 0) return realized
+  const depth = quoteStore.getDepth(code)
+  const ask1 = Number(depth?.asks?.[0]?.price) || 0
+  const bid1 = Number(depth?.bids?.[0]?.price) || 0
+  if (diff > 0) {
+    if (!ask1) return realized
+    return realized - diff * ask1
+  }
+  if (!bid1) return realized
+  return realized + (-diff) * bid1
+}
+
+function t0ReturnRateForRow(row) {
+  if (!row) return 0
+  const pnl = t0PnlForRow(row)
+  if (!Number.isFinite(pnl) || pnl === 0) return 0
+  const code = row.stock_code
+  const taskId = row.id
+  const orders = (holdingsStore.orders || []).filter(
+    o => o.stock_code === code
+      && Number(o.task_id) === Number(taskId)  // v77.1: 同上
+      && o.order_flag !== 1
+  )
+  let tradedCost = 0
+  for (const o of orders) {
+    const tv = Number(o.traded_volume) || 0
+    const ap = Number(o.avg_price) || 0
+    if (tv > 0 && ap) tradedCost += ap * tv
+  }
+  const base = Number(row.base_volume) || 0
+  const tgv = Number(row.target_volume) || 0
+  const target = base + tgv
+  let buyVol = 0, sellVol = 0
+  for (const o of orders) {
+    const v = Number(o.traded_volume) || 0
+    if (v <= 0) continue
+    if (o.order_type === '23') buyVol += v
+    else if (o.order_type === '24') sellVol += v
+  }
+  const cur = buyVol - sellVol
+  const diff = target - cur
+  const depth = quoteStore.getDepth(code)
+  const ask1 = Number(depth?.asks?.[0]?.price) || 0
+  const bid1 = Number(depth?.bids?.[0]?.price) || 0
+  let balanceCost = 0
+  if (diff > 0 && ask1) balanceCost = diff * ask1
+  else if (diff < 0 && bid1) balanceCost = (-diff) * bid1
+  const denom = tradedCost + balanceCost
+  if (denom <= 0) return 0
+  const r = pnl / denom
+  return Number.isFinite(r) ? r : 0
 }
 const sortedTaskRows = computed(() => {
   const list = [...taskRows.value]
@@ -688,16 +770,25 @@ function statusTagType(s) {
   return 'danger'
 }
 
-// ---- 收益率 (v54 复用 calcT0ReturnRate 纯函数) ----
-function t0ReturnRateForRow(row) {
-  // task 没有直接的 last_vol/cost_price, 用 base_volume 代替底仓 (近似);
-  //   真实"持仓成本价" 留作 v56 task cost 字段扩展
-  const baseVol = row.base_volume || 0
-  return calcT0ReturnRate(
-    { last_vol: baseVol, cost_price: 1 },  // 占位 cost_price=1, 实际意义 v56 调整
-    { today_buy_amount: 0, today_sell_amount: row.summary?.realized_pnl || 0 },
-  )
-}
+// ---- 做T盈亏 / 收益率 (v77: 纯委托 + 实时盘口口径, 不依赖 cost_basis) ----
+//
+// 修 bug: 用户 2026-07-21 二次反馈 "实时价 vs 成交价差异时, 页面没正常计算 PnL".
+//   v76 用 realized + (livePrice - cost_basis) × taskNetVol 的公式, 但 cost_basis
+//   是后端基于成交均价推的静态值, 跟"实时配平"语义不一致 — 用户要的是"实时盘口"口径.
+// v77 改为纯委托+盘口 (user 业务定义):
+//   1) 已实现: Σ(卖成交量 × 卖成交均价) − Σ(买成交量 × 买成交均价)
+//   2) 配平盘口 (按当前已成交净持仓 vs 目标 base+target):
+//        cur    = Σ(买成交) − Σ(卖成交)         // 当前净持仓
+//        target = base_volume + target_volume   // 配平目标
+//        diff   = target − cur
+//        diff>0: 配平部分按"补买" 算: Pnl += −(diff) × 卖1价(ask1)  (花卖1价买)
+//        diff<0: 配平部分按"补卖" 算: Pnl += (|diff|) × 买1价(bid1)  (收买1价卖)
+//        diff=0: 不加盘口项
+//   3) 收益率 = Pnl / (Σ成交量 × 均价 + |diff|×盘口价)  (综合成本分母)
+// 数据源: holdingsStore.orders (同 stock_code 即为该 task 下所有委托), quoteStore.getDepth (实时盘口).
+// 实现位置: 在 setup 块内 (见 _taskSortValue 下方) — 因 holdingsStore/quoteStore 是 setup 内 const,
+//   setup 外定义会 ReferenceError. (v77 v2)
+// ---- 实现 ---- (setup 内部, 见下方 t0PnlForRow / t0ReturnRateForRow)
 
 // ---- task 操作 ----
 function onTaskChange(taskId) {
