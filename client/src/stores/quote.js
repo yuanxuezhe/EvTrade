@@ -44,6 +44,8 @@ export const useQuoteStore = defineStore('quote', () => {
   //   Vue 追踪不到内部字段变化, computed 必须靠 1s tick 强制重算.
   //   现改 shallowRef, .set() 后 triggerRef(byCode) → 所有依赖 .value.get(code).field 的 computed 自动重算
   const byCode = shallowRef(new Map())
+  // v77.4: 全局 tick 计数器 — 每次 update() 自增, 外部组件 watch 这个 ref 即可响应行情推送
+  const tick = ref(0)
   // 2026-07-09: 维护当前已订阅的 code 集合（防止重复 subscribe + 退出页面时 unsubscribe）
   const subscribedSet = ref(new Set())
 
@@ -90,6 +92,8 @@ export const useQuoteStore = defineStore('quote', () => {
     byCode.value.set(payload.stock_code, next)
     // v32+: 手动触发响应 — shallowRef 不会追踪 Map 内部变化
     triggerRef(byCode)
+    // v77.4: 全局 tick 自增, 供外部 watch 实时重算 (PnL / 收益率 cell)
+    tick.value++
   }
 
   /**
@@ -243,7 +247,7 @@ export const useQuoteStore = defineStore('quote', () => {
 
   const size = computed(() => byCode.value.size)
   return {
-    byCode, subscribedSet, size,
+    byCode, subscribedSet, size, tick,
     update, applySnapshots, subscribe, unsubscribe, replayAll,
     get, getQuote, getLastPrice, getField, getChangePct, getDepth,
     codes, FIELD,

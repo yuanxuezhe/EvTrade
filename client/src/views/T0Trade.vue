@@ -670,9 +670,16 @@ function _taskSortValue(row, key) {
   }
 }
 
+// v77.4: 行情 tick 计数器 (本地 ref, 供 PnL/收益率 cell 读 quoteTick.value 建立响应追踪)
+//   watch quoteStore.tick (Pinia 自动解包成 number, number 变即触发) 让 quoteTick 自增
+const quoteTick = ref(0)
+watch(() => quoteStore.tick, () => { quoteTick.value++ }, { flush: 'post' })
+
 // v77: 纯委托+实时盘口 PnL — 实现放在 setup 内 (上方注释见)
 function t0PnlForRow(row) {
   if (!row) return 0
+  // 关键: 读 quoteTick.value 让 Vue 渲染时建立响应追踪 (quoteStore.byCode 变 → quoteTick++ → cell 重渲染)
+  void quoteTick.value
   const code = row.stock_code
   const taskId = row.id
   const orders = (holdingsStore.orders || []).filter(
@@ -714,7 +721,11 @@ function t0PnlForRow(row) {
 
 function t0ReturnRateForRow(row) {
   if (!row) return 0
+  // 关键: 收益率 cell render 时读 quoteTick.value 建立响应追踪
+  void quoteTick.value
   const pnl = t0PnlForRow(row)
+  // v77.3: 之前误用 || (Number.isFinite(pnl) || pnl === 0) 当 pnl=-100 时会落 true 分支返回 0,
+  //   改为 &&: 只在 pnl 不是有限数 (= NaN/Infinity) 或 =0 时返回 0
   if (!Number.isFinite(pnl) || pnl === 0) return 0
   const code = row.stock_code
   const taskId = row.id
