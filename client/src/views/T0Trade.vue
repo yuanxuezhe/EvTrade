@@ -500,6 +500,16 @@ watch([stockCode, filteredActiveTasks], ([code, list]) => {
     selectedTaskId.value = null
   }
 })
+
+// change 2026-07-21-t0-default-select-first: 进入页面/taskRows 变化时, 默认选中第一条
+//   修复配平 stock_code=空 bug: balanceStockCode 依赖 selectedTaskId, 无选中时返回 ''
+//   后端 place.py:84 校验 task.stock_code != req.stock_code → 报错
+watch(taskRows, (rows) => {
+  if (!selectedTaskId.value && rows && rows.length > 0) {
+    selectedTaskId.value = rows[0].id
+  }
+}, { immediate: true })
+
 // ---- v55.1 上下分区: 下半委托表 + 实时配平 ----
 // storeToRefs 是 pinia 解构 ref 必备
 const { orders: holdingsOrders } = storeToRefs(holdingsStore)
@@ -1071,4 +1081,12 @@ onMounted(async () => {
   overflow-x: auto; /* v57 commit.1: 主表 9 列宽 1150px > 容器 1010px, 允许横滚 (操作列 fixed 浮动) */
 }
 
+/* change 2026-07-21-t0-row-selected-darker: 选中行背景加深 + 左侧强调边 */
+.task-table :deep(.el-table__row.is-selected) > td {
+  background-color: var(--el-color-primary-light-9, #ecf5ff) !important;
+  box-shadow: inset 3px 0 0 0 var(--el-color-primary, #409eff);
+}
+.task-table :deep(.el-table__row.is-selected):hover > td {
+  background-color: var(--el-color-primary-light-8, #d9ecff) !important;
+}
 </style>
