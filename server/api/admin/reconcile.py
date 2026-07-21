@@ -69,9 +69,15 @@ async def get_config(db: Session = Depends(get_db), _=Depends(require_admin)):
                 updated_by=str(cfg.updated_by) if cfg.updated_by is not None else 'init',
             )
         auto, broker = False, 1
+        return ReconcileConfigOut(
+            auto_reconcile=bool(auto),
+            auto_use_broker_data=int(broker),
+            updated_by='init',
+        )
     return ReconcileConfigOut(
         auto_reconcile=bool(auto),
         auto_use_broker_data=int(broker),
+        updated_by='cache',
     )
 
 
