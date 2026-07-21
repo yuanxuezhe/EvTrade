@@ -275,6 +275,29 @@ class ReconcileConfig(Base):
     updated_by = Column(Integer, nullable=True)
 
 
+class SysConfig(Base):
+    """统一配置表 (v78)
+
+    📖 详见 `openspec/specs/data-model/spec.md` §3 (SysConfig 表)
+    主键: (user, cfg_key) 复合主键
+    - user='0' 表示全局默认配置 (任何用户未配置时回退到这里)
+    - user='<username>' 表示该用户专属覆盖
+    - 启动时一次性加载到内存 cache, 业务层从 cache 读
+    - 写时同步更新 cache + DB
+    """
+    __tablename__ = "sys_config"
+    __table_args__ = (
+        Index("ix_sys_config_user", "user"),
+    )
+
+    user = Column(String(64), primary_key=True, nullable=False, default="0")
+    cfg_key = Column(String(64), primary_key=True, nullable=False)
+    cfg_val = Column(String(512), nullable=False, default="")
+    desc = Column(String(255), nullable=False, default="")
+    updated_at = Column(DateTime, nullable=False, default=_utcnow, onupdate=_utcnow)
+    updated_by = Column(String(64), nullable=True)
+
+
 # ─────────────── 历史 ───────────────
 
 class ReconcileReport(Base):

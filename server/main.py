@@ -21,7 +21,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from server.auth.deps import get_current_user
 from server.api import positions, holdings, orders, trades, asset, auth as auth_api, users as users_api
-from server.api import clock, fee_config
+from server.api import clock, fee_config, sysconfig as sysconfig_api  # v78: 统一配置
 from server.api import system as system_api  # v8: 系统级查询（active-day）
 from server.api import t0_stats, t0_aggregate
 from server.api import t0_tasks  # v18 change t0-task-management
@@ -104,6 +104,10 @@ register_ws_endpoint(app)
 def on_startup():
     """DB 建表 + 默认账号 seed（实现见 server/lifecycle/seed.py）"""
     init_and_seed()
+    # v78: 启动时一次性加载 sysconfig 到 cache
+    from server.services import sysconfig
+    sysconfig.load_all()
+    print(f"[INIT] sysconfig loaded: {len(sysconfig._cache)} users")
 
 
 @app.on_event("startup")
@@ -195,6 +199,7 @@ _AUTH = [Depends(get_current_user)]
 app.include_router(positions.router, prefix="/api/positions", tags=["positions"], dependencies=_AUTH)
 app.include_router(holdings.router, prefix="/api/holdings", tags=["holdings"], dependencies=_AUTH)
 app.include_router(orders.router, prefix="/api/orders", tags=["orders"], dependencies=_AUTH)
+app.include_router(sysconfig_api.router, prefix="/api/sysconfig", tags=["sysconfig"], dependencies=_AUTH)
 app.include_router(t0_stats.router, prefix="/api/orders", tags=["t0-stats"], dependencies=_AUTH)
 app.include_router(t0_aggregate.router, prefix="/api/orders", tags=["t0-aggregate"], dependencies=_AUTH)
 app.include_router(t0_tasks.router, prefix="/api/t0-tasks", tags=["t0-tasks"], dependencies=_AUTH)  # v18

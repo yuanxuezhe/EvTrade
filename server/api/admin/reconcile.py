@@ -23,6 +23,7 @@ from server.db import get_db
 from server.models.orm import ReconcileConfig, ReconcileReport
 from server.models.user import User
 from server.services.guards import require_admin
+from server.services import sysconfig
 from server.utils.time import format_db_dt
 
 router = APIRouter()
@@ -54,20 +55,23 @@ class ReconcileReportSummary(BaseModel):
 
 @router.get("/config", response_model=ReconcileConfigOut)
 async def get_config(db: Session = Depends(get_db), _=Depends(require_admin)):
-    cfg = db.query(ReconcileConfig).first()
-    if not cfg:
-        cfg = ReconcileConfig(auto_reconcile=False, updated_by=None)
-        db.add(cfg)
-        db.commit()
-        db.refresh(cfg)
-    # v5 schema: ORM updated_by=Integer (历史遗留), Pydantic 期望 str
-    # 统一在序列化时 str() 包一下, 兼容 DB 里 int / None 两种
-    _ub = cfg.updated_by
+    """v78: 优先读 sysconfig cache, cache miss 回退旧 ReconcileConfig 表"""
+    auto = sysconfig.get("auto_reconcile", False, user="0")
+    broker = sysconfig.get("auto_use_broker_data", 1, user="0")
+    if auto is None and broker is None:
+        # cache miss 全 None (未加载), 回退旧表
+        cfg = db.query(ReconcileConfig).first()
+        if cfg:
+            return ReconcileConfigOut(
+                auto_reconcile=bool(cfg.auto_reconcile),
+                auto_use_broker_data=int(cfg.auto_use_broker_data),
+                updated_at=format_db_dt(cfg.updated_at) if cfg.updated_at else None,
+                updated_by=str(cfg.updated_by) if cfg.updated_by is not None else 'init',
+            )
+        auto, broker = False, 1
     return ReconcileConfigOut(
-        auto_reconcile=bool(cfg.auto_reconcile),
-        auto_use_broker_data=int(cfg.auto_use_broker_data),
-        updated_at=format_db_dt(cfg.updated_at) if cfg.updated_at else None,
-        updated_by=str(_ub) if _ub is not None else 'init',
+        auto_reconcile=bool(auto),
+        auto_use_broker_data=int(broker),
     )
 
 
@@ -77,14 +81,20 @@ async def update_config(
     db: Session = Depends(get_db),
     admin_user: User = Depends(require_admin),
 ):
+    """v78: 写 sysconfig.user='0' + 同步旧 ReconcileConfig 表"""
+    if req.auto_reconcile is not None:
+        sysconfig.set_value("0", "auto_reconcile", "1" if req.auto_reconcile else "0",
+                            "自动对账开关 (0=人工/1=自动)", admin_user.username)
+    if req.auto_use_broker_data is not None:
+        sysconfig.set_value("0", "auto_use_broker_data", "1" if req.auto_use_broker_data else "0",
+                            "自动对账时以柜台为准 (0=本地/1=柜台)", admin_user.username)
+    # 同步旧表 (向后兼容)
     cfg = db.query(ReconcileConfig).first()
     if not cfg:
         cfg = ReconcileConfig()
         db.add(cfg)
-    if req.auto_reconcile is not None:
-        cfg.auto_reconcile = 1 if req.auto_reconcile else 0
-    if req.auto_use_broker_data is not None:
-        cfg.auto_use_broker_data = 1 if req.auto_use_broker_data else 0
+    cfg.auto_reconcile = int(sysconfig.get("auto_reconcile", False, user="0"))
+    cfg.auto_use_broker_data = int(sysconfig.get("auto_use_broker_data", 1, user="0"))
     cfg.updated_by = admin_user.id
     cfg.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
     db.commit()
