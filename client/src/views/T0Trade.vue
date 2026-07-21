@@ -173,14 +173,15 @@
       <el-table-column label="操作" align="center" width="280" fixed="right">
         <template #default="{ row }">
           <div class="op-col">
+            <!-- change 2026-07-21-t0-buy-red-sell-green: 买=红 danger / 卖=绿 success -->
             <el-button
-              type="success"
+              type="danger"
               size="small"
               :disabled="!canOpRow(row)"
               @click="onBuyTask(row)"
             >买</el-button>
             <el-button
-              type="danger"
+              type="success"
               size="small"
               :disabled="!canOpRow(row)"
               @click="onSellTask(row)"
@@ -499,7 +500,6 @@ watch([stockCode, filteredActiveTasks], ([code, list]) => {
     selectedTaskId.value = null
   }
 })
-
 // ---- v55.1 上下分区: 下半委托表 + 实时配平 ----
 // storeToRefs 是 pinia 解构 ref 必备
 const { orders: holdingsOrders } = storeToRefs(holdingsStore)
@@ -1054,4 +1054,5 @@ onMounted(async () => {
   overflow-y: auto;
   overflow-x: auto; /* v57 commit.1: 主表 9 列宽 1150px > 容器 1010px, 允许横滚 (操作列 fixed 浮动) */
 }
+
 </style>
