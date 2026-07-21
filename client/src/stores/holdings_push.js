@@ -149,13 +149,15 @@ export function createPushHandlers(deps) {
 
     const tradeType = Number(row.trade_type) || 0
     // change: 标准化 amount = price × volume (本地算)
+    // change fix-trades-direction-reversed: broker trd_cfm 不带 order_type, 后端透传空串
+    //   前端按 '23'?→'买' 判定空串→'卖' 反了。修复: 反向累计 order 后, 把 order.order_type 写回 trade.
     const newTrade = normalizeTrade({
       trade_id: row.trade_id,
       order_id: row.order_id || '',
       order_no: row.order_no || '',
       trd_date: row.trd_date || todayYYYYMMDD(),
       stock_code: row.stock_code || '',
-      order_type: row.order_type || '',
+      order_type: row.order_type || '',   // broker 空 → 下方用 order 兜底
       trade_time: row.trade_time || nowHMS(),
       trade_type: tradeType,
       price: row.price,
@@ -170,6 +172,13 @@ export function createPushHandlers(deps) {
       if (orderIdx >= 0) {
         const old = orders.value[orderIdx]
         const updated = recomputeOrderFromTrade(old, newTrade)
+        // change fix-trades-direction-reversed: 用 order.order_type 填充 trade.order_type (broker trd_cfm 漏推)
+        if (!newTrade.order_type && updated.order_type) {
+          newTrade.order_type = updated.order_type
+          // 同步写回 trades ref + IDB (让前端判定和持久化都对)
+          trades.value[0] = newTrade
+          _persistTrade(newTrade)
+        }
         orders.value[orderIdx] = updated
         // v13: 累计间接改了 orders, 也单行写 IDB
         _persistOrder(updated)
