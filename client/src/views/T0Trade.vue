@@ -704,6 +704,20 @@ async function onBalanceTask(taskId) {
     ElMessage.info(`task #${taskId} 已平衡，无需操作`)
     return
   }
+  // change 2026-07-21-t0-balance-stock-code-guard: 防 balanceStockCode 空导致后端校验失败
+  //   server/api/orders/place.py:84 校验 task.stock_code != req.stock_code → 报错
+  //   兜底: selectedTaskId 失效 / tasksById 缺失 stock_code 时, 直接从 taskRows 拿 row.stock_code
+  let stockCodeForBalance = balanceStockCode.value
+  if (!stockCodeForBalance) {
+    const row = taskRows.value.find((t) => t.id === taskId)
+    if (row?.stock_code) {
+      stockCodeForBalance = row.stock_code
+      log('warn', 'T0', 'balance', `balanceStockCode 为空, 从 taskRows[${taskId}].stock_code 兜底`)
+    } else {
+      ElMessage.error(`task #${taskId} 缺少 stock_code, 无法配平`)
+      return
+    }
+  }
   const orderType = diff > 0 ? '24' : '23'  // 反向: 多买则卖, 多卖则买
   const volume = Math.abs(diff)
   try {
@@ -713,7 +727,9 @@ async function onBalanceTask(taskId) {
     )
   } catch (e) { return }
   try {
-    await submitBalanceOrder({ orderType, volume, price: 0, taskId })
+    // change 2026-07-21-t0-balance-stock-code-guard: 用 stockCodeOverride 让 useT0OrderSubmit
+    //   优先用兜底 stock_code (而不是闭包 stockCode.value, 后者可能为空)
+    await submitBalanceOrder({ orderType, volume, price: 0, taskId, stockCodeOverride: stockCodeForBalance })
     // useT0OrderSubmit 内部已 ElMessage.success
     await t0TasksStore.loadTasks()  // 刷新主表（task summary 更新）
   } catch (e) { /* ElMessage 已被 axios 拦截器弹出 */ }

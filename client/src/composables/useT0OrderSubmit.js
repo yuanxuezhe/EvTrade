@@ -22,16 +22,25 @@ import { ElMessage } from 'element-plus'
 import { formatPrice } from '../utils/format'
 
 export function useT0OrderSubmit({ stockCode, priceType, balanceCoeff, submitting, orderStore, onAfterSuccess }) {
-  async function submitOrder({ orderType, volume, price, taskId = null }) {
+  async function submitOrder({ orderType, volume, price, taskId = null, stockCodeOverride = null }) {
     submitting.value = true
     try {
       const priceTypeCode = priceType.value === 'market' ? 44
         : priceType.value === 'oppose' ? 14
         : 11  // 'latest' / 'limit'
+      // change 2026-07-21-t0-balance-stock-code-guard: 优先用 stockCodeOverride 兜底,
+      //   防止 balanceStockCode 为空时 (selectedTaskId 失效) 后端 place.py:84 校验失败.
+      //   T0Trade.vue onBalanceTask 在 selectedTaskId/tasksById 失效时, 从 taskRows 直接取 row.stock_code 传入.
+      const finalStockCode = stockCodeOverride || stockCode.value
+      if (!finalStockCode) {
+        ElMessage.warning('未选中标的，无法下单')
+        submitting.value = false
+        return
+      }
       // v8: 走 orderStore 统一处理（已 _upsertToHoldings 写缓存 + 防御性 status 重算）
       //     res = api 拦截器解包后的 list 数组(1 个 OrderOut)
       const res = await orderStore.placeOrder({
-        stock_code: stockCode.value,
+        stock_code: finalStockCode,
         order_type: orderType,
         price_type: priceTypeCode,
         price: price,
