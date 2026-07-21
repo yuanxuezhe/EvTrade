@@ -60,6 +60,9 @@ export function applyTradesRefresh(r, refs) {
     // change system-delegation-price-fill-calc: amount 本地算 (price × volume)
     const rawTrades = Array.isArray(r.value) ? r.value : []
     refs.trades.value = rawTrades.map(normalizeTrade)
+    // change fix-trades-direction-reversed: bootstrap/refresh 路径兜底, broker trd_cfm 不带 order_type
+    //   从 orders 表反查 order.order_type 填充 trade.order_type (broker 漏推, 后端透传空串)
+    _fillTradesDirection(refs)
     refs.refCounts.value.trades = 'ok'
     return `成交 ${refs.trades.value.length} 条`
   }
@@ -115,10 +118,37 @@ export function applyTradesResult(r, refs, source) {
     const rawTrades = Array.isArray(r.value) ? r.value
       : (Array.isArray(r.value?.list) ? r.value.list : [])
     refs.trades.value = rawTrades.map(normalizeTrade)
+    // change fix-trades-direction-reversed: bootstrap 路径兜底 (orders 已先于 trades 写入, 反查必中)
+    _fillTradesDirection(refs)
     refs.refCounts.value.trades = 'ok'
     refs.log('ok', '缓存', source, `成交加载成功 (${refs.trades.value.length} 条)`)
   } else {
     refs.refCounts.value.trades = 'fail'
     refs.log('err', '缓存', 'rpc', '成交加载失败', String(r.reason?.message || r.reason))
+  }
+}
+
+/**
+ * change fix-trades-direction-reversed: 成交方向兜底
+ *   broker trd_cfm 推送不带 order_type, 后端 trd.py:87 透传空串到 Trade.order_type='',
+ *   前端 row.order_type==='23' 判定空串走 else 分支 → 显示 '卖'.
+ *   修复: bootstrap/refresh 路径用 orders 表反查填充 (orders 已先于 trades 写入, 必中).
+ *   ws push 路径在 holdings_push.js:140 单独处理.
+ */
+function _fillTradesDirection(refs) {
+  const orders = refs.orders.value
+  if (!orders || orders.length === 0) return
+  const byOrderNo = new Map(orders.map((o) => [o.order_no, o]))
+  let filled = 0
+  for (const t of refs.trades.value) {
+    if (t.order_type) continue
+    const o = byOrderNo.get(t.order_no)
+    if (o && o.order_type) {
+      t.order_type = o.order_type
+      filled++
+    }
+  }
+  if (filled > 0) {
+    refs.log('info', '缓存', 'apply', `成交方向兜底填充 ${filled} 条 (broker trd_cfm 漏推 order_type)`)
   }
 }
