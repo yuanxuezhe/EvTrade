@@ -16,6 +16,7 @@
  *   applyTradesRefresh/applyTradesResult   — map 调 normalizeTrade 重算 amount
  */
 import { parseAsset, normalizeOrder, normalizeTrade } from './holdings_helpers'
+import { saveTrade } from './holdings_idb'
 
 // ---- refreshAll 用：返回 summary 字符串 --------------------------------
 
@@ -145,10 +146,12 @@ function _fillTradesDirection(refs) {
     const o = byOrderNo.get(t.order_no)
     if (o && o.order_type) {
       t.order_type = o.order_type
+      // change fix-trades-direction-reversed-persist: 兜底后回写 IDB (旧 trade.order_type='' 持久化空值)
+      saveTrade(t)
       filled++
     }
   }
   if (filled > 0) {
-    refs.log('info', '缓存', 'apply', `成交方向兜底填充 ${filled} 条 (broker trd_cfm 漏推 order_type)`)
+    refs.log('info', '缓存', 'apply', `成交方向兜底填充 ${filled} 条 + 回写 IDB (broker trd_cfm 漏推 order_type)`)
   }
 }
