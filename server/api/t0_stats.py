@@ -17,22 +17,25 @@ v6 改动（2026-06-19 t0-exposure-and-aggregate change）：
 - unrealized_pnl 改为基于当前持仓（position_vol × cost_basis），不再叠加当日已实现
   旧 = (avg_sell - cost_basis) * paired
   新 = (avg_sell - cost_basis) * position_vol  // 持仓浮动（用当日卖出均价作为市场价近似）
+
+v81.4 改动（tables-migration）：
+- 删 Depends(get_db) × 4 + sqlalchemy.orm.Session import + server.db.get_db
+- db.query(Order/Trade/Position).filter(…) → Orders/Trades/Positions.query_by(…) + 内存过滤
 """
 from collections import defaultdict
 from datetime import datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from typing import List, Optional
 
-from server.db import get_db
-from server.models.orm import Order, Trade, Position
+from server.db import db_session
 from server.auth.deps import get_current_user
 from server.models.user import User
 from server.services.guards import resolve_default_trd_date
 from server.services.t0 import get_fee_config
 from server.services.t0.aggregate_api import calc_realized_pnl
 from server.services.t0.aggregators import resolve_t0_user_defs
+from server.tables import Orders, Trades, Positions
 
 router = APIRouter()
 
@@ -67,41 +70,44 @@ async def t0_stats(
     trd_date: Optional[str] = Query(None, description="8 位数字 YYYYMMDD，默认激活日"),
     t0_only: bool = Query(False, description="只统计 user_def='T0' 标记的委托/成交"),
     user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
 ):
-    """T0 当日 + 历史收益汇总（单标的）"""
-    trd = trd_date or resolve_default_trd_date(db)
+    """T0 当日 + 历史收益汇总（单标的）
+
+    v81.4 tables-migration:
+      原 db.query(Order).filter(...) → Orders.query_by('trd_date', trd) + 内存过滤 stock_code/user_def
+      原 db.query(Position).filter(Position.stock_code == ...) → Positions.query_by('stock_code', stock_code)
+    """
+    # v81.4: resolve_default_trd_date / resolve_t0_user_defs 仍需 db session (service 层保留 ORM)
+    #   用 db_session() context manager (auto commit/close) 替代 Depends(get_db)
+    with db_session() as db:
+        trd = trd_date or resolve_default_trd_date(db)
     if not trd:
         raise HTTPException(
             status_code=400,
             detail={"code": "NO_TRADING_DAY", "msg": "无交易日，请先在系统初始化页激活"}
         )
 
-    # 当日委托 / 成交
-    orders_today = db.query(Order).filter(
-        Order.trd_date == trd,
-        Order.stock_code == stock_code,
-    )
+    # 当日委托 / 成交 — 走 Orders.query_by('trd_date', trd) + 内存过滤 stock_code
+    all_orders_today = Orders.query_by("trd_date", trd)
+    orders_today = [o for o in all_orders_today if o.stock_code == stock_code]
+
     if t0_only:
         # T0 扩展：user_def='T0' literal + 所有 type='t0' 策略的 user_def（task 8）
-        allowed = resolve_t0_user_defs(db, "T0")
-        orders_today = orders_today.filter(Order.user_def.in_(allowed))
-    orders_today = orders_today.all()
+        with db_session() as db:
+            allowed = resolve_t0_user_defs(db, "T0")
+        allowed_set = set(allowed) if allowed else set()
+        orders_today = [o for o in orders_today if (o.user_def or "") in allowed_set]
 
-    trades_today = db.query(Trade).filter(
-        Trade.trd_date == trd,
-        Trade.stock_code == stock_code,
-    )
+    all_trades_today = Trades.query_by("trd_date", trd)
+    trades_today = [t for t in all_trades_today if t.stock_code == stock_code]
+
     if t0_only:
         # 通过关联本地委托来过滤成交
-        t0_order_nos = {
-            o.order_no for o in orders_today
-        }
+        t0_order_nos = {o.order_no for o in orders_today}
         if t0_order_nos:
-            trades_today = trades_today.filter(Trade.order_no.in_(t0_order_nos))
+            trades_today = [t for t in trades_today if t.order_no in t0_order_nos]
         else:
-            trades_today = trades_today.filter(False)  # 强制空
-    trades_today = trades_today.all()
+            trades_today = []  # 强制空
 
     today_buy_vol = 0
     today_sell_vol = 0
@@ -117,8 +123,9 @@ async def t0_stats(
             today_sell_vol += vol
             today_sell_amt += price * vol
 
-    # 持仓（按 stock_code PK 单行）— 先取 cost_basis 再算 realized
-    pos = db.query(Position).filter(Position.stock_code == stock_code).first()
+    # 持仓（按 stock_code PK 单行）
+    pos_rows = Positions.query_by("stock_code", stock_code)
+    pos = pos_rows[0] if pos_rows else None
     cost_basis = float(pos.cost_price) if pos else 0.0
     position_vol = int(pos.vol) if pos and pos.vol else 0
     position_cost_total = cost_basis * position_vol
@@ -146,7 +153,7 @@ async def t0_stats(
 
     # 委托统计
     order_count = len(orders_today)
-    open_order_count = sum(1 for o in orders_today if o.status in ("48", "49", "50"))
+    open_order_count = sum(1 for o in orders_today if (o.status or "") in ("48", "49", "50"))
 
     return T0StatsOut(
         trd_date=trd,
@@ -192,28 +199,34 @@ def t0_history(
     stock_code: str,
     days: int = Query(30, ge=1, le=180),
     t0_only: bool = Query(False, description="只统计 user_def='T0' 标记的成交"),
-    db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    """近 N 天做T 每日买入/卖出/笔数 + 累计差额"""
+    """近 N 天做T 每日买入/卖出/笔数 + 累计差额
+
+    v81.4 tables-migration:
+      原 db.query(Trade).filter(Trade.stock_code == ..., Trade.trd_date >= start, ...) → 内存过滤
+      (区间 + 多条件 + IN, API 层不支持; 数据量小, 走 Trades.query_all + 内存)
+    """
     today = datetime.now().strftime("%Y%m%d")
     start = (datetime.now() - timedelta(days=days * 2)).strftime("%Y%m%d")
-    q = db.query(Trade).filter(
-        Trade.stock_code == stock_code,
-        Trade.trd_date >= start,
-        Trade.trd_date <= today,
-    )
+    all_trades = Trades.query_all()
+    q = [t for t in all_trades
+         if t.stock_code == stock_code
+         and (t.trd_date or "") >= start
+         and (t.trd_date or "") <= today]
+
     if t0_only:
         # T0 扩展：user_def='T0' literal + 所有 type='t0' 策略的 user_def（task 8）
-        allowed = resolve_t0_user_defs(db, "T0")
-        t0_order_nos = {
-            o.order_no for o in db.query(Order).filter(Order.user_def.in_(allowed)).all()
-        }
+        with db_session() as db:
+            allowed = resolve_t0_user_defs(db, "T0")
+        allowed_set = set(allowed) if allowed else set()
+        all_orders = Orders.query_all()
+        t0_order_nos = {o.order_no for o in all_orders if (o.user_def or "") in allowed_set}
         if t0_order_nos:
-            q = q.filter(Trade.order_no.in_(t0_order_nos))
+            q = [t for t in q if t.order_no in t0_order_nos]
         else:
-            q = q.filter(False)
-    rows = q.all()
+            q = []
+    rows = q
     by_day = defaultdict(lambda: {
         "buy_amt": 0.0, "sell_amt": 0.0, "diff": 0.0, "n": 0
     })

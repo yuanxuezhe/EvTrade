@@ -12,7 +12,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from server.db import get_db
-from server.models.orm import Position
+from server.tables import Positions
 
 router = APIRouter()
 
@@ -37,11 +37,12 @@ async def list_holdings(
     stock_code: Optional[str] = None,
     db: Session = Depends(get_db),
 ):
-    """读本地 positions 表"""
-    q = db.query(Position)
+    """读本地 positions 表（v81.4 tables-migration: 走 Positions.*）"""
+    # Positions.__pk_fields__ = ('stock_code',) → 默认按 stock_code 升序
     if stock_code:
-        q = q.filter(Position.stock_code == stock_code)
-    rows = q.order_by(Position.stock_code).all()
+        rows = Positions.query_by("stock_code", stock_code)
+    else:
+        rows = Positions.query_all()
     return HoldingsListResponse(code=0, msg="", list=[
         HoldingItem(
             stock_code=r.stock_code,

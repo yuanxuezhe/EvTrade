@@ -6,15 +6,19 @@ GET /api/orders/t0-exposure?user_def=T0&trd_date=YYYYMMDD
 
 GET /api/orders/t0-aggregate?user_def=T0&days=30
   → 跨期累计 + 按日/按股双视角 + 胜率/回报率
+
+v81.4 改动（tables-migration）：
+- 删 Depends(get_db) × 2 + sqlalchemy.orm.Session import + server.db.get_db
+- db.query(Order).filter(…) → Orders.query_by(…) + 内存过滤
+  (区间/复合查询 API 层不支持, 走内存过滤 — 数据量小, 走主键升序全表查)
+- db.query(Position) → Positions.query_all() (positions 表行数 ≤ 持仓数, 量小)
 """
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
-from sqlalchemy.orm import Session
 
-from server.db import get_db
-from server.models.orm import Order, Position, Trade
+from server.db import db_session
 from server.services.t0 import get_fee_config
 from server.services.t0.aggregators import (
     aggregate_by_day,
@@ -24,6 +28,7 @@ from server.services.t0.aggregators import (
 )
 from server.auth.deps import get_current_user
 from server.models.user import User
+from server.tables import Orders, Trades, Positions
 
 router = APIRouter()
 
@@ -119,21 +124,28 @@ async def get_t0_exposure(
         default=None,
         description="交易日 YYYYMMDD，留空=当前激活日",
     ),
-    db: Session = Depends(get_db),
     _user: User = Depends(get_current_user),
 ):
-    """当日多标的敞口聚合"""
+    """当日多标的敞口聚合
+
+    v81.4 tables-migration:
+      原 db.query(Order).filter(Order.trd_date == trd_date).all()
+      改 Orders.query_by('trd_date', trd_date)
+    """
     from server.services.guards import resolve_active_trd_date
 
     if not trd_date:
-        trd_date = resolve_active_trd_date(db) or _today_str()
+        # v81.4 tables-migration: db_session() context manager 替代 Depends(get_db)
+        with db_session() as db:
+            trd_date = resolve_active_trd_date(db) or _today_str()
 
     fee_cfg = get_fee_config()
-    orders = db.query(Order).filter(Order.trd_date == trd_date).all()
-    trades = db.query(Trade).filter(Trade.trd_date == trd_date).all()
-    positions = _query_positions_dict(db)
+    # v81.4: 走 Orders/Trades/Positions tables API (主键升序, 数据量小)
+    orders = Orders.query_by("trd_date", trd_date)
+    trades = Trades.query_by("trd_date", trd_date)
+    positions = _query_positions_dict()
 
-    f_orders, f_trades = apply_user_def_filter(orders, trades, user_def, db=db)
+    f_orders, f_trades = apply_user_def_filter(orders, trades, user_def)
     rows = aggregate_by_stock(f_trades, f_orders, positions, fee_cfg)
 
     # totals
@@ -167,20 +179,27 @@ async def get_t0_exposure(
 async def get_t0_aggregate(
     user_def: str = Query(default="T0", description="T0 标签键，空字符串=全部"),
     days: int = Query(default=30, ge=1, le=365, description="回溯天数"),
-    db: Session = Depends(get_db),
     _user: User = Depends(get_current_user),
 ):
-    """跨期累计 + 按日/按股聚合"""
+    """跨期累计 + 按日/按股聚合
+
+    v81.4 tables-migration:
+      原 db.query(Order).filter(Order.trd_date >= cutoff).all()
+      改 Orders.query_all() + 内存过滤 (区间 API 层不支持, 数据量小)
+    """
     from datetime import datetime, timedelta
 
     fee_cfg = get_fee_config()
     cutoff = (datetime.now() - timedelta(days=days)).strftime("%Y%m%d")
 
-    orders = db.query(Order).filter(Order.trd_date >= cutoff).all()
-    trades = db.query(Trade).filter(Trade.trd_date >= cutoff).all()
-    positions = _query_positions_dict(db)
+    # v81.4: 全表 + 内存过滤 (Orders/Trades 按 (trd_date, order_no) 复合 PK 升序全表查)
+    all_orders = Orders.query_all()
+    all_trades = Trades.query_all()
+    orders = [o for o in all_orders if (o.trd_date or "") >= cutoff]
+    trades = [t for t in all_trades if (t.trd_date or "") >= cutoff]
+    positions = _query_positions_dict()
 
-    f_orders, f_trades = apply_user_def_filter(orders, trades, user_def, db=db)
+    f_orders, f_trades = apply_user_def_filter(orders, trades, user_def)
 
     by_stock_rows = aggregate_by_stock(f_trades, f_orders, positions, fee_cfg)
     by_day_rows = aggregate_by_day(f_trades, positions, fee_cfg)
@@ -215,9 +234,13 @@ async def get_t0_aggregate(
 
 # ──────── Helpers ────────
 
-def _query_positions_dict(db: Session) -> dict:
-    """当前 Position 快照（按 stock_code 主键）"""
-    pos_list = db.query(Position).all()
+def _query_positions_dict() -> dict:
+    """当前 Position 快照（按 stock_code 主键）
+
+    v81.4 tables-migration: Positions.query_all() — positions 表行数小 (持仓数 ≤ 几十),
+    直接全表读, 内存建 dict 索引.
+    """
+    pos_list = Positions.query_all()
     return {p.stock_code: p for p in pos_list}
 
 

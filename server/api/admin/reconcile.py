@@ -10,13 +10,17 @@ v5 改动：
 - ReconcileReport 复合主键 (trd_date, mode, created_at)
 - 响应中 id 字段改为 created_at 时间戳
 - TRD_DATE → trd_date
+
+v81.4 改动（tables-migration）：
+- 散落的 db.query(ReconcileReport) 改走 server.tables.ReconcileReport
+- 复合主键查询用 query_one(trd_date=..., mode=..., created_at=...)
+- 范围查询 (created_at >= cutoff) 走 server.tables.get_conn() 原生 SQL（API 不支持范围）
 """
 from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 from typing import Optional, List
 from sqlalchemy.orm import Session
-from sqlalchemy import desc
 import json
 
 from server.db import get_db
@@ -24,7 +28,8 @@ from server.models.user import User
 from server.services.guards import require_admin
 from server.services import sysconfig
 from server.utils.time import format_db_dt
-from server.models.orm import ReconcileReport
+from server.tables import ReconcileReport, get_conn, scalar_query
+from sqlalchemy import text as _sa_text
 
 router = APIRouter()
 
@@ -92,14 +97,20 @@ async def update_config(
 @router.get("/reports", response_model=List[ReconcileReportSummary])
 async def list_reports(db: Session = Depends(get_db), _=Depends(require_admin)):
     cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=REPORT_RETENTION_DAYS)
-    rows = db.query(ReconcileReport).filter(
-        ReconcileReport.created_at >= cutoff
-    ).order_by(desc(ReconcileReport.created_at)).limit(200).all()
+    # v81.4 tables-migration: 走 tables 层 get_conn() 原生 SQL
+    #   (ReconcileReport.query_by/query_by_fields 仅支持等值过滤, 不支持 created_at >= 范围)
+    sql = (
+        "SELECT created_at, trd_date, mode, rpc_status FROM `reconcile_report` "
+        "WHERE created_at >= :cutoff ORDER BY created_at DESC LIMIT 200"
+    )
+    with get_conn() as conn:
+        cur = conn.execute(_sa_text(sql), {"cutoff": cutoff})
+        rows = cur.mappings().all()
     return [
         ReconcileReportSummary(
-            created_at=format_db_dt(r.created_at) if r.created_at else "",
-            trd_date=r.trd_date, mode=r.mode,
-            rpc_status=r.rpc_status,
+            created_at=format_db_dt(r["created_at"]) if r["created_at"] else "",
+            trd_date=r["trd_date"], mode=r["mode"],
+            rpc_status=r["rpc_status"],
         ) for r in rows
     ]
 
@@ -122,17 +133,16 @@ async def get_report(
             status_code=400,
             detail={"code": "BAD_CREATED_AT", "msg": f"created_at 解析失败: {created_at}"}
         )
-    r = db.query(ReconcileReport).filter_by(
-        trd_date=trd_date, mode=mode, created_at=ts
-    ).first()
+    # v81.4 tables-migration: 走 ReconcileReport.query_one (复合主键)
+    r = ReconcileReport.query_one(trd_date=trd_date, mode=mode, created_at=ts)
     if not r:
         raise HTTPException(status_code=404, detail={"code": "NOT_FOUND", "msg": f"报告 {trd_date}/{mode}@{created_at} 不存在"})
     return {
-        "created_at": format_db_dt(r.created_at) if r.created_at else None,
-        "trd_date": r.trd_date,
-        "mode": r.mode,
-        "rpc_status": r.rpc_status,
-        "error_message": r.error_message,
-        "created_by": r.created_by,
-        "diffs": json.loads(r.diffs_json) if r.diffs_json else {},
+        "created_at": format_db_dt(r["created_at"]) if r["created_at"] else None,
+        "trd_date": r["trd_date"],
+        "mode": r["mode"],
+        "rpc_status": r["rpc_status"],
+        "error_message": r["error_message"],
+        "created_by": r["created_by"],
+        "diffs": json.loads(r["diffs_json"]) if r["diffs_json"] else {},
     }

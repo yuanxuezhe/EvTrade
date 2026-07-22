@@ -15,6 +15,7 @@ from pydantic import BaseModel
 
 from server.auth.deps import require_admin
 from server.services.sync.manager import sync_manager
+from server.tables import Positions
 
 
 router = APIRouter()
@@ -76,14 +77,9 @@ async def _get_all_stock_codes() -> List[str]:
     本次实现:从 positions 读 + 返回内置常用代码 20 只(避免一开始就爬 5400 只耗时)
     """
     try:
-        from server.db import SessionLocal
-        from server.models.orm import Position
-        db = SessionLocal()
-        try:
-            rows = db.query(Position.stock_code).all()
-            position_codes = [r[0] for r in rows]
-        finally:
-            db.close()
+        # v81.4 tables-migration: 直接走 Positions.query_all() 取 stock_code 字段
+        # (Rows = [{stock_code, stock_name, ...}], 只取 stock_code 字段即可)
+        position_codes = [r.stock_code for r in Positions.query_all()]
     except Exception:
         position_codes = []
 
