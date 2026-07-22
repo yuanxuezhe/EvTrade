@@ -15,6 +15,13 @@ v77 (REQ-TRADE-028) 两阶段下单架构:
   - broker 慢/超时不影响 HTTP 应答 (axios 15s timeout 仍兜底)
   - RPC 异常吞掉会丢委托, 必须 try/except + ws push + log.exception
 
+v81 tables-migration:
+- 删 Depends(get_db) × 2 (endpoint + _submit_rpc_async)
+- 删 server.models.orm.Order / SysStatus / get_active_trd_date ORM 调用
+- DB I/O 全部走 server.tables.* (Orders.add_one / Orders.query_one / Orders.update_one / T0Tasks.query_one)
+- 交易日改用 server.repo.orders._get_active_trd_date (已迁到 tables 层)
+- 插入 + 更新改为 Row 风格: obj.x = val; obj.update(Orders, **pk)
+
 依赖 (late import 拿 patched symbol 用于 monkeypatch 测试):
 - from server.api.orders import ord_stk, ws_manager
 - 关键: asyncio.create_task 不能直接传 monkeypatched symbol, 必须用 late import 在 task 内取.
@@ -23,18 +30,20 @@ import asyncio
 import logging
 
 from fastapi import Depends, HTTPException
-from sqlalchemy.orm import Session
 
 from server.auth.deps import get_current_user
-from server.db import get_db, SessionLocal  # v77: SessionLocal 给 _submit_rpc_async 后台 task 用
-from server.models.orm import Order, SysStatus, get_active_trd_date
 from server.models.user import User
 from server.services.guards import require_trader, require_trading_day, require_trading_session
-from server.repo.orders import next_order_no
+from server.repo.orders import (
+    _get_active_trd_date,
+    insert_pending_order,
+    next_order_no,
+)
 from server.utils.time import format_ts
 from server.services.t0 import calc_net_amount, calc_t0_volume, get_fee_config
 from server.repo.stocks import GetStockInfo  # v80.1: 统一证券信息入口
 from server.services.sysconfig import get_cantrd_stktypes  # v80
+from server.tables import Orders, T0Tasks
 from server.api.orders.schemas import (
     PlaceOrderRequest,
     PlaceOrderResponse,
@@ -50,8 +59,11 @@ def register_place(router):
 
     @router.post("/place", response_model=PlaceOrderResponse,
                  dependencies=[Depends(require_trader), Depends(require_trading_day), Depends(require_trading_session)])
-    async def place_order(req: PlaceOrderRequest, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-        """下单（v77 两阶段：DB 写入立即应答，RPC 后台异步回报）"""
+    async def place_order(req: PlaceOrderRequest, user: User = Depends(get_current_user)):
+        """下单（v77 两阶段：DB 写入立即应答，RPC 后台异步回报）
+
+        v81 tables-migration: 删 Depends(get_db), 全部走 server.tables.*
+        """
         # Late import 拿 patched symbol（test_orders_api.py monkeypatch 路径）
         from server.api.orders import ord_stk, ws_manager
 
@@ -76,8 +88,8 @@ def register_place(router):
             req.price = round(float(req.price), scale)
 
         # 1. 取交易日 + order_no（v7：幂等改由 order_no 单调递增保证）
-        #    v_next: SysStatus 单行 (id=1)
-        trd_date = get_active_trd_date(db)
+        #    v_next: SysStatus 单行 (id=1). v81 tables-migration: 走 repo helper
+        trd_date = _get_active_trd_date()
         if not trd_date:
             raise HTTPException(
                 status_code=503,
@@ -98,9 +110,9 @@ def register_place(router):
         gross, net = calc_net_amount(req.price, adjusted, fee_cfg, direction)
 
         # 3.5 v18: 若带 task_id, 验证 task 归属 + active (避免跨用户误绑定)
+        #    v81 tables-migration: T0Tasks.query_one(id=...) 替代 db.query(T0Task).filter_by(id=...).first()
         if req.task_id is not None:
-            from server.models.orm import T0Task  # late import 避免循环
-            task = db.query(T0Task).filter_by(id=req.task_id).first()
+            task = T0Tasks.query_one(id=req.task_id)
             if not task or task.user_id != user.id or task.status != "active":
                 raise HTTPException(
                     status_code=400,
@@ -114,22 +126,23 @@ def register_place(router):
                 )
 
         # 4. INSERT status=48（未报）
-        order_no = next_order_no(db)
-        order = Order(
+        #    v81 tables-migration: 用 insert_pending_order (Orders.add_one 封装), 返回 Row
+        order_no = next_order_no()
+        order = insert_pending_order(
             trd_date=trd_date,
             order_no=order_no,
             user_def=req.user_def,
-            stock_code=req.stock_code, order_type=req.order_type,
-            price_type=req.price_type, price=req.price, volume=adjusted,
-            traded_volume=0, traded_amount=0.0, avg_price=0.0,
-            status="48", status_msg="未报",
-            order_time=format_ts(tz='local'),  # v10: "YYYY-MM-DD HH:MM:SS.fff"
-            task_id=req.task_id,  # v18: 关联做T任务 (None = 游离单)
-            strategy_type=req.strategy_type,  # v66: REQ-TRADE-026; 0=普通单(Trade.vue) 1=快速做T(T0Trade.vue)
+            stock_code=req.stock_code,
+            order_type=req.order_type,
+            price_type=req.price_type,
+            price=req.price,
+            volume=adjusted,
         )
-        db.add(order)
-        db.commit()
-        db.refresh(order)
+        # v66/v18: 补全 task_id + strategy_type (insert_pending_order 通用, 不含这俩)
+        if req.task_id is not None or req.strategy_type:
+            order.task_id = req.task_id
+            order.strategy_type = req.strategy_type
+            order.update(Orders, trd_date=trd_date, order_no=order_no)
 
         # 5. v77: 阶段 A — 立即 ws push status=48 (前端立即显示 "未报")
         #   先 ws 后 HTTP 应答: 前端 ws 收到 + axios 拿到 response 都立即 _upsertToHoldings
@@ -142,8 +155,8 @@ def register_place(router):
         # 6. v77: 阶段 B — RPC 后台 task (fire-and-forget)
         #   asyncio.create_task 不会阻塞 HTTP 应答; broker 慢/超时不影响前端.
         #   关键: task 内 late import 拿 patched ord_stk/ws_manager (test_orders_api.py monkeypatch).
-        #   trd_date/order_no 捕获到闭包 (闭包避免 ORM detached 问题).
-        #   注: Order ORM 无 user_id 字段, 按 (trd_date, order_no) 联合 PK 定位
+        #   trd_date/order_no 捕获到闭包 (闭包避免 Row detached 问题).
+        #   注: Orders 表 (trd_date, order_no) 联合 PK 定位
         _captured_trd_date = trd_date
         asyncio.create_task(_submit_rpc_async(order_no, _captured_trd_date))
 
@@ -165,7 +178,7 @@ async def _submit_rpc_async(order_no: str, trd_date: str):
     v77: RPC 异步执行函数 (阶段 B 后台 task)
 
     流程:
-    1. 新开 DB session (后台 task 不能复用请求的 db session, 那是 request-scoped)
+    1. v81 tables-migration: 删 db = SessionLocal(); 改 Orders.query_one + Orders.update_one (自带引擎)
     2. late import 拿 patched ord_stk/ws_manager (monkeypatch 测试兼容)
     3. 调 broker ord_stk, remark=order_no (broker 用 order_no 回报)
     4. ack.code==0: UPDATE status=50 + broker_order_id + ws push
@@ -180,9 +193,9 @@ async def _submit_rpc_async(order_no: str, trd_date: str):
     from server.api.orders import ord_stk, ws_manager
     from server.services.push.helpers import _order_to_out_dict
 
-    db = SessionLocal()
     try:
-        order = db.query(Order).filter_by(trd_date=trd_date, order_no=order_no).first()
+        # v81 tables-migration: Orders.query_one (复合 PK) 替代 db.query(Order).filter_by(...).first()
+        order = Orders.query_one(trd_date=trd_date, order_no=order_no)
         if not order:
             log.error("_submit_rpc_async: trd_date=%s order_no=%s not found", trd_date, order_no)
             return
@@ -198,8 +211,8 @@ async def _submit_rpc_async(order_no: str, trd_date: str):
             log.exception("place_order RPC failed: stock=%s order_no=%s", order.stock_code, order_no)
             order.status = "57"  # broker JUNK 废单
             order.status_msg = "RPC 失败: {}".format(e)
-            db.commit()
-            db.refresh(order)
+            # v81 tables-migration: obj.update(Orders, pk=...) 替代 db.commit() + db.refresh()
+            order.update(Orders, trd_date=trd_date, order_no=order_no)
             try:
                 asyncio.ensure_future(ws_manager.broadcast("order_update", _order_to_out_dict(order)))
             except Exception as push_err:
@@ -222,8 +235,8 @@ async def _submit_rpc_async(order_no: str, trd_date: str):
             # R2a 本地拒单时把 cancelled_volume 抹平到 volume
             order.cancelled_volume = order.volume
         print(f"RPC_DONE: ack_code={ack_code} broker_order_id={broker_order_id} set_status={order.status}", flush=True)
-        db.commit()
-        db.refresh(order)
+        # v81 tables-migration: 单次 update_one 替代 db.commit() + db.refresh()
+        order.update(Orders, trd_date=trd_date, order_no=order_no)
 
         # 7. ws push 阶段 B 结果
         try:
@@ -234,5 +247,3 @@ async def _submit_rpc_async(order_no: str, trd_date: str):
     except Exception as e:
         # 任何意外 (DB 查询失败/提交失败等) 也必须 log, 不允许吞掉
         log.exception("_submit_rpc_async top-level error: order_no=%s err=%s", order_no, e)
-    finally:
-        db.close()

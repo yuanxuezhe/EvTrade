@@ -8,15 +8,23 @@ cancel.py — DELETE /api/orders/{order_no} 撤单端点（v9 重写 + v13 增 r
 - DELETE 必须手动 ws_manager.broadcast("order_update", ...) 给前端
 
 5 步流程:
-  1. Pre-checks (status ∈ {48,49}、order_id 存在):不插行,直接返
+  1. Pre-checks (status ∈ {48,49,50}、order_id 存在):不插行,直接返
   2. INSERT cancel-row (commit 立即落库避免 RPC 异常时孤儿)
      v13 增 raw_id = orig.order_no（结构化冗余；user_def 仍 = "CANCEL:{orig.order_no}"）
   3. Call RPC (try/except 捕获网络异常)
   4. 分支:
-     - ack.code == 0 → cancel_row.status="53",同时 INSERT cancel-trade
+     - ack.code == 0 → cancel_row.status="54",同时 INSERT cancel-trade
      - ack.code != 0 → cancel_row.status="55" (废单,审计保留)
      - RPC 抛异常 → 同上 status="55"
   5. WS broadcast: 始终推 order_update,仅成功时推 trade_update（payload 含 raw_id）
+
+v81 tables-migration:
+- 删 Depends(get_db) + sqlalchemy.orm.Session
+- db.query(Order).filter_by(...) → Orders.query_one(trd_date=..., order_no=...)
+- m.x = val; db.commit() → obj.x = val; obj.update(Orders, **pk)
+- db.add(cancel_trade); db.commit() → Trades.add_one({...})
+- db.refresh(obj) → 删 (Row 已是 dict-like)
+- insert_cancel_row / next_order_no (server.repo.orders) 内部已迁 tables
 
 依赖（late import 拿 patched symbol 用于 monkeypatch 测试）：
 - from server.api.orders import rpc_cancel_order, ws_manager
@@ -26,19 +34,17 @@ import time as _time
 from datetime import datetime, timezone  # noqa: F401  # kept for legacy refs
 
 from fastapi import Depends, HTTPException, Query
-from sqlalchemy.orm import Session
 
 from server.auth.deps import get_current_user
-from server.db import get_db
-from server.models.orm import Order, Trade
 from server.models.user import User
 from server.services.guards import require_trader, require_trading_day, require_trading_session
-from server.repo.orders import next_order_no, insert_cancel_row  # v13: insert_cancel_row helper
+from server.repo.orders import next_order_no, insert_cancel_row  # v13: insert_cancel_row helper (v80.3 迁 tables)
 from server.utils.time import format_ts
 from server.api.orders.schemas import (
     CancelResponse,
     _to_order_out,
 )
+from server.tables import Orders, Trades
 
 log = logging.getLogger(__name__)
 
@@ -64,13 +70,17 @@ def register_cancel(router):
     @router.delete("/{order_no}", response_model=CancelResponse,
                    dependencies=[Depends(require_trader), Depends(require_trading_day), Depends(require_trading_session)])
     async def cancel_order(order_no: str, trd_date: str = Query(..., description="8 位数字 YYYYMMDD"),
-                          user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-        """撤单（v9 重写:本地代理 cancel-order 行 + cancel-trade 行；v13 增 raw_id 写入）"""
+                          user: User = Depends(get_current_user)):
+        """撤单（v9 重写:本地代理 cancel-order 行 + cancel-trade 行；v13 增 raw_id 写入）
+
+        v81 tables-migration: 删 Depends(get_db), 全部走 server.tables.*
+        """
         # Late import 拿 patched symbol
         from server.api.orders import rpc_cancel_order, ws_manager
 
         # ── 1. Pre-checks ──
-        order = db.query(Order).filter_by(order_no=order_no, trd_date=trd_date).first()
+        # v81 tables-migration: Orders.query_one (复合 PK) 替代 db.query(Order).filter_by(...).first()
+        order = Orders.query_one(trd_date=trd_date, order_no=order_no)
         if not order:
             raise HTTPException(status_code=404, detail={"code": "NOT_FOUND", "msg": "委托 {} 不存在".format(order_no)})
 
@@ -88,9 +98,9 @@ def register_cancel(router):
             )
 
         # ── 2. INSERT cancel-row (LOCAL-ONLY, v13 用 insert_cancel_row helper) ──
-        cancel_order_no = next_order_no(db)
+        # v81 tables-migration: next_order_no / insert_cancel_row 内部已走 tables; 不再传 db
+        cancel_order_no = next_order_no()
         cancel_row = insert_cancel_row(
-            db,
             orig=order,
             cancel_order_no=cancel_order_no,
             raw_id=order_no,  # v13 NEW: 结构化冗余字段 = orig.order_no
@@ -114,33 +124,31 @@ def register_cancel(router):
         cancel_trade = None
         if ack_code == 0:
             # 成功 → broker 54 已撤 (v11: 替代本地推断码 53)
+            # v81 tables-migration: Row 字段赋值 + obj.update(Orders, pk=...) 替代 db.commit() + db.refresh()
             cancel_row.status = "54"
             cancel_row.status_msg = "已撤"
             cancel_row.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+            cancel_row.update(Orders, trd_date=trd_date, order_no=cancel_order_no)
 
             # change system-delegation-price-fill-calc: R1 撤单成功 → orig.cancelled_volume 一次性抹平到 volume
             order.cancelled_volume = order.volume
+            order.update(Orders, trd_date=trd_date, order_no=order_no)
 
             if cancelled_qty > 0:
                 cancel_trade_id = "CANCEL-{}-{}".format(cancel_order_no, int(_time.time()))
-                cancel_trade = Trade(
-                    trd_date=trd_date,
-                    order_no=cancel_order_no,
-                    trade_id=cancel_trade_id,        # 合成
-                    stock_code=order.stock_code,
-                    order_type=order.order_type,
-                    price=cancel_trade_price,
-                    volume=cancelled_qty,
-                    amount=cancel_trade_price * cancelled_qty,
-                    trade_time=format_ts(tz='local'),  # v10: "YYYY-MM-DD HH:MM:SS.fff"
-                    trade_type=1,                    # ★ 撤单成交标记
-                )
-                db.add(cancel_trade)
-            db.commit()
-            db.refresh(cancel_row)
-            db.refresh(order)
-            if cancel_trade:
-                db.refresh(cancel_trade)
+                # v81 tables-migration: Trades.add_one(dict) 替代 db.add(Trade); db.commit()
+                cancel_trade = Trades.add_one({
+                    "trd_date": trd_date,
+                    "order_no": cancel_order_no,
+                    "trade_id": cancel_trade_id,        # 合成
+                    "stock_code": order.stock_code,
+                    "order_type": order.order_type,
+                    "price": cancel_trade_price,
+                    "volume": cancelled_qty,
+                    "amount": cancel_trade_price * cancelled_qty,
+                    "trade_time": format_ts(tz='local'),  # v10: "YYYY-MM-DD HH:MM:SS.fff"
+                    "trade_type": 1,                    # ★ 撤单成交标记
+                })
         else:
             # 失败 (ack.code != 0 或 RPC 异常) → broker 57 废单(审计保留,不插 trade, v11 替代本地码 55)
             cancel_row.status = "57"
@@ -148,8 +156,7 @@ def register_cancel(router):
                 (ack.get("msg") if ack else None) or rpc_error or "撤单失败"
             )
             cancel_row.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
-            db.commit()
-            db.refresh(cancel_row)
+            cancel_row.update(Orders, trd_date=trd_date, order_no=cancel_order_no)
 
         # ── 5. WS broadcast (broker 不会推这个 row,必须手动) ──
         try:
