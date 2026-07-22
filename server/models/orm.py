@@ -27,7 +27,7 @@ change v_next-sys-status-single-row (2026-07-22):
 """
 from sqlalchemy import (
     Column, Integer, String, Float, Text, DateTime, CheckConstraint, Index, Time,
-    Boolean,
+    Boolean, SmallInteger,
     UniqueConstraint,
 )
 from sqlalchemy.orm import Session
@@ -393,6 +393,8 @@ class Stock(Base):
     min_buy_qty = Column(Integer, nullable=False, default=100)  # 最小买入数量(A 股默认 100)
     trade_unit = Column(Integer, nullable=False, default=1)      # 买卖单位
     short_name = Column(String(16), nullable=True)              # v25: 拼音首字母简称(平安银行→PAYH),admin 编辑/手动维护
+    stktype = Column(SmallInteger, nullable=False, default=0)   # v80: 证券类型 (0=股票 1=ETF),用户手动维护
+    scale = Column(SmallInteger, nullable=False, default=2)     # v80: 价格小数位精度 (2=A股 3=ETF),用于四舍五入
     created_at = Column(DateTime, nullable=False, default=_utcnow)
     updated_at = Column(DateTime, nullable=False, default=_utcnow, onupdate=_utcnow)
 

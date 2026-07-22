@@ -201,6 +201,13 @@ def init_db():
 
     Base.metadata.create_all(bind=admin_engine)
 
+    # v80: stocks 加 stktype + scale 两列（幂等 — 仅在列不存在时 ALTER）
+    # 业务：stktype=0(股票)/1(ETF) 用户手动维护；scale=价格小数位精度 默认 2
+    _ensure_stocks_columns(admin_engine)
+
+    # v80: sys_config 兜底初始化 cantrdstktypes=0,1
+    _run_seed_cantrdstktypes_via_session(admin_engine)
+
     # change strategy_trade: 为 orders.user_def 加索引
     # SQLite IF NOT EXISTS；MySQL 用 INFORMATION_SCHEMA 探测
     idx_name = "ix_orders_user_def"
@@ -222,3 +229,100 @@ def init_db():
             conn.execute(text(f"CREATE INDEX IF NOT EXISTS {idx_name} ON {table} ({col})"))
 
     admin_engine.dispose()
+
+
+def _ensure_stocks_columns(engine) -> None:
+    """v80: stocks.stktype + stocks.scale 幂等迁移。
+
+    用 INFORMATION_SCHEMA.COLUMNS 探测列存在性，缺失则 ALTER TABLE ADD COLUMN。
+    重入 init_db() 时幂等（已存在则跳过）。
+    """
+    from sqlalchemy import text
+
+    target_cols = [
+        ("stktype", "SMALLINT", "0", "证券类型 0=股票 1=ETF"),
+        ("scale",   "SMALLINT", "2", "价格小数位精度"),
+    ]
+
+    with engine.begin() as conn:
+        if engine.dialect.name == "mysql":
+            for col_name, col_type, default_val, col_comment in target_cols:
+                row = conn.execute(text("""
+                    SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS
+                     WHERE TABLE_SCHEMA = DATABASE()
+                       AND TABLE_NAME   = 'stocks'
+                       AND COLUMN_NAME   = :c
+                     LIMIT 1
+                """), {"c": col_name}).first()
+                if row is None:
+                    # MySQL 8.0: ALTER ... ADD COLUMN ... NOT NULL DEFAULT ... COMMENT ...
+                    conn.execute(text(
+                        f"ALTER TABLE stocks ADD COLUMN {col_name} {col_type} "
+                        f"NOT NULL DEFAULT {default_val} COMMENT '{col_comment}'"
+                    ))
+                    print(f"[init_db] v80 ADD COLUMN stocks.{col_name} ({col_type} DEFAULT {default_val})")
+                else:
+                    print(f"[init_db] v80 stocks.{col_name} 已存在, 跳过")
+        else:
+            # SQLite 走 pragma (开发环境支持)
+            for col_name, col_type, default_val, _ in target_cols:
+                row = conn.execute(text("PRAGMA table_info(stocks)")).fetchall()
+                col_names = {r[1] for r in row}
+                if col_name not in col_names:
+                    conn.execute(text(
+                        f"ALTER TABLE stocks ADD COLUMN {col_name} {col_type} DEFAULT {default_val} NOT NULL"
+                    ))
+
+
+def _seed_cantrdstktypes() -> None:
+    """v80: sys_config 兜底初始化 cantrdstktypes=0,1 (可交易股票/ETF).
+
+    与 _ensure_defaults 同模式: idempotent, 若键已存在则跳过.
+    """
+    try:
+        from server.infra.db import SessionLocal
+        from server.repo.sysconfig import set_value
+        from server.repo.sysconfig import get_value
+        existing = get_value("system", "cantrdstktypes")
+        if existing is None:
+            set_value(
+                user="system",
+                key="cantrdstktypes",
+                value="0,1",
+                desc="可交易的证券类型 (stktype 逗号分隔, e.g. 0,1)",
+            )
+            print("[init_db] v80 seeded sys_config.cantrdstktypes=0,1")
+        else:
+            print(f"[init_db] v80 sys_config.cantrdstktypes 已存在 val={existing}, 跳过")
+    except Exception as e:
+        print(f"[init_db] v80 seed cantrdstktypes WARN: {e}")
+
+
+def _run_seed_cantrdstktypes_via_session(engine) -> None:
+    """v80: 用同一 admin_engine 跑 seed, 避免引入额外 db 连接
+
+    sys_config 实际列名是 cfg_key + cfg_val (不是 key+val)
+    """
+    from sqlalchemy import text
+    try:
+        with engine.begin() as conn:
+            row = conn.execute(text(
+                "SELECT cfg_val FROM sys_config WHERE `user`='system' AND cfg_key='cantrdstktypes' LIMIT 1"
+            )).first()
+            if row is None:
+                conn.execute(text(
+                    "INSERT INTO sys_config (`user`, cfg_key, cfg_val, `desc`, updated_at, updated_by) "
+                    "VALUES ('system', 'cantrdstktypes', '0,1', '可交易的证券类型 (stktype 逗号分隔)', NOW(), 'system')"
+                ))
+                print("[init_db] v80 seeded sys_config.cantrdstktypes=0,1")
+            else:
+                print(f"[init_db] v80 sys_config.cantrdstktypes 已存在 val={row[0]}, 跳过")
+    except Exception as e:
+        print(f"[init_db] v80 seed cantrdstktypes WARN: {e}")
+
+
+# _admin_engine 占位 (兼容旧引用)
+_admin_engine = None
+
+
+

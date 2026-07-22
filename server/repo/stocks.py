@@ -33,9 +33,23 @@ SKIP_THRESHOLD_DAYS = 7
 
 # v78.3: 内存 cache (key: stock_code, value: is_t0_able bool)
 # push handler 频繁调用 (trd_cfm 每笔成交都查), 加 cache 避免每次打 DB
-_stock_t0_cache: Dict[str, bool] = {}
+# v80: 扩展为 {is_t0_able, scale, stktype} 三字段 dict (下单价格精度用)
+_stock_cache: Dict[str, Dict] = {}  # code -> {"t0": bool, "scale": int, "stktype": int}
 _stock_cache_loaded: bool = False
 _stock_cache_lock = threading.RLock()
+
+
+def _ensure_cache_shape(d: Dict) -> Dict:
+    """兼容老 cache dict 形态 (v78.3 只有 is_t0_able)."""
+    if "scale" not in d:
+        d["scale"] = 2
+    if "stktype" not in d:
+        d["stktype"] = 0
+    if "t0" not in d and "is_t0_able" in d:
+        d["t0"] = d["is_t0_able"]
+    elif "t0" not in d:
+        d["t0"] = False
+    return d
 
 
 def get_is_t0_able(db: Session, stock_code: str) -> bool:
@@ -48,37 +62,78 @@ def get_is_t0_able(db: Session, stock_code: str) -> bool:
     if not stock_code:
         return False
     with _stock_cache_lock:
-        if _stock_cache_loaded and stock_code in _stock_t0_cache:
-            return _stock_t0_cache[stock_code]
+        if _stock_cache_loaded and stock_code in _stock_cache:
+            return _stock_cache[stock_code].get("t0", False)
         # cache miss → DB 查询
         row = db.query(Stock).filter_by(stock_code=stock_code).first()
-        result = bool(row.is_t0_able) if row else False
-        _stock_t0_cache[stock_code] = result
-        return result
+        if row is None:
+            return False
+        result = {
+            "t0": bool(row.is_t0_able),
+            "scale": int(getattr(row, "scale", 2) or 2),
+            "stktype": int(getattr(row, "stktype", 0) or 0),
+        }
+        _stock_cache[stock_code] = result
+        return result["t0"]
+
+
+def get_stock_scale(db: Session, stock_code: str) -> int:
+    """v80: 读 stock.scale (价格小数位精度). cache miss 走 DB."""
+    if not stock_code:
+        return 2
+    with _stock_cache_lock:
+        if _stock_cache_loaded and stock_code in _stock_cache:
+            return _stock_cache[stock_code].get("scale", 2)
+        row = db.query(Stock).filter_by(stock_code=stock_code).first()
+        if row is None:
+            return 2
+        return int(getattr(row, "scale", 2) or 2)
+
+
+def get_stock_stktype(db: Session, stock_code: str) -> int:
+    """v80: 读 stock.stktype (0=股票/1=ETF). cache miss 走 DB."""
+    if not stock_code:
+        return 0
+    with _stock_cache_lock:
+        if _stock_cache_loaded and stock_code in _stock_cache:
+            return _stock_cache[stock_code].get("stktype", 0)
+        row = db.query(Stock).filter_by(stock_code=stock_code).first()
+        if row is None:
+            return 0
+        return int(getattr(row, "stktype", 0) or 0)
 
 
 def load_all_stocks(db: Session) -> int:
     """v78.3: 启动时一次性加载所有 stocks.is_t0_able 到内存 cache
+    v80: 扩展加载 scale + stktype (下单价格精度 + 可交易类型校验用)
 
     返回加载条目数. 与 sysconfig._ensure_defaults 类似, 在 init_db 末尾调用.
     """
     global _stock_cache_loaded
-    rows = db.query(Stock.stock_code, Stock.is_t0_able).all()
+    rows = db.query(
+        Stock.stock_code, Stock.is_t0_able, Stock.scale, Stock.stktype
+    ).all()
     with _stock_cache_lock:
-        _stock_t0_cache.clear()
-        for code, t0 in rows:
-            _stock_t0_cache[code] = bool(t0)
+        _stock_cache.clear()
+        for code, t0, scale, stktype in rows:
+            _stock_cache[code] = {
+                "t0": bool(t0),
+                "scale": int(scale or 2),
+                "stktype": int(stktype or 0),
+            }
         _stock_cache_loaded = True
     return len(rows)
 
 
 def invalidate_stock_cache(stock_code: str = "") -> None:
-    """v78.3: 失效 cache (admin 编辑或新增 stock 时调用)"""
+    """v78.3: 失效 cache (admin 编辑或新增 stock 时调用)
+    v80: 同时清掉 scale + stktype 缓存
+    """
     with _stock_cache_lock:
         if stock_code:
-            _stock_t0_cache.pop(stock_code, None)
+            _stock_cache.pop(stock_code, None)
         else:
-            _stock_t0_cache.clear()
+            _stock_cache.clear()
             _stock_cache_loaded = False
 
 
