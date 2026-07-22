@@ -129,6 +129,7 @@ def invalidate_stock_cache(stock_code: str = "") -> None:
     """v78.3: 失效 cache (admin 编辑或新增 stock 时调用)
     v80: 同时清掉 scale + stktype 缓存
     """
+    global _stock_cache_loaded
     with _stock_cache_lock:
         if stock_code:
             _stock_cache.pop(stock_code, None)
