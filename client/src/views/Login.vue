@@ -167,7 +167,7 @@ async function handleLogin() {
       localStorage.removeItem(REMEMBER_KEY)
     }
     ElMessage.success(`欢迎回来，${user.full_name || user.username}`)
-    if (user.must_change_password) {
+    if (user.must_change_password_effective) {
       ElMessage.warning('这是首次登录，请修改默认密码')
       router.replace('/profile')
     } else {

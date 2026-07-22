@@ -31,7 +31,8 @@ DEFAULT_CONFIGS: list[dict] = [
     {"cfg_key": "auto_reconcile", "cfg_val": "0", "desc": "自动对账开关 (0=人工/1=自动)"},
     {"cfg_key": "auto_use_broker_data", "cfg_val": "1", "desc": "自动对账时以柜台为准 (0=本地/1=柜台)"},
     {"cfg_key": "trdtime", "cfg_val": "093000-113000;130000-153000", "desc": "交易时段 (分号分隔多段 HHMMSS-HHMMSS)"},
-]
+    {"cfg_key": "must_change_password_required", "cfg_val": "1", "desc": "首次登录强制改密 (0=关/1=开; 关掉后 seed 用户 must_change_password=True 也不再拦截)"},
+] # v_next: 新增首次登录强制改密开关
 
 # user → {cfg_key → cfg_val}
 _cache: dict[str, dict[str, str]] = {}

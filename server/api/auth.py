@@ -83,10 +83,18 @@ async def login(
     db.refresh(user)
 
     token = create_access_token({"sub": str(user.id), "role": user.role})
+    user_dict = user.to_dict()
+    # v_next: 系统级开关 — 关掉后首次登录不再强制改密
+    from server.services.sysconfig import get
+    required = bool(get("must_change_password_required", 1))
+    user_dict["must_change_password_required"] = required
+    user_dict["must_change_password_effective"] = (
+        bool(user_dict.get("must_change_password")) and required
+    )
     return TokenResponse(
         access_token=token,
         expires_in=ACCESS_TOKEN_EXPIRE_MINUTES * 60,
-        user=user.to_dict(),
+        user=user_dict,
     )
 
 
