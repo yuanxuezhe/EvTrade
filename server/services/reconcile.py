@@ -24,22 +24,21 @@ from sqlalchemy.orm import Session
 
 from server.rpc.client import qry_positions, qry_asset
 from server.models.orm import (
-    Position, Asset, SysStatus, ReconcileConfig, ReconcileReport,
+    Position, Asset, SysStatus, ReconcileReport,
 )
 import logging
 
 log = logging.getLogger(__name__)
 
 
-def get_reconcile_config(db: Session) -> ReconcileConfig:
-    """获取对账配置（单行）"""
-    cfg = db.query(ReconcileConfig).first()
-    if not cfg:
-        cfg = ReconcileConfig(auto_reconcile=False, updated_by=None)
-        db.add(cfg)
-        db.commit()
-        db.refresh(cfg)
-    return cfg
+def get_reconcile_config(db=None) -> dict:
+    """获取对账配置 (dict, v_next: 改读 sysconfig)
+
+    返回 dict, 字段: auto_reconcile (int 0/1), auto_use_broker_data (int 0/1)
+    """
+    from server.services.sysconfig import get_reconcile_dict
+    return get_reconcile_dict()
+
 
 
 def _safe_dict_list(data) -> List[Dict[str, Any]]:
@@ -107,7 +106,7 @@ async def do_reconcile(
     now = datetime.now(timezone.utc).replace(tzinfo=None)
     report = ReconcileReport(
         trd_date=new_trd_date,
-        mode="auto" if cfg.auto_reconcile else "manual",
+        mode="auto" if cfg["auto_reconcile"] else "manual",
         created_at=now,
         diffs_json=json.dumps({
             'rpc_errors': rpc_errors,
@@ -141,7 +140,7 @@ async def do_reconcile(
 
     # 4. auto_reconcile=True → 覆盖本地 (Position + Asset, 委托/成交跳过)
     applied = False
-    if cfg.auto_reconcile:
+    if cfg["auto_reconcile"]:
         try:
             applied = _apply_broker_data(
                 db, new_trd_date,
@@ -162,7 +161,7 @@ async def do_reconcile(
     # DB 层级: sys_status 是单行表 (CHECK id=1), 切日 = UPDATE 同一行的 trd_date + status
     # 同日重 init: 走同一行, 更新 status='active' + 初始化元数据
     # 切到新日: 同一行 UPDATE trd_date, 历史由 reconcile_report.trd_date 记录
-    if applied or not cfg.auto_reconcile:
+    if applied or not cfg["auto_reconcile"]:
         row = db.query(SysStatus).filter(SysStatus.id == 1).first()
         if not row:
             # id=1 行不存在 (极端脏数据: 初始化缺失), 创建占位

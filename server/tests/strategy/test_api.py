@@ -53,8 +53,7 @@ def fresh_db():
     # v20: 只清测试相关表的数据 (保留 users + sys_status)
     # 避免 drop_all + init_db 漏 import 问题
     from server.db import SessionLocal as _SL
-    KEEP_TABLES = {"users", "sys_status", "trading_session", "fee_config",
-                   "reconcile_config", "reconcile_report", "quote_snapshots",
+    KEEP_TABLES = {"users", "sys_status", "reconcile_report", "quote_snapshots",
                    "order_no_seq", "strategy_audit"}
     for tbl in reversed(Base.metadata.sorted_tables):
         if tbl.name in KEEP_TABLES:

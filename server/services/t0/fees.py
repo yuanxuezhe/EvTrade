@@ -39,12 +39,12 @@ def calc_commission_and_tax(amount, fee_cfg, direction):
     Returns:
         (commission, stamp_tax)
     """
-    commission = round(amount * fee_cfg.commission_rate, 2)
+    commission = round(amount * fee_cfg["commission_rate"], 2)
     # 最低佣金兜底（A 股规则：佣金 < 5 元时按 5 元收）
-    min_c = getattr(fee_cfg, "min_commission", 0.0) or 0.0
+    min_c = fee_cfg.get("min_commission", 0.0) or 0.0
     if min_c > 0 and commission < min_c and amount > 0:
         commission = min_c
     stamp_tax = 0.0
     if direction == "SELL":
-        stamp_tax = round(amount * fee_cfg.stamp_tax_rate, 2)
+        stamp_tax = round(amount * fee_cfg["stamp_tax_rate"], 2)
     return commission, stamp_tax

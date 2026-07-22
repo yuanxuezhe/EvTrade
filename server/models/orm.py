@@ -14,7 +14,7 @@ SQLAlchemy ORM models for EvTrade v5 (schema refactor).
 
 11 张表（详见 data-model/spec.md）：
   §1 业务：orders, trades, positions, assets
-  §2 配置：sys_status, trading_session, fee_config, reconcile_config
+  §2 配置：sys_status (单行), sys_config (统一配置, user-keyed)
   §3 历史：reconcile_report
   §4 行情：quote_snapshots
   §5 序列：order_no_seq
@@ -245,60 +245,6 @@ def get_active_sysstatus(db: Session) -> Optional[SysStatus]:
     返回 None 表示 id=1 行不存在 (极端脏数据) — 调用方应宽容 None。
     """
     return db.query(SysStatus).filter(SysStatus.id == 1).first()
-
-
-class TradingSession(Base):
-    """交易时段配置（单行）
-
-    📖 详见 `openspec/specs/data-model/spec.md` §2（TradingSession 行）
-    """
-    __tablename__ = "trading_session"
-    __table_args__ = (
-        CheckConstraint("id = 1", name="ck_session_single_row"),
-    )
-
-    id = Column(Integer, primary_key=True, default=1)
-    morning_start = Column(Time, nullable=False)        # 09:15
-    morning_end = Column(Time, nullable=False)          # 11:30
-    afternoon_start = Column(Time, nullable=False)      # 13:00
-    afternoon_end = Column(Time, nullable=False)        # 15:00
-    updated_at = Column(DateTime, nullable=False, default=_utcnow, onupdate=_utcnow)
-
-
-class FeeConfig(Base):
-    """费率配置（单行）
-
-    📖 详见 `openspec/specs/data-model/spec.md` §2（FeeConfig 行）
-    """
-    __tablename__ = "fee_config"
-    __table_args__ = (
-        CheckConstraint("id = 1", name="ck_fee_single_row"),
-    )
-
-    id = Column(Integer, primary_key=True, default=1)
-    commission_rate = Column(Float, nullable=False, default=0.0001)   # 万一
-    stamp_tax_rate = Column(Float, nullable=False, default=0.001)     # 千 1
-    slippage = Column(Float, nullable=False, default=0.001)            # 0.1%
-    min_commission = Column(Float, nullable=False, default=5.0)         # 最低 5 元
-    updated_at = Column(DateTime, nullable=False, default=_utcnow, onupdate=_utcnow)
-    updated_by = Column(Integer, nullable=True)
-
-
-class ReconcileConfig(Base):
-    """对账配置（单行）
-
-    📖 详见 `openspec/specs/data-model/spec.md` §2（ReconcileConfig 行）
-    """
-    __tablename__ = "reconcile_config"
-    __table_args__ = (
-        CheckConstraint("id = 1", name="ck_reconcile_cfg_single_row"),
-    )
-
-    id = Column(Integer, primary_key=True, default=1)
-    auto_reconcile = Column(Integer, nullable=False, default=0)        # 0=人工 1=自动
-    auto_use_broker_data = Column(Integer, nullable=False, default=1)  # 自动时 1=以柜台为准 0=以本地为准
-    updated_at = Column(DateTime, nullable=False, default=_utcnow, onupdate=_utcnow)
-    updated_by = Column(Integer, nullable=True)
 
 
 class SysConfig(Base):

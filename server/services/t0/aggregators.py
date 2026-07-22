@@ -14,7 +14,8 @@ from typing import Dict, List, Optional, Set, Tuple
 
 from sqlalchemy.orm import Session
 
-from server.models.orm import FeeConfig, Order, Position, Trade
+
+from server.models.orm import Order, Trade
 
 from server.services.t0.fees import (
     _BUY_TYPE,
@@ -75,8 +76,8 @@ def _group_by_code(trades: List[Trade]) -> Dict[str, List[Trade]]:
 def aggregate_by_stock(
     trades: List[Trade],
     orders: List[Order],
-    positions: Dict[str, Position],
-    fee_cfg: FeeConfig,
+    positions: Dict[str, dict],
+    fee_cfg: dict,
     include_unrealized: bool = True,
 ) -> List[Dict]:
     """按 stock_code 聚合
@@ -84,7 +85,7 @@ def aggregate_by_stock(
     Args:
         trades: 跨所有 stock_code 的 Trade 列表
         orders: 跨所有 stock_code 的 Order 列表
-        positions: {stock_code: Position}，提供 cost_basis
+        positions: {stock_code: dict}，提供 cost_basis
         fee_cfg: 费率
         include_unrealized: 是否算浮动盈亏（仅参考用）
 
@@ -138,14 +139,14 @@ def aggregate_by_stock(
 
 def aggregate_by_day(
     trades: List[Trade],
-    positions: Dict[str, Position],
-    fee_cfg: FeeConfig,
+    positions: Dict[str, dict],
+    fee_cfg: dict,
 ) -> List[Dict]:
     """按交易日聚合（跨标的）
 
     Args:
         trades: 全部 Trade 列表
-        positions: {stock_code: Position}，提供 cost_basis（用当前快照）
+        positions: {stock_code: dict}，提供 cost_basis（用当前快照）
         fee_cfg: 费率
 
     Returns:

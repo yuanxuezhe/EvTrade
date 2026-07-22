@@ -1,104 +1,54 @@
 """
-admin/session.py — v4 交易时段配置
+admin/session.py — v_next 交易时段配置 (整合到 sysconfig)
 
-GET   /api/admin/trading-session   读
-PATCH /api/admin/trading-session   改
+GET   /api/admin/trading-session   读 trdtime (HHMMSS-HHMMSS;...)
+PATCH /api/admin/trading-session   改 trdtime (admin only)
 """
-from datetime import datetime, time as dtime, timezone
+from typing import Optional
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
-from typing import Optional
-from sqlalchemy.orm import Session
 
-from server.db import get_db
-from server.models.orm import TradingSession
 from server.services.guards import require_admin
-from server.utils.time import format_db_dt
+from server.services import sysconfig
+from server.auth.deps import get_current_user
+from server.models.user import User
 
 router = APIRouter()
 
 
-# 默认时段
-DEFAULT_MORNING_START = dtime(9, 15)
-DEFAULT_MORNING_END = dtime(11, 30)
-DEFAULT_AFTERNOON_START = dtime(13, 0)
-DEFAULT_AFTERNOON_END = dtime(15, 0)
-
-
-def _parse_time(s):
-    """'HH:MM' or 'HH:MM:SS' -> time"""
-    parts = s.split(':')
-    return dtime(int(parts[0]), int(parts[1]), int(parts[2]) if len(parts) > 2 else 0)
-
-
 class SessionOut(BaseModel):
-    morning_start: str
-    morning_end: str
-    afternoon_start: str
-    afternoon_end: str
+    trdtime: str
     is_half_day: bool
-    updated_at: Optional[str] = None
 
 
 class SessionUpdate(BaseModel):
-    morning_start: Optional[str] = None
-    morning_end: Optional[str] = None
-    afternoon_start: Optional[str] = None
-    afternoon_end: Optional[str] = None
+    trdtime: Optional[str] = None
     is_half_day: Optional[bool] = None
 
 
 @router.get("", response_model=SessionOut)
-async def get_session(db: Session = Depends(get_db)):
-    row = db.query(TradingSession).first()
-    if not row:
-        row = TradingSession(
-            morning_start=DEFAULT_MORNING_START,
-            morning_end=DEFAULT_MORNING_END,
-            afternoon_start=DEFAULT_AFTERNOON_START,
-            afternoon_end=DEFAULT_AFTERNOON_END,
-        )
-        db.add(row)
-        db.commit()
-        db.refresh(row)
-    return SessionOut(
-        morning_start=row.morning_start.isoformat(),
-        morning_end=row.morning_end.isoformat(),
-        afternoon_start=row.afternoon_start.isoformat(),
-        afternoon_end=row.afternoon_end.isoformat(),
-        is_half_day=False,  # ORM 无此字段，固定 False
-        updated_at=row.updated_at.isoformat() if row.updated_at else None,
-    )
-
-
-@router.patch("", response_model=SessionOut)
-async def update_session(req: SessionUpdate, db: Session = Depends(get_db), _=Depends(require_admin)):
-    row = db.query(TradingSession).first()
-    if not row:
-        row = TradingSession(
-            morning_start=DEFAULT_MORNING_START,
-            morning_end=DEFAULT_MORNING_END,
-            afternoon_start=DEFAULT_AFTERNOON_START,
-            afternoon_end=DEFAULT_AFTERNOON_END,
-        )
-        db.add(row)
-        db.flush()
-    for field in ('morning_start', 'morning_end', 'afternoon_start', 'afternoon_end'):
-        v = getattr(req, field)
-        if v:
-            setattr(row, field, _parse_time(v))
-    # is_half_day 暂不持久化（ORM 无字段）— 前端可看到但后端忽略
-    row.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
-    db.commit()
-    db.refresh(row)
-    # 清缓存
+async def get_session(_user: User = Depends(get_current_user)):
+    """v_next: 读 sysconfig.trdtime"""
     from server.repo.system import TradingClock
-    TradingClock.invalidate_cache()
+    win = TradingClock.get_session_window()
     return SessionOut(
-        morning_start=row.morning_start.isoformat(),
-        morning_end=row.morning_end.isoformat(),
-        afternoon_start=row.afternoon_start.isoformat(),
-        afternoon_end=row.afternoon_end.isoformat(),
-        is_half_day=False,  # ORM 无此字段，固定 False
-        updated_at=format_db_dt(row.updated_at) if row.updated_at else None,
+        trdtime=sysconfig.get_trdtime_str(),
+        is_half_day=win.get("is_half_day", False),
     )
+
+
+@router.patch("", response_model=SessionOut, dependencies=[Depends(require_admin)])
+async def update_session(req: SessionUpdate, user: User = Depends(get_current_user)):
+    """v_next: 写 sysconfig.trdtime (HHMMSS-HHMMSS;HHMMSS-HHMMSS)."""
+    if req.trdtime is not None:
+        # 验证格式合法
+        parsed = sysconfig.parse_trdtime(req.trdtime)
+        if not parsed:
+            from fastapi import HTTPException
+            raise HTTPException(status_code=400, detail=f"invalid trdtime format: {req.trdtime!r}")
+        sysconfig.set_value("0", "trdtime", req.trdtime,
+                            "交易时段 (分号分隔多段 HHMMSS-HHMMSS)", user.username)
+        # 清缓存
+        from server.repo.system import TradingClock
+        TradingClock._loaded_at = None
+    return await get_session(user)
