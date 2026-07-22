@@ -166,6 +166,28 @@ class TableBase:
         d = dict(mapping)
         return Row(d, cls.__fields__)
 
+    @classmethod
+    def _execute_select(cls, sql: str, params=None) -> List[Row]:
+        """执行 SELECT 并自动 text() 包裹 + Row 转换 (内部 helper, 不暴露).
+
+        Args:
+            sql: SQL 语句 (含 %s 占位符或 :name 命名参数)
+            params: tuple (自动转 :p_0, :p_1) 或 dict (命名参数)
+        """
+        engine = get_engine()
+        with engine.connect() as conn:
+            if params is None:
+                cur = conn.execute(text(sql))
+            elif isinstance(params, tuple):
+                params_dict = {f"p_{i}": v for i, v in enumerate(params)}
+                named_sql = sql
+                for i in range(len(params) - 1, -1, -1):
+                    named_sql = named_sql.replace("%s", f":p_{i}", 1)
+                cur = conn.execute(text(named_sql), params_dict)
+            else:
+                cur = conn.execute(text(sql), params)
+        return [cls._row_from_mapping(r) for r in cur.mappings().all()]
+
     # ──────────────── 5 个核心方法 ────────────────
 
     @classmethod
@@ -178,13 +200,11 @@ class TableBase:
         """
         cls._validate_subclass()
         pk_dict = cls._pk_from_kwargs(pk)
-        engine = get_engine()
-        sql = text(f"SELECT * FROM `{cls.__tablename__}` WHERE " +
-                   " AND ".join([f"`{k}` = :pk_{i}" for i, k in enumerate(cls.__pk_fields__)]))
+        sql = f"SELECT * FROM `{cls.__tablename__}` WHERE " + \
+              " AND ".join([f"`{k}` = :pk_{i}" for i, k in enumerate(cls.__pk_fields__)])
         params = {f"pk_{i}": v for i, (k, v) in enumerate(pk_dict.items())}
-        with engine.connect() as conn:
-            row = conn.execute(sql, params).mappings().first()
-        return cls._row_from_mapping(row) if row else None
+        rows = cls._execute_select(sql, params)
+        return rows[0] if rows else None
 
     @classmethod
     def add_one(cls, data: Dict[str, Any]) -> Row:
@@ -254,63 +274,28 @@ class TableBase:
         return result.rowcount > 0
 
     @classmethod
-    def query_all(
-        cls,
-        order: str = "asc",
-        page: Optional[int] = None,
-        page_size: Optional[int] = None,
-    ) -> List[Row]:
-        """查询所有数据 (v80.4: 简化签名 — 不送 page/page_size = 全查).
+    def query_all(cls, order: str = "asc") -> List[Row]:
+        """查询所有数据 (v80.5: 彻底简化 — 取消分页, 直接全表).
+
+        数据量小 (用户偏好: '直接查全部, 有过滤条件的, 前端过滤').
 
         Args:
             order: 'asc' (按主键升序) 或 'desc' (按主键降序). 默认 'asc'.
-            page: 第几页 (从 1 开始). 不传/None = 全查 (不切片).
-            page_size: 每页行数. 不传/None = 全查 (不切片).
 
         Returns:
             List[Row] (不带行号)
 
         Examples:
-            Orders.query_all()                       # 全查, 升序
-            Orders.query_all(order='desc')           # 全查, 降序
-            Orders.query_all(page=1, page_size=20)   # 第 1 页 20 行
-            Orders.query_all('desc', 1, 20)          # 位置参数也行
+            Orders.query_all()            # 全查, 升序
+            Orders.query_all('desc')      # 全查, 降序
         """
         cls._validate_subclass()
         if order not in ("asc", "desc"):
             raise ValueError(f"order 必须是 'asc' 或 'desc', 收到 {order!r}")
 
         order_clause = ", ".join(f"`{pk}` {order.upper()}" for pk in cls.__pk_fields__)
-        engine = get_engine()
-
-        # 全查模式 (page=None 且 page_size=None)
-        if page is None and page_size is None:
-            sql = text(f"SELECT * FROM `{cls.__tablename__}` ORDER BY {order_clause}")
-            with engine.connect() as conn:
-                rows = conn.execute(sql).mappings().all()
-            return [cls._row_from_mapping(r) for r in rows]
-
-        # 分页模式 (两个都必传)
-        if page is None or page_size is None:
-            raise ValueError("page 和 page_size 要么都传, 要么都不传 (全查模式)")
-        if page < 1:
-            raise ValueError(f"page 必须 >= 1, 收到 {page}")
-        if page_size < 1:
-            raise ValueError(f"page_size 必须 >= 1, 收到 {page_size}")
-
-        start_row = (page - 1) * page_size + 1
-        end_row = page * page_size
-        sql = text(f"""
-            SELECT * FROM (
-                SELECT *, ROW_NUMBER() OVER (ORDER BY {order_clause}) AS rn
-                FROM `{cls.__tablename__}`
-            ) AS _t
-            WHERE rn BETWEEN :start AND :end
-            ORDER BY rn ASC
-        """)
-        with engine.connect() as conn:
-            rows = conn.execute(sql, {"start": start_row, "end": end_row}).mappings().all()
-        return [cls._row_from_mapping(r) for r in rows]
+        sql = f"SELECT * FROM `{cls.__tablename__}` ORDER BY {order_clause}"
+        return cls._execute_select(sql)
 
 
 # ──────────────────────────── 公共 helper ────────────────────────────
