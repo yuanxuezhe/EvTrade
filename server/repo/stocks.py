@@ -1,5 +1,5 @@
 """
-repo/stocks.py — 股票基础信息 CRUD (v23 slim-stocks-table, v46+ short-name-auto)
+repo/stocks.py — 股票基础信息 CRUD (v23 slim-stocks-table, v46+ short-name-auto, v80.5 tables)
 
 职责:
 - upsert:增量更新(7 天内跳过),crawler 自动入仓用
@@ -8,7 +8,7 @@ repo/stocks.py — 股票基础信息 CRUD (v23 slim-stocks-table, v46+ short-na
 - list_codes:仅返回 stock_code 列表(轻量)
 - update_by_admin:admin 手动编辑 stocks 字段(白名单, stock_name 改动自动重算 short_name)
 - create_by_admin:admin 手动添加(自动生成 short_name, REQ-STOCK-007)
-- to_dict:ORM → dict(WS 推送用)
+- to_dict:Row → dict(WS 推送用)
 - to_dict_from_data:raw dict (来自 crawler) → 标准 dict (WS 推送用)
 
 字段精简历史:
@@ -22,10 +22,9 @@ from datetime import datetime, timedelta
 from typing import List, Optional, Dict
 import threading
 
-from sqlalchemy.orm import Session
-
-from server.models.orm import Stock
 from server.services.short_name import to_short_name  # v46+ REQ-STOCK-007
+from server.tables.base import Row
+from server.tables.stocks import Stocks
 
 
 # 增量 upsert 的"7 天内跳过"阈值
@@ -88,25 +87,20 @@ def GetStockInfo(stock_code: str) -> dict:
                 "scale": int(d.get("scale", 2) or 2),
                 "t0": bool(d.get("t0", False)),
             }
-        # cache miss → DB 查询并填 cache
-        from server.infra.db import SessionLocal  # 避免循环 import
-        db = SessionLocal()
-        try:
-            row = db.query(Stock).filter_by(stock_code=stock_code).first()
-            if row is None:
-                return {"stktype": 0, "scale": 2, "t0": False}
-            result = {
-                "stktype": int(getattr(row, "stktype", 0) or 0),
-                "scale": int(getattr(row, "scale", 2) or 2),
-                "t0": bool(getattr(row, "is_t0_able", False)),
-            }
-            _stock_cache[stock_code] = result
-            return result
-        finally:
-            db.close()
+        # cache miss → 按主键查 DB 并填 cache
+        row = Stocks.query_one(stock_code=stock_code)
+        if row is None:
+            return {"stktype": 0, "scale": 2, "t0": False}
+        result = {
+            "stktype": int(row.stktype or 0),
+            "scale": int(row.scale or 2),
+            "t0": bool(row.is_t0_able),
+        }
+        _stock_cache[stock_code] = result
+        return result
 
 
-def get_is_t0_able(db: Session, stock_code: str) -> bool:
+def get_is_t0_able(db=None, stock_code: str = "") -> bool:
     """v78.3: 从内存 cache 读 is_t0_able; cache miss 时回退 DB 并填 cache
 
     设计: trade_cfm 推送每笔成交都会查, DB query 频繁;
@@ -125,7 +119,7 @@ def get_is_t0_able(db: Session, stock_code: str) -> bool:
         return info["t0"]
 
 
-def get_stock_scale(db: Session, stock_code: str) -> int:
+def get_stock_scale(db=None, stock_code: str = "") -> int:
     """v80: 读 stock.scale (价格小数位精度).
 
     v80.1: 重构为内部 helper, 调 GetStockInfo()
@@ -139,7 +133,7 @@ def get_stock_scale(db: Session, stock_code: str) -> int:
         return info["scale"]
 
 
-def get_stock_stktype(db: Session, stock_code: str) -> int:
+def get_stock_stktype(db=None, stock_code: str = "") -> int:
     """v80: 读 stock.stktype (0=股票/1=ETF).
 
     v80.1: 重构为内部 helper, 调 GetStockInfo()
@@ -153,23 +147,21 @@ def get_stock_stktype(db: Session, stock_code: str) -> int:
         return info["stktype"]
 
 
-def load_all_stocks(db: Session) -> int:
+def load_all_stocks(db=None) -> int:
     """v78.3: 启动时一次性加载所有 stocks.is_t0_able 到内存 cache
     v80: 扩展加载 scale + stktype (下单价格精度 + 可交易类型校验用)
 
     返回加载条目数. 与 sysconfig._ensure_defaults 类似, 在 init_db 末尾调用.
     """
     global _stock_cache_loaded
-    rows = db.query(
-        Stock.stock_code, Stock.is_t0_able, Stock.scale, Stock.stktype
-    ).all()
+    rows = Stocks.query_all()
     with _stock_cache_lock:
         _stock_cache.clear()
-        for code, t0, scale, stktype in rows:
-            _stock_cache[code] = {
-                "t0": bool(t0),
-                "scale": int(scale or 2),
-                "stktype": int(stktype or 0),
+        for row in rows:
+            _stock_cache[row.stock_code] = {
+                "t0": bool(row.is_t0_able),
+                "scale": int(row.scale or 2),
+                "stktype": int(row.stktype or 0),
             }
         _stock_cache_loaded = True
     return len(rows)
@@ -188,11 +180,11 @@ def invalidate_stock_cache(stock_code: str = "") -> None:
             _stock_cache_loaded = False
 
 
-def upsert(db: Session, stock_code: str, data: Dict) -> str:
+def upsert(db=None, stock_code: str = "", data: Optional[Dict] = None) -> str:
     """增量 upsert stocks 表(REQ-STOCK-002)
 
     Args:
-        db: SQLAlchemy Session
+        db: 兼容旧调用方的保留参数, v80.5 不再使用
         stock_code: '000001.SZ'
         data: dict 含 stock_name/sector(其余字段白名单过滤)
               (data 里若有 stock_code 会被剔除,以参数 stock_code 为准)
@@ -204,27 +196,23 @@ def upsert(db: Session, stock_code: str, data: Dict) -> str:
         - skipped: 已存在 + 距上次更新 ≤ 7 天 → 跳过
     """
     # data 可能有 stock_code 字段,剔除(参数 stock_code 为准)
-    payload = {k: v for k, v in data.items() if k != 'stock_code'}
-    existing = db.query(Stock).filter_by(stock_code=stock_code).first()
+    payload = {k: v for k, v in (data or {}).items() if k != 'stock_code'}
+    existing = Stocks.query_one(stock_code=stock_code)
     if existing is None:
-        # INSERT
-        stock = Stock(stock_code=stock_code, **payload)
-        db.add(stock)
-        db.commit()
+        Stocks.add_one({'stock_code': stock_code, **payload})
         return 'inserted'
     # 已存在 → 检查 7 天阈值
     if existing.updated_at and existing.updated_at > (datetime.utcnow() - timedelta(days=SKIP_THRESHOLD_DAYS)):
         return 'skipped'
-    # UPDATE
-    for k, v in payload.items():
-        if hasattr(existing, k):
-            setattr(existing, k, v)
-    db.commit()
+    update_data = {k: v for k, v in payload.items() if hasattr(existing, k)}
+    if update_data:
+        Stocks.update_one(update_data, stock_code=stock_code)
     return 'updated'
 
 
-def get_by_code(db: Session, stock_code: str) -> Optional[Stock]:
-    return db.query(Stock).filter_by(stock_code=stock_code).first()
+def get_by_code(db=None, stock_code: str = "") -> Optional[Row]:
+    """按 stock_code 主键查询; db 参数仅为兼容旧调用方保留."""
+    return Stocks.query_one(stock_code=stock_code)
 
 
 # v23 slim-stocks-table: admin 显式编辑 stocks 行
@@ -238,7 +226,11 @@ _ADMIN_EDITABLE_FIELDS = (
 )
 
 
-def update_by_admin(db: Session, stock_code: str, data: Dict) -> Optional[Stock]:
+def update_by_admin(
+    db=None,
+    stock_code: str = "",
+    data: Optional[Dict] = None,
+) -> Optional[Row]:
     """admin 显式编辑 stocks 表(REQ-STOCK-003 + REQ-STOCK-007)
 
     与 upsert 的区别:
@@ -248,7 +240,8 @@ def update_by_admin(db: Session, stock_code: str, data: Dict) -> Optional[Stock]
     v46+: 若 stock_name 字段在 data 中被修改, 自动重算 short_name (REQ-STOCK-007)
           data 中若含 short_name 也会被忽略 (admin 无权改)
     """
-    existing = db.query(Stock).filter_by(stock_code=stock_code).first()
+    data = data or {}
+    existing = Stocks.query_one(stock_code=stock_code)
     if existing is None:
         return None
 
@@ -257,23 +250,27 @@ def update_by_admin(db: Session, stock_code: str, data: Dict) -> Optional[Stock]
     if 'stock_name' in data:
         new_short_name = to_short_name(data['stock_name'])
 
+    update_data = {}
     for k, v in data.items():
         # v46+: 忽略 admin 传入的 short_name 字段
         if k == 'short_name':
             continue
         if k in _ADMIN_EDITABLE_FIELDS and hasattr(existing, k):
-            setattr(existing, k, v)
+            update_data[k] = v
 
     # v46+: 应用重算后的 short_name
     if new_short_name is not None:
-        existing.short_name = new_short_name
+        update_data['short_name'] = new_short_name
 
-    db.commit()
-    db.refresh(existing)
-    return existing
+    if not update_data:
+        return existing
+    return Stocks.update_one(update_data, stock_code=stock_code)
 
 
-def create_by_admin(db: Session, data: Dict) -> Optional[Stock]:
+def create_by_admin(
+    db=None,
+    data: Optional[Dict] = None,
+) -> Optional[Row]:
     """admin 手动添加 stocks 行(REQ-STOCK-006 + REQ-STOCK-007)
 
     与 upsert 的区别:
@@ -283,43 +280,39 @@ def create_by_admin(db: Session, data: Dict) -> Optional[Stock]:
     v46+: short_name 由 stock_name 自动派生 (REQ-STOCK-007)
           data 中若含 short_name 会被忽略 (admin 无权传)
     """
+    data = data or {}
     stock_code = data.get('stock_code')
     if not stock_code:
         return None  # API 层会在 Pydantic 阶段拦截(必填字段)
 
     # 重复检查(API 层会基于 None 返 409)
-    existing = db.query(Stock).filter_by(stock_code=stock_code).first()
+    existing = Stocks.query_one(stock_code=stock_code)
     if existing is not None:
         return None
 
     # 只允许白名单字段,stock_code 单独处理;v46+ 排除 short_name (自动生成)
     payload = {k: v for k, v in data.items()
-               if k in _ADMIN_EDITABLE_FIELDS and hasattr(Stock, k) and k != 'short_name'}
+               if k in _ADMIN_EDITABLE_FIELDS and k in Stocks.__fields__ and k != 'short_name'}
     # v46+: 自动生成 short_name (来自 stock_name)
     payload['short_name'] = to_short_name(data.get('stock_name', ''))
 
-    stock = Stock(stock_code=stock_code, **payload)
-    db.add(stock)
-    db.commit()
-    db.refresh(stock)
-    return stock
+    Stocks.add_one({'stock_code': stock_code, **payload})
+    return Stocks.query_one(stock_code=stock_code)
 
 
-def list_all(db: Session, limit: Optional[int] = None) -> List[Stock]:
-    q = db.query(Stock).order_by(Stock.stock_code)
-    if limit:
-        q = q.limit(limit)
-    return q.all()
+def list_all(db=None, limit: Optional[int] = None) -> List[Row]:
+    """按主键升序返回全表; limit 在 Python 侧切片."""
+    rows = Stocks.query_all()
+    return rows[:limit] if limit else rows
 
 
-def list_codes(db: Session) -> List[str]:
+def list_codes(db=None) -> List[str]:
     """仅返回 stock_code 列表,用于同步任务遍历"""
-    rows = db.query(Stock.stock_code).order_by(Stock.stock_code).all()
-    return [r[0] for r in rows]
+    return [row.stock_code for row in Stocks.query_all()]
 
 
-def to_dict(stock: Stock) -> Dict:
-    """ORM → dict(WS 推送前端用, v23 字段精简, v25 加 short_name, v80 加 scale + stktype)"""
+def to_dict(stock: Row) -> Dict:
+    """Row → dict(WS 推送前端用, v23 字段精简, v25 加 short_name, v80 加 scale + stktype)"""
     return {
         'stock_code': stock.stock_code,
         'stock_name': stock.stock_name or '',

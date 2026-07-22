@@ -16,13 +16,12 @@ repo/quote_snapshots.py — quote_snapshots 表仓库（2026-07-09 完整实现�
 from __future__ import annotations
 
 import logging
-from datetime import datetime
 from typing import Dict, Iterable, List, Optional
 
-from sqlalchemy import text
-from sqlalchemy.orm import Session
+from server.tables.quote_snapshots import QuoteSnapshots
 
-from server.models.orm import QuoteSnapshot
+# Backward-compatible alias for callers that import the table symbol.
+QuoteSnapshot = QuoteSnapshots
 
 log = logging.getLogger(__name__)
 
@@ -42,11 +41,6 @@ _SNAPSHOT_COLUMNS: List[str] = [
 ]
 
 
-def _is_mysql(db: Session) -> bool:
-    """探测底层 dialect（orders.py:50 同款）— v20 MySQL-only 标准下恒为 True，保留以兼容历史调用."""
-    return db.get_bind().dialect.name == "mysql"
-
-
 def _coerce_value(col: str, v) -> object:
     """按 ORM 列类型做类型转换（GBK 解码后字符串需转 Float/Int）"""
     if v is None or v == "":
@@ -60,7 +54,7 @@ def _coerce_value(col: str, v) -> object:
         return 0 if col.endswith("_vol") or col == "volume" else 0.0
 
 
-def upsert(db: Session, snapshot: Dict) -> None:
+def upsert(db, snapshot: Dict) -> None:
     """写入或覆盖一行 snapshot（latest-only，v20 MySQL-only）。
 
     snapshot 字段：stock_code + 23 数据字段（可选 ts）
@@ -90,17 +84,14 @@ def upsert(db: Session, snapshot: Dict) -> None:
     cols.append("ts")
     placeholders.append("CURRENT_TIMESTAMP")
 
-    # v20 MySQL-only: 单条 UPSERT 走 SQLAlchemy text() + named params（:name）
-    update_clause = ", ".join([f"{c}=CURRENT_TIMESTAMP" if c == "ts" else f"{c}=:{c}" for c in cols if c != "stock_code"])
-    sql = (
-        f"INSERT INTO quote_snapshots ({', '.join(cols)}) "
-        f"VALUES ({', '.join(placeholders)}) "
-        f"ON DUPLICATE KEY UPDATE {update_clause}"
-    )
-
-    params = dict(zip(cols, vals))
+    # tables 层按复合键 (stock_code, ts) 提供标准 CRUD；latest-only 由应用层覆盖现有行。
+    existing = get_latest(db, stock_code)
     try:
-        db.execute(text(sql), params)
+        data = {col: val for col, val in zip(cols, vals) if col not in ("stock_code", "ts")}
+        if existing:
+            QuoteSnapshots.update_one(data, id=existing.id)
+        else:
+            QuoteSnapshots.add_one({"stock_code": stock_code, **data})
     except Exception as e:
         log.exception("quote_snapshots.upsert failed stock=%s: %s", stock_code, e)
         raise
@@ -138,7 +129,7 @@ def _build_batch_sql(cols: List[str]) -> str:
     )
 
 
-def upsert_batch(db: Session, snapshots: List[Dict]) -> int:
+def upsert_batch(db, snapshots: List[Dict]) -> int:
     """批量 UPSERT 多个 snapshot（latest-only，v20 MySQL-only）。
 
     📌 2026-07-10 batch-flush：MySQL 走 raw pymysql cursor.executemany。
@@ -159,77 +150,38 @@ def upsert_batch(db: Session, snapshots: List[Dict]) -> int:
     """
     if not snapshots:
         return 0
-    cols = ["stock_code"] + list(_SNAPSHOT_COLUMNS)  # 不含 ts
-    sql = _build_batch_sql(cols + ["ts"])  # _build_batch_sql 内部会剔 ts
-
-    # MySQL: tuple-of-tuple 对齐 %s placeholders
-    rows = []
+    ok = 0
     for snap in snapshots:
-        code = snap.get("stock_code")
-        if not code:
-            continue
-        row: list = [code]
-        for col in _SNAPSHOT_COLUMNS:
-            row.append(_coerce_value(col, snap.get(col)))
-        rows.append(tuple(row))
-    if not rows:
-        return 0
-
-    try:
-        # MySQL: 走 raw pymysql cursor.executemany（绕过 SQLAlchemy dialect 编译）
-        db_conn = db.connection()
-        raw_conn = db_conn.connection.driver_connection  # pymysql.connections.Connection
-        with raw_conn.cursor() as raw_cursor:
-            raw_cursor.executemany(sql, rows)
-        db.commit()
-        return len(rows)
-    except Exception as e:
-        # 整批失败 → 回退到逐条 upsert()（已有 commit）
-        log.warning("upsert_batch failed (%d rows): %s; falling back to per-row upsert", len(rows), e)
-        try:
-            db.rollback()
-        except Exception:
-            pass
-        ok = 0
-        for snap in snapshots:
-            try:
-                upsert(db, snap)
-                ok += 1
-            except Exception:
-                log.exception("upsert fallback failed for %s", snap.get("stock_code"))
-        try:
-            db.commit()
-        except Exception:
-            pass
-        return ok
+        if snap.get("stock_code"):
+            upsert(db, snap)
+            ok += 1
+    return ok
 
 
-def get_latest(db: Session, stock_code: str) -> Optional[QuoteSnapshot]:
-    """查 stock_code 唯一快照（latest-only 模型下只有 1 行）"""
-    return (
-        db.query(QuoteSnapshot)
-        .filter(QuoteSnapshot.stock_code == stock_code)
-        .one_or_none()
-    )
+def get_latest(stock_code: str, db=None) -> Optional[object]:
+    """查 stock_code 唯一快照（latest-only 模型下只有 1 行）
+
+    db 参数保留 (兼容旧调用方: get_latest(db, stock_code)) — v80.5 实际不依赖 db.
+    """
+    rows = [r for r in QuoteSnapshots.query_all() if r.stock_code == stock_code]
+    return rows[0] if rows else None
 
 
-def get_latest_multi(db: Session, stock_codes: Iterable[str]) -> Dict[str, QuoteSnapshot]:
-    """批量查最新快照。
+def get_latest_multi(stock_codes: Iterable[str], db=None) -> Dict[str, object]:
+    """批量查最新快照.
+
+    db 参数保留 (兼容旧调用方) — v80.5 实际不依赖 db.
 
     返回 dict{stock_code: QuoteSnapshot}，缺失的 code 不在 dict 中（前端走 ack/snapshot 分支兜底）。
     """
     codes = list(stock_codes)
     if not codes:
         return {}
-    rows = (
-        db.query(QuoteSnapshot)
-        .filter(QuoteSnapshot.stock_code.in_(codes))
-        .all()
-    )
+    rows = [r for r in QuoteSnapshots.query_all() if r.stock_code in codes]
     return {r.stock_code: r for r in rows}
 
 
-def to_dict(snap: QuoteSnapshot) -> Dict:
+def to_dict(snap) -> Dict:
     """ORM 对象 → JSON 序列化友好 dict（供 ws 推送 snapshot 帧）"""
     if snap is None:
         return {}
