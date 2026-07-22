@@ -33,6 +33,8 @@ from server.services.guards import require_trader, require_trading_day, require_
 from server.repo.orders import next_order_no
 from server.utils.time import format_ts
 from server.services.t0 import calc_net_amount, calc_t0_volume, get_fee_config
+from server.repo.stocks import get_stock_scale, get_stock_stktype  # v80
+from server.services.sysconfig import get_cantrd_stktypes  # v80
 from server.api.orders.schemas import (
     PlaceOrderRequest,
     PlaceOrderResponse,
@@ -56,6 +58,21 @@ def register_place(router):
         if req.order_type not in ("23", "24"):
             raise HTTPException(status_code=400, detail={"code": "BAD_ORDER_TYPE", "msg": "order_type 必须 23(买) 24(卖)"})
 
+        # v80: stktype 可交易校验 + 价格按 stock.scale 四舍五入
+        stktype = get_stock_stktype(db, req.stock_code)
+        allowed = get_cantrd_stktypes(user="0")
+        if stktype not in allowed:
+            raise HTTPException(
+                status_code=403,
+                detail={"code": "STK_TYPE_NOT_TRADABLE",
+                        "msg": f"证券 {req.stock_code} 类型 {stktype} 不可交易 (允许: {sorted(allowed)})"}
+            )
+        scale = get_stock_scale(db, req.stock_code)
+        if scale > 6:
+            scale = 2  # 兜底 (用户原话)
+        if req.price is not None and req.price > 0:
+            req.price = round(float(req.price), scale)
+
         # 1. 取交易日 + order_no（v7：幂等改由 order_no 单调递增保证）
         #    v_next: SysStatus 单行 (id=1)
         trd_date = get_active_trd_date(db)
@@ -74,7 +91,7 @@ def register_place(router):
                 detail={"code": "VOLUME_TOO_SMALL", "msg": "T0 配平后 0 股 (目标 {} × 系数 {})".format(req.volume, req.t0_coefficient)}
             )
 
-        # 3. 算费
+        # 3. 算费 (用 round 后的 price)
         fee_cfg = get_fee_config()
         gross, net = calc_net_amount(req.price, adjusted, fee_cfg, direction)
 
