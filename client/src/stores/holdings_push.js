@@ -27,7 +27,7 @@ import {
   todayYYYYMMDD,
   recomputeStatus,
   normalizeTrade,
-  recomputeOrderFromTrade,
+  // v78.3 (REQ-TRADE-032): 不再 import recomputeOrderFromTrade — 后端 ord_cfm 一次写入委托累计, 前端不二次累计
   metaMerge,
   flattenCancelledByRow
 } from './holdings_helpers'
@@ -166,23 +166,21 @@ export function createPushHandlers(deps) {
     trades.value.unshift(newTrade)
     // v13: IDB 单行写 (复合 key 维度, O(1) idbPut)
     _persistTrade(newTrade)
-    // change: 反向累计 orders 中的对应委托
+    // v78.3 (REQ-TRADE-032): 委托累计 (traded_volume/avg_price/traded_amount) 由后端 ord_cfm 一次写入
+    //   broker 推完整成交数量+成交均价 → 后端 ord.py 用 broker.traded_volume/traded_price 直接覆盖 Order 表
+    //   前端 applyTradePush 不再调 recomputeOrderFromTrade 二次累计 (避免与后端覆盖冲突)
+    //   当 trd_cfm 先到 ord_cfm 后到: 表格列在 trd_cfm 后暂时显示旧累计, ord_cfm 后到会自动刷新
+    // change fix-trades-direction-reversed: 用 order.order_type 填充 trade.order_type (broker trd_cfm 漏推)
     if (newTrade.order_no) {
       const orderIdx = orders.value.findIndex((o) => o.order_no === newTrade.order_no)
       if (orderIdx >= 0) {
-        const old = orders.value[orderIdx]
-        const updated = recomputeOrderFromTrade(old, newTrade)
-        // change fix-trades-direction-reversed: 用 order.order_type 填充 trade.order_type (broker trd_cfm 漏推)
+        const updated = orders.value[orderIdx]
         if (!newTrade.order_type && updated.order_type) {
           newTrade.order_type = updated.order_type
           // 同步写回 trades ref + IDB (让前端判定和持久化都对)
           trades.value[0] = newTrade
           _persistTrade(newTrade)
         }
-        orders.value[orderIdx] = updated
-        // v13: 累计间接改了 orders, 也单行写 IDB
-        _persistOrder(updated)
-        log('info', '交易', 'ws', `订单累计: ${updated.stock_code} ${updated.order_no} ${updated.traded_volume}/${updated.volume} status=${updated.status}`)
       }
     }
     // change t0-trade-polish-bundle (commit 3): 成交通知使该标的 t0Stats 缓存失效

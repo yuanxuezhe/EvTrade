@@ -89,16 +89,15 @@ def handle_ord_cfm(db: Session, row: Dict[str, Any], ts: str) -> Optional[Dict[s
     if broker_volume > 0 and broker_volume != order.volume:
         order.volume = broker_volume
 
-    # v79 (REQ-TRADE-032): ord_cfm 只推 2 类状态 — broker 首次 ack (50) + 废单 (57)
+    # v79.2 (REQ-TRADE-032): ord_cfm 只推 2 类 ws — broker 首次 ack (50) + 废单 (57)
     #   - 50 (已报): broker 确认收到委托, 前端首次弹窗
     #   - 57 (废单): broker 拒收委托, 前端弹窗提示
-    #   - 其他 (51/52/53/54/55/56): 全部 return None, dispatcher 跳过 ws 广播
+    #   - 其他 (51/52/53/54/55/56): ws 不广播 (避免 spam), 但 **DB 仍写** (broker 推的 traded_volume/traded_price 累计落到 Order 表)
     #     - 撤单类 52/53/54: 撤单由 api/orders/cancel.py 主动 INSERT cancel-trade (trade_type=1),
     #       trd_cfm 路径推送, 前端通过成交通知感知撤单完成
-    #     - 部成/已成 55/56: 累计由 trd_cfm 推 (每次成交都推), 不需要 ord_cfm 二次 ack
-    PUSH_STATUSES = ('50', '57')
-    if broker_status not in PUSH_STATUSES:
-        return None
+    #     - 部成/已成 55/56: broker 每次成交都会推 ord_cfm (带 cum traded_volume/traded_price),
+    #       DB 必须把累计写到 Order 表 (前端 holdings.applyOrderPush.metaMerge 已信任这些字段), 但不推 ws 避免 spam
+    # 实现: handler 末尾返回 None (ord_cfm 这次不推 ws) 或 dict (推 ws) — 由 dispatcher._broadcast_generic 跳过 None
 
     # v59 旧规则保留做兜底 (保留 DB 写入, 即便不推 ws):
     #   CANCEL_LIKE_STATUSES = (52/53/54/57)  → order.status = broker_status
@@ -138,4 +137,8 @@ def handle_ord_cfm(db: Session, row: Dict[str, Any], ts: str) -> Optional[Dict[s
         order.order_no, order.order_id, order.status, broker_status,
         order.traded_volume, order.volume, order.avg_price))
 
+    # v79.2: 只推 ws 50/57, 其他 return None 让 dispatcher._broadcast_generic 跳过 ws 广播
+    #   但 DB 已经 commit, 前端 bootstrap refreshAll 也能拿到正确累计
+    if order.status not in ('50', '57'):
+        return None
     return _order_to_out_dict(order)
