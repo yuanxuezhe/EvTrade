@@ -301,7 +301,36 @@ class TableBase:
         return [cls._row_from_mapping(r) for r in rows]
 
 
-# ──────────────────────────── 公共 context manager ────────────────────────────
+# ──────────────────────────── 公共 helper ────────────────────────────
+def exec_sql(conn, sql: str, params=None):
+    """others.py 专用 helper: 自动 text() 包裹 + 执行.
+
+    支持:
+        exec_sql(conn, "SELECT ... WHERE id=%s", (1,))         # tuple
+        exec_sql(conn, "SELECT ... WHERE id=:id", {"id": 1})  # dict
+        exec_sql(conn, "SELECT 1")                              # 无参
+
+    Examples:
+        with get_conn() as conn:
+            cur = exec_sql(conn, "SELECT * FROM users WHERE id=%s", (1,))
+    """
+    from sqlalchemy import text
+    if params is None:
+        return conn.execute(text(sql))
+    if isinstance(params, tuple):
+        # tuple 自动转命名 dict (%s 占位符 → :p_0, :p_1)
+        sql = sql.replace("%s", ":p_N") if False else sql
+        # 直接用位置参数: SQLAlchemy 也支持 text("... %s ...") + tuple — 但要 binding 形式
+        # 用 dict 形式最稳
+        params_dict = {f"p_{i}": v for i, v in enumerate(params)}
+        # 同时把 SQL 里 %s 改成 :p_0, :p_1
+        named_sql = sql
+        for i in range(len(params) - 1, -1, -1):
+            named_sql = named_sql.replace("%s", f":p_{i}", 1)
+        return conn.execute(text(named_sql), params_dict)
+    return conn.execute(text(sql), params)
+
+
 @contextmanager
 def get_conn():
     """获取数据库连接 (context manager, with 语句自动 close).
