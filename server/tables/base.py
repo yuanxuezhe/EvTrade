@@ -257,37 +257,49 @@ class TableBase:
     def query_all(
         cls,
         order: str = "asc",
-        page: int = 1,
-        page_size: int = 20,
+        page: Optional[int] = None,
+        page_size: Optional[int] = None,
     ) -> List[Row]:
-        """分页查询所有数据 (带行号切片).
+        """查询所有数据 (v80.4: 简化签名 — 不送 page/page_size = 全查).
 
         Args:
-            order: 'asc' (按主键升序) 或 'desc' (按主键降序).
-                   asc 时 ORDER BY pk1, pk2 ASC; desc 时 ORDER BY pk1, pk2 DESC.
-            page: 第几页 (从 1 开始)
-            page_size: 每页行数
+            order: 'asc' (按主键升序) 或 'desc' (按主键降序). 默认 'asc'.
+            page: 第几页 (从 1 开始). 不传/None = 全查 (不切片).
+            page_size: 每页行数. 不传/None = 全查 (不切片).
 
         Returns:
             List[Row] (不带行号)
 
-        算法:
-            按主键排序, 给每行加行号 rn = ROW_NUMBER() OVER (ORDER BY pk)
-            取 rn BETWEEN (page-1)*page_size+1 AND page*page_size
+        Examples:
+            Orders.query_all()                       # 全查, 升序
+            Orders.query_all(order='desc')           # 全查, 降序
+            Orders.query_all(page=1, page_size=20)   # 第 1 页 20 行
+            Orders.query_all('desc', 1, 20)          # 位置参数也行
         """
         cls._validate_subclass()
         if order not in ("asc", "desc"):
             raise ValueError(f"order 必须是 'asc' 或 'desc', 收到 {order!r}")
+
+        order_clause = ", ".join(f"`{pk}` {order.upper()}" for pk in cls.__pk_fields__)
+        engine = get_engine()
+
+        # 全查模式 (page=None 且 page_size=None)
+        if page is None and page_size is None:
+            sql = text(f"SELECT * FROM `{cls.__tablename__}` ORDER BY {order_clause}")
+            with engine.connect() as conn:
+                rows = conn.execute(sql).mappings().all()
+            return [cls._row_from_mapping(r) for r in rows]
+
+        # 分页模式 (两个都必传)
+        if page is None or page_size is None:
+            raise ValueError("page 和 page_size 要么都传, 要么都不传 (全查模式)")
         if page < 1:
             raise ValueError(f"page 必须 >= 1, 收到 {page}")
         if page_size < 1:
             raise ValueError(f"page_size 必须 >= 1, 收到 {page_size}")
 
-        order_clause = ", ".join(f"`{pk}` {order.upper()}" for pk in cls.__pk_fields__)
         start_row = (page - 1) * page_size + 1
         end_row = page * page_size
-
-        engine = get_engine()
         sql = text(f"""
             SELECT * FROM (
                 SELECT *, ROW_NUMBER() OVER (ORDER BY {order_clause}) AS rn

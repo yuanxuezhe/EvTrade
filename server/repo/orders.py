@@ -1,101 +1,104 @@
 """
-repo/orders.py — orders 表仓库 + order_no_seq 表仓库（v13 从 services/ 迁入）
+repo/orders.py — orders 表仓库 + order_no_seq 表仓库 (v13 从 services/ 迁入, v80.3 迁移到 tables 层)
 
-包含：
-- 8 位订单序号生成器（next_order_no / get_current_no / reset_to）— 旧 services/order_no.py
-- broker xtconstant 字典 + 委托 status 推断（ORDER_STATUS / TERMINAL_STATUSES /
-  is_cancellable / _status_msg / _infer_order_status / _get_active_trd_date）— 旧 services/order_status.py
-- v13 新增表级 CRUD 封装（get_by_order_no / insert_pending_order / insert_cancel_row）
+包含:
+- 8 位订单序号生成器 (next_order_no / get_current_no / reset_to) — 旧 services/order_no.py
+- broker xtconstant 字典 + 委托 status 推断 (ORDER_STATUS / TERMINAL_STATUSES /
+  is_cancellable / _status_msg / _infer_order_status / _get_active_trd_date) — 旧 services/order_status.py
+- v13 新增表级 CRUD 封装 (get_by_order_no / insert_pending_order / insert_cancel_row)
+- v80.3 迁移到 server/tables/ 层: 消除 ORM 依赖, 用 Orders.add_one / Orders.query_one / Orders.update_one 等标准接口
 
-规范：openspec/specs/rpc-protocol/spec.md REQ-RPC-009
+规范: openspec/specs/rpc-protocol/spec.md REQ-RPC-009
       openspec/changes/2026-06-22-order-no-sqlite-compat (SQLite 3.21.0 兼容)
       openspec/changes/2026-07-06-layered-architecture-and-strategy-master (v13 分层)
+      openspec/changes/2026-07-23-tables-codegen-and-orm-removal (v80.3 tables 层迁移)
 """
 from datetime import datetime
 from typing import Optional
 
 from sqlalchemy import text
-from sqlalchemy.orm import Session
 
-from server.models.orm import Order, SysStatus, get_active_trd_date
+from server.tables.base import get_conn
+from server.tables.order_no_seq import OrderNoSeq
+from server.tables.orders import Orders
+from server.tables.sys_status import SysStatus
+from server.tables.trades import Trades
+from server.tables.positions import Positions
+from server.tables.reconcile_report import ReconcileReport
 
 
 # ================================================================
-# 8 位订单序号生成器（v6 起 8 位单调递增；SQLite ≥ 3.21 三步分离）
+# 8 位订单序号生成器 (v6 起 8 位单调递增; SQLite ≥ 3.21 三步分离)
 # ================================================================
 
-def next_order_no(db: Session) -> str:
-    """原子自增，返回 8 位数字字符串。函数内自动 commit（破坏旧约定）。
+def next_order_no(db=None) -> str:
+    """原子自增, 返回 8 位数字字符串. 函数内自动 commit (破坏旧约定).
 
-    实现：三步分离（SQLite ≥ 3.21 兼容方案，2026-06-22 因 Python 3.6.8 自带
-    SQLite 3.21.0 不支持 ON CONFLICT...DO UPDATE...RETURNING，从 2026-06-21
-    提案的方案 A 降级）：
+    实现: 三步分离 (SQLite ≥ 3.21 兼容方案, 2026-06-22 因 Python 3.6.8 自带
+    SQLite 3.21.0 不支持 ON CONFLICT...DO UPDATE...RETURNING, 从 2026-06-21
+    提案的方案 A 降级):
         1) INSERT OR IGNORE INTO order_no_seq ...  # 兜底初始化
         2) UPDATE order_no_seq SET last_value = last_value + 1 ...  # 自增
         3) SELECT last_value FROM order_no_seq ...  # 读出
 
-    优势：
-      1. 兼容当前 SQLite 3.21.0（业务不中断）
+    优势:
+      1. 兼容当前 SQLite 3.21.0 (业务不中断)
       2. 函数内 commit, 消除"调用方漏 commit 导致序号回退"风险
-      3. SQLite 串行写入保证并发安全（无应用层锁）
+      3. SQLite 串行写入保证并发安全 (无应用层锁)
 
-    上限保护：8 位数字最大 99999999，达到上限时拒绝继续分配。
+    上限保护: 8 位数字最大 99999999, 达到上限时拒绝继续分配.
 
-    注意：调用方不需要再 commit (函数已 commit)。
+    v80.3 迁移: OrderNoSeq.query_one 不会锁, 所以保留 SELECT FOR UPDATE 写法 (绕过
+    TableBase 标准方法). 函数内 commit, 调用方不需要再 commit.
+    db 参数保留 (兼容旧调用方: next_order_no(db)) — v80.3 实际不依赖 db.
     """
-    # 步 1: 兜底初始化 (id=1 不存在时插入 last_value=10000000)
-    # v18 修复 MySQL 兼容: (a) `last_value` 是 MySQL 8.0 保留字必须反引号包裹
-    #                       (b) `INSERT OR IGNORE` 是 sqlite 方言，MySQL 是 `INSERT IGNORE`
-    bind = db.get_bind()
-    is_mysql = bind.dialect.name == "mysql"
-    if is_mysql:
-        db.execute(text("""
-            INSERT IGNORE INTO order_no_seq (`id`, `last_value`, `updated_at`)
+    with get_conn() as conn:
+        # 步 1: 兜底初始化 (id=1 不存在时插入 last_value=10000000)
+        # v18 修复 MySQL 兼容: (a) `last_value` 是 MySQL 8.0 保留字必须反引号包裹
+        #                       (b) `INSERT OR IGNORE` 是 sqlite 方言, MySQL 是 `INSERT IGNORE`
+        # v80.3: 用 text() 包裹, 通过 SQLAlchemy 的 dialect 自动判断 (简化分支)
+        conn.execute(text("""
+            INSERT IGNORE INTO `order_no_seq` (`id`, `last_value`, `updated_at`)
             VALUES (1, 10000000, CURRENT_TIMESTAMP)
         """))
-    else:
-        db.execute(text("""
-            INSERT OR IGNORE INTO order_no_seq (`id`, `last_value`, `updated_at`)
-            VALUES (1, 10000000, CURRENT_TIMESTAMP)
+        # 步 2: 自增 (保留 SELECT FOR UPDATE 等价语义 — 这里用单 UPDATE 保证原子性)
+        conn.execute(text("""
+            UPDATE `order_no_seq`
+            SET `last_value` = `last_value` + 1, `updated_at` = CURRENT_TIMESTAMP
+            WHERE `id` = 1
         """))
-    # 步 2: 自增
-    db.execute(text("""
-        UPDATE order_no_seq
-        SET `last_value` = `last_value` + 1, `updated_at` = CURRENT_TIMESTAMP
-        WHERE `id` = 1
-    """))
-    # 步 3: 读出
-    val = db.execute(text(
-        "SELECT `last_value` FROM order_no_seq WHERE `id` = 1"
-    )).scalar()
+        conn.commit()
+        # 步 3: 读出 (新事务里读, 不加锁)
+        val = conn.execute(text(
+            "SELECT `last_value` FROM `order_no_seq` WHERE `id` = 1"
+        )).scalar()
     if val is None:
         raise RuntimeError("order_no_seq 读取失败")
     if val >= 99999999:
         raise RuntimeError(
-            f"order_no 已达上限 ({val})，请手动扩容或迁移新序号段"
+            f"order_no 已达上限 ({val}), 请手动扩容或迁移新序号段"
         )
-    db.commit()
     return str(val)
 
 
-def get_current_no(db: Session) -> int:
-    """查询当前序号（不递增）"""
-    row = db.execute(text("SELECT last_value FROM order_no_seq WHERE id = 1")).first()
+def get_current_no(db=None) -> int:
+    """查询当前序号 (不递增). v80.3: 用 OrderNoSeq.query_one."""
+    row = OrderNoSeq.query_one(id=1)
     if not row:
         return 10000000
-    return row[0]
+    return row.last_value
 
 
-def reset_to(db: Session, value: int) -> None:
-    """重置序号（仅测试/迁移用）"""
-    db.execute(text("""
-        UPDATE order_no_seq SET last_value = :v, updated_at = CURRENT_TIMESTAMP WHERE id = 1
-    """), {"v": value})
-    db.commit()
+def reset_to(db=None, value: int = 0) -> None:
+    """重置序号 (仅测试/迁移用). v80.3: 用 OrderNoSeq.update_one."""
+    OrderNoSeq.update_one(
+        {"last_value": value, "updated_at": datetime.now()},
+        id=1,
+    )
 
 
 # ================================================================
-# broker xtconstant 字典（v11, 1:1 对齐）
+# broker xtconstant 字典 (v11, 1:1 对齐)
 # 权威源: iquant/xtquant_api.py 第 130-200 行 / 280-340 行
 # ================================================================
 ORDER_STATUS = {
@@ -112,14 +115,14 @@ ORDER_STATUS = {
     "255": "未知",          # ORDER_UNKNOWN
 }
 
-# 终态集合（v11: 含 broker 52=部成待撤, 删 broker 55=部成 PART_SUCC 非终态 - 与 broker 终态口径一致）
+# 终态集合 (v11: 含 broker 52=部成待撤, 删 broker 55=部成 PART_SUCC 非终态 - 与 broker 终态口径一致)
 # 含 broker 52 (部成待撤, 撤单过渡) + broker 53/54/56/57 (部成部撤/已撤/已成/废单)
 # 不含 broker 55 (PART_SUCC 部成, 可继续累计到 broker 56 已成)
 TERMINAL_STATUSES = ('52', '53', '54', '56', '57')
 
 
 def is_cancellable(code: str) -> bool:
-    """是否可撤单（v11: 含 broker 50=已报 也可撤）
+    """是否可撤单 (v11: 含 broker 50=已报 也可撤)
 
     触发码 (48, 49, 50) 对应 broker UNREPORTED / WAIT_REPORTING / REPORTED.
     broker 51=已报待撤 已算"撤单中", 不再可发起新撤单.
@@ -132,11 +135,15 @@ def _status_msg(status: str) -> str:
     return ORDER_STATUS.get(status, '')
 
 
-def _infer_order_status(order: Order, broker_status: Optional[str] = None) -> str:
-    """委托 status 本地推断（v8 改: cancelled_volume 主轴 + v11 改: broker 码输出）
+def _infer_order_status(order, broker_status: Optional[str] = None) -> str:
+    """委托 status 本地推断 (v8 改: cancelled_volume 主轴 + v11 改: broker 码输出)
+
+    v80.3: 参数 order 兼容 Order ORM 实例 和 server.tables.orders.Row (两者都支持
+    属性访问 .status / .traded_volume / .cancelled_volume / .volume).
 
     Args:
-        order: Order 实例, 需要 traded_volume / cancelled_volume / volume / status (当前值) 字段
+        order: Order ORM 实例 或 server.tables.orders.Row, 需要 traded_volume /
+               cancelled_volume / volume / status (当前值) 字段
         broker_status: 可选, broker ord_cfm 推的 status 字段 (52/53/54 视为撤单类, broker xtconstant 码)
                      trd_cfm 调用时传 None (trd_cfm 永远不写撤单类状态)
 
@@ -194,32 +201,48 @@ def _infer_order_status(order: Order, broker_status: Optional[str] = None) -> st
     return '56'  # broker 已成
 
 
-def _get_active_trd_date(db: Session) -> str:
-    """获取当前激活交易日；未激活则用 MAX(trd_date)
+def _get_active_trd_date(db=None) -> str:
+    """获取当前激活交易日; 未激活则用 MAX(trd_date)
 
-    v_next: SysStatus 单行 (id=1), 通过 ORM helper get_active_trd_date 判定激活。
+    v80.4 简化: 用 SysStatus.query_one(id=1) + 全表扫描 Python max.
+    db 参数保留 (兼容旧调用方: _get_active_trd_date(db)) — v80.4 实际不依赖 db.
     """
-    trd = get_active_trd_date(db)
-    if trd:
-        return trd
-    for table in ("orders", "trades", "positions", "reconcile_report"):
-        r = db.execute(text(f"SELECT MAX(trd_date) FROM {table}")).first()
-        if r and r[0]:
-            return r[0]
+    # sys_status 是单行配置, 主键查询
+    ss = SysStatus.query_one(id=1)
+    if ss and ss.trd_date:
+        return ss.trd_date
+    # 兜底: 各表全查取最大 trd_date (数据量小, 全查无压力)
+    candidates = []
+    for rows in (
+        Orders.query_all(),       # 47 行
+        Trades.query_all(),       # 几十行
+        Positions.query_all(),
+        ReconcileReport.query_all(),
+    ):
+        for r in rows:
+            td = getattr(r, "trd_date", None)
+            if td:
+                candidates.append(td)
+    if candidates:
+        return max(candidates)
     return datetime.now().strftime('%Y%m%d')
 
 
 # ================================================================
-# v13 NEW: 表级 CRUD 封装（orders 表）
+# v13 NEW: 表级 CRUD 封装 (orders 表) — v80.3 迁移到 Orders 标准方法
 # ================================================================
 
-def get_by_order_no(db: Session, trd_date: str, order_no: str) -> Optional[Order]:
-    """按 (trd_date, order_no) 复合主键查询 orders 行。"""
-    return db.query(Order).filter_by(trd_date=trd_date, order_no=order_no).first()
+def get_by_order_no(db=None, trd_date: str = '', order_no: str = '') -> Optional[object]:
+    """按 (trd_date, order_no) 复合主键查询 orders 行.
+
+    v80.3 迁移: 改用 Orders.query_one (复合主键). 返回 server.tables.orders.Row (非 ORM Order).
+    db 参数保留 (兼容旧调用方).
+    """
+    return Orders.query_one(trd_date=trd_date, order_no=order_no)
 
 
 def insert_pending_order(
-    db: Session,
+    db=None,
     *,
     trd_date: str,
     order_no: str,
@@ -229,65 +252,65 @@ def insert_pending_order(
     price_type: str,
     price: float,
     volume: int,
-) -> Order:
-    """INSERT status=48 待报行（place 第 3 步用；user_def 透传 = str(strategy.id) / 'T0' / 默认空）。
+) -> object:
+    """INSERT status=48 待报行 (place 第 3 步用; user_def 透传 = str(strategy.id) / 'T0' / 默认空).
 
-    函数内 commit + refresh，返回 ORM 实例供 caller 继续 UPDATE。
+    v80.3 迁移: 改用 Orders.add_one. 返回 server.tables.orders.Row.
+    db 参数保留 (兼容旧调用方: insert_pending_order(db, ...)).
     """
     from server.utils.time import format_ts  # 避免循环 import
-    order = Order(
-        trd_date=trd_date,
-        order_no=order_no,
-        user_def=user_def,
-        stock_code=stock_code,
-        order_type=order_type,
-        price_type=price_type,
-        price=price,
-        volume=volume,
-        traded_volume=0, traded_amount=0.0, avg_price=0.0,
-        status="48", status_msg="未报",
-        order_time=format_ts(tz='local'),
-    )
-    db.add(order)
-    db.commit()
-    db.refresh(order)
-    return order
+    return Orders.add_one({
+        "trd_date": trd_date,
+        "order_no": order_no,
+        "user_def": user_def,
+        "stock_code": stock_code,
+        "order_type": order_type,
+        "price_type": price_type,
+        "price": price,
+        "volume": volume,
+        "traded_volume": 0,
+        "traded_amount": 0.0,
+        "avg_price": 0.0,
+        "status": "48",
+        "status_msg": "未报",
+        "order_time": format_ts(tz='local'),
+    })
 
 
 def insert_cancel_row(
-    db: Session,
+    db=None,
     *,
-    orig: Order,
+    orig,                       # server.tables.orders.Row (v80.3)
     cancel_order_no: str,
     raw_id: Optional[str] = None,
-) -> Order:
-    """INSERT cancel-row（v9 重构: order_flag=1, user_def='CANCEL:{orig.order_no}'）。
+) -> object:
+    """INSERT cancel-row (v9 重构: order_flag=1, user_def='CANCEL:{orig.order_no}').
 
-    v13 加 raw_id 参数（默认 None；DELETE 端点调用时传 orig.order_no）。
-    普通 strategy 委托的 raw_id 永远为 NULL（place 流程不调本函数）。
+    v13 加 raw_id 参数 (默认 None; DELETE 端点调用时传 orig.order_no).
+    普通 strategy 委托的 raw_id 永远为 NULL (place 流程不调本函数).
 
-    函数内 commit + refresh。
+    v80.3 迁移: 改用 Orders.add_one. orig 现在是 Row (属性访问兼容).
+    返回 server.tables.orders.Row.
+    db 参数保留 (兼容旧调用方).
     """
     from server.utils.time import format_ts  # 避免循环 import
-    cancel_row = Order(
-        trd_date=orig.trd_date,
-        order_no=cancel_order_no,
-        order_id=None,                    # broker 永远不报这个 row
-        user_def="CANCEL:{}".format(orig.order_no),  # 关联: cancel → orig
-        raw_id=raw_id,                    # ★ v13 NEW 字段写入
-        stock_code=orig.stock_code,       # 镜像
-        order_type=orig.order_type,       # 镜像 23/24
-        price_type=orig.price_type,       # 镜像
-        price=orig.price,                 # 镜像
-        volume=0,                          # ★ 用户选择: 零委托量
-        traded_volume=0, traded_amount=0.0, avg_price=0.0,
-        cancelled_volume=0,
-        order_flag=1,                      # ★ 撤单委托标记
-        status="48",                       # sentinel 待发
-        status_msg="撤单请求中",
-        order_time=format_ts(tz='local'),
-    )
-    db.add(cancel_row)
-    db.commit()
-    db.refresh(cancel_row)
-    return cancel_row
+    return Orders.add_one({
+        "trd_date": orig.trd_date,
+        "order_no": cancel_order_no,
+        "order_id": None,                     # broker 永远不报这个 row
+        "user_def": "CANCEL:{}".format(orig.order_no),  # 关联: cancel → orig
+        "raw_id": raw_id,                     # ★ v13 NEW 字段写入
+        "stock_code": orig.stock_code,        # 镜像
+        "order_type": orig.order_type,        # 镜像 23/24
+        "price_type": orig.price_type,        # 镜像
+        "price": orig.price,                  # 镜像
+        "volume": 0,                          # ★ 用户选择: 零委托量
+        "traded_volume": 0,
+        "traded_amount": 0.0,
+        "avg_price": 0.0,
+        "cancelled_volume": 0,
+        "order_flag": 1,                      # ★ 撤单委托标记
+        "status": "48",                       # sentinel 待发
+        "status_msg": "撤单请求中",
+        "order_time": format_ts(tz='local'),
+    })
