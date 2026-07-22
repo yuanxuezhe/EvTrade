@@ -1,5 +1,5 @@
 """
-sysconfig/__init__.py — 统一配置 cache (v78)
+sysconfig/__init__.py — 统一配置 cache (v78 + v81 tables-migration)
 
 启动时一次性从 sys_config 表加载到内存, 业务层从 cache 读
 - user='0' 默认配置
@@ -7,15 +7,20 @@ sysconfig/__init__.py — 统一配置 cache (v78)
 
 读策略: get(user, key, default) → 先查 user 行, 缺失回退 user='0' 默认
 写策略: set(user, key, val) → 同步更新 cache + DB
+
+v81 tables-migration:
+- 删 sqlalchemy.orm.Session / server.db.SessionLocal 依赖 (DB I/O 走 server.tables.SysConfig)
+- db.query(SysConfig).filter(SysConfig.user == "0").all() → SysConfig.query_by('user', '0')
+- db.add(row); db.commit()                        → SysConfig.add_one({...})
+- m.x = val; db.commit()                          → row.x = val; row.update(SysConfig, **pk)
+- db.delete(row); db.commit()                     → SysConfig.delete_one(**pk)
+- 删 db.close() (tables 全局 engine 自管理)
 """
 import logging
 import threading
 from typing import Any, Optional
 
-from sqlalchemy.orm import Session
-
-from server.db import SessionLocal
-from server.models.orm import SysConfig
+from server.tables import SysConfig
 
 log = logging.getLogger(__name__)
 
@@ -43,55 +48,48 @@ _desc_cache: dict[str, dict[str, str]] = {}
 _loaded: bool = False
 
 
-def _row_to_dict(row: SysConfig) -> dict:
-    return {
-        "user": row.user,
-        "cfg_key": row.cfg_key,
-        "cfg_val": row.cfg_val,
-        "desc": row.desc,
-        "updated_at": row.updated_at,
-        "updated_by": row.updated_by,
-    }
+def _ensure_defaults() -> None:
+    """确保 user='0' 默认配置行存在 (v78 整合: 从 fee_config/reconcile_config 一次性导入)
 
-
-def _ensure_defaults(db: Session) -> None:
-    """确保 user='0' 默认配置行存在 (v78 整合: 从 fee_config/reconcile_config 一次性导入)"""
+    v81 tables-migration: SysConfig.query_by('user', '0') 替代 db.query(SysConfig).filter(...).all()
+                       + SysConfig.add_one({...}) 替代 db.add(SysConfig(...)); db.commit()
+    """
     existing = {
-        row.cfg_key for row in db.query(SysConfig).filter(SysConfig.user == "0").all()
+        r.cfg_key for r in SysConfig.query_by('user', '0')
     }
     for cfg in DEFAULT_CONFIGS:
         if cfg["cfg_key"] not in existing:
-            row = SysConfig(user="0", **cfg)
-            db.add(row)
+            # v81: add_one 返回 Row; 简化参数构造
+            SysConfig.add_one({
+                "user": "0",
+                "cfg_key": cfg["cfg_key"],
+                "cfg_val": cfg["cfg_val"],
+                "desc": cfg["desc"],
+            })
             log.info("sysconfig: seed default cfg_key=%s", cfg["cfg_key"])
-    db.commit()
 
 
-def load_all(db: Optional[Session] = None) -> None:
-    """启动时一次性加载全表到 cache"""
+def load_all(db: Optional[Any] = None) -> None:
+    """启动时一次性加载全表到 cache
+
+    v81 tables-migration: SysConfig.query_all() 替代 db.query(SysConfig).all()
+    db 参数保留 (兼容旧调用方: load_all(db=None) — 实际不依赖)
+    """
     global _loaded
-    close_db = False
-    if db is None:
-        db = SessionLocal()
-        close_db = True
-    try:
-        _ensure_defaults(db)
-        rows = db.query(SysConfig).all()
-        with _lock:
-            new_cache: dict[str, dict[str, str]] = {}
-            new_desc: dict[str, dict[str, str]] = {}
-            for r in rows:
-                new_cache.setdefault(r.user, {})[r.cfg_key] = r.cfg_val
-                new_desc.setdefault(r.user, {})[r.cfg_key] = r.desc or ""
-            _cache.clear()
-            _cache.update(new_cache)
-            _desc_cache.clear()
-            _desc_cache.update(new_desc)
-            _loaded = True
-        log.info("sysconfig: loaded %d rows (%d users)", len(rows), len(_cache))
-    finally:
-        if close_db:
-            db.close()
+    _ensure_defaults()
+    rows = SysConfig.query_all()
+    with _lock:
+        new_cache: dict[str, dict[str, str]] = {}
+        new_desc: dict[str, dict[str, str]] = {}
+        for r in rows:
+            new_cache.setdefault(r.user, {})[r.cfg_key] = r.cfg_val
+            new_desc.setdefault(r.user, {})[r.cfg_key] = r.desc or ""
+        _cache.clear()
+        _cache.update(new_cache)
+        _desc_cache.clear()
+        _desc_cache.update(new_desc)
+        _loaded = True
+    log.info("sysconfig: loaded %d rows (%d users)", len(rows), len(_cache))
 
 
 def is_loaded() -> bool:
@@ -141,45 +139,45 @@ def get_raw(key: str, user: str = "0") -> Optional[str]:
 
 
 def set_value(user: str, key: str, val: str, desc: str = "", updated_by: Optional[str] = None) -> None:
-    """写配置 — 同步更新 cache + DB"""
-    db = SessionLocal()
-    try:
-        row = db.query(SysConfig).filter_by(user=user, cfg_key=key).first()
-        if row:
-            row.cfg_val = val
-            if desc:
-                row.desc = desc
-            row.updated_by = updated_by
-        else:
-            row = SysConfig(
-                user=user, cfg_key=key, cfg_val=val,
-                desc=desc or "", updated_by=updated_by,
-            )
-            db.add(row)
-        db.commit()
-        with _lock:
-            _cache.setdefault(user, {})[key] = val
-            _desc_cache.setdefault(user, {})[key] = desc
-        log.info("sysconfig: set user=%s key=%s", user, key)
-    finally:
-        db.close()
+    """写配置 — 同步更新 cache + DB
+
+    v81 tables-migration: SysConfig.query_one + obj.update + SysConfig.add_one
+                       替代 db.query(...).filter_by(...).first() + db.add/commit
+    """
+    row = SysConfig.query_one(user=user, cfg_key=key)
+    if row:
+        row.cfg_val = val
+        if desc:
+            row.desc = desc
+        # v81: updated_by 字段也通过 update 写; updated_at 由 DB DEFAULT 自动更新
+        row.updated_by = updated_by
+        row.update(SysConfig, user=user, cfg_key=key)
+    else:
+        SysConfig.add_one({
+            "user": user,
+            "cfg_key": key,
+            "cfg_val": val,
+            "desc": desc or "",
+            "updated_by": updated_by,
+        })
+    with _lock:
+        _cache.setdefault(user, {})[key] = val
+        _desc_cache.setdefault(user, {})[key] = desc
+    log.info("sysconfig: set user=%s key=%s", user, key)
 
 
 def delete_value(user: str, key: str) -> bool:
-    """删除配置 — 同步删 cache + DB"""
-    db = SessionLocal()
-    try:
-        row = db.query(SysConfig).filter_by(user=user, cfg_key=key).first()
-        if not row:
-            return False
-        db.delete(row)
-        db.commit()
-        with _lock:
-            if user in _cache and key in _cache[user]:
-                del _cache[user][key]
-        return True
-    finally:
-        db.close()
+    """删除配置 — 同步删 cache + DB
+
+    v81 tables-migration: SysConfig.delete_one 替代 db.delete(row); db.commit()
+    """
+    ok = SysConfig.delete_one(user=user, cfg_key=key)
+    if not ok:
+        return False
+    with _lock:
+        if user in _cache and key in _cache[user]:
+            del _cache[user][key]
+    return True
 
 
 def list_all(user: Optional[str] = None) -> list[dict]:
