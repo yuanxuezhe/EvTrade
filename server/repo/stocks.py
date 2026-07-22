@@ -52,55 +52,105 @@ def _ensure_cache_shape(d: Dict) -> Dict:
     return d
 
 
+# ============================================================================
+# v80.1: 证券信息统一入口 — GetStockInfo (公开 API)
+# ============================================================================
+def GetStockInfo(stock_code: str) -> dict:
+    """获取证券元信息 (v80.1 命名规范)
+
+    Args:
+        stock_code: '000001.SZ'
+
+    Returns:
+        dict: {
+            "stktype": int,   # 0=股票 / 1=ETF
+            "scale": int,     # 价格小数位 (默认 2, ETF 可为 3)
+            "t0": bool,       # 是否支持 T+0
+        }
+
+    实现:
+        - cache 命中 → O(1) 返回
+        - cache miss → 查 DB 并填 cache
+        - 未知标的 → 返回默认 {stktype:0, scale:2, t0:False}
+
+    关联函数:
+        - place_order: 用 stktype 校验可交易类型
+        - push ord/trd: 用 scale round 价格字段
+        - trd_cfm: 用 t0 判断做T标记
+    """
+    if not stock_code:
+        return {"stktype": 0, "scale": 2, "t0": False}
+    with _stock_cache_lock:
+        if _stock_cache_loaded and stock_code in _stock_cache:
+            d = _stock_cache[stock_code]
+            return {
+                "stktype": int(d.get("stktype", 0) or 0),
+                "scale": int(d.get("scale", 2) or 2),
+                "t0": bool(d.get("t0", False)),
+            }
+        # cache miss → DB 查询并填 cache
+        from server.infra.db import SessionLocal  # 避免循环 import
+        db = SessionLocal()
+        try:
+            row = db.query(Stock).filter_by(stock_code=stock_code).first()
+            if row is None:
+                return {"stktype": 0, "scale": 2, "t0": False}
+            result = {
+                "stktype": int(getattr(row, "stktype", 0) or 0),
+                "scale": int(getattr(row, "scale", 2) or 2),
+                "t0": bool(getattr(row, "is_t0_able", False)),
+            }
+            _stock_cache[stock_code] = result
+            return result
+        finally:
+            db.close()
+
+
 def get_is_t0_able(db: Session, stock_code: str) -> bool:
     """v78.3: 从内存 cache 读 is_t0_able; cache miss 时回退 DB 并填 cache
 
     设计: trade_cfm 推送每笔成交都会查, DB query 频繁;
     cache 简化路径 = O(1) 读. 启动时 init_db 同步调用 load_all_stocks 一次.
     admin 更新股票时通过 invalidate_stock_cache() 失效对应 key.
+
+    v80.1: 重构为内部 helper, 调 GetStockInfo()
     """
     if not stock_code:
         return False
     with _stock_cache_lock:
         if _stock_cache_loaded and stock_code in _stock_cache:
             return _stock_cache[stock_code].get("t0", False)
-        # cache miss → DB 查询
-        row = db.query(Stock).filter_by(stock_code=stock_code).first()
-        if row is None:
-            return False
-        result = {
-            "t0": bool(row.is_t0_able),
-            "scale": int(getattr(row, "scale", 2) or 2),
-            "stktype": int(getattr(row, "stktype", 0) or 0),
-        }
-        _stock_cache[stock_code] = result
-        return result["t0"]
+        # cache miss → GetStockInfo 兜底
+        info = GetStockInfo(stock_code)
+        return info["t0"]
 
 
 def get_stock_scale(db: Session, stock_code: str) -> int:
-    """v80: 读 stock.scale (价格小数位精度). cache miss 走 DB."""
+    """v80: 读 stock.scale (价格小数位精度).
+
+    v80.1: 重构为内部 helper, 调 GetStockInfo()
+    """
     if not stock_code:
         return 2
     with _stock_cache_lock:
         if _stock_cache_loaded and stock_code in _stock_cache:
             return _stock_cache[stock_code].get("scale", 2)
-        row = db.query(Stock).filter_by(stock_code=stock_code).first()
-        if row is None:
-            return 2
-        return int(getattr(row, "scale", 2) or 2)
+        info = GetStockInfo(stock_code)
+        return info["scale"]
 
 
 def get_stock_stktype(db: Session, stock_code: str) -> int:
-    """v80: 读 stock.stktype (0=股票/1=ETF). cache miss 走 DB."""
+    """v80: 读 stock.stktype (0=股票/1=ETF).
+
+    v80.1: 重构为内部 helper, 调 GetStockInfo()
+    """
     if not stock_code:
         return 0
     with _stock_cache_lock:
         if _stock_cache_loaded and stock_code in _stock_cache:
             return _stock_cache[stock_code].get("stktype", 0)
-        row = db.query(Stock).filter_by(stock_code=stock_code).first()
-        if row is None:
-            return 0
-        return int(getattr(row, "stktype", 0) or 0)
+        info = GetStockInfo(stock_code)
+        return info["stktype"]
 
 
 def load_all_stocks(db: Session) -> int:

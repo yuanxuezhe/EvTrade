@@ -33,7 +33,7 @@ from server.services.guards import require_trader, require_trading_day, require_
 from server.repo.orders import next_order_no
 from server.utils.time import format_ts
 from server.services.t0 import calc_net_amount, calc_t0_volume, get_fee_config
-from server.repo.stocks import get_stock_scale, get_stock_stktype  # v80
+from server.repo.stocks import GetStockInfo  # v80.1: 统一证券信息入口
 from server.services.sysconfig import get_cantrd_stktypes  # v80
 from server.api.orders.schemas import (
     PlaceOrderRequest,
@@ -59,7 +59,9 @@ def register_place(router):
             raise HTTPException(status_code=400, detail={"code": "BAD_ORDER_TYPE", "msg": "order_type 必须 23(买) 24(卖)"})
 
         # v80: stktype 可交易校验 + 价格按 stock.scale 四舍五入
-        stktype = get_stock_stktype(db, req.stock_code)
+        # v80.1: 用 GetStockInfo() 一次性拿 stktype + scale
+        info = GetStockInfo(req.stock_code)
+        stktype = info["stktype"]
         allowed = get_cantrd_stktypes(user="0")
         if stktype not in allowed:
             raise HTTPException(
@@ -67,7 +69,7 @@ def register_place(router):
                 detail={"code": "STK_TYPE_NOT_TRADABLE",
                         "msg": f"证券 {req.stock_code} 类型 {stktype} 不可交易 (允许: {sorted(allowed)})"}
             )
-        scale = get_stock_scale(db, req.stock_code)
+        scale = info["scale"]
         if scale > 6:
             scale = 2  # 兜底 (用户原话)
         if req.price is not None and req.price > 0:
