@@ -268,7 +268,7 @@ def list_codes(db: Session) -> List[str]:
 
 
 def to_dict(stock: Stock) -> Dict:
-    """ORM → dict(WS 推送前端用, v23 字段精简, v25 加 short_name)"""
+    """ORM → dict(WS 推送前端用, v23 字段精简, v25 加 short_name, v80 加 scale + stktype)"""
     return {
         'stock_code': stock.stock_code,
         'stock_name': stock.stock_name or '',
@@ -277,11 +277,13 @@ def to_dict(stock: Stock) -> Dict:
         'min_buy_qty': stock.min_buy_qty,
         'trade_unit': stock.trade_unit,
         'short_name': stock.short_name,
+        'stktype': int(getattr(stock, 'stktype', 0) or 0),  # v80
+        'scale': int(getattr(stock, 'scale', 2) or 2),      # v80
     }
 
 
 def to_dict_from_data(stock_code: str, data: Dict) -> Dict:
-    """raw dict (来自 crawler) → 标准 dict (WS 推送用, v23 字段精简, v25 加 short_name)
+    """raw dict (来自 crawler) → 标准 dict (WS 推送用, v23 字段精简, v25 加 short_name, v80 加 scale + stktype)
 
     用于 upsert 成功后立即推 stock_synced,无需再读 DB
     """
@@ -293,4 +295,6 @@ def to_dict_from_data(stock_code: str, data: Dict) -> Dict:
         'min_buy_qty': int(data.get('min_buy_qty', 100)),
         'trade_unit': int(data.get('trade_unit', 1)),
         'short_name': data.get('short_name'),
+        'stktype': int(data.get('stktype', 0) or 0),  # v80
+        'scale': int(data.get('scale', 2) or 2),      # v80
     }

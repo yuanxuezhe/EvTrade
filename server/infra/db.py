@@ -301,18 +301,19 @@ def _seed_cantrdstktypes() -> None:
 def _run_seed_cantrdstktypes_via_session(engine) -> None:
     """v80: 用同一 admin_engine 跑 seed, 避免引入额外 db 连接
 
+    写到 user='0' 默认区, 与其他 sysconfig 配置保持一致
     sys_config 实际列名是 cfg_key + cfg_val (不是 key+val)
     """
     from sqlalchemy import text
     try:
         with engine.begin() as conn:
             row = conn.execute(text(
-                "SELECT cfg_val FROM sys_config WHERE `user`='system' AND cfg_key='cantrdstktypes' LIMIT 1"
+                "SELECT cfg_val FROM sys_config WHERE `user`='0' AND cfg_key='cantrdstktypes' LIMIT 1"
             )).first()
             if row is None:
                 conn.execute(text(
                     "INSERT INTO sys_config (`user`, cfg_key, cfg_val, `desc`, updated_at, updated_by) "
-                    "VALUES ('system', 'cantrdstktypes', '0,1', '可交易的证券类型 (stktype 逗号分隔)', NOW(), 'system')"
+                    "VALUES ('0', 'cantrdstktypes', '0,1', '可交易的证券类型 (stktype 逗号分隔)', NOW(), 'system')"
                 ))
                 print("[init_db] v80 seeded sys_config.cantrdstktypes=0,1")
             else:

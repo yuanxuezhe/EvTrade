@@ -32,6 +32,8 @@ DEFAULT_CONFIGS: list[dict] = [
     {"cfg_key": "auto_use_broker_data", "cfg_val": "1", "desc": "自动对账时以柜台为准 (0=本地/1=柜台)"},
     {"cfg_key": "trdtime", "cfg_val": "093000-113000;130000-153000", "desc": "交易时段 (分号分隔多段 HHMMSS-HHMMSS)"},
     {"cfg_key": "must_change_password_required", "cfg_val": "1", "desc": "首次登录强制改密 (0=关/1=开; 关掉后 seed 用户 must_change_password=True 也不再拦截)"},
+    # v80: 可交易证券类型列表 (stktype 逗号分隔) — 默认 0(股票)+1(ETF)
+    {"cfg_key": "cantrdstktypes", "cfg_val": "0,1", "desc": "可交易的证券类型 (stktype 逗号分隔, e.g. 0,1)"},
 ] # v_next: 新增首次登录强制改密开关
 
 # user → {cfg_key → cfg_val}
@@ -283,3 +285,25 @@ def _hms_to_time(hms: str):
     hms = hms.strip().zfill(6)
     h = int(hms[0:2]); m = int(hms[2:4]); s = int(hms[4:6])
     return time(h, m, s)
+
+
+# ============================================================================
+# v80: 可交易证券类型 helper
+# ============================================================================
+def get_cantrd_stktypes(user: str = "0") -> set[int]:
+    """获取可交易的证券类型集合 (stktype 集合, e.g. {0, 1})
+
+    走 sysconfig cache — user 专属配置可覆盖默认
+
+    返回 set[int]; 若配置缺失或解析失败回退 {0, 1} (股票+ETF 默认值)
+    """
+    raw = get_raw("cantrdstktypes", user=user)
+    if not raw:
+        return {0, 1}
+    out: set[int] = set()
+    for seg in raw.replace(",", " ").split():
+        try:
+            out.add(int(seg))
+        except ValueError:
+            continue
+    return out if out else {0, 1}
