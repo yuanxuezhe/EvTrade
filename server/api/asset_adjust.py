@@ -18,7 +18,7 @@ from pydantic import BaseModel, validator
 from sqlalchemy.orm import Session
 
 from server.db import get_db
-from server.models.orm import Asset
+from server.tables import Assets, Row
 from server.auth.deps import require_admin
 from server.models.user import User
 from server.utils.time import _utcnow, format_db_dt
@@ -71,7 +71,7 @@ class AdjustAssetResponse(BaseModel):
 
 # ─────────────── handler helper ───────────────
 
-def _to_asset_out(row: Asset) -> AssetOut:
+def _to_asset_out(row: Row) -> AssetOut:
     return AssetOut(
         cash=row.cash,
         frozen_cash=row.frozen_cash,
@@ -110,11 +110,18 @@ def register_adjust(router: APIRouter) -> None:
                 detail="at least one of delta_cash / delta_total_asset required",
             )
 
-        row = db.query(Asset).first()
+        row = Assets.query_one(id=1)
         if row is None:
             # 空库场景：初始化全零 + 立刻施加 delta
-            row = Asset()
-            db.add(row)
+            row = Assets.add_one({
+                "id": 1,
+                "cash": 0.0,
+                "frozen_cash": 0.0,
+                "market_value": 0.0,
+                "total_asset": 0.0,
+                "synced_at": _utcnow(),
+                "synced_from": "",
+            })
 
         new_cash = row.cash + (req.delta_cash or 0.0)
         new_total_asset = row.total_asset + (req.delta_total_asset or 0.0)
@@ -123,8 +130,7 @@ def register_adjust(router: APIRouter) -> None:
         row.total_asset = round(new_total_asset, 2)
         row.synced_from = "manual"
         row.synced_at = _utcnow()
-        db.commit()
-        db.refresh(row)
+        row.update(Assets, id=row.id)
 
         log.info(
             "[manual_adjust] asset admin=%s reason=%s delta_cash=%s delta_total_asset=%s "

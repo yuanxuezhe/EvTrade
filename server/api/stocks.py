@@ -17,11 +17,10 @@ from typing import Optional, List
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field, validator
-from sqlalchemy import func as sa_func
-
 from server.db import get_db
 from server.auth.deps import require_admin
 from server.repo import stocks as stocks_repo
+from server.tables.stocks import Stocks
 
 
 router = APIRouter()
@@ -59,29 +58,29 @@ async def list_stocks(
     if page_size < 1 or page_size > 500:
         raise HTTPException(status_code=400, detail="page_size must be in 1..500")
 
-    from server.models.orm import Stock
-    base_q = db.query(Stock)
+    rows = Stocks.query_all()
 
     # 服务端筛选
     if sector:
-        base_q = base_q.filter(Stock.sector == sector)
+        rows = [row for row in rows if row.sector == sector]
     if is_t0_able is not None:
-        base_q = base_q.filter(Stock.is_t0_able == is_t0_able)
+        rows = [row for row in rows if bool(row.is_t0_able) == is_t0_able]
     if keyword:
-        kw = f"%{keyword.strip()}%"
+        kw = keyword.strip().lower()
         # 优先 stock_code 前缀,其次 stock_name 含
         # MySQL 用 LIKE 模糊匹配 + 函数 LOWER 不必要(主键 stock_code 是数字+字母)
-        base_q = base_q.filter(
-            (Stock.stock_code.like(kw)) | (Stock.stock_name.like(kw))
-        )
+        rows = [
+            row for row in rows
+            if kw in row.stock_code.lower() or kw in (row.stock_name or "").lower()
+        ]
 
     # total = COUNT(*),与 limit/page 无关
-    total = base_q.with_entities(sa_func.count(Stock.stock_code)).scalar() or 0
+    total = len(rows)
 
     # 分页
     if limit is not None:
         # 老客户端兼容:limit 优先,不分页
-        rows = base_q.order_by(Stock.stock_code).limit(limit).all()
+        rows = sorted(rows, key=lambda row: row.stock_code)[:limit]
         return {
             "code": 0,
             "msg": "ok",
@@ -91,12 +90,7 @@ async def list_stocks(
 
     # 真分页
     offset = (page - 1) * page_size
-    rows = (
-        base_q.order_by(Stock.stock_code)
-        .offset(offset)
-        .limit(page_size)
-        .all()
-    )
+    rows = sorted(rows, key=lambda row: row.stock_code)[offset:offset + page_size]
     return {
         "code": 0,
         "msg": "ok",

@@ -20,7 +20,7 @@ from pydantic import BaseModel, validator
 from sqlalchemy.orm import Session
 
 from server.db import get_db
-from server.models.orm import Position
+from server.tables import Positions, Row
 from server.auth.deps import require_admin
 from server.models.user import User
 from server.utils.time import _utcnow, format_db_dt
@@ -72,7 +72,7 @@ class AdjustPositionResponse(BaseModel):
 
 # ─────────────── handler helper ───────────────
 
-def _to_position_out(r: Position) -> PositionOut:
+def _to_position_out(r: Row) -> PositionOut:
     return PositionOut(
         stock_code=r.stock_code,
         stock_name=r.stock_name,
@@ -116,7 +116,7 @@ def register_adjust(router: APIRouter) -> None:
                 detail="at least one of delta_vol / delta_avl_vol required",
             )
 
-        row = db.query(Position).filter(Position.stock_code == stock_code).first()
+        row = Positions.query_one(stock_code=stock_code)
         if row is None:
             raise HTTPException(
                 status_code=404,
@@ -129,8 +129,7 @@ def register_adjust(router: APIRouter) -> None:
             row.avl_vol = row.avl_vol + int(req.delta_avl_vol)
         row.synced_from = "manual"
         row.synced_at = _utcnow()
-        db.commit()
-        db.refresh(row)
+        row.update(Positions, stock_code=row.stock_code)
 
         log.info(
             "[manual_adjust] position admin=%s stock_code=%s reason=%s "

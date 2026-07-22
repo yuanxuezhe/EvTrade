@@ -21,7 +21,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from server.db import get_db
-from server.models.orm import Trade
+from server.tables.trades import Trades
 from server.services.guards import resolve_default_trd_date
 
 router = APIRouter()
@@ -69,21 +69,21 @@ async def list_trades(
 
     排序: trade_time DESC, trade_id DESC (v10, trade_time 同秒时 trade_id 二级稳定)
     """
-    q = db.query(Trade)
+    rows = Trades.query_all()
 
     if start_date or end_date:
         if start_date:
-            q = q.filter(Trade.trd_date >= start_date)
+            rows = [row for row in rows if row.trd_date >= start_date]
         if end_date:
-            q = q.filter(Trade.trd_date <= end_date)
+            rows = [row for row in rows if row.trd_date <= end_date]
     else:
         trd = trd_date or resolve_default_trd_date(db)
-        q = q.filter(Trade.trd_date == trd)
+        rows = [row for row in rows if row.trd_date == trd]
 
     if stock_code:
-        q = q.filter(Trade.stock_code == stock_code)
+        rows = [row for row in rows if row.stock_code == stock_code]
 
-    rows = q.order_by(Trade.trade_time.desc(), Trade.trade_id.desc()).limit(500).all()
+    rows = sorted(rows, key=lambda row: (row.trade_time, row.trade_id), reverse=True)[:500]
     return TradesListResponse(code=0, msg="", list=[
         TradeOut(
             trade_id=r.trade_id,
