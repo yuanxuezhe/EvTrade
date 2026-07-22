@@ -1,5 +1,14 @@
 """
-push_handler_trd.py — trd_cfm 处理（v10: broker 原字段名）
+push_handler_trd.py — trd_cfm 处理（v10 + v78.3 重写 + v79.3 重命名 + (trd_date, order_no) 唯一匹配）
+
+行为：
+- v78.3 (REQ-TRADE-032): trd_cfm 不再动 Order 累计；只插 Trade + 改 Position
+  (Order traded_volume/traded_amount/avg_price/status 由 ord_cfm 推送一次写入)
+- v79.3 (REQ-TRADE-033) 字段命名统一 (消歧义):
+  - row['remark']      → order_no        (即我司系统订单号, 我们下单时送入到 broker.remark)
+  - row['order_id']    → order_id         (即柜台/券商委托号, broker xtquant 系统分配)
+- v79.3 (REQ-TRADE-034) 唯一匹配维度:
+  - **只用 (trd_date, order_no) 命中本地 Order** — 不用 order_id 兜底
 
 行为：
 - 用 broker.remark（= 本地 order_no）匹配本地 Order
@@ -47,31 +56,31 @@ def handle_trd_cfm(db: Session, row: Dict[str, Any], ts: str) -> Optional[Dict[s
     if not trd_date or len(trd_date) != 8:
         trd_date = _get_active_trd_date(db)
 
-    broker_order_id = _str(row.get('order_id', ''))
-    broker_remark = _str(row.get('remark', ''))  # v7: 本地 order_no
+    # v79.3: 字段名直接用 row['remark'] 接 order_no, row['order_id'] 接柜台 order_id
+    order_no = _str(row.get('remark', ''))  # ← 柜台 broker.remark = 我们下传的 order_no
+    order_id = _str(row.get('order_id', ''))  # ← 柜台 xtquant 系统分配的 broker order id
 
-    # v7: order_no 是 Trade PK 第二段,缺则不写孤儿 Trade
-    if not broker_remark:
-        print("[trd_cfm] WARN: no order_no (remark 缺失),跳过 traded_id={}".format(
-            row.get('traded_id', '')))
+    # v79.3 (REQ-TRADE-034): order_no 是 Trade PK 第二段, 缺则不写孤儿 Trade
+    if not order_no:
+        print(f"[trd_cfm] WARN: no order_no (remark 缺失), 跳过 traded_id={row.get('traded_id', '')}")
         return None
 
     trade_id = _str(row.get('traded_id', ''))  # v10: 原字段名
     if not trade_id:
-        # v7: 用 order_no + traded_time 作 fallback key（替代原 order_id + trade_time）
-        trade_id = "{}-{}".format(broker_remark, row.get('traded_time', ''))
+        # v7: 用 order_no + traded_time 作 fallback key
+        trade_id = "{}-{}".format(order_no, row.get('traded_time', ''))
 
-    # 幂等:已存在则不重复插入(PK = (trd_date, order_no, trade_id))
+    # 幂等: 已存在则不重复插入 (PK = (trd_date, order_no, trade_id))
     existing = db.query(Trade).filter_by(
-        trd_date=trd_date, order_no=broker_remark, trade_id=trade_id
+        trd_date=trd_date, order_no=order_no, trade_id=trade_id
     ).first()
     if existing:
         return None
 
-    # v7: 优先用 remark (= 本地 order_no) 查 Order,broker order_id 只作兜底
-    order = db.query(Order).filter_by(order_no=broker_remark, trd_date=trd_date).first()
-    if not order and broker_order_id:
-        order = db.query(Order).filter_by(order_id=broker_order_id, trd_date=trd_date).first()
+    # v79.3 (REQ-TRADE-034): 唯一匹配 (trd_date, order_no) — 不用 order_id 兜底
+    order = db.query(Order).filter_by(
+        order_no=order_no, trd_date=trd_date
+    ).first()
 
     # v13: amount 本地算 = price × volume (忽略 broker.traded_amount, 与前端
     #   normalizeTrade 公式一致 — system-delegation-price-fill-calc 设计点)
@@ -86,7 +95,7 @@ def handle_trd_cfm(db: Session, row: Dict[str, Any], ts: str) -> Optional[Dict[s
     final_order_type = broker_order_type or (order.order_type if order else '')
     trade = Trade(
         trd_date=trd_date,
-        order_no=broker_remark,
+        order_no=order_no,
         trade_id=trade_id,
         stock_code=_str(row.get('stock_code', '')),
         order_type=final_order_type,
@@ -106,8 +115,7 @@ def handle_trd_cfm(db: Session, row: Dict[str, Any], ts: str) -> Optional[Dict[s
     #   这些字段由 ord_cfm 推送 cum_volume/avg_price 一次写入 (按字段处理委托表)
     #   trd_cfm 只做两件事: (1) 插 Trade (2) 更新 Position 持仓
     if not order:
-        print("[trd_cfm] WARN: no order for trade_id={} (order_no={}, order_id={}) — Trade 行已留存".format(
-            trade_id, broker_remark, broker_order_id))
+        print(f"[trd_cfm] WARN: no order for trade_id={trade_id} (order_no={order_no}, order_id={order_id}) — Trade 行已留存")
 
     # v78.3: trd_cfm 增量更新 Position.vol + avl_vol（按 T0/非 T0 规则）
     #   - trade_type != 0 (cancel-trade) 跳过 (撤单由 DELETE 端点单独处理)
@@ -115,11 +123,10 @@ def handle_trd_cfm(db: Session, row: Dict[str, Any], ts: str) -> Optional[Dict[s
     #   - Position 不存在 + 卖出 → WARN 跳过（不允许凭空卖）
     if trade.trade_type == 0:
         _update_position_vol(db, trade.stock_code, trade.order_type, trade.volume,
-                             order_no=broker_remark, trade_id=trade_id,
+                             order_no=order_no, trade_id=trade_id,
                              trade_price=trade.price)
 
-    print("[trd_cfm] inserted trade_id={} order_no={} vol={} px={}".format(
-        trade_id, broker_remark, trade.volume, trade.price))
+    print(f"[trd_cfm] inserted trade_id={trade_id} order_no={order_no} vol={trade.volume} px={trade.price}")
 
     return {
         "trade": _trade_to_out_dict(trade),
