@@ -186,6 +186,34 @@ export const useStocksStore = defineStore('stocks', () => {
     return hit?.stock_name || null
   }
 
+  /**
+   * v80: 按 stock_code 查价格小数位精度 (scale)
+   * 返回 number (默认 2); cache miss 返回 2 兜底
+   */
+  function stockScale(code) {
+    if (!code) return 2
+    if (!cacheLoaded.value || !cache.value.length) return 2
+    const hit = cache.value.find((s) => s.stock_code === code)
+    const scale = hit?.scale
+    if (scale === null || scale === undefined) return 2
+    const n = Number(scale)
+    if (!Number.isFinite(n) || n < 0 || n > 6) return 2  // 兜底 >6 → 2
+    return Math.floor(n)
+  }
+
+  /**
+   * v80: 按 stock_code 查证券类型 stktype (0=股票 1=ETF)
+   * 返回 number (默认 0); cache miss 返回 0 兜底
+   */
+  function stockStktype(code) {
+    if (!code) return 0
+    if (!cacheLoaded.value || !cache.value.length) return 0
+    const hit = cache.value.find((s) => s.stock_code === code)
+    const t = hit?.stktype
+    if (t === null || t === undefined) return 0
+    return Number(t) || 0
+  }
+
   // ==================== 添加 (v46 stock-info-create) ====================
 
   // 添加 loading（与 editLoading 同）
@@ -282,6 +310,8 @@ export const useStocksStore = defineStore('stocks', () => {
     closeEdit,
     saveEdit,
     createStock,  // v46 stock-info-create
-    stockName
+    stockName,
+    stockScale,    // v80: 价格小数位精度
+    stockStktype,  // v80: 证券类型
   }
 })

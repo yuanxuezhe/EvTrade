@@ -46,7 +46,7 @@
       <el-form-item label="参考价" prop="reference_price">
         <el-input-number
           v-model="form.reference_price"
-          :precision="3"
+          :precision="pricePrecision"
           :step="0.01"
           :min="0"
           :max="99999"
@@ -86,6 +86,7 @@
 import { computed, watch } from 'vue'
 import { TYPE_LABEL } from './composables/useStrategy'
 import StockCodePicker from '../../components/StockCodePicker.vue'
+import { usePricePrecision } from '../../composables/usePricePrecision'
 
 const props = defineProps({
   modelValue: { type: Object, required: true },
@@ -101,6 +102,11 @@ const TYPE_HINT = {
   general: '通用策略（多 regime + 多 grid，灵活配置）',
   t0: 'T0 策略（关联 Order.user_def=str(id)，T0 端点 JOIN 过滤）',
 }
+
+// v80: 价格精度 (按 stock.scale 动态; 默认 2)
+// 用 ref 同步 stock_code (避免 computed 时序问题)
+const stockCodeRef = computed(() => form.value?.stock_code || '')
+const { precision: pricePrecision } = usePricePrecision(stockCodeRef)
 
 const form = computed({
   get: () => props.modelValue,

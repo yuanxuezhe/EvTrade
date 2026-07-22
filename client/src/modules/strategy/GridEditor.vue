@@ -30,7 +30,7 @@
         <el-input-number
           :model-value="modelValue.trigger_price"
           @update:model-value="patch('trigger_price', $event)"
-          :precision="3"
+          :precision="pricePrecision"
           :step="0.01"
           :min="0"
           :max="99999"
@@ -44,7 +44,7 @@
         <el-input-number
           :model-value="modelValue.step_offset"
           @update:model-value="patch('step_offset', $event)"
-          :precision="3"
+          :precision="pricePrecision"
           :step="0.01"
           :disabled="disabled"
           controls-position="right"
@@ -120,12 +120,17 @@
 
 <script setup>
 import { Delete } from '@element-plus/icons-vue'
+import { usePricePrecision } from '../../composables/usePricePrecision'
 
 const props = defineProps({
   modelValue: { type: Object, required: true },
   disabled: { type: Boolean, default: false },
+  stockCode: { type: String, default: '' },  // v80: 用于查询价格精度
 })
 const emit = defineEmits(['update:modelValue', 'remove'])
+
+// v80: 价格精度 (按 stock.scale 动态; 默认 2)
+const { precision: pricePrecision } = usePricePrecision(() => props.stockCode)
 
 function patch(field, value) {
   emit('update:modelValue', { ...props.modelValue, [field]: value })

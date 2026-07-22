@@ -132,6 +132,7 @@
 import { computed, watch } from 'vue'
 import { useQuoteStore, FIELD } from '../stores/quote'
 import { useStocksStore } from '../stores/stocks'
+import { usePricePrecision } from '../composables/usePricePrecision'
 
 const props = defineProps({
   stockCode: { type: String, default: '' }
@@ -143,6 +144,9 @@ const quoteStore = useQuoteStore()
 const F = FIELD
 // v33: 从证券信息缓存获取证券名称 (v32 已实现 getByCode)
 const stocksStore = useStocksStore()
+
+// v80: 价格精度 (按 stock.scale 动态)
+const { precision: pricePrecision } = usePricePrecision(() => props.stockCode)
 
 // v33: 永不退订 — 用户原话"请一直保持系统相关标的的订阅"
 //   - 监听 props.stockCode 变化, 当用户输入新代码 (debounce 300ms) 自动调订阅
@@ -252,10 +256,11 @@ const amplitude = computed(() => {
 const amplitudeText = computed(() => amplitude.value != null ? `${amplitude.value.toFixed(2)}%` : '—')
 
 // TODO 区分板块: 创业板/科创板 20%, ST 5%; 当前简化为主板 10%
-const limitUp = computed(() => prevClose.value != null ? Number((prevClose.value * 1.10).toFixed(2)) : null)
-const limitDown = computed(() => prevClose.value != null ? Number((prevClose.value * 0.90).toFixed(2)) : null)
-const limitUpText = computed(() => limitUp.value != null ? limitUp.value.toFixed(2) : '—')
-const limitDownText = computed(() => limitDown.value != null ? limitDown.value.toFixed(2) : '—')
+// v80: 涨跌停按 stock.scale 动态 round (默认 2, ETF 可配 3)
+const limitUp = computed(() => prevClose.value != null ? Number((prevClose.value * 1.10).toFixed(pricePrecision.value)) : null)
+const limitDown = computed(() => prevClose.value != null ? Number((prevClose.value * 0.90).toFixed(pricePrecision.value)) : null)
+const limitUpText = computed(() => limitUp.value != null ? limitUp.value.toFixed(pricePrecision.value) : '—')
+const limitDownText = computed(() => limitDown.value != null ? limitDown.value.toFixed(pricePrecision.value) : '—')
 
 // ─── 5 档盘口 ───
 function getAskPrice(level) {
