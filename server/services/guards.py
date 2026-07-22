@@ -1,10 +1,14 @@
 """
-guards.py — 屏障层（v5: TradingDay→SysStatus, current_date→trd_date）
+guards.py — 屏障层（v_next: SysStatus 单行宽表, id=1）
 
 - require_trading_day: 未做日初 → 503 TRADING_DAY_NOT_INIT
 - require_trading_session: 非交易时段 → 503 OUTSIDE_TRADING_SESSION
 - require_trader: 角色校验（直接复用 auth.deps）
 - require_admin: admin 角色校验
+
+v_next (2026-07-22): sys_status 改为单行宽表 (id=1)
+  - SysStatus 不再有 "status='active'" 多行概念; 改用 SysStatus.id=1 单行
+  - 切日判定: id=1 行的 status 字段 + trd_date 字段
 """
 from datetime import datetime
 from fastapi import HTTPException, Depends
@@ -12,27 +16,32 @@ from typing import Optional
 from sqlalchemy.orm import Session
 
 from server.db import db_session
-from server.models.orm import SysStatus
+from server.models.orm import SysStatus, get_active_trd_date, get_active_sysstatus
 from server.models.user import User
 from server.repo.system import TradingClock
 from server.auth.deps import get_current_user
 
 
 def resolve_active_trd_date(db: Session) -> Optional[str]:
-    """返回当前激活的交易日 (8 位数字字符串)，未激活返回 None"""
-    row = db.query(SysStatus).filter_by(status='active').first()
-    return row.trd_date if row else None
+    """返回当前激活的交易日 (8 位数字字符串)，未激活返回 None
+
+    v_next: SysStatus 单行 (id=1), 通过 ORM helper 实现。
+    """
+    return get_active_trd_date(db)
 
 
 def resolve_default_trd_date(db: Session) -> str:
-    """默认查询日期：已激活 → active.trd_date，否则 MAX(trd_date)，否则今日"""
-    from sqlalchemy import text
-    active = db.query(SysStatus).filter_by(status='active').first()
-    if active:
-        return active.trd_date
+    """默认查询日期：已激活 → active.trd_date，否则 MAX(trd_date)，否则今日
+
+    v_next: 已激活判定走 SysStatus 单行 (id=1)。
+    """
+    trd = get_active_trd_date(db)
+    if trd:
+        return trd
     # 兜底：取本地表 MAX
     # v5 schema 注意：positions 是当前快照（按 stock_code 唯一），无 trd_date 列，
     # 不能进这个循环。其余 3 张表都有 trd_date。
+    from sqlalchemy import text
     for table in ("orders", "trades", "reconcile_report"):
         r = db.execute(text(f"SELECT MAX(trd_date) FROM {table}")).first()
         if r and r[0]:

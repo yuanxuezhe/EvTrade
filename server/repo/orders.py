@@ -17,7 +17,7 @@ from typing import Optional
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from server.models.orm import Order, SysStatus
+from server.models.orm import Order, SysStatus, get_active_trd_date
 
 
 # ================================================================
@@ -195,10 +195,13 @@ def _infer_order_status(order: Order, broker_status: Optional[str] = None) -> st
 
 
 def _get_active_trd_date(db: Session) -> str:
-    """获取当前激活交易日；未激活则用 MAX(trd_date)"""
-    row = db.query(SysStatus).filter_by(status='active').first()
-    if row:
-        return row.trd_date
+    """获取当前激活交易日；未激活则用 MAX(trd_date)
+
+    v_next: SysStatus 单行 (id=1), 通过 ORM helper get_active_trd_date 判定激活。
+    """
+    trd = get_active_trd_date(db)
+    if trd:
+        return trd
     for table in ("orders", "trades", "positions", "reconcile_report"):
         r = db.execute(text(f"SELECT MAX(trd_date) FROM {table}")).first()
         if r and r[0]:

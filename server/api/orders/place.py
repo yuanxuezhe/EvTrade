@@ -27,7 +27,7 @@ from sqlalchemy.orm import Session
 
 from server.auth.deps import get_current_user
 from server.db import get_db, SessionLocal  # v77: SessionLocal 给 _submit_rpc_async 后台 task 用
-from server.models.orm import Order, SysStatus
+from server.models.orm import Order, SysStatus, get_active_trd_date
 from server.models.user import User
 from server.services.guards import require_trader, require_trading_day, require_trading_session
 from server.repo.orders import next_order_no
@@ -57,7 +57,13 @@ def register_place(router):
             raise HTTPException(status_code=400, detail={"code": "BAD_ORDER_TYPE", "msg": "order_type 必须 23(买) 24(卖)"})
 
         # 1. 取交易日 + order_no（v7：幂等改由 order_no 单调递增保证）
-        trd_date = db.query(SysStatus).filter_by(status='active').first().trd_date
+        #    v_next: SysStatus 单行 (id=1)
+        trd_date = get_active_trd_date(db)
+        if not trd_date:
+            raise HTTPException(
+                status_code=503,
+                detail={"code": "TRADING_DAY_NOT_INIT", "msg": "未做日初处理，无法交易"},
+            )
 
         # 2. T0 配平
         direction = "BUY" if req.order_type == "23" else "SELL"

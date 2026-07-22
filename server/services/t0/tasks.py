@@ -58,9 +58,9 @@ def create_task(
         raise ValueError("coefficient 必须在 [0, 10]")
 
     if not created_trd_date:
-        from server.models.orm import SysStatus
-        sys_row = db.query(SysStatus).filter_by(status='active').first()
-        created_trd_date = sys_row.trd_date if sys_row else datetime.now().strftime("%Y%m%d")
+        # v_next: SysStatus 单行 (id=1)
+        from server.models.orm import get_active_trd_date
+        created_trd_date = get_active_trd_date(db) or datetime.now().strftime("%Y%m%d")
 
     task = T0Task(
         user_id=user_id,

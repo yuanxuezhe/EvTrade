@@ -1,37 +1,36 @@
 """
-admin/sys_status.py — v5 重构版（schema refactor）
+admin/sys_status.py — v_next 重构版（SysStatus 单行宽表）
 
-原 admin/trading_day.py 重命名。交易日状态机写入 sys_status 表（替代 trading_day）。
+交易日状态机写入 sys_status 表（替代 trading_day）。
 URL 路径：/api/admin/sys-status（替代 /api/admin/trading-day）。
 
 POST /api/admin/sys-status/init
   body: { "trd_date": "20260614", "mode": "auto" | "manual" }
-  -> 触发对账 + 切交易日
+  -> 触发对账 + 切交易日（UPDATE id=1 行的 trd_date）
   -> 失败返 503 + 报告 id
 
-GET  /api/admin/sys-status
-  -> 历史交易日列表（90 天）
 GET  /api/admin/sys-status/active
-  -> 当前激活的交易日
+  -> 当前 SysStatus 行（id=1）
+
 POST /api/admin/sys-status/reconcile
   body: { "trd_date": "20260614", "mode": "manual" }
   -> 仅生成对账报告（不切日）
 
-v5 改动：
-- 表 trading_day → sys_status；类 TradingDay → SysStatus
-- 字段 current_date → trd_date
-- 复合主键 → trd_date 单 PK（无 id）
+v_next 改动（2026-07-22, 用户明令）:
+- 表 sys_status 单行化（id=1, 强制 CHECK id=1）
+- 字段 trd_date 不再是 PK；切日 = UPDATE 单行 trd_date
+- 历史交易日从 reconcile_report.trd_date 查
+- 删除 GET /api/admin/sys-status 列表端点（用户接受此损失）
 """
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
-from typing import Optional, List
+from typing import Optional
 from sqlalchemy.orm import Session
-from sqlalchemy import desc
 from datetime import datetime, timezone
 import asyncio
 
 from server.db import get_db
-from server.models.orm import SysStatus
+from server.models.orm import SysStatus, get_active_sysstatus
 from server.models.user import User
 from server.services.reconcile import do_reconcile
 from server.services.guards import require_admin
@@ -39,19 +38,21 @@ from server.utils.time import format_db_dt
 
 router = APIRouter()
 
-REPORT_RETENTION_DAYS = 90
-
 
 class SysStatusOut(BaseModel):
-    """SysStatus 响应模型 — 字段名直接对齐前端 SystemInit.vue
+    """SysStatus 响应模型 — v_next 单行宽表
 
-    v5: 移除 id（trd_date 即 PK）
+    字段名直接对齐前端 SystemInit.vue
     """
     trd_date: str
     status: str
+    is_half_day: int = 0
     activated_at: Optional[str] = None
-    last_reconcile_at: Optional[str] = None
-    activated_by: str = ""
+    activated_by: Optional[int] = None
+    closed_at: Optional[str] = None
+    closed_by: Optional[int] = None
+    remark: str = ""
+    updated_at: Optional[str] = None
 
 
 class InitRequest(BaseModel):
@@ -79,7 +80,7 @@ async def init_trading_day(
     db: Session = Depends(get_db),
     admin_user: User = Depends(require_admin),
 ):
-    """人工日初: 触发对账 + 切交易日"""
+    """人工日初: 触发对账 + 切交易日（v_next 单行 UPSERT）"""
     if len(req.trd_date) != 8 or not req.trd_date.isdigit():
         raise HTTPException(
             status_code=400,
@@ -101,16 +102,10 @@ async def init_trading_day(
             error=result['error'],
         )
 
-    # upsert 已在 do_reconcile 完成, 这里直接查 active 行
-    new_day = db.query(SysStatus).filter_by(
-        status='active', trd_date=req.trd_date
-    ).first()
+    # 切日已写入 (do_reconcile 内 UPDATE id=1 行), 这里直接读出来
+    row = get_active_sysstatus(db)
 
-    # 2026-07-15-system-init-broadcast: 日初成功后 ws 推 init_completed,
-    #   让前端自动刷新 holdings/asset/position 缓存 (无需点 AppHeader 刷新按钮)
-    #   - 范式与 services/push/dispatcher.py::_broadcast_trade_cfm 一致: ensure_future 调度, 不阻塞 HTTP 响应
-    #   - status 简化判定: error 为空 = 'ok'，否则 'partial'（全失败时 ok=False 已早返到 line ~95，不会到这）
-    #   - reconcile_only 端点不会执行到本块（不同函数）
+    # v25: 日初成功后 ws 推 init_completed, 让前端自动刷新 holdings/asset/position 缓存
     try:
         from server.ws.manager import ws_manager
         _init_status = 'partial' if result.get('error') else 'ok'
@@ -127,7 +122,6 @@ async def init_trading_day(
             trace_id=f"init:{req.trd_date}:{result['report_id']}",
         ))
     except Exception as _e:
-        # ws 推送失败不应影响 init HTTP 响应 (用户已收到 200, 缓存可手动刷新)
         import logging
         logging.getLogger(__name__).warning(
             "init_trading_day ws broadcast failed: %s", _e
@@ -139,11 +133,16 @@ async def init_trading_day(
         report_id=result['report_id'],
         applied=result['applied'],
         trading_day=SysStatusOut(
-            trd_date=req.trd_date,
-            status='active',
-            activated_at=format_db_dt(new_day.initialized_at) if new_day and new_day.initialized_at else None,
-            activated_by=str(new_day.initialized_by) if new_day and new_day.initialized_by else "0",
-        ),
+            trd_date=row.trd_date,
+            status=row.status,
+            is_half_day=row.is_half_day,
+            activated_at=format_db_dt(row.initialized_at) if row.initialized_at else None,
+            activated_by=int(row.initialized_by) if row.initialized_by else None,
+            closed_at=format_db_dt(row.closed_at) if row.closed_at else None,
+            closed_by=int(row.closed_by) if row.closed_by else None,
+            remark=row.remark or "",
+            updated_at=format_db_dt(row.updated_at) if row.updated_at else None,
+        ) if row else None,
         error=None,
     )
 
@@ -173,38 +172,27 @@ async def reconcile_only(
     )
 
 
-@router.get("", response_model=List[SysStatusOut])
-async def list_trading_days(days: int = 90, db: Session = Depends(get_db)):
-    """历史交易日列表"""
-    rows = db.query(SysStatus).order_by(desc(SysStatus.trd_date)).limit(days).all()
-    return [
-        SysStatusOut(
-            trd_date=r.trd_date,
-            status=r.status,
-            activated_at=format_db_dt(r.initialized_at) if r.initialized_at else None,
-            activated_by=str(r.initialized_by) if r.initialized_by else "0",
-        ) for r in rows
-    ]
-
-
 @router.get("/active", response_model=SysStatusOut)
 async def get_active_trading_day(db: Session = Depends(get_db)):
-    """获取当前激活的交易日
+    """获取当前 SysStatus 单行（id=1）
 
-    无记录 → 返默认值占位 (status="none", trd_date=""),
+    无记录 → 返默认值占位 (status="closed", trd_date=""),
     避免前端 null 处理。
     """
-    row = db.query(SysStatus).filter_by(status='active').first()
+    row = get_active_sysstatus(db)
     if not row:
         return SysStatusOut(
             trd_date="",
-            status="none",
-            activated_at=None,
-            activated_by="0",
+            status="closed",
         )
     return SysStatusOut(
         trd_date=row.trd_date,
         status=row.status,
+        is_half_day=row.is_half_day,
         activated_at=format_db_dt(row.initialized_at) if row.initialized_at else None,
-        activated_by=str(row.initialized_by) if row.initialized_by else "0",
+        activated_by=int(row.initialized_by) if row.initialized_by else None,
+        closed_at=format_db_dt(row.closed_at) if row.closed_at else None,
+        closed_by=int(row.closed_by) if row.closed_by else None,
+        remark=row.remark or "",
+        updated_at=format_db_dt(row.updated_at) if row.updated_at else None,
     )

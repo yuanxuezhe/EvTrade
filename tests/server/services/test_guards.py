@@ -32,7 +32,7 @@ def test_resolve_active_returns_none_when_no_active():
 
 def test_resolve_active_returns_current_date():
     db = SessionLocal()
-    db.add(SysStatus(trd_date="20260614", status="active"))
+    db.add(SysStatus(id=1, trd_date="20260614", status="active"))
     db.commit()
     from services.guards import resolve_active_trd_date
     assert resolve_active_trd_date(db) == "20260614"
@@ -40,9 +40,11 @@ def test_resolve_active_returns_current_date():
 
 
 def test_resolve_active_ignores_closed_and_pending():
+    """v_next: sys_status 单行; status='closed' 时 resolve_active 返 None"""
     db = SessionLocal()
-    db.add(SysStatus(trd_date="20260613", status="closed"))
-    db.add(SysStatus(trd_date="20260615", status="pending"))
+    # 清旧 (确保只有 id=1)
+    db.query(SysStatus).delete()
+    db.add(SysStatus(id=1, trd_date="20260613", status="closed"))
     db.commit()
     from services.guards import resolve_active_trd_date
     assert resolve_active_trd_date(db) is None
@@ -53,7 +55,7 @@ def test_resolve_active_ignores_closed_and_pending():
 
 def test_default_uses_active():
     db = SessionLocal()
-    db.add(SysStatus(trd_date="20260614", status="active"))
+    db.add(SysStatus(id=1, trd_date="20260614", status="active"))
     db.commit()
     from services.guards import resolve_default_trd_date
     assert resolve_default_trd_date(db) == "20260614"
@@ -100,7 +102,7 @@ async def test_require_trading_day_blocks_when_not_init():
 @pytest.mark.asyncio
 async def test_require_trading_day_passes_when_active():
     db = SessionLocal()
-    db.add(SysStatus(trd_date="20260614", status="active"))
+    db.add(SysStatus(id=1, trd_date="20260614", status="active"))
     db.commit()
     db.close()
     from services.guards import require_trading_day
@@ -172,7 +174,7 @@ def test_clock_half_day_skips_afternoon():
         morning_start=time(9, 15), morning_end=time(11, 30),
         afternoon_start=time(13, 0), afternoon_end=time(15, 0),
     ))
-    db.add(SysStatus(trd_date="20260614", status="active", is_half_day=1))
+    db.add(SysStatus(id=1, trd_date="20260614", status="active", is_half_day=1))
     db.commit()
     db.close()
     from services.trading_clock import TradingClock

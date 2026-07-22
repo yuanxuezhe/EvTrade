@@ -124,8 +124,8 @@ def test_init_trading_day_with_auto_reconcile():
         assert db.query(Position).filter_by(stock_code="600030.SH").count() == 1
         # Asset 单行
         assert db.query(Asset).count() == 1
-        # SysStatus 切到了 20260614
-        active = db.query(SysStatus).filter_by(status="active").first()
+        # v_next: SysStatus 单行 (id=1) 切到了 20260614
+        active = db.query(SysStatus).filter_by(id=1).first()
         assert active.trd_date == "20260614"
         # 对账报告生成
         assert db.query(ReconcileReport).count() == 1
@@ -159,10 +159,10 @@ def test_init_trading_day_rpc_fail_does_not_switch_day():
         assert "rpc" in body["error"].lower() or "断连" in body["error"]
         assert body["trading_day"] is None
 
-        # 关键：SysStatus 没切
+        # 关键：SysStatus 没切 (v_next: 单行 id=1 status 仍是 closed)
         db = SessionLocal()
-        active = db.query(SysStatus).filter_by(status="active").first()
-        assert active is None
+        active = db.query(SysStatus).filter_by(id=1).first()
+        assert active is None or active.status != 'active'
         # 对账报告写了
         assert db.query(ReconcileReport).count() == 1
         db.close()

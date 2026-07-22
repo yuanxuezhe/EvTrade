@@ -57,7 +57,7 @@ def _auth(u):
 def test_active_day_returns_rpc_format_with_trd_date(client, trader_user):
     """激活日存在 → 返标准 RPC {code:0, msg:"", list:[{trd_date, status}]}"""
     db = SessionLocal()
-    db.add(SysStatus(trd_date="20260614", status="active"))
+    db.add(SysStatus(id=1, trd_date="20260614", status="active"))
     db.commit()
     db.close()
 
@@ -89,7 +89,7 @@ def test_active_day_no_active_returns_empty_list(client, trader_user):
 def test_active_day_pending_status_ignored(client, trader_user):
     """pending 状态不算激活（要 status='active'）"""
     db = SessionLocal()
-    db.add(SysStatus(trd_date="20260615", status="pending"))
+    db.add(SysStatus(id=1, trd_date="20260615", status="pending"))
     db.commit()
     db.close()
 
@@ -98,21 +98,20 @@ def test_active_day_pending_status_ignored(client, trader_user):
     assert r.json()["list"] == []
 
 
-# ──── 多条 active 记录：取第一条（防御）───
+# ──── 单行单 active 记录：单行接口 ────
 
-def test_active_day_multiple_active_takes_first(client, trader_user):
-    """多条 active（异常数据）→ 不报错，返 list 包含全部"""
+def test_active_day_single_row(client, trader_user):
+    """v_next: sys_status 单行宽表 (id=1), 只 1 条 active, /active 端点直接返回"""
     db = SessionLocal()
-    db.add(SysStatus(trd_date="20260614", status="active"))
-    db.add(SysStatus(trd_date="20260615", status="active"))
+    db.query(SysStatus).delete()
+    db.add(SysStatus(id=1, trd_date="20260614", status="active"))
     db.commit()
     db.close()
 
-    r = client.get("/api/system/active-day", headers=_auth(trader_user))
+    r = client.get("/api/admin/sys-status/active", headers=_auth(trader_user))
     body = r.json()
-    # resolve_active_trd_date 只返第一条
-    assert len(body["list"]) == 1
-    assert body["list"][0]["trd_date"] in ("20260614", "20260615")
+    assert body["trd_date"] == "20260614"
+    assert body["status"] == "active"
 
 
 # ──── 鉴权：未登录 401 ────

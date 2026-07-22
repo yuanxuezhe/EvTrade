@@ -19,7 +19,7 @@ def fresh_db():
     Base.metadata.drop_all(bind=engine)
     init_db()
     db = SessionLocal()
-    db.add(SysStatus(trd_date="20260614", status="active"))
+    db.add(SysStatus(id=1, trd_date="20260614", status="active"))
     db.commit()
     db.close()
     yield

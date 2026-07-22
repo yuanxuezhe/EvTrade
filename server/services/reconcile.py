@@ -157,28 +157,35 @@ async def do_reconcile(
                 'error': f"覆盖本地失败: {e}",
             }
 
-    # 5. 切交易日 (upsert: 有则激活老行, 无则新增)
+    # 5. 切交易日 (v_next: SysStatus 单行宽表 id=1)
     #
-    # DB 层级: SysStatus ORM 主键 trd_date
-    # 防同日多 INSERT, 配合本 upsert 块保证同日只 1 行 active。
-    # 同 trd_date 再次 init: 走 `existing` 分支, status='active' + 更新元数据
-    # 切到新日: 老的 active 同 trd_date 不同的先 closed, 再查/插新日
+    # DB 层级: sys_status 是单行表 (CHECK id=1), 切日 = UPDATE 同一行的 trd_date + status
+    # 同日重 init: 走同一行, 更新 status='active' + 初始化元数据
+    # 切到新日: 同一行 UPDATE trd_date, 历史由 reconcile_report.trd_date 记录
     if applied or not cfg.auto_reconcile:
-        old_active = db.query(SysStatus).filter_by(status='active').first()
-        if old_active and old_active.trd_date != new_trd_date:
-            old_active.status = 'closed'
-        existing = db.query(SysStatus).filter_by(trd_date=new_trd_date).first()
-        if existing:
-            existing.status = 'active'
-            existing.initialized_at = now
-            existing.initialized_by = by_user
-        else:
-            db.add(SysStatus(
+        row = db.query(SysStatus).filter(SysStatus.id == 1).first()
+        if not row:
+            # id=1 行不存在 (极端脏数据: 初始化缺失), 创建占位
+            row = SysStatus(
+                id=1,
                 trd_date=new_trd_date,
                 status='active',
                 initialized_at=now,
-                initialized_by=by_user,
-            ))
+                initialized_by=int(by_user) if by_user.isdigit() else None,
+                created_at=now,
+                updated_at=now,
+            )
+            db.add(row)
+        else:
+            # 单行 UPDATE: 切日 = 改 trd_date 字段; 状态变 active
+            row.trd_date = new_trd_date
+            row.status = 'active'
+            row.is_half_day = 0
+            row.initialized_at = now
+            row.initialized_by = int(by_user) if by_user.isdigit() else None
+            row.closed_at = None
+            row.closed_by = None
+            row.updated_at = now
         db.commit()
 
     return {

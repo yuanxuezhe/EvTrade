@@ -11,7 +11,7 @@ from datetime import datetime, time as dtime
 from typing import Optional
 
 from server.db import db_session
-from server.models.orm import TradingSession, SysStatus
+from server.models.orm import TradingSession, SysStatus, get_active_sysstatus
 
 
 class TradingClock:
@@ -37,9 +37,9 @@ class TradingClock:
                 db.commit()
                 db.refresh(row)
             cls._session = row
-            # 半天判断
-            active = db.query(SysStatus).filter_by(status='active').first()
-            cls._is_half_day = bool(active and active.is_half_day)
+            # 半天判断 (v_next: SysStatus 单行 id=1)
+            active = get_active_sysstatus(db)
+            cls._is_half_day = bool(active and active.status == 'active' and active.is_half_day)
             cls._loaded_at = datetime.now()
             return row
 

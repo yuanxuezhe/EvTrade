@@ -92,7 +92,7 @@ def active_day(fresh_db):
     db.commit()
     trader = User(username="trader1", password_hash=hash_password("x"), role="trader")
     db.add(trader)
-    db.add(SysStatus(trd_date="20260614", status="active"))
+    db.add(SysStatus(id=1, trd_date="20260614", status="active"))
     db.commit()
     db.refresh(trader)
     db.close()

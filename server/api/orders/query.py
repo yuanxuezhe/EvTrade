@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 
 from server.auth.deps import get_current_user
 from server.db import get_db
-from server.models.orm import Order, SysStatus
+from server.models.orm import Order, SysStatus, get_active_trd_date
 from server.models.user import User
 from server.api.orders.schemas import ListOrdersResponse, _to_order_out
 
@@ -56,10 +56,9 @@ def register_query(router):
             if end_date:
                 q = q.filter(Order.trd_date <= end_date)
         else:
-            # 缺省模式：trd_date 显式给则用，否则激活日
+            # 缺省模式：trd_date 显式给则用，否则激活日 (v_next: SysStatus 单行 id=1)
             if not trd_date:
-                active = db.query(SysStatus).filter_by(status='active').first()
-                trd_date = active.trd_date if active else None
+                trd_date = get_active_trd_date(db)
             if trd_date:
                 q = q.filter(Order.trd_date == trd_date)
 

@@ -108,10 +108,21 @@ def setup_db():
         # 创建测试用户
         u = User(username=USERNAME, password_hash=hash_password(PASSWORD), role="trader")
         db.add(u)
-        # 激活交易日 (sys_status PK = trd_date)
+        # 激活交易日 (v_next: sys_status 单行 id=1)
         from server.models.orm import SysStatus as _Ss
-        db.execute(text("DELETE FROM sys_status WHERE trd_date = :d"), {"d": TRD_DATE})
-        db.add(_Ss(status="active", trd_date=TRD_DATE, is_half_day=False, remark="sim"))
+        # 不再 DELETE WHERE trd_date; 改为 UPDATE id=1 行的 trd_date/status
+        existing = db.query(_Ss).filter(_Ss.id == 1).first()
+        if existing:
+            existing.trd_date = TRD_DATE
+            existing.status = "active"
+            existing.is_half_day = 0
+            existing.remark = "sim"
+            existing.initialized_at = None
+            existing.initialized_by = None
+            existing.closed_at = None
+            existing.closed_by = None
+        else:
+            db.add(_Ss(id=1, status="active", trd_date=TRD_DATE, is_half_day=False, remark="sim"))
         db.commit()
         return db.query(User).filter_by(username=USERNAME).first().id
     finally:
