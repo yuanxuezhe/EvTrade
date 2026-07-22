@@ -20,6 +20,7 @@ repo/stocks.py — 股票基础信息 CRUD (v23 slim-stocks-table, v46+ short-na
 """
 from datetime import datetime, timedelta
 from typing import List, Optional, Dict
+import threading
 
 from sqlalchemy.orm import Session
 
@@ -29,6 +30,56 @@ from server.services.short_name import to_short_name  # v46+ REQ-STOCK-007
 
 # 增量 upsert 的"7 天内跳过"阈值
 SKIP_THRESHOLD_DAYS = 7
+
+# v78.3: 内存 cache (key: stock_code, value: is_t0_able bool)
+# push handler 频繁调用 (trd_cfm 每笔成交都查), 加 cache 避免每次打 DB
+_stock_t0_cache: Dict[str, bool] = {}
+_stock_cache_loaded: bool = False
+_stock_cache_lock = threading.RLock()
+
+
+def get_is_t0_able(db: Session, stock_code: str) -> bool:
+    """v78.3: 从内存 cache 读 is_t0_able; cache miss 时回退 DB 并填 cache
+
+    设计: trade_cfm 推送每笔成交都会查, DB query 频繁;
+    cache 简化路径 = O(1) 读. 启动时 init_db 同步调用 load_all_stocks 一次.
+    admin 更新股票时通过 invalidate_stock_cache() 失效对应 key.
+    """
+    if not stock_code:
+        return False
+    with _stock_cache_lock:
+        if _stock_cache_loaded and stock_code in _stock_t0_cache:
+            return _stock_t0_cache[stock_code]
+        # cache miss → DB 查询
+        row = db.query(Stock).filter_by(stock_code=stock_code).first()
+        result = bool(row.is_t0_able) if row else False
+        _stock_t0_cache[stock_code] = result
+        return result
+
+
+def load_all_stocks(db: Session) -> int:
+    """v78.3: 启动时一次性加载所有 stocks.is_t0_able 到内存 cache
+
+    返回加载条目数. 与 sysconfig._ensure_defaults 类似, 在 init_db 末尾调用.
+    """
+    global _stock_cache_loaded
+    rows = db.query(Stock.stock_code, Stock.is_t0_able).all()
+    with _stock_cache_lock:
+        _stock_t0_cache.clear()
+        for code, t0 in rows:
+            _stock_t0_cache[code] = bool(t0)
+        _stock_cache_loaded = True
+    return len(rows)
+
+
+def invalidate_stock_cache(stock_code: str = "") -> None:
+    """v78.3: 失效 cache (admin 编辑或新增 stock 时调用)"""
+    with _stock_cache_lock:
+        if stock_code:
+            _stock_t0_cache.pop(stock_code, None)
+        else:
+            _stock_t0_cache.clear()
+            _stock_cache_loaded = False
 
 
 def upsert(db: Session, stock_code: str, data: Dict) -> str:

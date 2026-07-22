@@ -17,8 +17,8 @@ from typing import Any, Dict, Optional
 from sqlalchemy.orm import Session
 
 from server.models.orm import Order
-from server.repo.orders import _infer_order_status, _status_msg
-from server.services.push.helpers import _int, _str, _order_to_out_dict
+from server.repo.orders import _get_active_trd_date  # v78.3: ord_cfm 用 broker 推的 status, 不再依赖 _infer_order_status/_status_msg 本地推断 (按字段处理委托表)
+from server.services.push.helpers import _float, _int, _str, _order_to_out_dict
 from server.utils.time import _utcnow, parse_broker_ts  # bugfix: were wrongly imported from helpers (never existed there)
 
 
@@ -109,18 +109,33 @@ def handle_ord_cfm(db: Session, row: Dict[str, Any], ts: str) -> Optional[Dict[s
         order.status = broker_status
     else:
         order.status = '50'  # 已报
-    order.status_msg = _str(row.get('status_msg', '')) or _status_msg(order.status)
+    # v78.3: 直接用 broker 推的 status_msg, 不再 _status_msg 本地兜底
+    order.status_msg = _str(row.get('status_msg', ''))
 
     # v10: 写入 order_time（v10 起, parse_broker_ts 统一为标准格式 "YYYY-MM-DD HH:MM:SS.fff"）
     broker_order_time = _str(row.get('order_time', ''))
     if broker_order_time:
         order.order_time = parse_broker_ts(broker_order_time, order.trd_date, tz='local')
 
+    # v78.3: 累加 cumulative 成交量 + 成交均价（broker ord_cfm 推送的字段, 不再依赖 trd_cfm 累加）
+    # broker 字段: traded_volume (累计成交量) / traded_price (最近成交价, 用作均价近似)
+    # 注: xtquant_api.py:260-271 broker 仅推 traded_volume + traded_price, 没有 avg_price/cum_volume
+    cum_volume = _int(row.get('traded_volume', 0))
+    cum_avg_price = _float(row.get('traded_price', 0))  # broker 推的最近成交价作为均价
+    if cum_volume > 0:
+        # 不超过委托量
+        if order.volume and cum_volume > order.volume:
+            cum_volume = order.volume
+        order.traded_volume = cum_volume
+    if cum_avg_price > 0:
+        order.traded_amount = round(cum_avg_price * order.traded_volume, 2)
+        order.avg_price = cum_avg_price
+
     order.pushed_at = _utcnow()
     order.updated_at = _utcnow()
 
-    print("[ord_cfm] updated order_no={} order_id={} status={} (broker_status={}, cum={}/{})".format(
+    print("[ord_cfm] updated order_no={} order_id={} status={} (broker_status={}, cum={}/{}, avg={})".format(
         order.order_no, order.order_id, order.status, broker_status,
-        order.traded_volume, order.volume))
+        order.traded_volume, order.volume, order.avg_price))
 
     return _order_to_out_dict(order)

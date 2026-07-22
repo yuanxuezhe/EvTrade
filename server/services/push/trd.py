@@ -22,7 +22,7 @@ from typing import Any, Dict, Optional
 from sqlalchemy.orm import Session
 
 from server.models.orm import Order, Trade
-from server.repo.orders import _get_active_trd_date, _infer_order_status, _status_msg
+from server.repo.orders import _get_active_trd_date  # v78.3: trd_cfm 不再调用 _infer_order_status/_status_msg (按字段处理委托表)
 from server.services.push.helpers import _float, _int, _str, _order_to_out_dict, _trade_to_out_dict
 from server.utils.time import _utcnow, parse_broker_ts  # bugfix: were wrongly imported from helpers (never existed there)
 
@@ -102,31 +102,24 @@ def handle_trd_cfm(db: Session, row: Dict[str, Any], ts: str) -> Optional[Dict[s
     db.add(trade)
     db.flush()
 
-    # 同步更新 Order 累计 + 推断 status
-    if order:
-        order.traded_volume = (order.traded_volume or 0) + trade.volume
-        order.traded_amount = (order.traded_amount or 0) + trade.amount
-        if trade.price and trade.volume:
-            order.avg_price = order.traded_amount / order.traded_volume
-        # v6: 累计后本地推断 status(不传 broker_status,trd_cfm 永远不写撤单类状态)
-        order.status = _infer_order_status(order)
-        order.status_msg = _status_msg(order.status)
-        order.pushed_at = _utcnow()
-        order.updated_at = _utcnow()
-    else:
+    # v78.3: trd_cfm 不再累加 Order (traded_volume/traded_amount/avg_price/status)
+    #   这些字段由 ord_cfm 推送 cum_volume/avg_price 一次写入 (按字段处理委托表)
+    #   trd_cfm 只做两件事: (1) 插 Trade (2) 更新 Position 持仓
+    if not order:
         print("[trd_cfm] WARN: no order for trade_id={} (order_no={}, order_id={}) — Trade 行已留存".format(
             trade_id, broker_remark, broker_order_id))
 
-    # change consolidate-position-data-flow: trd_cfm 增量更新 Position.vol
-    # OQ-1 option B: trade_type=1 (cancel-trade) MUST 跳过 — DELETE 端点
-    # R1 抹平已负责 vol 调整，本路径再 ± 会与 R1 抹平语义冲突
+    # v78.3: trd_cfm 增量更新 Position.vol + avl_vol（按 T0/非 T0 规则）
+    #   - trade_type != 0 (cancel-trade) 跳过 (撤单由 DELETE 端点单独处理)
+    #   - Position 不存在 + 买入 → 自动创建（vol/avl_vol 初始化）
+    #   - Position 不存在 + 卖出 → WARN 跳过（不允许凭空卖）
     if trade.trade_type == 0:
         _update_position_vol(db, trade.stock_code, trade.order_type, trade.volume,
-                             order_no=broker_remark, trade_id=trade_id)
+                             order_no=broker_remark, trade_id=trade_id,
+                             trade_price=trade.price)
 
-    print("[trd_cfm] inserted trade_id={} order_no={} vol={} px={} order_status={}".format(
-        trade_id, broker_remark, trade.volume, trade.price,
-        order.status if order else 'N/A'))
+    print("[trd_cfm] inserted trade_id={} order_no={} vol={} px={}".format(
+        trade_id, broker_remark, trade.volume, trade.price))
 
     return {
         "trade": _trade_to_out_dict(trade),
@@ -142,56 +135,93 @@ def _update_position_vol(
     *,
     order_no: str = "",
     trade_id: str = "",
+    trade_price: float = 0.0,
 ) -> None:
-    """trd_cfm 增量更新 Position.vol（change consolidate-position-data-flow）
+    """v78.3: trd_cfm 增量更新 Position（按 T0/非 T0 规则）
 
-    设计要点：
-    - 仅累加/扣减 `Position.vol`，不动 cost_price / avl_vol / last_vol (today_buy/today_sell 列已删除)
-      （这些字段由 day-init reconcile 负责，详见 design DR-2）
-    - order_type "23" (买) → vol += volume；"24" (卖) → vol -= volume
-    - Position row 不存在 → log WARNING + 跳过（admin 必须先 day-init reconcile）
-    - 上游 caller 已保证 trade_type != 1（cancel-trade 由 DELETE 端点 R1 抹平，不重复处理）
-    - 异常（DB 错误等）仅 log，不向上抛 — 不能让 push 链路因 Position 更新失败而中断
-      Order/Trade 落库已在外层函数完成
+    设计要点:
+    - vol 永远按 order_type 累加: 买 += qty, 卖 -= qty
+    - avl_vol 规则 (T0 决定):
+        * T0 股票 买: avl_vol += qty (T+0 当日可卖)
+        * T0 股票 卖: avl_vol -= qty
+        * 非 T0 股票 买: avl_vol 不变 (T+1 解禁, 当日不可卖)
+        * 非 T0 股票 卖: avl_vol -= qty (可卖存量)
+    - Position 不存在 + 买入: 自动创建 Position 行
+      (vol = qty, avl_vol = T0 ? qty : 0, cost_price = trade_price)
+    - Position 不存在 + 卖出: WARN 跳过 (不允许凭空卖, 等 day-init reconcile)
+    - trade_type != 0 由 caller 保证已 skip (撤单由 DELETE 端点单独处理)
+    - 异常仅 log 不向上抛 — 不能让 push 链路中断
     """
     if not stock_code or not volume:
         return
 
-    from server.models.orm import Position  # lazy: 避免循环 import
+    from server.models.orm import Position
+    from server.repo.stocks import get_is_t0_able  # v78.3: 内存 cache
 
+    is_t0 = get_is_t0_able(db, stock_code)
     pos = db.query(Position).filter_by(stock_code=stock_code).first()
-    if pos is None:
-        print(
-            "[TRD→POSITION] WARN: Position not found for stock_code={}, "
-            "skipping vol update (order_no={}, trade_id={}, order_type={}, vol={})".format(
-                stock_code, order_no, trade_id, order_type, volume,
-            )
-        )
-        return
 
+    # v78.3: 买入时 Position 不存在 → 自动创建
+    if pos is None:
+        if order_type == "23":  # 买
+            pos = Position(
+                stock_code=stock_code,
+                stock_name="",  # 由 day-init reconcile 后补全
+                last_vol=0,
+                vol=volume,
+                avl_vol=volume if is_t0 else 0,  # T0 当日可卖, 非 T0 次日解禁
+                cost_price=trade_price,
+                synced_at=_utcnow(),
+                synced_from="push_partial",
+            )
+            db.add(pos)
+            print(
+                "[TRD→POSITION] auto-created Position stock_code={} vol={} avl_vol={} t0={} "
+                "(order_no={}, trade_id={})".format(
+                    stock_code, volume, volume if is_t0 else 0, is_t0,
+                    order_no, trade_id,
+                )
+            )
+            return
+        else:  # 卖
+            print(
+                "[TRD→POSITION] WARN: sell but no Position for stock_code={}, "
+                "skipping (order_no={}, trade_id={}, vol={})".format(
+                    stock_code, order_no, trade_id, volume,
+                )
+            )
+            return
+
+    # Position 存在 → 按规则增量
     if order_type == "23":  # 买
         pos.vol = (pos.vol or 0) + volume
+        if is_t0:
+            pos.avl_vol = (pos.avl_vol or 0) + volume
+        # 非 T0 买: avl_vol 不变 (T+1 解禁, 等 reconcile)
     elif order_type == "24":  # 卖
         pos.vol = (pos.vol or 0) - volume
+        pos.avl_vol = (pos.avl_vol or 0) - volume
     else:
-        # 异常 order_type（不应发生）— 跳过而非乱动 vol
         print(
             "[TRD→POSITION] WARN: unknown order_type={} for stock_code={}, "
-            "skipping vol update (order_no={}, trade_id={})".format(
+            "skipping (order_no={}, trade_id={})".format(
                 order_type, stock_code, order_no, trade_id,
             )
         )
         return
 
-    # Position ORM 无显式 updated_at 列，沿用 synced_at 标记本次增量更新时刻
     pos.synced_at = _utcnow()
     if not pos.synced_from:
         pos.synced_from = "push_partial"
 
+    avl_delta = volume if (order_type == "23" and is_t0) else (-volume if order_type == "24" else 0)
     print(
-        "[TRD→POSITION] updated Position.vol stock_code={} order_type={} delta={} new_vol={} "
-        "(order_no={}, trade_id={})".format(
-            stock_code, order_type, volume if order_type == "23" else -volume,
-            pos.vol, order_no, trade_id,
+        "[TRD→POSITION] updated Position stock_code={} order_type={} vol_delta={} avl_delta={} "
+        "new_vol={} new_avl={} t0={} (order_no={}, trade_id={})".format(
+            stock_code, order_type,
+            volume if order_type == "23" else -volume,
+            avl_delta,
+            pos.vol, pos.avl_vol, is_t0,
+            order_no, trade_id,
         )
     )
