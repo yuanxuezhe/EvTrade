@@ -21,6 +21,7 @@ from server.models.orm import Order
 from server.repo.orders import _get_active_trd_date  # v79.3 命名统一: 不再用 broker_*
 from server.services.push.helpers import _float, _int, _str, _order_to_out_dict
 from server.utils.time import _utcnow, parse_broker_ts
+from server.repo.stocks import get_stock_scale  # v80: 价格按 stock.scale round
 
 
 def handle_ord_cfm(db: Session, row: Dict[str, Any], ts: str) -> Optional[Dict[str, Any]]:
@@ -117,8 +118,12 @@ def handle_ord_cfm(db: Session, row: Dict[str, Any], ts: str) -> Optional[Dict[s
             cum_volume = order.volume
         order.traded_volume = cum_volume
     if cum_avg_price > 0:
-        order.traded_amount = round(cum_avg_price * order.traded_volume, 2)
-        order.avg_price = cum_avg_price
+        # v80: 按 stock.scale round 均价 + 成交金额 (scale>6 兜底 2)
+        scale = get_stock_scale(db, order.stock_code)
+        if scale > 6:
+            scale = 2
+        order.traded_amount = round(cum_avg_price * order.traded_volume, scale)
+        order.avg_price = round(cum_avg_price, scale)
 
     order.pushed_at = _utcnow()
     order.updated_at = _utcnow()
