@@ -136,7 +136,7 @@ def register_place(router):
             order=_to_order_out(order),
             list=[_to_order_out(order)],
             broker_order_id="",  # broker 回报后由 _submit_rpc_async 写入, 后续 ws push 推送
-            fee_breakdown={"gross": gross, "net": net, "commission_rate": fee_cfg.commission_rate},
+            fee_breakdown={"gross": gross, "net": net, "commission_rate": fee_cfg["commission_rate"]},
             t0_adjusted_volume=adjusted,
         )
 

@@ -90,10 +90,10 @@ def calc_commission(amount: float, cfg: dict, direction: str) -> Tuple[float, fl
     min_commission 兜底逻辑在 services.t0.aggregate_api.calc_commission_and_tax 中实现，
     本函数保留原签名（不带 min 兜底）以兼容既有调用方。
     """
-    commission = round(amount * cfg.commission_rate, 2)
+    commission = round(amount * cfg["commission_rate"], 2)
     stamp_tax = 0.0
     if direction == "SELL":
-        stamp_tax = round(amount * cfg.stamp_tax_rate, 2)
+        stamp_tax = round(amount * cfg["stamp_tax_rate"], 2)
     return commission, stamp_tax
 
 
