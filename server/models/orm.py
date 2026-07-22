@@ -19,15 +19,20 @@ SQLAlchemy ORM models for EvTrade v5 (schema refactor).
   §4 行情：quote_snapshots
   §5 序列：order_no_seq
 
-change add-manual-adjust-and-history-pages (v12):
-  - Position 表移除 today_buy / today_sell 两列
-  - Asset / Position 的 synced_from 支持 'manual' 标记（admin 调平）
+change v_next-sys-status-single-row (2026-07-22):
+  - sys_status 改为单行宽表 (id=1 PK, 强制 CHECK id=1)
+  - trd_date 不再是 PK; 切日 = UPDATE id=1 行的 trd_date
+  - 历史交易日仍由 reconcile_report.trd_date 记录
+  - Asset 也确认无 PK (单行表)
 """
 from sqlalchemy import (
     Column, Integer, String, Float, Text, DateTime, CheckConstraint, Index, Time,
     Boolean,
     UniqueConstraint,
 )
+from sqlalchemy.orm import Session
+from typing import Optional
+
 from server.db import Base
 from server.utils.time import _utcnow
 
@@ -201,24 +206,45 @@ class Asset(Base):
 # ─────────────── 配置表 ───────────────
 
 class SysStatus(Base):
-    """系统级状态机（含交易日；主键 trd_date）
+    """系统级状态机（单行宽表, v_next 重构:不再用 trd_date 作 PK）
 
     📖 详见 `openspec/specs/data-model/spec.md` §2（SysStatus 行）
+
+    设计原则 (v_next 重构, 用户明令):
+      - 表只存 1 行: 唯一的『当前交易日』状态 (trd_date + status)
+      - PK = id=1 (强制 CHECK id=1); 历史交易日由 reconcile_report.trd_date 记录
+      - 切日 = UPDATE 这一行的 trd_date 字段, 不是插新行
     """
     __tablename__ = "sys_status"
-    __table_args__ = (
-        Index("ix_sys_status_status", "status"),
-    )
 
-    trd_date = Column(String(8), primary_key=True, nullable=False)   # YYYYMMDD
-    status = Column(String(16), nullable=False, default="pending")   # pending / active / closed
+    id = Column(Integer, primary_key=True, nullable=False, default=1)
+    trd_date = Column(String(8), nullable=False)                     # YYYYMMDD
+    status = Column(String(16), nullable=False, default="closed")     # active | closed
     is_half_day = Column(Integer, nullable=False, default=0)
     initialized_at = Column(DateTime, nullable=True)
-    initialized_by = Column(Integer, nullable=True)                  # FK users.id
+    initialized_by = Column(Integer, nullable=True)
     closed_at = Column(DateTime, nullable=True)
     closed_by = Column(Integer, nullable=True)
     remark = Column(String(255), nullable=False, default="")
     created_at = Column(DateTime, nullable=False, default=_utcnow)
+    updated_at = Column(DateTime, nullable=False, default=_utcnow, onupdate=_utcnow)
+
+
+def get_active_trd_date(db: Session) -> Optional[str]:
+    """v_next 单行接口:获取当前交易日 trd_date (status='active')
+
+    返回 None 表示未激活/刚闭市。
+    """
+    row = db.query(SysStatus.trd_date).filter(SysStatus.id == 1, SysStatus.status == 'active').first()
+    return row[0] if row else None
+
+
+def get_active_sysstatus(db: Session) -> Optional[SysStatus]:
+    """v_next 单行接口:获取当前 SysStatus 完整行 (id=1)
+
+    返回 None 表示 id=1 行不存在 (极端脏数据) — 调用方应宽容 None。
+    """
+    return db.query(SysStatus).filter(SysStatus.id == 1).first()
 
 
 class TradingSession(Base):

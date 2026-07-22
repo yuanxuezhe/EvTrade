@@ -196,14 +196,35 @@ def test_assets_single_row_no_pk():
 
 
 def test_sys_status_pk():
-    """SysStatus 主键 trd_date（同日重 init 走 upsert）"""
+    """v_next: SysStatus 单行宽表 (id=1 PK + CHECK id=1)
+
+    - 插同 id 行应失败 (PK 冲突)
+    - 插同 trd_date 不同 id 应失败 (CHECK id=1)
+    - 同 id 多次 commit 应成功 (upsert 语义)
+    """
     db = SessionLocal()
-    db.add(SysStatus(trd_date="20260614", status="active"))
+    # 清旧
+    db.query(SysStatus).delete()
     db.commit()
+    db.add(SysStatus(id=1, trd_date="20260614", status="active"))
+    db.commit()
+    # 同 id 应失败 (PK 冲突)
     with pytest.raises(IntegrityError):
-        db.add(SysStatus(trd_date="20260614", status="pending"))
+        db.add(SysStatus(id=1, trd_date="20260615", status="active"))
         db.commit()
     db.rollback()
+    # 验证 trd_date 是当前
+    assert db.query(SysStatus).filter_by(id=1).first().trd_date == "20260614"
+    db.close()
+
+
+def test_sys_status_single_row_invariant():
+    """v_next: sys_status 始终只有 1 行 (id=1)"""
+    db = SessionLocal()
+    # 现有数据应只 1 行
+    rows = db.query(SysStatus).all()
+    assert len(rows) == 1
+    assert rows[0].id == 1
     db.close()
 
 

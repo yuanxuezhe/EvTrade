@@ -32,7 +32,7 @@ def test_db_session_yields_usable_session():
         assert hasattr(db, "add")
         assert hasattr(db, "commit")
         # 写入一条
-        db.add(SysStatus(trd_date="20260701", status="active"))
+        db.add(SysStatus(id=1, trd_date="20260701", status="active"))
         db.commit()
         # 再查一次验证
         row = db.query(SysStatus).filter_by(trd_date="20260701").first()
@@ -44,7 +44,7 @@ def test_db_session_rollback_on_exception():
     """异常路径：with 块内抛异常 → 自动 rollback + 向上抛"""
     with pytest.raises(RuntimeError, match="boom"):
         with db_session() as db:
-            db.add(SysStatus(trd_date="20260701", status="active"))
+            db.add(SysStatus(id=1, trd_date="20260701", status="active"))
             # 故意抛异常
             raise RuntimeError("boom")
     # 验证 rollback 生效：再开新 session 查不到这条
@@ -56,7 +56,7 @@ def test_db_session_rollback_on_exception():
 def test_db_session_commit_in_with_block_persists():
     """with 块内显式 commit 应该持久化"""
     with db_session() as db:
-        db.add(SysStatus(trd_date="20260701", status="active"))
+        db.add(SysStatus(id=1, trd_date="20260701", status="active"))
         db.commit()
     # 用新 session 验证
     with db_session() as db:
