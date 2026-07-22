@@ -60,7 +60,7 @@ def list_configs(
             user=r["user"],
             cfg_key=r["cfg_key"],
             cfg_val=r["cfg_val"],
-            desc="",
+            desc=r.get("desc", "") or "",
             has_override=r.get("has_override", False),
             inherited=r.get("inherited", False),
         )

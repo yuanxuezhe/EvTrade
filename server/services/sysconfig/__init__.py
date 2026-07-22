@@ -36,6 +36,8 @@ DEFAULT_CONFIGS: list[dict] = [
 
 # user → {cfg_key → cfg_val}
 _cache: dict[str, dict[str, str]] = {}
+# v78.1: desc 旁路 cache (list_all UI 需要展示说明)
+_desc_cache: dict[str, dict[str, str]] = {}
 _loaded: bool = False
 
 
@@ -75,10 +77,14 @@ def load_all(db: Optional[Session] = None) -> None:
         rows = db.query(SysConfig).all()
         with _lock:
             new_cache: dict[str, dict[str, str]] = {}
+            new_desc: dict[str, dict[str, str]] = {}
             for r in rows:
                 new_cache.setdefault(r.user, {})[r.cfg_key] = r.cfg_val
+                new_desc.setdefault(r.user, {})[r.cfg_key] = r.desc or ""
             _cache.clear()
             _cache.update(new_cache)
+            _desc_cache.clear()
+            _desc_cache.update(new_desc)
             _loaded = True
         log.info("sysconfig: loaded %d rows (%d users)", len(rows), len(_cache))
     finally:
@@ -151,6 +157,7 @@ def set_value(user: str, key: str, val: str, desc: str = "", updated_by: Optiona
         db.commit()
         with _lock:
             _cache.setdefault(user, {})[key] = val
+            _desc_cache.setdefault(user, {})[key] = desc
         log.info("sysconfig: set user=%s key=%s", user, key)
     finally:
         db.close()
@@ -193,6 +200,7 @@ def list_all(user: Optional[str] = None) -> list[dict]:
                     "user": u,
                     "cfg_key": k,
                     "cfg_val": v,
+                    "desc": _desc_cache.get(u, {}).get(k, ""),
                     "has_override": has_override if u == "0" else True,
                 })
                 seen_keys.add((u, k))
@@ -205,7 +213,73 @@ def list_all(user: Optional[str] = None) -> list[dict]:
                     "user": "0",
                     "cfg_key": k,
                     "cfg_val": v,
+                    "desc": _desc_cache.get("0", {}).get(k, ""),
                     "has_override": False,
                     "inherited": True,
                 })
         return out
+# ============================================================================
+# v_next (config 整合): 旧 fee_config / reconcile_config / trading_session
+# 改走 sysconfig 后, 业务层便捷访问 helper
+# ============================================================================
+
+# 旧 fee_config 字段 (系统级, user='0')
+FEE_KEYS = {
+    "commission_rate": 0.0001,
+    "stamp_tax_rate": 0.001,
+    "slippage": 0.001,
+    "min_commission": 5.0,
+}
+
+# 旧 reconcile_config 字段
+RECONCILE_KEYS = {
+    "auto_reconcile": 0,
+    "auto_use_broker_data": 1,
+}
+
+# 旧 trading_session.trdtime (HHMMSS-HHMMSS;...)
+TRDTIME_KEY = "trdtime"
+DEFAULT_TRDTIME = "093000-113000;130000-153000"
+
+
+def get_fee_dict(user: str = "0") -> dict:
+    """获取费率配置 (系统级, 默认 user='0').
+
+    返回 {commission_rate, stamp_tax_rate, slippage, min_commission}
+    """
+    return {k: get(k, default=v, user=user) for k, v in FEE_KEYS.items()}
+
+
+def get_reconcile_dict(user: str = "0") -> dict:
+    """获取对账配置 (系统级)."""
+    return {k: get(k, default=v, user=user) for k, v in RECONCILE_KEYS.items()}
+
+
+def get_trdtime_str(user: str = "0") -> str:
+    """获取交易时段字符串 (HHMMSS-HHMMSS;HHMMSS-HHMMSS)."""
+    return get(TRDTIME_KEY, default=DEFAULT_TRDTIME, user=user)
+
+
+def parse_trdtime(s: str) -> list[tuple]:
+    """解析 HHMMSS-HHMMSS;HHMMSS-HHMMSS → [(time, time), ...]
+
+    例: '093000-113000;130000-153000' → [(09:30, 11:30), (13:00, 15:00)]
+    返回 [(datetime.time, datetime.time), ...] 列表
+    """
+    from datetime import time
+    out = []
+    for seg in s.split(";"):
+        seg = seg.strip()
+        if not seg or "-" not in seg:
+            continue
+        a, b = seg.split("-", 1)
+        out.append((_hms_to_time(a), _hms_to_time(b)))
+    return out
+
+
+def _hms_to_time(hms: str):
+    """'HHMMSS' → datetime.time"""
+    from datetime import time
+    hms = hms.strip().zfill(6)
+    h = int(hms[0:2]); m = int(hms[2:4]); s = int(hms[4:6])
+    return time(h, m, s)
