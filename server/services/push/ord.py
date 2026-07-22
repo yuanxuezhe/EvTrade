@@ -15,9 +15,7 @@ push_handler_ord.py — ord_cfm 处理（v10 + v79.3 重命名 + (trd_date, orde
 """
 from typing import Any, Dict, Optional
 
-from sqlalchemy.orm import Session
-
-from server.models.orm import Order
+from server.tables import Orders  # v81: tables API
 from server.repo.orders import _get_active_trd_date  # v79.3 命名统一: 不再用 broker_*
 from server.services.push.helpers import _float, _int, _str, _order_to_out_dict
 from server.utils.time import _utcnow, parse_broker_ts
@@ -56,10 +54,7 @@ def handle_ord_cfm(db: Session, row: Dict[str, Any], ts: str) -> Optional[Dict[s
         return None
 
     # v79.3 (REQ-TRADE-034): 唯一匹配 (trd_date, order_no) — 不用 order_id 兜底
-    order = db.query(Order).filter_by(
-        trd_date=trd_date,
-        order_no=order_no,
-    ).first()
+    order = Orders.query_one(trd_date=trd_date, order_no=order_no)
 
     if not order:
         # 极端情况:push 来了但本地没有 (重启后丢单 / 跨日错位)
@@ -127,6 +122,9 @@ def handle_ord_cfm(db: Session, row: Dict[str, Any], ts: str) -> Optional[Dict[s
 
     order.pushed_at = _utcnow()
     order.updated_at = _utcnow()
+
+    # v81: Row.update() 把所有累加字段一次性 UPDATE
+    order.update(Orders, trd_date=trd_date, order_no=order_no)
 
     print(f"[ord_cfm] updated trd_date={trd_date} order_no={order_no} order_id={order_id} status={order.status} (broker_status={broker_status}, cum={order.traded_volume}/{order.volume}, avg={order.avg_price})")
 

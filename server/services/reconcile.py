@@ -96,19 +96,19 @@ async def do_reconcile(
     local_positions = [
         {"stock_code": p.stock_code, "vol": p.vol, "avl_vol": p.avl_vol,
          "cost_price": p.cost_price}
-        for p in db.query(Position).all()
+        for p in Positions.query_all()
     ]
     local_assets = [
         {"cash": a.cash, "total_asset": a.total_asset}
-        for a in db.query(Asset).all()
+        for a in Assets.query_all()
     ]
 
     now = datetime.now(timezone.utc).replace(tzinfo=None)
-    report = ReconcileReport(
-        trd_date=new_trd_date,
-        mode="auto" if cfg["auto_reconcile"] else "manual",
-        created_at=now,
-        diffs_json=json.dumps({
+    report = ReconcileReport.add_one({
+        'trd_date': new_trd_date,
+        'mode': "auto" if cfg["auto_reconcile"] else "manual",
+        'created_at': now,
+        'diffs_json': json.dumps({
             'rpc_errors': rpc_errors,
             'broker': {
                 'positions': positions_data, 'assets': assets_data,
@@ -117,16 +117,14 @@ async def do_reconcile(
                 'positions': local_positions, 'assets': local_assets,
             },
         }, ensure_ascii=False, default=str),
-        broker_asset_json=json.dumps(assets_data, ensure_ascii=False, default=str),
-        local_asset_json=json.dumps(local_assets, ensure_ascii=False, default=str),
-        broker_positions_json=json.dumps(positions_data, ensure_ascii=False, default=str),
-        local_positions_json=json.dumps(local_positions, ensure_ascii=False, default=str),
-        rpc_status=rpc_status,
-        error_message="; ".join(rpc_errors)[:512],
-        created_by=int(by_user) if by_user else None,
-    )
-    db.add(report)
-    db.flush()
+        'broker_asset_json': json.dumps(assets_data, ensure_ascii=False, default=str),
+        'local_asset_json': json.dumps(local_assets, ensure_ascii=False, default=str),
+        'broker_positions_json': json.dumps(positions_data, ensure_ascii=False, default=str),
+        'local_positions_json': json.dumps(local_positions, ensure_ascii=False, default=str),
+        'rpc_status': rpc_status,
+        'error_message': "; ".join(rpc_errors)[:512],
+        'created_by': int(by_user) if by_user else None,
+    })
 
     # 3. 全部 RPC 失败 → 写报告 + 返 503
     if rpc_status == "failed":
@@ -162,19 +160,19 @@ async def do_reconcile(
     # 同日重 init: 走同一行, 更新 status='active' + 初始化元数据
     # 切到新日: 同一行 UPDATE trd_date, 历史由 reconcile_report.trd_date 记录
     if applied or not cfg["auto_reconcile"]:
-        row = db.query(SysStatus).filter(SysStatus.id == 1).first()
+        row = SysStatus.query_one(id=1)
         if not row:
-            # id=1 行不存在 (极端脏数据: 初始化缺失), 创建占位
-            row = SysStatus(
-                id=1,
-                trd_date=new_trd_date,
-                status='active',
-                initialized_at=now,
-                initialized_by=int(by_user) if by_user.isdigit() else None,
-                created_at=now,
-                updated_at=now,
-            )
-            db.add(row)
+            SysStatus.add_one({
+                'id': 1,
+                'trd_date': new_trd_date,
+                'status': 'active',
+                'initialized_at': now,
+                'initialized_by': int(by_user) if by_user.isdigit() else None,
+                'created_at': now,
+                'updated_at': now,
+                'is_half_day': 0,
+                'remark': '',
+            })
         else:
             # 单行 UPDATE: 切日 = 改 trd_date 字段; 状态变 active
             row.trd_date = new_trd_date
@@ -185,7 +183,7 @@ async def do_reconcile(
             row.closed_at = None
             row.closed_by = None
             row.updated_at = now
-        db.commit()
+            row.update(SysStatus, id=1)
 
     return {
         'ok': True,

@@ -276,9 +276,9 @@ def resolve_t0_user_defs(db: Session, user_def: str) -> Optional[Set[str]]:
     if not user_def:
         return None
     if user_def == 'T0':
-        from server.services.strategy.models import Strategy
+        from server.tables import Strategy
         t0_ids = {
-            str(s.id) for s in db.query(Strategy.id).filter(Strategy.type == 't0').all()
+            str(s.id) for s in Strategy.query_all() if s.type == 't0'
         }
         return {'T0'} | t0_ids
     return {user_def}
