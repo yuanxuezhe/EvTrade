@@ -72,6 +72,13 @@ class Row:
         except KeyError:
             raise AttributeError(f"Row has no field {name!r}")
 
+    # 属性设置 (v81: 用户伪代码风格: row.xx = new_val 直接生效到 _data)
+    def __setattr__(self, name: str, value: Any) -> None:
+        if name in ("_data", "_comments"):
+            super().__setattr__(name, value)
+            return
+        self._data[name] = value
+
     # 字典访问
     def __getitem__(self, key: str) -> Any:
         return self._data[key]
@@ -104,6 +111,57 @@ class Row:
 
     def to_dict(self) -> Dict[str, Any]:
         return dict(self._data)
+
+    # v81: 对象.Update — 把当前 _data 全部字段写回数据库
+    def save(self) -> None:
+        """Row.Update(): 把 _data 全部字段 UPDATE 到 DB.
+
+        跟 ORM 的 db.commit() 等价, 但只写当前 Row 的全部字段 (含 PK).
+        PK 字段保留原值不动.
+
+        支持伪代码:
+            obj = Orders.query_one(trd_date='x', order_no='y')
+            obj.price = 11.0
+            obj.save()
+
+        必须先 query_one(), 不能给新建 Row 调 save (会变成 INSERT).
+        """
+        # 找 _owner_class (从 _data 的 key 反查)
+        # 所有 TableBase 子类都能调用, 通过 type(self) 拿到
+        # 但 Row 不持有 _owner, 走 __qualname__ 匹配太脆
+        # 改为: save() 必须接收 cls 参数 (强制显式), 避免误用
+        raise NotImplementedError(
+            "Row.save() 需要指明表类. 用法: Orders.update_one(row.to_dict(), pk=row.pk) "
+            "或者 row.update(Orders, pk=row.pk). "
+            "推荐 api 层直接用表类.update_one({...}) 模式."
+        )
+
+    # v81: 更友好的 update — 接收表类 + 可选过滤
+    def update(self, cls=None, **filters) -> int:
+        """Row.Update(cls=..., ..., pk=...): 把当前字段 UPDATE.
+
+        支持伪代码:
+            obj = Users.query_one(id=1)
+            obj.name = 'new'
+            obj.update(Users, id=1)
+
+        等价 SQL: UPDATE users SET ... WHERE id=1
+        返回受影响行数.
+        """
+        if cls is None:
+            raise ValueError(
+                "Row.update 需要显式 cls 参数. "
+                "用法: obj.update(Users, id=1)"
+            )
+        if not filters:
+            raise ValueError(
+                "Row.update 需要 PK 过滤. "
+                "用法: obj.update(Users, id=1)"
+            )
+        # 排除 PK 字段 — update_one 不允许 data 含 PK
+        pk_fields = set(getattr(cls, '__pk_fields__', ['id']))
+        clean_data = {k: v for k, v in self._data.items() if k not in pk_fields}
+        return cls.update_one(clean_data, **filters)
 
     @property
     def comments(self) -> Dict[str, str]:
@@ -159,6 +217,69 @@ class TableBase:
                 f"表 {cls.__tablename__} 主键 = {cls.__pk_fields__}"
             )
         return {pk: kwargs[pk] for pk in cls.__pk_fields__}
+
+    # ──────────────── 字段过滤查询 (v80.9 新增) ────────────────
+
+    @classmethod
+    def query_by(cls, field: str = None, value=None,
+                 order: str = "asc", limit: Optional[int] = None) -> List[Row]:
+        """按单字段任意值查询 (替代 db.query(M).filter(M.field == v)).
+
+        Args:
+            field: 字段名 (任意字段, 不限主键)
+            value: 字段值 (str/int/datetime/...) — None 跳过 (返回全表)
+            order: 'asc' (按主键升序) 或 'desc' (按主键降序). 默认 'asc'.
+            limit: 限制返回行数. None = 全部.
+
+        Examples:
+            Users.query_by('username', 'admin')      # 查 username='admin' 的行
+            Orders.query_by('user_id', 1)              # 查 user_id=1 的所有订单
+            Users.query_by('role', 'admin', limit=10)  # 限制 10 行
+            Users.query_by()                           # 等价 query_all()
+        """
+        cls._validate_subclass()
+        if field is None:
+            return cls.query_all(order=order)[:limit] if limit else cls.query_all(order=order)
+        if order not in ("asc", "desc"):
+            raise ValueError(f"order 必须是 'asc' 或 'desc', 收到 {order!r}")
+        order_clause = ", ".join(f"`{pk}` {order.upper()}" for pk in cls.__pk_fields__)
+        sql = f"SELECT * FROM `{cls.__tablename__}` WHERE `{field}` = :v ORDER BY {order_clause}"
+        if limit is not None:
+            sql += f" LIMIT {int(limit)}"
+        rows = cls._execute_select(sql, {"v": value})
+        return rows
+
+    @classmethod
+    def query_by_fields(cls, filters: Dict[str, Any],
+                        order: str = "asc", limit: Optional[int] = None) -> List[Row]:
+        """按多字段同时过滤 (AND 关系).
+
+        Args:
+            filters: {field: value} dict, 所有条件用 AND 合并
+            order: 'asc' 或 'desc'
+            limit: 限制返回行数
+
+        Examples:
+            Orders.query_by_fields({"user_id": 1, "stock_code": "000001.SZ"})
+                # user_id=1 AND stock_code='000001.SZ'
+            Trades.query_by_fields({}, order="desc", limit=20)
+                # 等价 query_all('desc', limit=20)
+        """
+        cls._validate_subclass()
+        if order not in ("asc", "desc"):
+            raise ValueError(f"order 必须是 'asc' 或 'desc', 收到 {order!r}")
+        order_clause = ", ".join(f"`{pk}` {order.upper()}" for pk in cls.__pk_fields__)
+        if not filters:
+            sql = f"SELECT * FROM `{cls.__tablename__}` ORDER BY {order_clause}"
+        else:
+            wheres = " AND ".join([f"`{f}` = :f_{i}" for i, f in enumerate(filters.keys())])
+            sql = f"SELECT * FROM `{cls.__tablename__}` WHERE {wheres} ORDER BY {order_clause}"
+        if limit is not None:
+            sql += f" LIMIT {int(limit)}"
+        params = {f"f_{i}": v for i, v in enumerate(filters.values())}
+        return cls._execute_select(sql, params if params else None)
+
+    # ──────────────── 字段过滤查询 END ────────────────
 
     @classmethod
     def _row_from_mapping(cls, mapping) -> Row:
@@ -342,3 +463,84 @@ def get_conn():
         yield conn
     finally:
         conn.close()
+
+
+# ──────────────────────────── v80.9 增强 ────────────────────────────
+
+@contextmanager
+def transaction():
+    """事务 context manager (替代 ORM db.commit()).
+
+    自动 begin/commit/rollback.
+
+    Examples:
+        with transaction() as tx:
+            Users.add_one({"username": "x"})
+            # 离开 with 自动 commit; 异常自动 rollback
+    """
+    from sqlalchemy import text as _text
+    engine = get_engine()
+    with engine.begin() as conn:
+        yield conn
+
+
+def aggregate(table: str, fn: str, field: str, where: str = "", params=None) -> Any:
+    """SQL 聚合查询 (替代 db.query(func.sum(...)) 等).
+
+    Args:
+        table: 表名 (snake_case, 如 'orders')
+        fn: 聚合函数 ('SUM'/'COUNT'/'AVG'/'MAX'/'MIN')
+        field: 字段名 (如 'traded_volume')
+        where: 可选 WHERE 子句 (不含 WHERE 关键字), 占位符用 %s 或 :name
+        params: tuple / dict / None
+
+    Returns:
+        fn=='COUNT' → int
+        否则 → Any (可能是 None 当无匹配)
+
+    Examples:
+        aggregate('orders', 'COUNT', '*', "user_id = %s", (1,))
+        aggregate('trades', 'SUM', 'volume', where="trd_date = %s", params=('20260722',))
+        aggregate('positions', 'AVG', 'volume')
+    """
+    sql = f"SELECT {fn}({field}) FROM `{table}`"
+    if where:
+        sql += f" WHERE {where}"
+    with get_conn() as conn:
+        from sqlalchemy import text as _text
+        if params is None:
+            row = conn.execute(_text(sql)).first()
+        elif isinstance(params, tuple):
+            named_sql = sql
+            for i in range(len(params) - 1, -1, -1):
+                named_sql = named_sql.replace("%s", f":p_{i}", 1)
+            params_dict = {f"p_{i}": v for i, v in enumerate(params)}
+            row = conn.execute(_text(named_sql), params_dict).first()
+        else:
+            row = conn.execute(_text(sql), params).first()
+    if not row:
+        return None
+    val = row[0]
+    if fn.upper() == "COUNT":
+        return int(val) if val is not None else 0
+    return val
+
+
+def scalar_query(conn, sql: str, params=None) -> Any:
+    """单值查询 helper (SELECT 1 列).
+
+    Returns:
+        单值 (可能 None)
+    """
+    from sqlalchemy import text as _text
+    if params is None:
+        row = conn.execute(_text(sql)).first()
+    elif isinstance(params, tuple):
+        named_sql = sql
+        for i in range(len(params) - 1, -1, -1):
+            named_sql = named_sql.replace("%s", f":p_{i}", 1)
+        params_dict = {f"p_{i}": v for i, v in enumerate(params)}
+        row = conn.execute(_text(named_sql), params_dict).first()
+    else:
+        row = conn.execute(_text(sql), params).first()
+    return row[0] if row else None
