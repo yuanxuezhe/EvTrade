@@ -671,16 +671,11 @@ function _taskSortValue(row, key) {
   }
 }
 
-// v77.4: 行情 tick 计数器 (本地 ref, 供 PnL/收益率 cell 读 quoteTick.value 建立响应追踪)
-//   watch quoteStore.tick (Pinia 自动解包成 number, number 变即触发) 让 quoteTick 自增
-const quoteTick = ref(0)
-watch(() => quoteStore.tick, () => { quoteTick.value++ }, { flush: 'post' })
-
 // v77: 纯委托+实时盘口 PnL — 实现放在 setup 内 (上方注释见)
+//   v77.5: 不再调 quoteStore.getDepth(code) (那是另封装), 直接 quoteStore.get(code) 拿整个行情结构体, 然后取结构体已有字段 bid_prices[0] / ask_prices[0]
+//   quoteStore.byCode 是 shallowRef(Map), update() 内 byCode.value.set(...) + triggerRef(byCode) 让 cell 自动重渲
 function t0PnlForRow(row) {
   if (!row) return 0
-  // 关键: 读 quoteTick.value 让 Vue 渲染时建立响应追踪 (quoteStore.byCode 变 → quoteTick++ → cell 重渲染)
-  void quoteTick.value
   const code = row.stock_code
   const taskId = row.id
   const orders = (holdingsStore.orders || []).filter(
@@ -709,9 +704,10 @@ function t0PnlForRow(row) {
   const target = base + tgv
   const diff = target - cur
   if (diff === 0) return realized
-  const depth = quoteStore.getDepth(code)
-  const ask1 = Number(depth?.asks?.[0]?.price) || 0
-  const bid1 = Number(depth?.bids?.[0]?.price) || 0
+  // v77.5: 直接读行情表结构体已有字段 bid_prices[0] / ask_prices[0] — 不另存 bid1_price / ask1_price
+  const quote = quoteStore.get(code) || {}
+  const ask1 = Number(quote.ask_prices?.[0]) || 0
+  const bid1 = Number(quote.bid_prices?.[0]) || 0
   if (diff > 0) {
     if (!ask1) return realized
     return realized - diff * ask1
@@ -722,8 +718,6 @@ function t0PnlForRow(row) {
 
 function t0ReturnRateForRow(row) {
   if (!row) return 0
-  // 关键: 收益率 cell render 时读 quoteTick.value 建立响应追踪
-  void quoteTick.value
   const pnl = t0PnlForRow(row)
   // v77.3: 之前误用 || (Number.isFinite(pnl) || pnl === 0) 当 pnl=-100 时会落 true 分支返回 0,
   //   改为 &&: 只在 pnl 不是有限数 (= NaN/Infinity) 或 =0 时返回 0
@@ -753,9 +747,10 @@ function t0ReturnRateForRow(row) {
   }
   const cur = buyVol - sellVol
   const diff = target - cur
-  const depth = quoteStore.getDepth(code)
-  const ask1 = Number(depth?.asks?.[0]?.price) || 0
-  const bid1 = Number(depth?.bids?.[0]?.price) || 0
+  // v77.5: 直接读行情表结构体已有字段 bid_prices[0] / ask_prices[0] — 不另存 bid1_price / ask1_price
+  const quote = quoteStore.get(code) || {}
+  const ask1 = Number(quote.ask_prices?.[0]) || 0
+  const bid1 = Number(quote.bid_prices?.[0]) || 0
   let balanceCost = 0
   if (diff > 0 && ask1) balanceCost = diff * ask1
   else if (diff < 0 && bid1) balanceCost = (-diff) * bid1
@@ -797,7 +792,7 @@ function statusTagType(s) {
 //        diff<0: 配平部分按"补卖" 算: Pnl += (|diff|) × 买1价(bid1)  (收买1价卖)
 //        diff=0: 不加盘口项
 //   3) 收益率 = Pnl / (Σ成交量 × 均价 + |diff|×盘口价)  (综合成本分母)
-// 数据源: holdingsStore.orders (同 stock_code 即为该 task 下所有委托), quoteStore.getDepth (实时盘口).
+// 数据源: holdingsStore.orders (同 stock_code 即为该 task 下所有委托), quoteStore.get(code).bid_prices[0]/.ask_prices[0] (行情表结构体已有字段).
 // 实现位置: 在 setup 块内 (见 _taskSortValue 下方) — 因 holdingsStore/quoteStore 是 setup 内 const,
 //   setup 外定义会 ReferenceError. (v77 v2)
 // ---- 实现 ---- (setup 内部, 见下方 t0PnlForRow / t0ReturnRateForRow)

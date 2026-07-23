@@ -162,8 +162,13 @@ def get_latest(stock_code: str, db=None) -> Optional[object]:
     """查 stock_code 唯一快照（latest-only 模型下只有 1 行）
 
     db 参数保留 (兼容旧调用方: get_latest(db, stock_code)) — v80.5 实际不依赖 db.
+
+    v84.4 BUG 修复: 之前用 QuoteSnapshots.query_all() (全表扫 5万行) + Python filter,
+      不仅 O(N) 慢, 还因为 _execute_select 用新连接 (REPEATABLE READ) 看不到同事务
+      内刚 INSERT 但未 commit 的数据, 导致 add_one INSERT 触发 UNIQUE 冲突 IntegrityError.
+    修法: 用 query_by_fields 直接 WHERE stock_code=? (UNIQUE 索引 → O(logN))
     """
-    rows = [r for r in QuoteSnapshots.query_all() if r.stock_code == stock_code]
+    rows = QuoteSnapshots.query_by_fields({"stock_code": stock_code}, limit=1)
     return rows[0] if rows else None
 
 
@@ -173,12 +178,19 @@ def get_latest_multi(stock_codes: Iterable[str], db=None) -> Dict[str, object]:
     db 参数保留 (兼容旧调用方) — v80.5 实际不依赖 db.
 
     返回 dict{stock_code: QuoteSnapshot}，缺失的 code 不在 dict 中（前端走 ack/snapshot 分支兜底）。
+
+    v84.4: query_by_fields 当前只支持 = 等值, 不支持 IN tuple. 循环单查:
+      UNIQUE 索引 → 单查 O(logN), 100 个 codes 总计 O(100*logN) 远小于 query_all() 5万行扫表.
     """
     codes = list(stock_codes)
     if not codes:
         return {}
-    rows = [r for r in QuoteSnapshots.query_all() if r.stock_code in codes]
-    return {r.stock_code: r for r in rows}
+    out = {}
+    for code in codes:
+        rows = QuoteSnapshots.query_by_fields({"stock_code": code}, limit=1)
+        if rows:
+            out[code] = rows[0]
+    return out
 
 
 def to_dict(snap) -> Dict:
