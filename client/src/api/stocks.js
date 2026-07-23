@@ -70,6 +70,22 @@ export const stocksApi = {
   },
 
   /**
+   * 全量证券信息 (v90 前端 IndexedDB 首次/同步缓存用, 不分页)
+   * 1 次拉完所有 stocks 行 (to_dict 全 9 字段)
+   * @returns {Promise<{list: Array, total: number}>}
+   */
+  async listAll() {
+    const { data } = await rawHttp.get('/stocks/all')
+    if (data && data.code === 0) {
+      return {
+        list: data.list || [],
+        total: data.total || 0
+      }
+    }
+    throw new Error(data?.msg || 'stocks listAll failed')
+  },
+
+  /**
    * 单只详情
    * @returns {Promise<Object|null>} 后端返回 {code, msg, data}, 拦截器解包为 data
    *   注意：404 时 throw（API 拦截器对非 RPC 错误透传）

@@ -1,80 +1,129 @@
 import { defineStore } from 'pinia'
-import { reactive, ref } from 'vue'
+import { reactive, ref, computed } from 'vue'
 import { stocksApi } from '../api'
+import { openDB, idbGet, idbPut } from '../utils/idb'
 
 /**
- * 股票基础信息 store
- * v25 stocks-cache-and-short-name: 全量缓存 + 真分页 + autocomplete 筛选
- * v26 (2026-07-12-universalize-stockcode-autocomplete): 多页面共用 cache
- * v32 (2026-07-14-stock-names-from-cache): +stockName(code) getter,供表格/表单查名称
+ * 股票基础信息 store (v90 IndexedDB + Map 重构)
  *
- * 数据源：
- *   1. REST GET /api/stocks?page=N&page_size=100     循环拉全量 → cache (autocomplete 用)
- *   2. REST GET /api/stocks?page=N&page_size=20      单页拉 → pageRows (表格分页)
- *   3. REST PATCH /api/stocks/{code}                admin 编辑 + 同步 cache + pageRows
+ * v90 核心改造:
+ *   - cache: ref([]) -> cacheMap: reactive(new Map())  O(1) 查找
+ *   - loadCache() 串行 56 次分页 -> initCache() + refreshCache() 1 次 /stocks/all
+ *   - 启动顺序: loadFromIDB() 秒载 Map -> 后台 refreshCache() 静默更新
+ *   - 持久化: 全量数组写 IDB 单 key, 刷新页面 F5 秒开
+ *   - CRUD 同步: saveEdit/createStock 成功后 upsertLocal() 同步 Map + IDB
  *
- * 缓存策略 (v26):
- *   - cache: 全量 5529 内存缓存，刷新页面重拉 ~18s
- *   - cacheLoaded: bool，cache 是否加载完成
- *   - 多个页面 (Trade / T0Trade / StrategyTrade / AdminStockConfig) 共享同一 cache
- *     - App.vue onMounted 触发 loadCache()，进 Trade 页 0 等待
- *     - StockCodePicker.ensureCache() 在输入时也兜底触发（防 cache 失效）
- *     - loadCache() 内置 cacheLoading 防重入（v26 单例保证）
+ * 数据源:
+ *   1. IDB 'EvTrade-stocks/kv[all]'             启动秒载 (F5 不再拉后端)
+ *   2. REST GET /api/stocks/all                  全量刷新 (首次 / 手动同步)
+ *   3. REST GET /api/stocks?page=N&page_size=20  单页拉 -> pageRows (表格分页)
+ *   4. REST PATCH /api/stocks/{code}             admin 编辑 + upsertLocal
+ *   5. REST POST /api/stocks                     admin 添加 + upsertLocal
  *
- * 字段精简历史:
- *   v22 (2026-07-10) stock-info-editor: 11 字段编辑
- *   v23 (2026-07-12) slim-stocks-table: 5 字段编辑(白名单)
- *   v25 (2026-07-12) stocks-cache-and-short-name: +short_name, 6 字段编辑 + 全量缓存
- *   v26 (2026-07-12) universalize-stockcode-autocomplete: cache 跨页面共享 + autocomplete 通用化
+ * 兼容字段 (外部模板依赖):
+ *   - cache:        computed, 返 Array.from(cacheMap.values()) (StockCodePicker/AdminStockConfig 用 .length)
+ *   - cacheLoaded / cacheLoading / cacheProgress: 保留同名 ref
+ *   - stockName(code) / stockScale(code) / stockStktype(code): 签名不变, 内部改 Map.get
  */
+const IDB_DB_NAME = 'stocks'
+const IDB_STORE = 'kv'
+const IDB_KEY = 'all'  // 单 key 存全量数组, 启动一次 get
+
 export const useStocksStore = defineStore('stocks', () => {
   // ==================== 状态 ====================
-  // 全量缓存（autocomplete 用）
-  const cache = ref([])
+  // 内存 Map (O(1) 查找, reactive 触发重渲染)
+  const cacheMap = reactive(new Map())  // code -> stock dict
   const cacheLoading = ref(false)
   const cacheLoaded = ref(false)
   const cacheProgress = ref(0)  // 0..1, 加载进度
   const cacheError = ref(null)
 
-  // 表格分页（后端分页）
+  // 兼容: cache 作为 computed 返回数组 (模板里用 store.cache.length / v-for)
+  const cache = computed(() => Array.from(cacheMap.values()))
+
+  // 表格分页 (后端分页)
   const pageRows = ref([])
   const total = ref(0)
   const page = ref(1)
   const pageSize = ref(20)
-  const loading = ref(false)  // page fetch loading
+  const loading = ref(false)
 
   // 当前编辑中的 stock_code
   const editingCode = ref(null)
-  // 详情编辑表单（dialog 用）
+  // 详情编辑表单 (dialog 用)
   const editForm = reactive({})
   // 编辑 loading
   const editLoading = ref(false)
 
+  // ==================== IDB 持久化 ====================
+
+  /**
+   * 启动时从 IDB 加载到 Map (秒开, F5 不再拉后端)
+   * IDB 空 (首次/清缓存) -> cacheLoaded 保持 false, 由调用方触发 refreshCache
+   */
+  async function loadFromIDB() {
+    try {
+      const db = await openDB(IDB_DB_NAME, 1, [IDB_STORE])
+      const arr = await idbGet(db, IDB_STORE, IDB_KEY)
+      if (Array.isArray(arr) && arr.length > 0) {
+        cacheMap.clear()
+        for (const s of arr) {
+          if (s && s.stock_code) cacheMap.set(s.stock_code, s)
+        }
+        cacheLoaded.value = true
+        cacheProgress.value = 1
+      }
+    } catch (e) {
+      // IDB 不可用 (Node 测试 / 隐私模式) -> 静默降级, 走 refreshCache
+      console.warn('[stocks] loadFromIDB failed:', e?.message || e)
+    }
+  }
+
+  /**
+   * 把当前 cacheMap 全量写回 IDB (单 key, 覆盖)
+   * 内部防抖: 多次 upsertLocal 短时间内只写 1 次
+   */
+  let _persistTimer = null
+  function _persistIDB() {
+    if (_persistTimer) return
+    _persistTimer = setTimeout(async () => {
+      _persistTimer = null
+      try {
+        const db = await openDB(IDB_DB_NAME, 1, [IDB_STORE])
+        const arr = Array.from(cacheMap.values())
+        await idbPut(db, IDB_STORE, IDB_KEY, arr)
+      } catch (e) {
+        console.warn('[stocks] persistIDB failed:', e?.message || e)
+      }
+    }, 300)
+  }
+
   // ==================== cache 加载 ====================
 
   /**
-   * 全量加载 cache（循环分页拉）
-   * 一次 page_size=100,直到 total === cache.length
-   * 调用方负责 catch cacheError
+   * 全量拉取并落 IDB (首次 / 手动刷新用)
+   * 调 GET /api/stocks/all 1 次拿全 5529 条, 覆盖 Map + IDB
    */
-  async function loadCache({ page_size = 100 } = {}) {
+  async function refreshCache() {
     if (cacheLoading.value) return
     cacheLoading.value = true
     cacheError.value = null
     cacheProgress.value = 0
     try {
-      let all = []
-      let p = 1
-      const MAX_PAGES = 200  // 安全上限: 200 * 100 = 20000 行
-      while (p <= MAX_PAGES) {
-        const res = await stocksApi.list({ page: p, page_size })
-        all = all.concat(res.list)
-        cacheProgress.value = res.total > 0 ? Math.min(all.length / res.total, 1) : 1
-        if (all.length >= res.total || res.list.length === 0) break
-        p += 1
+      const res = await stocksApi.listAll()
+      cacheMap.clear()
+      for (const s of res.list) {
+        if (s && s.stock_code) cacheMap.set(s.stock_code, s)
       }
-      cache.value = all
       cacheLoaded.value = true
+      cacheProgress.value = 1
+      // 写 IDB (异步, 不阻塞)
+      try {
+        const db = await openDB(IDB_DB_NAME, 1, [IDB_STORE])
+        await idbPut(db, IDB_STORE, IDB_KEY, res.list)
+      } catch (e) {
+        console.warn('[stocks] IDB put failed:', e?.message || e)
+      }
     } catch (e) {
       cacheError.value = e?.message || 'cache 加载失败'
       throw e
@@ -84,18 +133,42 @@ export const useStocksStore = defineStore('stocks', () => {
   }
 
   /**
-   * cache 内搜索（autocomplete 用）
+   * 启动入口: 先 IDB 秒载, IDB 空则首次拉; 否则后台静默 refresh
+   * App.vue onMounted / StockCodePicker.ensureCache 调这个
+   */
+  let _initPromise = null
+  async function initCache() {
+    if (_initPromise) return _initPromise
+    _initPromise = (async () => {
+      await loadFromIDB()
+      if (!cacheLoaded.value) {
+        // IDB 空 - 首次直接拉 (阻塞, 让调用方拿到数据)
+        await refreshCache().catch((e) => {
+          console.warn('[stocks] initCache refresh failed:', e?.message || e)
+        })
+      } else {
+        // IDB 命中 - 后台静默刷新 (不阻塞)
+        refreshCache().catch((e) => {
+          console.warn('[stocks] initCache background refresh failed:', e?.message || e)
+        })
+      }
+    })()
+    return _initPromise
+  }
+
+  /**
+   * cache 内搜索 (autocomplete 用)
    * 三路 OR: stock_code 前缀 OR stock_name 包含 OR short_name 前缀
    * @param {string} query
    * @param {number} limit
    * @returns {Array} 候选 stock 列表
    */
   function searchCache(query, limit = 50) {
-    if (!query || !cache.value.length) return []
+    if (!query) return []
     const q = query.trim().toLowerCase()
     if (!q) return []
     const matches = []
-    for (const s of cache.value) {
+    for (const s of cacheMap.values()) {
       const code = (s.stock_code || '').toLowerCase()
       const name = (s.stock_name || '').toLowerCase()
       const short = (s.short_name || '').toLowerCase()
@@ -112,7 +185,7 @@ export const useStocksStore = defineStore('stocks', () => {
   // ==================== 表格分页 ====================
 
   /**
-   * 拉当前页（后端分页）
+   * 拉当前页 (后端分页)
    * @param {Object} params { sector?, keyword?, is_t0_able? } (page/pageSize 走 store 状态)
    */
   async function fetchPage(extraParams = {}) {
@@ -131,27 +204,21 @@ export const useStocksStore = defineStore('stocks', () => {
     return pageRows.value
   }
 
-  /**
-   * 设置页码并拉取
-   */
-  async function setPage(p) {
+  function setPage(p) {
     page.value = p
-    await fetchPage()
+    return fetchPage()
   }
 
-  /**
-   * 设置每页大小并回到第 1 页
-   */
-  async function setPageSize(sz) {
+  function setPageSize(sz) {
     pageSize.value = sz
     page.value = 1
-    await fetchPage()
+    return fetchPage()
   }
 
   // ==================== 编辑 ====================
 
   /**
-   * 拉详情填到 editForm（打开 dialog 时）
+   * 拉详情填到 editForm (打开 dialog 时)
    * @returns {Promise<boolean>} 成功 true / 失败 false
    */
   async function openEdit(stockCode) {
@@ -176,14 +243,13 @@ export const useStocksStore = defineStore('stocks', () => {
   }
 
   /**
-   * 按 stock_code 查名称（v32 stock-names-from-cache）
-   * 返回 null 表示查不到/缓存未加载；调用方决定占位字符串
+   * 按 stock_code 查名称 (v90 改 Map.get, O(1))
+   * 返回 null 表示查不到/缓存未加载; 调用方决定占位字符串
    */
   function stockName(code) {
     if (!code) return null
-    if (!cacheLoaded.value || !cache.value.length) return null
-    const hit = cache.value.find((s) => s.stock_code === code)
-    return hit?.stock_name || null
+    if (!cacheLoaded.value) return null
+    return cacheMap.get(code)?.stock_name || null
   }
 
   /**
@@ -192,12 +258,11 @@ export const useStocksStore = defineStore('stocks', () => {
    */
   function stockScale(code) {
     if (!code) return 2
-    if (!cacheLoaded.value || !cache.value.length) return 2
-    const hit = cache.value.find((s) => s.stock_code === code)
-    const scale = hit?.scale
+    if (!cacheLoaded.value) return 2
+    const scale = cacheMap.get(code)?.scale
     if (scale === null || scale === undefined) return 2
     const n = Number(scale)
-    if (!Number.isFinite(n) || n < 0 || n > 6) return 2  // 兜底 >6 → 2
+    if (!Number.isFinite(n) || n < 0 || n > 6) return 2  // 兜底 >6 -> 2
     return Math.floor(n)
   }
 
@@ -207,33 +272,41 @@ export const useStocksStore = defineStore('stocks', () => {
    */
   function stockStktype(code) {
     if (!code) return 0
-    if (!cacheLoaded.value || !cache.value.length) return 0
-    const hit = cache.value.find((s) => s.stock_code === code)
-    const t = hit?.stktype
+    if (!cacheLoaded.value) return 0
+    const t = cacheMap.get(code)?.stktype
     if (t === null || t === undefined) return 0
     return Number(t) || 0
   }
 
   // ==================== 添加 (v46 stock-info-create) ====================
 
-  // 添加 loading（与 editLoading 同）
   const createLoading = ref(false)
 
   /**
-   * admin 添加证券（REQ-STOCK-006 / REQ-FE-STOCK-CREATE）
-   * 同时同步 cache + total + pageRows
-   * @param {Object} payload 8 字段: stock_code(必填) + stock_name(必填) + 可选 sector/short_name/is_t0_able/min_buy_qty/trade_unit
+   * 本地 Map + IDB 同步 upsert (CRUD 成功后调用)
+   * @param {Object} stock 完整 stock dict (含 stock_code)
+   */
+  function upsertLocal(stock) {
+    if (!stock || !stock.stock_code) return
+    cacheMap.set(stock.stock_code, stock)
+    _persistIDB()
+  }
+
+  /**
+   * admin 添加证券 (REQ-STOCK-006 / REQ-FE-STOCK-CREATE)
+   * 同步 cache (Map + IDB) + total + pageRows
+   * @param {Object} payload 6 字段: stock_code(必填) + stock_name(必填) + 可选 sector/is_t0_able/min_buy_qty/trade_unit
    * @returns {Promise<{ok: boolean, msg?: string, data?: Object}>}
    */
   async function createStock(payload) {
     createLoading.value = true
     try {
       const data = await stocksApi.create(payload)
-      // 同步 cache（unshift 头部，便于 autocomplete）
-      cache.value.unshift(data)
+      // 同步 Map + IDB
+      upsertLocal(data)
       // total +1
       total.value += 1
-      // 当前页立即显示（如果当前是第 1 页或 pageRows 空）
+      // 当前页立即显示 (如果当前是第 1 页或 pageRows 空)
       if (page.value === 1) {
         pageRows.value.unshift(data)
       }
@@ -247,8 +320,8 @@ export const useStocksStore = defineStore('stocks', () => {
   }
 
   /**
-   * 保存编辑（PATCH）
-   * 同时刷新 cache + pageRows + 后端
+   * 保存编辑 (PATCH)
+   * 同步 Map + IDB + pageRows + 后端
    * @returns {Promise<{ok: boolean, msg?: string}>}
    */
   async function saveEdit() {
@@ -267,11 +340,10 @@ export const useStocksStore = defineStore('stocks', () => {
       }
       const updated = await stocksApi.update(editingCode.value, payload)
 
-      // 1. 同步更新 cache（按 stock_code 查找）
-      const cIdx = cache.value.findIndex((s) => s.stock_code === editingCode.value)
-      if (cIdx >= 0) cache.value.splice(cIdx, 1, updated)
+      // 1. 同步 Map + IDB
+      upsertLocal(updated)
 
-      // 2. 同步更新 pageRows（如果在当前页）
+      // 2. 同步 pageRows (如果在当前页)
       const pIdx = pageRows.value.findIndex((s) => s.stock_code === editingCode.value)
       if (pIdx >= 0) pageRows.value.splice(pIdx, 1, updated)
 
@@ -286,7 +358,8 @@ export const useStocksStore = defineStore('stocks', () => {
 
   return {
     // state
-    cache,
+    cache,            // v90: computed -> Array.from(cacheMap.values())
+    cacheMap,         // v90: 新增, O(1) 查找
     cacheLoading,
     cacheLoaded,
     cacheProgress,
@@ -299,9 +372,11 @@ export const useStocksStore = defineStore('stocks', () => {
     editingCode,
     editForm,
     editLoading,
-    createLoading,  // v46 stock-info-create
+    createLoading,
     // actions
-    loadCache,
+    initCache,        // v90: 替代 loadCache
+    refreshCache,     // v90: 新增, 手动同步缓存
+    loadFromIDB,      // v90: 新增, 启动秒载
     searchCache,
     fetchPage,
     setPage,
@@ -309,9 +384,10 @@ export const useStocksStore = defineStore('stocks', () => {
     openEdit,
     closeEdit,
     saveEdit,
-    createStock,  // v46 stock-info-create
+    createStock,
+    upsertLocal,      // v90: 新增, CRUD 后同步 Map + IDB
     stockName,
-    stockScale,    // v80: 价格小数位精度
-    stockStktype,  // v80: 证券类型
+    stockScale,
+    stockStktype,
   }
 })

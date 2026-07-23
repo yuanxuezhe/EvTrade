@@ -22,8 +22,7 @@ export function stockName(code) {
   if (!code) return null
   const store = useStocksStore()
   if (!store || !store.cacheLoaded) return null
-  const found = store.cache.find((s) => s.stock_code === code)
-  return found?.stock_name || null
+  return store.cacheMap.get(code)?.stock_name || null
 }
 
 /**
