@@ -121,13 +121,12 @@
           <template #default="{ row }">
             <el-button
               v-if="canCancel(row)"
-              link
               type="danger"
               size="small"
               :loading="orderStore.cancelling && cancellingOrderNo === row.order_no"
               @click="handleCancel(row)"
             >
-              撤
+              撤单
             </el-button>
           </template>
         </el-table-column>

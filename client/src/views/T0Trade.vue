@@ -178,13 +178,13 @@
               type="danger"
               size="small"
               :disabled="!canOpRow(row)"
-              @click="onBuyTask(row)"
+              @click.stop="onBuyTask(row)"
             >买</el-button>
             <el-button
               type="success"
               size="small"
               :disabled="!canOpRow(row)"
-              @click="onSellTask(row)"
+              @click.stop="onSellTask(row)"
             >卖</el-button>
             <el-button
               v-if="row.status === 'active'"
@@ -192,14 +192,14 @@
               link
               size="small"
               :disabled="computeRowBalanceDiff(row.id) === 0"
-              @click="onBalanceTask(row.id)"
+              @click.stop="onBalanceTask(row.id)"
             >{{ balanceBtnLabel(row.id) }}</el-button>
             <el-button
               v-if="row.status !== 'archived'"
               type="info"
               link
               size="small"
-              @click="onArchiveTask(row.id)"
+              @click.stop="onArchiveTask(row.id)"
             >归档</el-button>
           </div>
         </template>
@@ -305,12 +305,11 @@
           <template #default="{ row }">
             <el-button
               v-if="canCancel(row)"
-              link
               type="danger"
               size="small"
               :loading="orderStore.cancelling && cancellingOrderNo === row.order_no"
               @click="handleCancel(row)"
-            >撤</el-button>
+            >撤单</el-button>
           </template>
         </el-table-column>
         <el-table-column prop="user_def" label="备注" min-width="120">
@@ -1186,12 +1185,20 @@ onMounted(async () => {
   overflow-x: auto; /* v57 commit.1: 主表 9 列宽 1150px > 容器 1010px, 允许横滚 (操作列 fixed 浮动) */
 }
 
-/* change 2026-07-21-t0-row-selected-darker: 选中行背景加深 + 左侧强调边 */
+/* v92: 选中行美化 - 品牌色低透明度背景 + 4px 左侧强调边, 亮/暗自适应
+   旧: --el-color-primary-light-9 (#eef2ff) 在暗色模式下是浅蓝突兀
+   新: rgba(brand-primary, 0.10/0.18) 跟随品牌色, 暗色加深一档 */
 .task-table :deep(.el-table__row.is-selected) > td {
-  background-color: var(--el-color-primary-light-9, #ecf5ff) !important;
-  box-shadow: inset 3px 0 0 0 var(--el-color-primary, #409eff);
+  background-color: rgba(79, 124, 255, 0.10) !important;
+  box-shadow: inset 4px 0 0 0 var(--brand-primary);
 }
 .task-table :deep(.el-table__row.is-selected):hover > td {
-  background-color: var(--el-color-primary-light-8, #d9ecff) !important;
+  background-color: rgba(79, 124, 255, 0.16) !important;
+}
+html.dark .task-table :deep(.el-table__row.is-selected) > td {
+  background-color: rgba(79, 124, 255, 0.18) !important;
+}
+html.dark .task-table :deep(.el-table__row.is-selected):hover > td {
+  background-color: rgba(79, 124, 255, 0.26) !important;
 }
 </style>
