@@ -24,8 +24,9 @@ from sqlalchemy.orm import Session
 
 from server.rpc.client import qry_positions, qry_asset
 from server.models.orm import (
-    Position, Asset, SysStatus, ReconcileReport,
+    Position, Asset,  # ORM-only: Position / Asset 保留 v_next 老逻辑 (Position 行 insert/delete via db.add)
 )
+from server.tables import Positions, Assets, SysStatus, ReconcileReport  # v81.11: 修复 /api/admin/sys-status/init 500 (tables API)
 import logging
 
 log = logging.getLogger(__name__)
