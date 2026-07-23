@@ -135,12 +135,12 @@ const tagBoxStyle = computed(() => ({
     minWidth: 0,
 }))
 
-// 缓存 loadCache promise (避免并发触发, 复用 v27 模式)
+// 缓存 initCache promise (避免并发触发, 复用 v27 模式)
 let cacheLoadPromise = null
 async function ensureCache() {
     if (store.cacheLoaded) return
     if (cacheLoadPromise) return cacheLoadPromise
-    cacheLoadPromise = store.loadCache().catch((e) => {
+    cacheLoadPromise = store.initCache().catch((e) => {
         cacheLoadPromise = null
         throw e
     })
@@ -222,7 +222,7 @@ watch(
             selectedStock.value = null
             return
         }
-        const matched = store.cache.find((s) => s.stock_code === newVal)
+        const matched = store.cacheMap.get(newVal)
         if (matched) {
             selectedStock.value = matched
             inputText.value = matched.stock_code
@@ -241,9 +241,7 @@ watch(
     () => store.cacheLoaded,
     (loaded) => {
         if (loaded && props.modelValue) {
-            const matched = store.cache.find(
-                (s) => s.stock_code === props.modelValue
-            )
+            const matched = store.cacheMap.get(props.modelValue)
             if (matched && (!selectedStock.value || selectedStock.value.stock_code !== matched.stock_code)) {
                 selectedStock.value = matched
                 inputText.value = matched.stock_code

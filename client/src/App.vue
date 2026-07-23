@@ -77,12 +77,11 @@ onMounted(async () => {
   if (authStore.isAuthenticated) {
     // App 启动：拉取资金 + 持仓 + 委托 + 成交 缓存，启动 ws，启动实时市值 watcher
     holdingsStore.bootstrap()
-    // v26: 后台异步预加载 stocks 全量缓存 (~18s)
-    // - 不阻塞首屏渲染 (fire-and-forget)
-    // - 多个页面 (Trade / T0 / Strategy / Admin) 共享同一 cache
-    // - loadCache() 内置 cacheLoading 防重入，重复触发安全
-    stocksStore.loadCache().catch((e) => {
-      console.warn('[App.vue] stocksStore.loadCache 失败:', e?.message || e)
+    // v90: stocks cache 改为 IDB 持久化 + Map 索引
+    // - initCache() 先从 IDB 秒载 (F5 不再拉后端)
+    // - IDB 空 (首次) 才阻塞拉 /stocks/all; 否则后台静默刷新
+    stocksStore.initCache().catch((e) => {
+      console.warn('[App.vue] stocksStore.initCache 失败:', e?.message || e)
     })
   }
 })
@@ -94,9 +93,9 @@ watch(
     if (yes) {
       holdingsStore._startWatchers()
       await holdingsStore.bootstrap()
-      // v26: 登录后立即预加载 stocks cache (用户登录后多半会去 Trade/T0/Strategy 下单)
-      stocksStore.loadCache().catch((e) => {
-        console.warn('[App.vue] stocksStore.loadCache 失败:', e?.message || e)
+      // v90: 登录后立即预加载 stocks cache (IDB 秒载 -> 后台静默 refresh)
+      stocksStore.initCache().catch((e) => {
+        console.warn('[App.vue] stocksStore.initCache 失败:', e?.message || e)
       })
     } else {
       holdingsStore._stopWatchers()

@@ -616,7 +616,7 @@ function computeOrderVolume(stockCode) {
   if (!stockCode) return { volume: 0, raw: 0, trade_unit: 1, min_buy_qty: 100 }
   const pos = (holdingsStore.positions || []).find(p => p.stock_code === stockCode)
   if (!pos) return { volume: 0, raw: 0, trade_unit: 1, min_buy_qty: 100 }
-  const stock = (stocksStore.cache || []).find(s => s.stock_code === stockCode) || {}
+  const stock = stocksStore.cacheMap.get(stockCode) || {}
   const trade_unit = Number(stock.trade_unit) || 1
   const min_buy_qty = Number(stock.min_buy_qty) || 100
   const base = Number(pos[globalQtyBase.value]) || 0

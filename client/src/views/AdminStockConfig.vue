@@ -35,6 +35,14 @@
           <el-button :icon="Refresh" :loading="store.loading" @click="onRefresh">
             刷新
           </el-button>
+          <!-- v90: 同步缓存按钮 (手动重刷 IDB, 用于其他页面改动后强制同步) -->
+          <el-button
+            :icon="Sync"
+            :loading="store.cacheLoading"
+            @click="onSyncCache"
+          >
+            同步缓存
+          </el-button>
           <!-- v46 stock-info-create: 添加证券按钮 (独立于编辑 dialog) -->
           <el-button type="primary" @click="onCreateOpen">
             添加证券
@@ -233,7 +241,7 @@
 <script setup>
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
-import { Search, Refresh } from '@element-plus/icons-vue'
+import { Search, Refresh, Sync } from '@element-plus/icons-vue'
 import { useStocksStore } from '../stores/stocks'
 import StockCodePicker from '../components/StockCodePicker.vue'
 
@@ -366,7 +374,7 @@ async function onRefresh() {
     is_t0_able:
       filters.is_t0_able === null ? undefined : filters.is_t0_able
   })
-  // keyword 客户端二次过滤(可选 — 后端已有 keyword 但只搜 code/name,前端 cache 还能搜 short_name)
+  // keyword 客户端二次过滤(可选 - 后端已有 keyword 但只搜 code/name,前端 cache 还能搜 short_name)
   if (filters.keyword) {
     const kw = filters.keyword.trim().toLowerCase()
     store.pageRows = store.pageRows.filter((s) => {
@@ -378,12 +386,22 @@ async function onRefresh() {
   }
 }
 
+// v90: 手动同步缓存 (从后端 /stocks/all 重刷 Map + IDB)
+async function onSyncCache() {
+  try {
+    await store.refreshCache()
+    ElMessage.success(`已同步 ${store.cache.length} 条证券信息`)
+  } catch (e) {
+    ElMessage.error('同步缓存失败: ' + (e?.message || e))
+  }
+}
+
 onMounted(async () => {
   // 1. 拉首屏表格
   await store.fetchPage()
-  // 2. 后台异步拉全量 cache(autocomplete 用)
+  // 2. 初始化 stocks cache (IDB 秒载 -> 后台静默 refresh)
   if (!store.cacheLoaded && !store.cacheLoading) {
-    store.loadCache().catch((e) => {
+    store.initCache().catch((e) => {
       console.warn('[AdminStockConfig] cache 加载失败:', e)
     })
   }
