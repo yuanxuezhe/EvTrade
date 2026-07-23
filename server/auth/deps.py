@@ -5,20 +5,21 @@ from typing import Optional
 
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
-from sqlalchemy.orm import Session
 
-from server.db import get_db
 from server.models.user import User
 from server.auth.security import decode_token
+from server.tables import Users  # v81.9: User ORM → tables.Users
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login", auto_error=False)
 
 
 def get_current_user(
     token: Optional[str] = Depends(oauth2_scheme),
-    db: Session = Depends(get_db),
 ) -> User:
-    """Return the User identified by the JWT, or raise 401."""
+    """Return the User identified by the JWT, or raise 401.
+
+    v81.9: 改走 server.tables.Users (compat: 仍返 ORM User-like 对象)
+    """
     if not token:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -39,10 +40,11 @@ def get_current_user(
         user_id = int(user_id)
     except (TypeError, ValueError):
         raise HTTPException(status_code=401, detail="令牌用户标识无效")
-    user = db.query(User).filter(User.id == user_id).first()
+    # v81.9: 走 tables 接口 (Row 支持 getattr: role/is_active/email/full_name 等)
+    user = Users.query_one(id=user_id)
     if not user:
         raise HTTPException(status_code=401, detail="用户不存在")
-    if not user.is_active:
+    if not getattr(user, 'is_active', True):
         raise HTTPException(status_code=403, detail="账号已禁用，请联系管理员")
     return user
 

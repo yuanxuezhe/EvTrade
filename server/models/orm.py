@@ -230,21 +230,35 @@ class SysStatus(Base):
     updated_at = Column(DateTime, nullable=False, default=_utcnow, onupdate=_utcnow)
 
 
-def get_active_trd_date(db: Session) -> Optional[str]:
+def get_active_trd_date(db: Optional["Session"] = None) -> Optional[str]:  # noqa: ARG001
     """v_next 单行接口:获取当前交易日 trd_date (status='active')
 
     返回 None 表示未激活/刚闭市。
+
+    v81.9: 改走 server.tables.SysStatus (兼容保留 db 参数但忽略)
     """
-    row = db.query(SysStatus.trd_date).filter(SysStatus.id == 1, SysStatus.status == 'active').first()
-    return row[0] if row else None
+    from server.tables import SysStatus
+    row = SysStatus.query_one(id=1)
+    if not row:
+        return None
+    if row.status == 'active':
+        return row.trd_date
+    return None
 
 
-def get_active_sysstatus(db: Session) -> Optional[SysStatus]:
+def get_active_sysstatus(db: Optional["Session"] = None) -> Optional["SysStatus"]:  # noqa: ARG001
     """v_next 单行接口:获取当前 SysStatus 完整行 (id=1)
 
     返回 None 表示 id=1 行不存在 (极端脏数据) — 调用方应宽容 None。
+
+    v81.9: 改走 server.tables.SysStatus (兼容保留 db 参数但忽略)
     """
-    return db.query(SysStatus).filter(SysStatus.id == 1).first()
+    from server.tables import SysStatus
+    row = SysStatus.query_one(id=1)
+    if row is None:
+        return None
+    # 保持 ORM 兼容: 返回的对象支持 .id/.trd_date/.status 等访问
+    return row
 
 
 class SysConfig(Base):
