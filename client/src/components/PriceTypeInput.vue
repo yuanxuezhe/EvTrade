@@ -64,6 +64,7 @@
 <script setup>
 import { computed } from 'vue'
 import { PriceType, priceTypeOptions } from '../constants/priceType.js'
+import { useStocksStore } from '../stores/stocks'
 
 const props = defineProps({
   price: { type: [Number, String], default: null },
@@ -74,7 +75,13 @@ const props = defineProps({
   width: { type: [String, Number], default: '100%' },
   inputRatio: { type: Number, default: 1 },
   nameRatio: { type: Number, default: 1 },
+  // v82: 证券代码 — 用于按 scale 四舍五入价格
+  stockCode: { type: String, default: '' },
 })
+
+const stocksStore = useStocksStore()
+// 按 scale round 价格 (el-input type=number 没有 :precision 属性, 用 onPriceInput 主动 round)
+const priceScale = computed(() => stocksStore.stockScale(props.stockCode))
 
 const emit = defineEmits(['update:price', 'update:priceType'])
 
@@ -124,7 +131,24 @@ const selectBoxStyle = computed(() => ({
 // el-input type=number 输入处理: 保留字符串; 父组件 orderForm handleSubmit 时 Number() 转换
 // 不强制 number 转换避免零卡小数点
 function onPriceInput(v) {
-  emit('update:price', v)
+  // v82: 按证券 scale 四舍五入 — 兼容股票(2)/ETF(3)/可转债(3)
+  if (v === '' || v === null || v === undefined) {
+    emit('update:price', v)
+    return
+  }
+  const n = Number(v)
+  if (!Number.isFinite(n)) {
+    emit('update:price', v)
+    return
+  }
+  const p = priceScale.value
+  const rounded = n.toFixed(p)
+  // 只有 round 变化时才 emit, 避免光标跳动
+  if (String(n) !== rounded) {
+    emit('update:price', rounded)
+  } else {
+    emit('update:price', v)
+  }
 }
 </script>
 

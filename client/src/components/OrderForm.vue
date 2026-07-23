@@ -40,6 +40,7 @@
           <PriceTypeInput
             v-model:price="form.price"
             v-model:price-type="form.price_type"
+            :stock-code="form.stock_code"
           />
         </el-form-item>
 
