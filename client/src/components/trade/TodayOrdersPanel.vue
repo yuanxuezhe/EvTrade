@@ -84,7 +84,7 @@
         </el-table-column>
         <el-table-column prop="price" label="委托价" sortable v-bind="COL.MONEY">
           <template #default="{ row }">
-            <span class="text-mono">{{ formatMoney(row.price) }}</span>
+            <span class="text-mono">{{ formatPrice(row.price, row.stock_code) }}</span>
           </template>
         </el-table-column>
         <el-table-column prop="traded_volume" label="成交量" sortable v-bind="COL.NUMBER">
@@ -94,7 +94,7 @@
         </el-table-column>
         <el-table-column prop="avg_price" label="成交均价" sortable v-bind="COL.MONEY">
           <template #default="{ row }">
-            <span class="text-mono">{{ row.traded_volume > 0 ? formatMoney(row.avg_price) : '—' }}</span>
+            <span class="text-mono">{{ row.traded_volume > 0 ? formatPrice(row.avg_price, row.stock_code) : '—' }}</span>
           </template>
         </el-table-column>
         <el-table-column label="成交金额" v-bind="COL.makeDict('money', { width: 105, align: 'right', headerAlign: 'right' })">
@@ -199,7 +199,7 @@
         </el-table-column>
         <el-table-column prop="price" label="成交价" sortable v-bind="COL.MONEY">
           <template #default="{ row }">
-            <span class="text-mono">{{ formatMoney(row.price) }}</span>
+            <span class="text-mono">{{ formatPrice(row.price, row.stock_code) }}</span>
           </template>
         </el-table-column>
         <el-table-column label="金额" v-bind="COL.MONEY">
@@ -254,6 +254,7 @@
 import { computed, nextTick, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { formatMoney, formatNumber } from '../../utils/format'
+import { formatPrice } from '../../composables/usePricePrecision'
 import { stockName } from '../../utils/stockNames'
 import { COL } from '../../utils/tableColumns'
 import OrderStatusBadge from '../OrderStatusBadge.vue'
@@ -317,7 +318,7 @@ function canCancel(row) {
 async function handleCancel(row) {
   try {
     await ElMessageBox.confirm(
-      `确认撤销 ${row.stock_code} 委托 ${row.volume}@${formatMoney(row.price)}？`,
+      `确认撤销 ${row.stock_code} 委托 ${row.volume}@${formatPrice(row.price, row.stock_code)}？`,
       '撤单确认',
       {
         confirmButtonText: '确认撤单',

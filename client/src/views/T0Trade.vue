@@ -139,7 +139,7 @@
       <!-- 6. 最新价(涨跌幅) (140, sortable) — 数据源 quoteStore.getLastPrice + getChangePct -->
       <el-table-column prop="last_price" label="最新价(涨跌幅)" align="right" width="140" sortable="custom">
         <template #default="{ row }">
-          <span class="text-mono">{{ formatPrice(quoteStore.getLastPrice(row.stock_code)) }}</span>
+          <span class="text-mono">{{ formatPrice(quoteStore.getLastPrice(row.stock_code), row.stock_code) }}</span>
           <span :class="(quoteStore.getChangePct(row.stock_code) ?? 0) >= 0 ? 'up' : 'down'" class="col-change"
             style="margin-left: 4px; font-size: 12px">
             <template v-if="quoteStore.getChangePct(row.stock_code) != null">
@@ -268,7 +268,7 @@
         </el-table-column>
         <el-table-column prop="price" label="委托价" v-bind="COL.MONEY">
           <template #default="{ row }">
-            <span class="text-mono">{{ formatPrice(row.price) }}</span>
+            <span class="text-mono">{{ formatPrice(row.price, row.stock_code) }}</span>
           </template>
         </el-table-column>
         <el-table-column prop="traded_volume" label="成交量" v-bind="COL.NUMBER">
@@ -278,7 +278,7 @@
         </el-table-column>
         <el-table-column prop="avg_price" label="成交均价" v-bind="COL.MONEY">
           <template #default="{ row }">
-            <span class="text-mono">{{ row.traded_volume > 0 ? formatPrice(row.avg_price) : '—' }}</span>
+            <span class="text-mono">{{ row.traded_volume > 0 ? formatPrice(row.avg_price, row.stock_code) : '—' }}</span>
           </template>
         </el-table-column>
         <el-table-column prop="traded_amount" label="成交金额" v-bind="COL.MONEY">
@@ -401,7 +401,7 @@
         <div class="confirm-row">
           <span class="label">价格:</span>
           <span class="value">
-            {{ confirmDialogPayload.priceType === 'market' ? '市价' : '¥' + formatPrice(confirmDialogPayload.price) }}
+            {{ confirmDialogPayload.priceType === 'market' ? '市价' : '¥' + formatPrice(confirmDialogPayload.price, confirmDialogPayload.stockCode) }}
             <span class="hint">({{ confirmDialogPayload.priceType === 'market' ? '柜台撮合价' : '最新价' }})</span>
           </span>
         </div>
@@ -432,7 +432,8 @@ import T0TaskDetail from '../components/trade/T0TaskDetail.vue'
 import T0TaskCreateDialog from '../components/trade/T0TaskCreateDialog.vue'
 import HoldingsPanel from '../components/trade/HoldingsPanel.vue'
 import { useT0OrderSubmit } from '../composables/useT0OrderSubmit'
-import { formatNumber, formatAmount, formatMoney, formatPrice } from '../utils/format'
+import { formatNumber, formatAmount, formatMoney } from '../utils/format'
+import { formatPrice } from '../composables/usePricePrecision'
 import { STATUS_LABEL, STATUS_TYPE } from '../utils/format'
 import { stockName } from '../utils/stockNames'
 import { COL } from '../utils/tableColumns'
@@ -921,7 +922,7 @@ async function _submitOrder(p) {
       strategy_type: 1,  // v66: REQ-TRADE-026; T0Trade.vue 下单 = 快速做T
       ...(p.taskId ? { task_id: p.taskId } : {}),
     })
-    ElMessage.success(`${p.direction}单已报：${p.stockCode} ${p.volume} 股 @ ${p.priceType === 'market' ? '市价' : '¥' + formatPrice(p.price)}`)
+    ElMessage.success(`${p.direction}单已报：${p.stockCode} ${p.volume} 股 @ ${p.priceType === 'market' ? '市价' : '¥' + formatPrice(p.price, p.stockCode)}`)
     return res
   } catch (e) {
     const detail = e?.response?.data?.detail

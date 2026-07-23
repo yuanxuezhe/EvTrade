@@ -242,7 +242,8 @@ const avgPrice = computed(() => {
   if (!Number.isFinite(amount) || !Number.isFinite(volume) || volume === 0) return null
   return amount / volume
 })
-const avgPriceText = computed(() => avgPrice.value != null ? avgPrice.value.toFixed(3) : '—')
+// v82.2: 均价按 stock scale 四舍五入 (与限价/涨跌停一致, 默认 2, ETF/可转债 3)
+const avgPriceText = computed(() => avgPrice.value != null ? avgPrice.value.toFixed(pricePrecision.value) : '—')
 
 const amplitude = computed(() => {
   const q = quote.value

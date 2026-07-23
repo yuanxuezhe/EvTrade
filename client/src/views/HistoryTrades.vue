@@ -127,7 +127,7 @@
         </el-table-column>
         <el-table-column prop="price" label="成交价格" sortable v-bind="COL.MONEY">
           <template #default="{ row }">
-            <span class="text-mono">{{ formatMoney(row.price) }}</span>
+            <span class="text-mono">{{ formatPrice(row.price, row.stock_code) }}</span>
           </template>
         </el-table-column>
         <el-table-column label="成交金额" v-bind="COL.MONEY">
@@ -167,6 +167,7 @@ import { ElMessage } from 'element-plus'
 import { Search, Refresh, Download } from '@element-plus/icons-vue'
 import { api } from '../api'
 import { formatMoney, formatNumber } from '../utils/format'
+import { formatPrice } from '../composables/usePricePrecision'
 import { stockName } from '../utils/stockNames'
 import { COL } from '../utils/tableColumns'
 import { shiftDateStr } from '../utils/date'

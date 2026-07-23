@@ -72,7 +72,7 @@
         </el-table-column>
         <el-table-column prop="cost_price" label="成本价" v-bind="COL.MONEY">
           <template #default="{ row }">
-            <span class="text-mono">{{ formatMoney(row.cost_price) }}</span>
+            <span class="text-mono">{{ formatPrice(row.cost_price, row.stock_code) }}</span>
           </template>
         </el-table-column>
         <el-table-column prop="market_value" label="市值" v-bind="COL.MONEY">
@@ -173,6 +173,7 @@ import { Search } from '@element-plus/icons-vue'
 import { useHoldingsStore } from '../stores/holdings'
 import { api } from '../api'
 import { formatMoney, formatNumber } from '../utils/format'
+import { formatPrice } from '../composables/usePricePrecision'
 import { stockName } from '../utils/stockNames'
 import { COL } from '../utils/tableColumns'
 

@@ -143,7 +143,7 @@
               </div>
               <div class="activity-bottom">
                 <span class="text-mono text-secondary">
-                  {{ formatNumber(order.volume) }} 股 @ ¥{{ formatMoney(order.price) }}
+                  {{ formatNumber(order.volume) }} 股 @ ¥{{ formatPrice(order.price, order.stock_code) }}
                 </span>
                 <OrderStatusBadge :status="order.status" :remark="order.remark" :status_msg="order.status_msg" />
               </div>

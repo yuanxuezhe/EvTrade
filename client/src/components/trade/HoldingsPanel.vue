@@ -83,7 +83,7 @@
         </el-table-column>
         <el-table-column prop="cost_price" label="成本" v-bind="COL.MONEY">
           <template #default="{ row }">
-            <span class="text-mono">{{ row.cost_price != null ? formatMoney(row.cost_price) : '—' }}</span>
+            <span class="text-mono">{{ row.cost_price != null ? formatPrice(row.cost_price, row.stock_code) : '—' }}</span>
           </template>
         </el-table-column>
         <el-table-column label="最新" v-bind="COL.MONEY">
@@ -138,6 +138,7 @@
 <script setup>
 import { computed, ref } from 'vue'
 import { formatNumber, formatMoney } from '../../utils/format'
+import { formatPrice } from '../../composables/usePricePrecision'
 import { stockName } from '../../utils/stockNames'
 import { COL } from '../../utils/tableColumns'
 import { useQuoteStore } from '../../stores/quote'

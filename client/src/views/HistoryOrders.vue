@@ -136,7 +136,7 @@
         </el-table-column>
         <el-table-column prop="price" label="委托价" v-bind="COL.MONEY">
           <template #default="{ row }">
-            <span class="text-mono">{{ formatMoney(row.price) }}</span>
+            <span class="text-mono">{{ formatPrice(row.price, row.stock_code) }}</span>
           </template>
         </el-table-column>
         <el-table-column prop="traded_volume" label="成交量" v-bind="COL.NUMBER">
@@ -146,7 +146,7 @@
         </el-table-column>
         <el-table-column prop="avg_price" label="成交均价" v-bind="COL.MONEY">
           <template #default="{ row }">
-            <span class="text-mono">{{ row.traded_volume > 0 ? formatMoney(row.avg_price) : '—' }}</span>
+            <span class="text-mono">{{ row.traded_volume > 0 ? formatPrice(row.avg_price, row.stock_code) : '—' }}</span>
           </template>
         </el-table-column>
         <el-table-column label="成交金额" v-bind="COL.MONEY">
@@ -196,6 +196,7 @@ import { ElMessage } from 'element-plus'
 import { Search, Refresh, Download } from '@element-plus/icons-vue'
 import { api } from '../api'
 import { formatMoney, formatAmount, formatNumber, STATUS_LABEL } from '../utils/format'
+import { formatPrice } from '../composables/usePricePrecision'
 import { stockName } from '../utils/stockNames'
 import { COL } from '../utils/tableColumns'
 import OrderStatusBadge from '../components/OrderStatusBadge.vue'
