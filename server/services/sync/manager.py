@@ -1,5 +1,5 @@
 """
-services/sync/manager.py — 同步任务全局管理器 (v21 stock-info-crawler)
+services/sync/manager.py - 同步任务全局管理器 (v21 stock-info-crawler, v90 去 stock_synced)
 
 职责:
 - 全局单例 current_task (任何时刻最多 1 个同步任务跑)
@@ -8,10 +8,9 @@ services/sync/manager.py — 同步任务全局管理器 (v21 stock-info-crawler
 - status(): 返 current_task.to_dict()
 
 WS 推送:
-- runner 通过 progress_callback 推两类消息:
-  - stock_sync_progress (1Hz 节流 — 但当前每只推一次,简化)
-  - stock_synced (每只 upsert 成功)
-- 这两类消息广播到 ws_manager.active_connections['sync_update']
+- runner 通过 progress_callback 推 stock_sync_progress (每只推一次)
+- 广播到 ws_manager.active_connections['sync_update']
+- v90: 去掉 stock_synced 单只推送 (前端 IndexedDB 负责缓存, 后端不再推)
 """
 import asyncio
 import json
@@ -58,15 +57,9 @@ class SyncManager:
     async def _run(self, task: SyncTask, all_codes: List[str]):
         """后台执行:跑 crawler runner + WS broadcast"""
         try:
-            # progress callback → 更新 task 状态 + 推 WS
+            # progress callback -> 更新 task 状态 + 推 WS
             def progress_callback(msg: dict):
-                # 区分两类消息
-                msg_type = msg.get("type", "stock_sync_progress")
-                if msg_type == "stock_synced":
-                    # 单只同步完成
-                    asyncio.ensure_future(self._broadcast_sync(msg))
-                    return
-                # 进度消息 — 更新 task + 推 WS
+                # 进度消息 - 更新 task + 推 WS
                 task.state = msg.get("state", task.state)
                 task.current_code = msg.get("current_code")
                 task.current_name = msg.get("current_name")
@@ -125,19 +118,6 @@ class SyncManager:
             await ws_manager.broadcast("sync_update", payload)
         except Exception as e:
             print(f"[sync_manager] broadcast progress error: {e}", flush=True)
-
-    async def _broadcast_sync(self, msg: dict):
-        """广播 stock_synced 到 sync_update 频道"""
-        payload = {
-            "type": "stock_synced",
-            "stock_code": msg["stock_code"],
-            "data": msg["data"],
-            "ts": time.time(),
-        }
-        try:
-            await ws_manager.broadcast("sync_update", payload)
-        except Exception as e:
-            print(f"[sync_manager] broadcast stock_synced error: {e}", flush=True)
 
     async def stop(self) -> bool:
         """请求停止当前任务"""

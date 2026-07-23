@@ -108,20 +108,7 @@ async def run(
             "eta_s": round(eta, 1),
         })
 
-        # 单只同步完成后单独推 stock_synced(让前端立即更新缓存)
-        if action in ("inserted", "updated") and data is not None:
-            # data 是 dict,直接构造 WS payload (避免再开 session 读 ORM)
-            # v23 字段精简: WS payload 仅含 crawler 实际写入的字段
-            #   (stock_code/stock_name/sector),不广播 admin 专属字段
-            progress_callback({
-                "type": "stock_synced",  # 区分 progress 消息
-                "stock_code": stock_code,
-                "data": {
-                    "stock_code": stock_code,
-                    "stock_name": data.get("stock_name", ""),
-                    "sector": data.get("sector", ""),
-                },
-            })
+        # v90: 去掉 stock_synced WS 推送 (前端 IndexedDB 负责缓存, 后端不再推单只同步事件)
 
         # 防反爬 sleep
         await asyncio.sleep(sleep_sec)
