@@ -112,7 +112,7 @@ export function priceTypeLabel(p) {
  * v11 删除旧 14 个英文 fall-back 兼容 key（grep 0 处外部引用）。
  */
 export const STATUS_LABEL = {
-  '48':  '未报',
+  '48':  '待报',   # v84.3: 与后端一致 (broker 反馈前)
   '49':  '待报',
   '50':  '已报',
   '51':  '已报待撤',
@@ -127,7 +127,7 @@ export const STATUS_LABEL = {
 
 /** Element Plus tag type (颜色) */
 export const STATUS_TYPE = {
-  '48':  'info',      // 未报
+  '48':  'info',// v84.3 待报
   '49':  'info',      // 待报
   '50':  'primary',   // 已报
   '51':  'warning',   // 已报待撤
@@ -142,7 +142,7 @@ export const STATUS_TYPE = {
 
 /** 状态色调分组：pending=等待中, working=进行中, done=终态成功, terminal=终态撤销/废单 */
 export const STATUS_TONE = {
-  '48':  'pending',  // 未报
+  '48':  'pending',// v84.3 待报
   '49':  'pending',  // 待报
   '50':  'working',  // 已报
   '51':  'working',  // 已报待撤 (撤单过渡)
@@ -157,7 +157,7 @@ export const STATUS_TONE = {
 
 /** 状态对应的 Element Plus 图标组件名 */
 export const STATUS_ICON_NAME = {
-  '48':  'Clock',             // 未报
+  '48':  'Clock',// v84.3 待报
   '49':  'Clock',             // 待报
   '50':  'Promotion',          // 已报
   '51':  'Loading',           // 已报待撤
@@ -172,7 +172,7 @@ export const STATUS_ICON_NAME = {
 
 /** 是否需要脉冲动画（48/49/50/51/52/55 等仍可能在变化的中间态） */
 export const STATUS_PULSE = {
-  '48':  true,    // 未报
+  '48':  true,// v84.3 待报
   '49':  true,    // 待报
   '50':  true,    // 已报
   '51':  true,    // 已报待撤

@@ -272,7 +272,7 @@ def insert_pending_order(
         "traded_amount": 0.0,
         "avg_price": 0.0,
         "status": "48",
-        "status_msg": "未报",
+        "status_msg": "待报",   # v84.3: 统一为"待报" (broker 异步反馈前)
         "order_time": format_ts(tz='local'),
     })
 
