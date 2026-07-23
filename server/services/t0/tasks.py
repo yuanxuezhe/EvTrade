@@ -15,7 +15,7 @@ t0_tasks.py — T0Task 业务逻辑层 (REQ-TRADE-013 ~ 015 + 017)
 - 持仓/资产前置校验走 REQ-TRADE-010 同款 409 Conflict
 
 v81 tables-migration (本版本):
-- 删 sqlalchemy.orm.Session 依赖, db 参数统一 db=None 占位 (兼容 api 层仍传 db)
+- 删 sqlalchemy.orm.Session 依赖
 - db.query(T0Task).filter().first()       → T0Tasks.query_one(**pk)
 - db.query(T0Task).filter().all() + .count()→ T0Tasks.query_all() + 内存过滤
 - db.add(task); db.commit(); db.refresh()   → T0Tasks.add_one({...}) 返回 Row
@@ -42,7 +42,6 @@ log = logging.getLogger(__name__)
 # ───────────────────── CRUD ─────────────────────
 
 def create_task(
-    db=None,  # noqa: ARG001 — v81 tables-migration: 占位兼容 api 层仍传 db
     user_id: int = 0,
     stock_code: str = "",
     base_volume: int = 0,
@@ -98,7 +97,6 @@ def create_task(
 
 
 def list_tasks(
-    db=None,  # noqa: ARG001
     user_id: int = 0,
     is_admin: bool = False,
     status: Optional[str] = None,
@@ -147,7 +145,6 @@ def list_tasks(
 
 
 def get_task_detail(
-    db=None,  # noqa: ARG001
     task_id: int = 0,
     user_id: int = 0,
     is_admin: bool = False,
@@ -168,7 +165,6 @@ def get_task_detail(
 
 
 def update_task(
-    db=None,  # noqa: ARG001
     task_id: int = 0,
     user_id: int = 0,
     is_admin: bool = False,
@@ -218,7 +214,6 @@ def update_task(
 
 
 def delete_task(
-    db=None,  # noqa: ARG001
     task_id: int = 0,
     user_id: int = 0,
     is_admin: bool = False,
@@ -250,7 +245,6 @@ def delete_task(
 
 
 def archive_task(
-    db=None,  # noqa: ARG001
     task_id: int = 0,
     user_id: int = 0,
     is_admin: bool = False,
@@ -273,7 +267,6 @@ def archive_task(
 # ───────────────────── 配平 (REQ-TRADE-014 + 017) ─────────────────────
 
 def balance_task(
-    db=None,  # noqa: ARG001
     task_id: int = 0,
     user_id: int = 0,
     is_admin: bool = False,
@@ -363,7 +356,6 @@ def balance_task(
 
 
 def close_task(
-    db=None,  # noqa: ARG001
     task_id: int = 0,
     user_id: int = 0,
     is_admin: bool = False,
@@ -405,7 +397,6 @@ def close_task(
 # ───────────────────── 统计 (REQ-TRADE-015) ─────────────────────
 
 def aggregate_task_stats(
-    db=None,  # noqa: ARG001
     task_id: int = 0,
 ) -> Dict:
     """task 维度统计: realized + unrealized + win_rate + trading_days + daily[]
@@ -599,7 +590,6 @@ def aggregate_task_stats(
 
 
 def list_overview(
-    db=None,  # noqa: ARG001
     user_id: int = 0,
     is_admin: bool = False,
 ) -> Dict:
@@ -651,7 +641,6 @@ def list_overview(
 
 
 def list_overview_by_stock(
-    db=None,  # noqa: ARG001
     user_id: int = 0,
     is_admin: bool = False,
 ) -> List[Dict]:

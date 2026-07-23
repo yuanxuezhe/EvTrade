@@ -17,7 +17,6 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Path
 from pydantic import BaseModel, validator
-from sqlalchemy.orm import Session
 
 from server.db import get_db
 from server.tables import Positions, Row
@@ -102,8 +101,7 @@ def register_adjust(router: APIRouter) -> None:
         stock_code: str = Path(..., description="股票代码（PK）"),
         req: AdjustPositionRequest = ...,
         admin: User = Depends(require_admin),
-        db: Session = Depends(get_db),
-    ):
+        ):
         """admin 持仓盘中调平：Position.vol / Position.avl_vol 原子 +=
 
         - 必须至少传一个 delta_* 字段（否则 422）

@@ -22,7 +22,6 @@ from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
-from sqlalchemy.orm import Session
 
 from server.auth.deps import get_current_user, require_admin, require_trader
 from server.db import get_db
@@ -141,19 +140,17 @@ def _is_trader_or_admin(user: User) -> bool:
 async def create_task(
     req: CreateTaskRequest,
     user: User = Depends(require_trader),
-    db: Session = Depends(get_db),
 ):
     """创建 T0Task. trader/admin 可用."""
     try:
-        task = t0_tasks_service.create_task(
-            db, user_id=user.id, stock_code=req.stock_code,
+        task = t0_tasks_service.create_task(user_id=user.id, stock_code=req.stock_code,
             base_volume=req.base_volume, target_volume=req.target_volume,
             coefficient=req.coefficient, note=req.note,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-    summary = t0_tasks_service._compute_summary(db, task)
+    summary = t0_tasks_service._compute_summary(task)
     return TaskOut(
         id=task.id, user_id=task.user_id, stock_code=task.stock_code,
         base_volume=task.base_volume, target_volume=task.target_volume,
@@ -171,11 +168,9 @@ async def list_tasks(
     stock_code: Optional[str] = None,
     days: Optional[int] = Query(None, ge=1, le=365),
     user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
 ):
     """列表 task. trader 仅看自己; admin 看所有."""
-    rows = t0_tasks_service.list_tasks(
-        db, user_id=user.id, is_admin=_user_is_admin(user),
+    rows = t0_tasks_service.list_tasks(user_id=user.id, is_admin=_user_is_admin(user),
         status=status, stock_code=stock_code, days=days,
     )
     out = []
@@ -202,11 +197,9 @@ async def list_tasks(
 @router.get("/overview", response_model=OverviewResponse)
 async def get_overview(
     user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
 ):
     """整体做T收益 (cross-task summary)."""
-    o = t0_tasks_service.list_overview(
-        db, user_id=user.id, is_admin=_user_is_admin(user),
+    o = t0_tasks_service.list_overview(user_id=user.id, is_admin=_user_is_admin(user),
     )
     return OverviewResponse(**o)
 
@@ -214,7 +207,6 @@ async def get_overview(
 @router.get("/stats", response_model=GlobalStatsResponse)
 async def get_global_stats(
     user: User = Depends(require_admin),  # v18: 全局 stats 仅 admin 可见
-    db: Session = Depends(get_db),
 ):
     """全局 stats (all users + 跨期). admin only.
 
@@ -223,8 +215,8 @@ async def get_global_stats(
     daily 字段: 跨 task 跨日明细聚合成本高 (N×M) — v18 暂留空 list,
     v19 可补 SQL GROUP BY trd_date 优化。
     """
-    o = t0_tasks_service.list_overview(db, user_id=user.id, is_admin=True)
-    bs = t0_tasks_service.list_overview_by_stock(db, user_id=user.id, is_admin=True)
+    o = t0_tasks_service.list_overview(user_id=user.id, is_admin=True)
+    bs = t0_tasks_service.list_overview_by_stock(user_id=user.id, is_admin=True)
     return GlobalStatsResponse(
         summary={
             'active_task_count': o['active_task_count'],
@@ -245,11 +237,9 @@ async def get_global_stats(
 @router.get("/by-stock", response_model=List[ByStockOut])
 async def get_by_stock(
     user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
 ):
     """单券做T收益 (per-stock)."""
-    bs = t0_tasks_service.list_overview_by_stock(
-        db, user_id=user.id, is_admin=_user_is_admin(user),
+    bs = t0_tasks_service.list_overview_by_stock(user_id=user.id, is_admin=_user_is_admin(user),
     )
     return [ByStockOut(**row) for row in bs]
 
@@ -258,10 +248,8 @@ async def get_by_stock(
 async def get_task(
     task_id: int,
     user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
 ):
-    d = t0_tasks_service.get_task_detail(
-        db, task_id=task_id, user_id=user.id, is_admin=_user_is_admin(user),
+    d = t0_tasks_service.get_task_detail(task_id=task_id, user_id=user.id, is_admin=_user_is_admin(user),
     )
     if not d:
         raise HTTPException(status_code=404, detail="task 不存在或无权访问")
@@ -289,11 +277,9 @@ async def update_task(
     task_id: int,
     req: UpdateTaskRequest,
     user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
 ):
     try:
-        t = t0_tasks_service.update_task(
-            db, task_id=task_id, user_id=user.id, is_admin=_user_is_admin(user),
+        t = t0_tasks_service.update_task(task_id=task_id, user_id=user.id, is_admin=_user_is_admin(user),
             note=req.note, coefficient=req.coefficient,
             target_volume=req.target_volume, status=req.status,
         )
@@ -302,7 +288,7 @@ async def update_task(
     if not t:
         raise HTTPException(status_code=404, detail="task 不存在或无权访问")
 
-    summary = t0_tasks_service._compute_summary(db, t)
+    summary = t0_tasks_service._compute_summary(t)
     return TaskOut(
         id=t.id, user_id=t.user_id, stock_code=t.stock_code,
         base_volume=t.base_volume, target_volume=t.target_volume,
@@ -318,12 +304,10 @@ async def update_task(
 async def delete_task(
     task_id: int,
     user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
 ):
     """删除 task. 仅 archived 状态可删."""
     try:
-        ok = t0_tasks_service.delete_task(
-            db, task_id=task_id, user_id=user.id, is_admin=_user_is_admin(user),
+        ok = t0_tasks_service.delete_task(task_id=task_id, user_id=user.id, is_admin=_user_is_admin(user),
         )
     except ValueError as e:
         raise HTTPException(status_code=409, detail=str(e))
@@ -336,18 +320,16 @@ async def delete_task(
 async def close_task(
     task_id: int,
     user: User = Depends(require_trader),
-    db: Session = Depends(get_db),
 ):
     """关 task (强制配平到 base_volume 后改 status=closed)."""
     try:
-        c = t0_tasks_service.close_task(
-            db, task_id=task_id, user_id=user.id, is_admin=_user_is_admin(user),
+        c = t0_tasks_service.close_task(task_id=task_id, user_id=user.id, is_admin=_user_is_admin(user),
         )
     except ValueError as e:
         raise HTTPException(status_code=409, detail=str(e))
 
     task_dict = c['task']
-    summary = t0_tasks_service._compute_summary(db, type('T', (), task_dict)())
+    summary = t0_tasks_service._compute_summary(type('T', (), task_dict)())
     _created_at = task_dict.pop('created_at', None)
     _closed_at = task_dict.pop('closed_at', None)
     return CloseResponse(
@@ -365,12 +347,10 @@ async def close_task(
 async def archive_task(
     task_id: int,
     user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
 ):
     """归档 (closed → archived)."""
     try:
-        t = t0_tasks_service.archive_task(
-            db, task_id=task_id, user_id=user.id, is_admin=_user_is_admin(user),
+        t = t0_tasks_service.archive_task(task_id=task_id, user_id=user.id, is_admin=_user_is_admin(user),
         )
     except ValueError as e:
         raise HTTPException(status_code=409, detail=str(e))
@@ -383,17 +363,15 @@ async def archive_task(
 async def get_task_stats(
     task_id: int,
     user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
 ):
     """task 完整统计 (realized + unrealized + win_rate + trading_days + daily[])."""
     # 先鉴权 (admin 看所有; trader 仅自己)
-    t_check = t0_tasks_service.get_task_detail(
-        db, task_id=task_id, user_id=user.id, is_admin=_user_is_admin(user),
+    t_check = t0_tasks_service.get_task_detail(task_id=task_id, user_id=user.id, is_admin=_user_is_admin(user),
     )
     if not t_check:
         raise HTTPException(status_code=404, detail="task 不存在或无权访问")
 
-    s = t0_tasks_service.aggregate_task_stats(db, task_id=task_id)
+    s = t0_tasks_service.aggregate_task_stats(task_id=task_id)
     if not s:
         raise HTTPException(status_code=404, detail="task 不存在")
     return TaskStatsOut(**s)

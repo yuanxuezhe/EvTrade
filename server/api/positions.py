@@ -29,7 +29,6 @@ NOTE: market_value 字段
 from fastapi import APIRouter, Depends
 from typing import List, Optional
 from pydantic import BaseModel
-from sqlalchemy.orm import Session
 
 from server.db import get_db
 from server.tables import Positions
@@ -61,7 +60,6 @@ class PositionsListResponse(BaseModel):
 @router.get("", response_model=PositionsListResponse)
 async def list_positions(
     stock_code: Optional[str] = None,
-    db: Session = Depends(get_db),
 ):
     # v81.4 tables-migration: 走 Positions.query_by / query_one
     # Positions.__pk_fields__ = ('stock_code',) → 默认按 stock_code 升序

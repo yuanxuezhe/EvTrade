@@ -18,7 +18,6 @@ v10 改动（order-trade-query-by-trd-date）：
 from fastapi import APIRouter, Depends, Query
 from typing import Optional, List
 from pydantic import BaseModel
-from sqlalchemy.orm import Session
 
 from server.db import get_db
 from server.tables.trades import Trades
@@ -58,7 +57,6 @@ async def list_trades(
         None, regex=r"^\d{8}$",
         description="结束交易日 YYYYMMDD（含）",
     ),
-    db: Session = Depends(get_db),
 ):
     """成交列表
 
