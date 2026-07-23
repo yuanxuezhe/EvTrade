@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import logging
 from contextlib import contextmanager
+from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
 from sqlalchemy import text
@@ -206,6 +207,25 @@ class TableBase:
         if not cls.__pk_fields__:
             raise NotImplementedError(f"{cls.__name__}.__pk_fields__ not set")
 
+    # v81.10: 查 INFORMATION_SCHEMA 获取 NOT NULL 无 default 列 (cache 加速)
+    _required_columns_cache = {}
+
+    @classmethod
+    def _get_required_columns(cls) -> list:
+        if cls.__tablename__ in cls._required_columns_cache:
+            return cls._required_columns_cache[cls.__tablename__]
+        from server.db import engine
+        sql = text(
+            "SELECT COLUMN_NAME, DATA_TYPE FROM INFORMATION_SCHEMA.COLUMNS "
+            "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = :t "
+            "AND IS_NULLABLE = \'NO\' AND COLUMN_DEFAULT IS NULL"
+        )
+        with get_engine().connect() as conn:
+            rows = conn.execute(sql, {"t": cls.__tablename__}).fetchall()
+        result = [(r[0], (r[1] or "").lower()) for r in rows]
+        cls._required_columns_cache[cls.__tablename__] = result
+        return result
+
     @classmethod
     def _pk_from_kwargs(cls, kwargs: Dict[str, Any]) -> Dict[str, Any]:
         """从 kwargs 提取主键字段"""
@@ -341,6 +361,18 @@ class TableBase:
         cls._validate_subclass()
         if not data:
             raise ValueError(f"{cls.__name__}.add_one: data 不能为空")
+        # v81.10: 自动填充 NOT NULL 无 default 列 (MySQL strict mode)
+        data = dict(data)
+        for col_name, col_type in cls._get_required_columns():
+            if col_name not in data:
+                if "datetime" in col_type or "timestamp" in col_type:
+                    data[col_name] = datetime.now()
+                elif "int" in col_type or "tinyint" in col_type:
+                    data[col_name] = 0
+                elif "varchar" in col_type or "char" in col_type or "text" in col_type:
+                    data[col_name] = ""
+                else:
+                    data[col_name] = ""
         engine = get_engine()
         cols = list(data.keys())
         col_list = ", ".join(f"`{c}`" for c in cols)
@@ -348,8 +380,18 @@ class TableBase:
         sql = text(f"INSERT INTO `{cls.__tablename__}` ({col_list}) VALUES ({val_list})")
         with engine.begin() as conn:
             conn.execute(sql, data)
-            # 回填自增主键
-            if cls.__auto_increment_pk__ and cls.__auto_increment_pk__ not in data:
+            # v81.10: INSERT 后 SELECT * 回填完整 Row (含所有列, 避免 _data 缺字段)
+            # 优先按 PK 查, 没 PK 时用 LAST_INSERT_ID
+            pk_dict = {k: data[k] for k in cls.__pk_fields__ if k in data}
+            if len(pk_dict) == len(cls.__pk_fields__):
+                sel_sql = f"SELECT * FROM `{cls.__tablename__}` WHERE " + \
+                    " AND ".join([f"`{k}` = :pk_{i}" for i, k in enumerate(cls.__pk_fields__)])
+                sel_params = {f"pk_{i}": v for i, (k, v) in enumerate(pk_dict.items())}
+                row = conn.execute(text(sel_sql), sel_params).mappings().first()
+                if row:
+                    return cls._row_from_mapping(dict(row))
+            # 兜底: 没 PK 时回填 last_insert_id
+            if cls.__auto_increment_pk__:
                 last_id = conn.execute(text("SELECT LAST_INSERT_ID() AS id")).scalar()
                 data = dict(data)
                 data[cls.__auto_increment_pk__] = last_id

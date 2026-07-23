@@ -22,7 +22,7 @@ from server.utils.time import _utcnow, parse_broker_ts
 from server.repo.stocks import get_stock_scale  # v80: 价格按 stock.scale round
 
 
-def handle_ord_cfm(db: Session, row: Dict[str, Any], ts: str) -> Optional[Dict[str, Any]]:
+def handle_ord_cfm(db, row: Dict[str, Any], ts: str) -> Optional[Dict[str, Any]]:
     """处理 ord_cfm 推送（v10: 简化为只填 order_id + 推断 status + order_time）
 
     v79.3 字段命名 (REQ-TRADE-033):
