@@ -253,7 +253,7 @@ const orderStats = computed(() => {
     },
     {
       key: 'pending',
-      label: '已报/待报',   # v84.3: 48 待报 (broker 反馈前), 49 备, 50 已报 (broker 反馈后)
+      label: '已报/待报',   // v84.3: 48 待报 (broker 反馈前), 49 备, 50 已报 (broker 反馈后)
       color: '#5fa8ff',
       statuses: ['50', '49', '48']
     },
