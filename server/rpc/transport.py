@@ -493,13 +493,15 @@ class RPClient(MessageQueueClient):
                 None, _do_junk_update_sync, order_no, trd_date, ack_msg or f"broker reject code={code_int}",
             )
             # ws push 必须在主 event loop (run_in_executor 线程没有 loop)
+            # v84.3: 改用 _broadcast_order_cfm helper 包装成 {type:'ord_cfm', channel, ts, data}
+            #   前端 ws_dispatch.js t='ord_cfm' 才识别 (裸 dict 之前被默默丢)
             if updated_order is not None:
                 try:
-                    from server.services.push.helpers import _order_to_out_dict
-                    from server.ws.manager import ws_manager
-                    await ws_manager.broadcast("order_update", _order_to_out_dict(updated_order))
+                    from server.services.push.order_broadcast import _broadcast_order_cfm
+                    # _broadcast_order_cfm 内部用 asyncio.ensure_future, 在主 event loop 自动调度
+                    _broadcast_order_cfm(updated_order, trace_id=msg_id)
                 except Exception as push_err:
-                    log.warning("v84 junk update ws push failed: %s", push_err)
+                    log.warning("v84.3 junk update ws push failed: %s", push_err)
 
             # 显式清 cache (无论 DB 更新成功与否, 避免长期占用)
             _evict_msgid_orderno(msg_id)

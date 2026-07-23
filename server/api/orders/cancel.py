@@ -159,36 +159,21 @@ def register_cancel(router):
             cancel_row.update(Orders, trd_date=trd_date, order_no=cancel_order_no)
 
         # ── 5. WS broadcast (broker 不会推这个 row,必须手动) ──
+        # v84.3: 改用统一 _broadcast_order_cfm helper, 包装 type='ord_cfm' + data,
+        # 前端 ws_dispatch.js t='ord_cfm' 才能正确 parse (裸 dict 之前被丢).
         try:
-            await ws_manager.broadcast("order_update", {
-                "trd_date": cancel_row.trd_date,
-                "order_no": cancel_row.order_no,
-                "remark": cancel_row.order_no,
-                "order_id": cancel_row.order_id or "",
-                "stock_code": cancel_row.stock_code,
-                "status": cancel_row.status,
-                "status_msg": cancel_row.status_msg,
-                "volume": cancel_row.volume,
-                "traded_volume": cancel_row.traded_volume,
-                "order_flag": cancel_row.order_flag,
-                "user_def": cancel_row.user_def,
-                "raw_id": cancel_row.raw_id,  # v13 NEW: 透传结构化 raw_id
-            })
+            from server.services.push.order_broadcast import _broadcast_order_cfm
+            _broadcast_order_cfm(cancel_row, trace_id=cancel_row.order_no)
             if cancel_trade:
+                from server.services.push.helpers import _trade_to_out_dict
                 await ws_manager.broadcast("trade_update", {
-                    "trd_date": trd_date,
-                    "trade_id": cancel_trade.trade_id,
-                    "order_no": cancel_trade.order_no,
-                    "stock_code": cancel_trade.stock_code,
-                    "order_type": cancel_trade.order_type,
-                    "price": cancel_trade.price,
-                    "volume": cancel_trade.volume,
-                    "amount": cancel_trade.amount,
-                    "trade_time": cancel_trade.trade_time,
-                    "trade_type": cancel_trade.trade_type,
+                    "type": "trd_cfm",
+                    "channel": "trade_update",
+                    "ts": format_ts(tz="local"),
+                    "data": _trade_to_out_dict(cancel_trade),
                 })
         except Exception as e:
-            log.warning("WS broadcast cancel failed: %s", e)
+            log.warning("v84.3 WS broadcast cancel failed: %s", e)
 
         # ── 6. Return ──
         if ack_code == 0:

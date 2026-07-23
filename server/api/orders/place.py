@@ -49,7 +49,7 @@ from server.api.orders.schemas import (
     PlaceOrderResponse,
     _to_order_out,
 )
-from server.services.push.helpers import _order_to_out_dict
+# 删 _order_to_out_dict import (v84.3 用 _broadcast_order_cfm helper)
 
 log = logging.getLogger(__name__)
 
@@ -144,13 +144,14 @@ def register_place(router):
             order.strategy_type = req.strategy_type
             order.update(Orders, trd_date=trd_date, order_no=order_no)
 
-        # 5. v77: 阶段 A — 立即 ws push status=48 (前端立即显示 "未报")
-        #   先 ws 后 HTTP 应答: 前端 ws 收到 + axios 拿到 response 都立即 _upsertToHoldings
-        #   metaMerge (v76 修复) 保证 4 累计字段透传, 表格立即正确显示 status=48 未报委托.
+        # 5. v77: 阶段 A — 立即 ws push status=48 (前端立即显示 "待报")
+        #   v84.3: 走统一 _broadcast_order_cfm helper (包装 type='ord_cfm' + channel + data),
+        #          与 push/dispatcher.py 推送同协议, 前端 ws_dispatch 才能识别.
+        from server.services.push.order_broadcast import _broadcast_order_cfm as _oc_broadcast
         try:
-            asyncio.ensure_future(ws_manager.broadcast("order_update", _order_to_out_dict(order)))
+            _oc_broadcast(order, trace_id=order_no)
         except Exception as e:
-            log.warning("ws push (status=48) failed: %s", e)
+            log.warning("v84.3 ws push (status=48) failed: %s", e)
 
         # 6. v77: 阶段 B — RPC 后台 task (fire-and-forget)
         #   asyncio.create_task 不会阻塞 HTTP 应答; broker 慢/超时不影响前端.
@@ -199,7 +200,8 @@ async def _submit_rpc_async(order_no: str, trd_date: str):
     log = logging.getLogger(__name__)
     # 关键: task 内 late import 取 module-level ord_stk/ws_manager (monkeypatch 兼容)
     from server.api.orders import ord_stk, ws_manager
-    from server.services.push.helpers import _order_to_out_dict
+    from server.services.push.order_broadcast import _broadcast_order_cfm
+    # 删 _order_to_out_dict import (v84.3 用 _broadcast_order_cfm helper 替代)
 
     try:
         # v81 tables-migration: Orders.query_one (复合 PK) 替代 db.query(Order).filter_by(...).first()
@@ -231,9 +233,9 @@ async def _submit_rpc_async(order_no: str, trd_date: str):
             order.status_msg = "RPC 失败: {}".format(e)
             order.update(Orders, trd_date=trd_date, order_no=order_no)
             try:
-                asyncio.ensure_future(ws_manager.broadcast("order_update", _order_to_out_dict(order)))
+                _broadcast_order_cfm(order, trace_id=order_no)
             except Exception as push_err:
-                log.warning("ws push (RPC exception path) failed: %s", push_err)
+                log.warning("v84.3 ws push (RPC exception path) failed: %s", push_err)
             return
 
         # v84: 不解 ack.code, 不写 Order (broker ord_cfm push 会异步处理真实状态)
