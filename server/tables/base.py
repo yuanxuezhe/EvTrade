@@ -521,6 +521,15 @@ class TableBase:
             # 兜底: AUTO_INCREMENT
             if cls.__auto_increment_pk__:
                 last_id = conn.execute(text("SELECT LAST_INSERT_ID() AS id")).scalar()
+                # v92 fix: SELECT * 回填完整 Row (nullable 字段如 t0_tasks.closed_at
+                # 不会在 data_out 里, 直接返回会 AttributeError)
+                sel_sql = (
+                    "SELECT * FROM `" + cls.__tablename__ + "` WHERE `" +
+                    cls.__auto_increment_pk__ + "` = :pk"
+                )
+                row = conn.execute(text(sel_sql), {"pk": last_id}).mappings().first()
+                if row:
+                    return cls._row_from_mapping(dict(row))
                 data_out = dict(data_out)
                 data_out[cls.__auto_increment_pk__] = last_id
         return cls._row_from_mapping(data_out)
