@@ -108,15 +108,7 @@ def on_startup():
     from server.services import sysconfig
     sysconfig.load_all()
     print(f"[INIT] sysconfig loaded: {len(sysconfig._cache)} users")
-    # v78.3: 启动时加载 stocks.is_t0_able 内存 cache
-    from server.repo.stocks import load_all_stocks
-    from server.db import SessionLocal
-    db = SessionLocal()
-    try:
-        n = load_all_stocks(db)
-        print(f"[INIT] stocks t0 cache loaded: {n} codes")
-    finally:
-        db.close()
+    # v90: 去掉 stocks 内存 cache (前端 IndexedDB 负责缓存, 后端直查 DB)
 
 
 @app.on_event("startup")

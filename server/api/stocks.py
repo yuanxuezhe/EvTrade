@@ -102,6 +102,28 @@ async def list_stocks(
 
 
 # ============================================================
+# GET 全量 - v90 前端 IndexedDB 首次/同步缓存用 (不分页, 1 次拉完)
+# ============================================================
+
+@router.get("/all")
+async def list_all_stocks():
+    """全量证券信息(前端缓存首次加载 / 同步刷新用, 不分页)
+
+    Returns:
+        {code:0, msg:"ok", list:[...], total:N}
+        list 元素含 to_dict 全部 9 字段 (stock_code/stock_name/sector/is_t0_able/
+        min_buy_qty/trade_unit/short_name/stktype/scale)
+    """
+    rows = sorted(Stocks.query_all(), key=lambda r: r.stock_code)
+    return {
+        "code": 0,
+        "msg": "ok",
+        "list": [stocks_repo.to_dict(s) for s in rows],
+        "total": len(rows),
+    }
+
+
+# ============================================================
 # GET 详情
 # ============================================================
 
