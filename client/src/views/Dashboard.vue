@@ -169,6 +169,7 @@ import { useHoldingsStore } from '../stores/holdings'
 // v32: quoteStore 订阅下沉到 holdings store bootstrap 阶段, 此处不再需要 useQuoteStore
 import { useUiStore } from '../stores/ui'
 import { formatMoney, formatNumber, STATUS_LABEL, STATUS_TYPE } from '../utils/format'
+import { formatPrice } from '../composables/usePricePrecision'
 import { stockName } from '../utils/stockNames'
 
 const assetStore = useAssetStore()
