@@ -304,10 +304,13 @@ class StrategyEngine:
         current_price: float,
         trd_date: Optional[str],
     ) -> Optional[str]:
-        """INSERT Order (status='48') → ord_stk → UPDATE status
+        """INSERT Order (status='48') → ord_stk → 不解析 ack (v84)
 
-        📌 仿 place.py 范式：user_def = str(strategy.id)
-        📌 ord_stk 失败 → status='57'（不抛错给 caller）
+        v84 重构:
+          - ack.code=0 → 不写 Order (broker ord_cfm push 异步处理真实 broker_order_id + status=50)
+          - ack.code!=0 → 不写 Order (transport._handle_ord_stk_reply_junk 按 msgid 接管废单)
+          - RPC 异常 → 兜底写 status=57 (transport cache 已 evict, 必须本地写)
+          - ord_cfm / trd_cfm push → handle_ord_cfm / handle_trd_cfm 真实状态
         """
         order_no = None
         try:
@@ -333,7 +336,14 @@ class StrategyEngine:
                 db.commit()
                 db.refresh(order)
 
-            # 调 RPC（broker 同步返回 ack）
+            # v84: msgid_meta 让 transport 按 msgid 接管废单路径
+            msgid_meta = {
+                "order_no": order_no,
+                "trd_date": trd_date,
+                "stock_code": self.stock_code,
+            }
+
+            # 调 RPC（broker 同步返回 ack, 但 v84 不解析 ack 内容）
             try:
                 ack = await ord_stk(
                     stock_code=self.stock_code,
@@ -342,10 +352,12 @@ class StrategyEngine:
                     price=current_price,
                     order_type="23" if action.direction == "buy" else "24",
                     remark=order_no,
+                    msgid_meta=msgid_meta,
                 )
             except Exception as e:
                 log.exception("strategy ord_stk failed: strategy=%s order_no=%s err=%s",
                               self.strategy_id, order_no, e)
+                # v84: RPC 异常 → transport cache 已 evict, 必须本地兜底写废单
                 with db_session() as db:
                     o = db.query(Order).filter_by(order_no=order_no).first()
                     if o:
@@ -354,23 +366,16 @@ class StrategyEngine:
                         db.commit()
                 return None
 
-            # 解析 ack → UPDATE
-            ack_code = int(ack.get("code", -1))
-            ack_list = ack.get("list", [])
-            with db_session() as db:
-                o = db.query(Order).filter_by(order_no=order_no).first()
-                if o:
-                    if ack_code == 0 and ack_list:
-                        broker_order_id = str(ack_list[0].get("order_id", "")) if isinstance(ack_list[0], dict) else ""
-                        if broker_order_id:
-                            o.order_id = broker_order_id
-                        o.status = "50"
-                        o.status_msg = "已报"
-                    else:
-                        o.status = "57"
-                        o.status_msg = ack.get("msg", "柜台拒单")
-                        o.cancelled_volume = o.volume
-                    db.commit()
+            # v84: 不解析 ack.code / ack.list. broker ord_cfm push 异步处理真实 broker_order_id + status=50.
+            try:
+                ack_code = int(ack.get("code", -1)) if isinstance(ack, dict) else -1
+            except (TypeError, ValueError):
+                ack_code = -1
+            log.info(
+                "v84 strategy _place_order: order_no=%s ack received (code=%s). " +
+                "code=0 → wait broker ord_cfm push; code!=0 → transport cache write handled.",
+                order_no, ack_code,
+            )
             return order_no
         except Exception as e:
             log.exception("strategy _place_order failed: %s", e)

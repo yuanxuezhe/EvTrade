@@ -175,18 +175,26 @@ def register_place(router):
 
 async def _submit_rpc_async(order_no: str, trd_date: str):
     """
-    v77: RPC 异步执行函数 (阶段 B 后台 task)
+    v84 重构: RPC 异步执行函数 (阶段 B 后台 task)
+
+    关键变化 (v84):
+      - 下单时传 msgid_meta (order_no + trd_date + stock_code), 让 transport._MSGID_ORDERNO_CACHE
+        按 msgid 注册. 应答到达时按 msgid 反查 → 异步废单.
+      - code == 0: 不处理 (broker ord_cfm push 会异步推真实 broker_order_id + status=50).
+        ❗ 旧逻辑(code==0 同步写 status=50) 被废除: 因为应答包中 broker_order_id 此时空,
+        真正的 broker_order_id 在 broker 异步推送的 ord_cfm 包里才有.
+      - code != 0: 也不在 place.py 处理, 由 transport 层 _handle_ord_stk_reply_junk 接管.
+        因为 cache 已注册, transport 按 msgid 反查 → 异步废单 + status_msg + ws push.
+      - RPC 异常 (publish/wait_for 超时): 兜底写 status=57 + msg (transport cache 已 evict).
+      - ord_cfm / trd_cfm push: 由 handle_ord_cfm / handle_trd_cfm 处理真实 broker 状态.
 
     流程:
-    1. v81 tables-migration: 删 db = SessionLocal(); 改 Orders.query_one + Orders.update_one (自带引擎)
-    2. late import 拿 patched ord_stk/ws_manager (monkeypatch 测试兼容)
-    3. 调 broker ord_stk, remark=order_no (broker 用 order_no 回报)
-    4. ack.code==0: UPDATE status=50 + broker_order_id + ws push
-    5. ack.code!=0: UPDATE status=57 + cancelled_volume=volume + ws push
-    6. 异常 (RPC 超时/broker down): UPDATE status=57 + ws push (status_msg 携带异常)
-    7. log.exception 永远记 (异常吞掉是最大风险, 必须留 trace)
-
-    关键: 全程 try/except 包裹, 任何路径都不允许吞掉异常.
+      1. v81 tables-migration: Orders.query_one (自带引擎)
+      2. late import 拿 patched ord_stk/ws_manager (monkeypatch 测试兼容)
+      3. 调 broker ord_stk, 传 msgid_meta (v84)
+      4. ack 已收到: 不写 Order (transport 接管 code!=0; code==0 由 ord_cfm 推)
+      5. 异常: 兜底写 status=57 + msg
+      6. log.exception 永远记
     """
     log = logging.getLogger(__name__)
     # 关键: task 内 late import 取 module-level ord_stk/ws_manager (monkeypatch 兼容)
@@ -200,18 +208,27 @@ async def _submit_rpc_async(order_no: str, trd_date: str):
             log.error("_submit_rpc_async: trd_date=%s order_no=%s not found", trd_date, order_no)
             return
 
+        # v84: 构建 msgid_meta 让 transport._handle_reply 按 msgid 接管废单路径
+        msgid_meta = {
+            "order_no": order.order_no,
+            "trd_date": trd_date,
+            "stock_code": order.stock_code or "",
+        }
+
         # 5. 调 RPC
         try:
             ack = await ord_stk(
                 stock_code=order.stock_code, order_type=order.order_type,
                 price_type=order.price_type, price=order.price, volume=order.volume,
                 remark=order.order_no,
+                msgid_meta=msgid_meta,
             )
         except Exception as e:
             log.exception("place_order RPC failed: stock=%s order_no=%s", order.stock_code, order_no)
+            # v84: transport cache 已被 _evict_msgid_orderno 清掉 (call() 超时路径),
+            # 这里必须兜底写废单 (否则订单卡在 status=48)
             order.status = "57"  # broker JUNK 废单
             order.status_msg = "RPC 失败: {}".format(e)
-            # v81 tables-migration: obj.update(Orders, pk=...) 替代 db.commit() + db.refresh()
             order.update(Orders, trd_date=trd_date, order_no=order_no)
             try:
                 asyncio.ensure_future(ws_manager.broadcast("order_update", _order_to_out_dict(order)))
@@ -219,30 +236,18 @@ async def _submit_rpc_async(order_no: str, trd_date: str):
                 log.warning("ws push (RPC exception path) failed: %s", push_err)
             return
 
-        # 6. 解析 ack
-        ack_code = int(ack.get("code", -1))
-        ack_list = ack.get("list", [])
-        broker_order_id = ""
-        if ack_code == 0 and ack_list and isinstance(ack_list[0], dict):
-            broker_order_id = str(ack_list[0].get("order_id", ""))
-            if broker_order_id:
-                order.order_id = broker_order_id
-            order.status = "50"  # broker REPORTED 已报 (v11)
-            order.status_msg = "已报"
-        else:
-            order.status = "57"  # broker JUNK 废单 (v11)
-            order.status_msg = ack.get("msg", "柜台拒单")
-            # R2a 本地拒单时把 cancelled_volume 抹平到 volume
-            order.cancelled_volume = order.volume
-        print(f"RPC_DONE: ack_code={ack_code} broker_order_id={broker_order_id} set_status={order.status}", flush=True)
-        # v81 tables-migration: 单次 update_one 替代 db.commit() + db.refresh()
-        order.update(Orders, trd_date=trd_date, order_no=order_no)
-
-        # 7. ws push 阶段 B 结果
+        # v84: 不解 ack.code, 不写 Order (broker ord_cfm push 会异步处理真实状态)
+        #      transport._handle_ord_stk_reply_junk 已在另一个线程处理了 code!=0 废单路径
+        #      code==0 应答: broker_order_id 此时空, ord_cfm 异步推来时才有
         try:
-            asyncio.ensure_future(ws_manager.broadcast("order_update", _order_to_out_dict(order)))
-        except Exception as e:
-            log.warning("ws push (RPC done) failed: %s", e)
+            ack_code = int(ack.get("code", -1)) if isinstance(ack, dict) else -1
+        except (TypeError, ValueError):
+            ack_code = -1
+        log.info(
+            "v84 _submit_rpc_async: order_no=%s ack received (code=%s). " +
+            "code=0 → wait broker ord_cfm push; code!=0 → transport cache write handled.",
+            order_no, ack_code,
+        )
 
     except Exception as e:
         # 任何意外 (DB 查询失败/提交失败等) 也必须 log, 不允许吞掉
