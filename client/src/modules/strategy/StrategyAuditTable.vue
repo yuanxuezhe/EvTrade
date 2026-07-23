@@ -37,7 +37,7 @@
       <el-table-column label="当前价" width="100" align="right">
         <template #default="{ row }">
           <span v-if="row.current_price != null" class="text-mono">
-            {{ row.current_price.toFixed(3) }}
+            {{ formatPrice(row.current_price) }}
           </span>
         </template>
       </el-table-column>
@@ -64,6 +64,7 @@
 </template>
 
 <script setup>
+import { usePricePrecision } from '../../composables/usePricePrecision'
 import { computed } from 'vue'
 
 const props = defineProps({
@@ -71,6 +72,7 @@ const props = defineProps({
   loading: { type: Boolean, default: false },
   maxRows: { type: Number, default: 50 },
 })
+const { formatPrice } = usePricePrecision(() => props.stock_code || '')
 
 const TRIGGER_LABEL = {
   grid_triggered: '网格触发',

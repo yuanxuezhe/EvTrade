@@ -57,7 +57,7 @@
                   <span class="tl-time text-mono text-secondary">{{ item.time }}</span>
                 </div>
                 <div class="tl-body text-mono">
-                  {{ item.volume }} 股 @ ¥{{ item.price.toFixed(2) }}
+                  {{ item.volume }} 股 @ ¥{{ formatPrice(item.price) }}
                   <span class="tl-status" v-if="item.status !== '-'">
                     · <OrderStatusBadge :status="item.statusKey" size="sm" :remark="item.remark" :status_msg="item.status_msg" />
                   </span>
@@ -88,7 +88,7 @@
             <el-table-column prop="volume" label="数量" v-bind="COL.NUMBER" />
             <el-table-column prop="price" label="价格" v-bind="COL.MONEY">
               <template #default="{ row }">
-                <span class="text-mono">{{ row.price.toFixed(2) }}</span>
+                <span class="text-mono">{{ formatPrice(row.price) }}</span>
               </template>
             </el-table-column>
             <el-table-column prop="statusLabel" label="状态" v-bind="COL.STATUS">
@@ -109,6 +109,7 @@ import { computed, ref } from 'vue'
 import OrderStatusBadge from './OrderStatusBadge.vue'
 import { STATUS_LABEL } from '../utils/format'
 import { COL } from '../utils/tableColumns'
+import { usePricePrecision } from '../composables/usePricePrecision'
 
 const props = defineProps({
   orders: { type: Array, default: () => [] },
@@ -118,6 +119,7 @@ const props = defineProps({
 })
 
 const activeTab = ref('timeline')
+const { formatPrice } = usePricePrecision(() => props.stockCode)
 
 const orderTradeList = computed(() => {
   const list = []

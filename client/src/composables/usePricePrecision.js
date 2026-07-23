@@ -34,11 +34,15 @@ export function usePricePrecision(stockCodeGetter) {
   /**
    * 按 scale 四舍五入显示价格 (前端展示用)
    */
-  function formatPrice(price) {
+  function formatPrice(price, stockCode) {
     if (price === null || price === undefined || price === '') return ''
     const n = Number(price)
     if (!Number.isFinite(n)) return ''
-    return n.toFixed(precision.value)
+    // v82: 支持每行按 row.stock_code 计算精度
+    const p = stockCode !== undefined
+      ? stocksStore.stockScale(stockCode)
+      : precision.value
+    return n.toFixed(p)
   }
 
   /**

@@ -64,7 +64,7 @@
             </el-table-column>
             <el-table-column label="触发价" width="100" align="right">
               <template #default="{ row }">
-                <span class="text-mono">{{ row.trigger_price.toFixed(3) }}</span>
+                <span class="text-mono">{{ formatPrice(row.trigger_price, row.stock_code) }}</span>
               </template>
             </el-table-column>
             <el-table-column label="量" width="100" align="right">
@@ -96,9 +96,11 @@
 </template>
 
 <script setup>
+import { usePricePrecision } from '../../composables/usePricePrecision'
 defineProps({
   regimes: { type: Array, default: () => [] },
 })
+const { formatPrice } = usePricePrecision(() => '')
 </script>
 
 <style scoped>
