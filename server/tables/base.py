@@ -50,21 +50,122 @@ def get_engine():
 
 # ──────────────────────────── Row 容器 ────────────────────────────
 class Row:
-    """一行记录的轻量字典类 — 支持属性访问 + 字典访问 + 注释
+    """一行记录的轻量字典类 — 支持属性访问 + 字典访问 + 注释 + 用户伪代码风格
+
+    v81.11 增强:
+    - __init__(**kw) 支持关键字实例化, 字段缺失用 __defaults__ 填默认
+    - _owner_class 指向所属 TableBase 子类 (query_one 时绑定)
+    - update() 无参调用: 自动用 _owner_class + self._data, WHERE PK + SET 全字段 (除 PK)
 
     Examples:
+        # 旧用法 (v80 兼容)
         row = Order.query_one(trd_date='20260722', order_no='10000048')
-        row.price           # 属性访问
-        row['price']        # 字典访问
-        row.to_dict()       # 转纯 dict
-        for k, v in row:    # 迭代
+        row.price = 11.0
+        row.update(Orders, trd_date='20260722', order_no='10000048')  # 兼容
+
+        # 新用法 (v81.11 用户伪代码)
+        obj = Users(username='alice')           # 类实例化, 缺字段自动补默认
+        Users.add_one(obj)                      # 接 Row
+        obj = Users.query_one(id=1)
+        obj.is_active = False
+        obj.update()                            # 无参, 自动 PK WHERE + 全字段 SET
     """
 
-    __slots__ = ("_data", "_comments")
+    __slots__ = ("_data", "_comments", "_owner_class")
 
-    def __init__(self, data: Dict[str, Any], comments: Optional[Dict[str, str]] = None):
-        self._data = data
+    def __init__(self, data=None, *, _owner_class=None, comments=None, **kw):
+        """data dict 优先; kw 兼容; 双模式都支持"""
+        # 1. 收集所有数据
+        if isinstance(data, dict):
+            base = dict(data)
+        elif data is None:
+            base = {}
+        else:
+            base = dict(data)
+        base.update(kw)
+
+        # 2. 自动填默认 (如果提供了 _owner_class, 用其 __defaults__)
+        if _owner_class is not None:
+            defaults = getattr(_owner_class, '__defaults__', {}) or {}
+            for k, v in defaults.items():
+                base.setdefault(k, v)
+
+        # 3. _owner_class 不能进 data (避免 INSERT 时污染字段)
+        self._owner_class = _owner_class
+        self._data = base
         self._comments = comments or {}
+
+    # v81.11: 无参 update (user-style pseudo code)
+    def update(self, cls=None, **filters) -> int:
+        """Row.update()  无参自动 PK WHERE + 全字段 SET (除 PK).
+
+        支持伪代码 (用户原话):
+            obj = Users.query_one(id=1)
+            obj.is_active = False
+            obj.update()                         # 自动 UPDATE users SET ALL WHERE id=1
+
+        兼容老用法:
+            obj.update(Users, id=1)
+
+        返回受影响行数 (int).
+        """
+        # 模式 1: v81 兼容 - 显式 cls + filters
+        if cls is not None:
+            pk_fields = set(getattr(cls, '__pk_fields__', ['id']))
+            clean_data = {k: v for k, v in self._data.items() if k not in pk_fields}
+            n = cls.update_one(clean_data, return_rowcount=True, **filters)
+            # update_one 默认返回 Row. 这里拿 rowcount.
+            # 简化: 不调 update_one, 直接跑 UPDATE
+        # 模式 2: v81.11 无参 - 用 self._owner_class
+        owner = cls or self._owner_class
+        if owner is None:
+            raise ValueError(
+                "Row.update() 无参需要 Row._owner_class (在 query_one/add_one 时自动绑定). "
+                "或者显式调用: row.update(Users, id=1)"
+            )
+        pk_fields = set(owner.__pk_fields__)
+        # WHERE 用 filters 或 self._data 的 PK
+        if not filters:
+            filters = {pk: self._data[pk] for pk in pk_fields if pk in self._data}
+        missing_pk = [pk for pk in pk_fields if pk not in filters]
+        if missing_pk:
+            raise ValueError(
+                f"Row.update() 缺少 PK 字段值: {missing_pk}. "
+                f"必须先 query_one() 或显式 add_one() 后 update()."
+            )
+        # SET 用 self._data (除了 PK)
+        clean_data = {k: v for k, v in self._data.items() if k not in pk_fields}
+        # 直接跑 UPDATE, 拿 rowcount
+        from sqlalchemy import text as _text
+        from server.tables.base import get_engine as _engine
+        set_list = ", ".join(f"`{c}` = :upd_{c}" for c in clean_data)
+        where_list = " AND ".join(f"`{k}` = :pk_{i}" for i, k in enumerate(pk_fields))
+        sql = _text(f"UPDATE `{owner.__tablename__}` SET {set_list} WHERE {where_list}")
+        params = {f"upd_{c}": v for c, v in clean_data.items()}
+        params.update({f"pk_{i}": v for i, (k, v) in enumerate(filters.items()) if k in pk_fields})
+        with _engine().begin() as conn:
+            res = conn.execute(sql, params)
+        # 同步回 self._data (让 Row 真的反映 DB 状态)
+        for k, v in filters.items():
+            self._data[k] = v
+        return res.rowcount
+
+    # v81.11: Row.delete() 便捷 - 用 _owner_class + self PK
+    def delete(self) -> bool:
+        """Row.delete() 自动用 _owner_class + self PK DELETE.
+
+        Examples:
+            obj = Users.query_one(id=1)
+            obj.delete()
+        """
+        owner = self._owner_class
+        if owner is None:
+            raise ValueError("Row.delete() 需要 _owner_class")
+        pk_values = {pk: self._data[pk] for pk in owner.__pk_fields__ if pk in self._data}
+        missing = [pk for pk in owner.__pk_fields__ if pk not in self._data]
+        if missing:
+            raise ValueError(f"Row.delete() 缺少 PK: {missing}")
+        return owner.delete_one(**pk_values)
 
     # 属性访问
     def __getattr__(self, name: str) -> Any:
@@ -75,7 +176,7 @@ class Row:
 
     # 属性设置 (v81: 用户伪代码风格: row.xx = new_val 直接生效到 _data)
     def __setattr__(self, name: str, value: Any) -> None:
-        if name in ("_data", "_comments"):
+        if name in ("_data", "_comments", "_owner_class"):
             super().__setattr__(name, value)
             return
         self._data[name] = value
@@ -137,32 +238,7 @@ class Row:
             "推荐 api 层直接用表类.update_one({...}) 模式."
         )
 
-    # v81: 更友好的 update — 接收表类 + 可选过滤
-    def update(self, cls=None, **filters) -> int:
-        """Row.Update(cls=..., ..., pk=...): 把当前字段 UPDATE.
-
-        支持伪代码:
-            obj = Users.query_one(id=1)
-            obj.name = 'new'
-            obj.update(Users, id=1)
-
-        等价 SQL: UPDATE users SET ... WHERE id=1
-        返回受影响行数.
-        """
-        if cls is None:
-            raise ValueError(
-                "Row.update 需要显式 cls 参数. "
-                "用法: obj.update(Users, id=1)"
-            )
-        if not filters:
-            raise ValueError(
-                "Row.update 需要 PK 过滤. "
-                "用法: obj.update(Users, id=1)"
-            )
-        # 排除 PK 字段 — update_one 不允许 data 含 PK
-        pk_fields = set(getattr(cls, '__pk_fields__', ['id']))
-        clean_data = {k: v for k, v in self._data.items() if k not in pk_fields}
-        return cls.update_one(clean_data, **filters)
+    # v81.11 老 update 已迁移到 L99 (无参自动 PK WHERE)
 
     @property
     def comments(self) -> Dict[str, str]:
@@ -180,24 +256,45 @@ class TableBase:
       __field_types__: dict[str, str]  # 字段名 → MySQL type (生成器自动填)
 
     子类可选定义:
-      __auto_increment_pk__: str  # 自增主键字段名 (Add 时不回填, 只 insert)
+      __auto_increment_pk__: str     # 自增主键字段名 (Add 时不回填, 只 insert)
+      __defaults__: dict             # v81.11: 字段默认值 (类实例化时填到 Row _data)
 
     5 个核心类方法:
-      query_one(**pk)            # 按主键查
-      add_one(data)              # INSERT
+      query_one(**pk)            # 按主键查, 返回 Row (绑定 _owner_class)
+      add_one(data)              # INSERT (接 Row 或 dict)
       update_one(**pk, **data)   # UPDATE (pk 从 kwargs 取)
       delete_one(**pk)           # DELETE
       query_all(order, page, page_size)  # 分页
+
+    v81.11: __call__(**kw) 工厂 — 显式实例化 Row 时自动用 __defaults__ 填字段
+        Users(username='alice')                 # 等同 Row(_owner_class=Users, username='alice')
+        Users.add_one(user_row)                 # 接 Row
+        user_row.update()                       # 无参 WHERE PK + SET 全字段
     """
 
-    # 子类必须覆盖 ↓
+    # 子类必须覆盖
     __tablename__: str = ""
     __pk_fields__: Tuple[str, ...] = ()
     __fields__: Dict[str, str] = {}
     __field_types__: Dict[str, str] = {}
 
-    # 子类可选覆盖 ↓
-    __auto_increment_pk__: Optional[str] = None  # 'id' if int auto_increment
+    # 子类可选覆盖
+    __auto_increment_pk__: Optional[str] = None
+    __defaults__: Dict[str, Any] = {}  # v81.11: 字段默认 (cls(**kw) 时填)
+
+    # v81.11: __new__ 拦截类实例化 — Users(...) 自动返回 Row + 默认值
+    def __new__(cls, *args, **kw):
+        """类实例化 = 生成绑定到本类的 Row + 用 __defaults__ 填默认.
+
+        3 种模式:
+            obj = Users(username='alice')                 # kw 模式
+            obj = Users({'username':'x'})                 # dict 模式 (兼容)
+            obj = Users(username='alice', role='viewer')  # kw 模式 + 默认
+        """
+        if args and isinstance(args[0], dict):
+            data = args[0]
+            return Row(data, _owner_class=cls, **kw)
+        return Row(_owner_class=cls, **kw)
 
     # ──────────────── 内部 helper ────────────────
     @classmethod
@@ -303,9 +400,9 @@ class TableBase:
 
     @classmethod
     def _row_from_mapping(cls, mapping) -> Row:
-        """SQLAlchemy RowMapping / dict → Row"""
+        """SQLAlchemy RowMapping / dict → Row (v81.11: 自动绑 _owner_class)"""
         d = dict(mapping)
-        return Row(d, cls.__fields__)
+        return Row(d, comments=cls.__fields__, _owner_class=cls)
 
     @classmethod
     def _execute_select(cls, sql: str, params=None) -> List[Row]:
@@ -348,54 +445,85 @@ class TableBase:
         return rows[0] if rows else None
 
     @classmethod
-    def add_one(cls, data: Dict[str, Any]) -> Row:
-        """INSERT 一行, 返回带主键的 Row.
+    def add_one(cls, obj) -> Row:
+        """INSERT 一行, 返回带完整数据 + PK 的 Row.
 
-        - 自增主键: 插入后用 LAST_INSERT_ID() 回填
-        - 复合主键: data 必须含全部 PK 字段
+        v81.11: 接 Row 或 dict 两种模式:
+            Row 模式: o = Users(username='x'); Users.add_one(o)
+            dict 模式: Users.add_one({'username':'x'})    # 仍兼容
 
-        Examples:
-            Order.add_one({'trd_date':'20260722', 'order_no':'10000049',
-                           'stock_code':'000001.SZ', 'price':10.55, ...})
+        PK 列 (主键 + AUTO_INCREMENT 列) 自动跳过, 让 DB 自动生成.
+
+        Args:
+            obj: Row 对象 或 dict
+        Returns:
+            Row (含全字段值 + 已生成 PK)
         """
         cls._validate_subclass()
+
+        # v81.11: 接 Row / dict 双模式
+        if isinstance(obj, Row):
+            row = obj
+            # 自动绑 owner (如果 Row 没绑)
+            if row._owner_class is None:
+                row._owner_class = cls
+            # 转 dict
+            data = dict(row._data)
+        elif isinstance(obj, dict):
+            data = dict(obj)
+        else:
+            raise TypeError(
+                f"{cls.__name__}.add_one: obj 必须是 Row 或 dict, 收到 {type(obj).__name__}"
+            )
+
         if not data:
             raise ValueError(f"{cls.__name__}.add_one: data 不能为空")
+
+        # v81.11: PK 跳过 AUTO_INCREMENT (让 DB 生成), 复合 PK 字段保留
+        # 跳过 Row 内部字段 (_owner_class/_data/_comments 这些不可能进 data, 但保险)
+        data_out = {}
+        for k, v in data.items():
+            if k.startswith('_'):
+                continue  # 内部字段
+            if cls.__auto_increment_pk__ and k == cls.__auto_increment_pk__:
+                continue  # AUTO_INCREMENT, 让 DB 生成
+            data_out[k] = v
+
         # v81.10: 自动填充 NOT NULL 无 default 列 (MySQL strict mode)
-        data = dict(data)
         for col_name, col_type in cls._get_required_columns():
-            if col_name not in data:
+            if col_name not in data_out:
                 if "datetime" in col_type or "timestamp" in col_type:
-                    data[col_name] = datetime.now()
+                    data_out[col_name] = datetime.now()
                 elif "int" in col_type or "tinyint" in col_type:
-                    data[col_name] = 0
+                    data_out[col_name] = 0
                 elif "varchar" in col_type or "char" in col_type or "text" in col_type:
-                    data[col_name] = ""
+                    data_out[col_name] = ""
                 else:
-                    data[col_name] = ""
+                    data_out[col_name] = ""
         engine = get_engine()
-        cols = list(data.keys())
+        cols = list(data_out.keys())
+        if not cols:
+            raise ValueError(f"{cls.__name__}.add_one: 没有任何有效列可 INSERT")
         col_list = ", ".join(f"`{c}`" for c in cols)
         val_list = ", ".join(f":{c}" for c in cols)
         sql = text(f"INSERT INTO `{cls.__tablename__}` ({col_list}) VALUES ({val_list})")
         with engine.begin() as conn:
-            conn.execute(sql, data)
-            # v81.10: INSERT 后 SELECT * 回填完整 Row (含所有列, 避免 _data 缺字段)
-            # 优先按 PK 查, 没 PK 时用 LAST_INSERT_ID
-            pk_dict = {k: data[k] for k in cls.__pk_fields__ if k in data}
+            conn.execute(sql, data_out)
+            # v81.10: INSERT 后 SELECT * 回填完整 Row
+            pk_dict = {k: data_out[k] for k in cls.__pk_fields__ if k in data_out}
             if len(pk_dict) == len(cls.__pk_fields__):
-                sel_sql = f"SELECT * FROM `{cls.__tablename__}` WHERE " + \
+                sel_sql = "SELECT * FROM `" + cls.__tablename__ + "` WHERE " + \
                     " AND ".join([f"`{k}` = :pk_{i}" for i, k in enumerate(cls.__pk_fields__)])
                 sel_params = {f"pk_{i}": v for i, (k, v) in enumerate(pk_dict.items())}
                 row = conn.execute(text(sel_sql), sel_params).mappings().first()
                 if row:
                     return cls._row_from_mapping(dict(row))
-            # 兜底: 没 PK 时回填 last_insert_id
+            # 兜底: AUTO_INCREMENT
             if cls.__auto_increment_pk__:
                 last_id = conn.execute(text("SELECT LAST_INSERT_ID() AS id")).scalar()
-                data = dict(data)
-                data[cls.__auto_increment_pk__] = last_id
-        return cls._row_from_mapping(data)
+                data_out = dict(data_out)
+                data_out[cls.__auto_increment_pk__] = last_id
+        return cls._row_from_mapping(data_out)
 
     @classmethod
     def update_one(cls, data: Dict[str, Any], **pk) -> Row:
