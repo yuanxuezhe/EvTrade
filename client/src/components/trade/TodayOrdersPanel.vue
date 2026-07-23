@@ -310,11 +310,12 @@ const pagedTrades = computed(() => {
 
 const cancellingOrderNo = ref('')
 
-// 可撤状态: 非撤单审计 + 状态不在终态集
-const TERMINAL_STATUSES = new Set(['51', '52', '53', '54', '55', '56', '57'])
+// v91: 可撤状态白名单 - 仅 已报(50) / 部成(55) 可撤
+//   48/49 (未报/待报) broker order_id 未回报, 不可撤; 51/52 已在撤单流程中; 53/54/56/57 终态
+const CANCELLABLE_STATUSES = new Set(['50', '55'])
 function canCancel(row) {
   if (Number(row.order_flag) === 1) return false
-  return !TERMINAL_STATUSES.has(String(row.status))
+  return CANCELLABLE_STATUSES.has(String(row.status))
 }
 
 async function handleCancel(row) {

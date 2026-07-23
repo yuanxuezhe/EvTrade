@@ -122,12 +122,18 @@ TERMINAL_STATUSES = ('52', '53', '54', '56', '57')
 
 
 def is_cancellable(code: str) -> bool:
-    """是否可撤单 (v11: 含 broker 50=已报 也可撤)
+    """是否可撤单 (v91: 收紧到 已报 50 / 部成 55)
 
-    触发码 (48, 49, 50) 对应 broker UNREPORTED / WAIT_REPORTING / REPORTED.
-    broker 51=已报待撤 已算"撤单中", 不再可发起新撤单.
+    v11 旧规则: (48, 49, 50) - 未报/待报/已报 都可撤. 但 48/49 时 broker order_id 尚未回报,
+                 撤单 RPC 无的放针, 实际撤不下来.
+    v91 新规则: (50, 55) - 仅 已报/部成 可撤
+      - 48 未报 / 49 待报: broker order_id 未回报, 禁止撤单
+      - 50 已报: broker 已接收, 可撤
+      - 55 部成: 剩余未成交部分可撤
+      - 51/52 已报待撤/部成待撤: 已在撤单流程中, 不可再发起新撤单
+      - 53/54/56/57 终态: 不可撤
     """
-    return code in ('48', '49', '50')
+    return code in ('50', '55')
 
 
 def _status_msg(status: str) -> str:

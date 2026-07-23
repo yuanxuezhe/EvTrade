@@ -84,9 +84,9 @@ def register_cancel(router):
         if not order:
             raise HTTPException(status_code=404, detail={"code": "NOT_FOUND", "msg": "委托 {} 不存在".format(order_no)})
 
-        if order.status not in ("48", "49", "50"):  # v11: 含 broker 50=已报也可撤
+        if order.status not in ("50", "55"):  # v91: 仅 已报/部成 可撤 (48/49 broker order_id 未回报)
             return CancelResponse(
-                code=1, msg="当前 status={} 不可撤".format(order.status),
+                code=1, msg="当前 status={} 不可撤 (仅已报/部成可撤)".format(order.status),
                 order_id=order.order_id or "", cancel_order=None,
                 error="status {} non-cancellable".format(order.status),
             )

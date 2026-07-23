@@ -31,26 +31,37 @@ from server.services.push.dispatcher import PushDispatcher
 
 log = logging.getLogger(__name__)
 
-def _do_junk_update_sync(order_no: str, trd_date: str, status_msg: str) -> Optional["Order"]:
-    """v84: 同步执行废单 DB 写入 (run_in_executor 调用, 不阻塞 event loop).
+def _do_reply_update_sync(
+    order_no: str,
+    trd_date: str,
+    status: str,
+    status_msg: str,
+    flatten_cancelled: bool = False,
+) -> Optional["Order"]:
+    """v91: 同步执行 RPC 应答 DB 写入 (统一 code=0 待报 / code!=0 废单).
+
+    Args:
+        status: 目标 status 码 ('49' 待报 / '57' 废单)
+        status_msg: 状态描述
+        flatten_cancelled: True 时把 cancelled_volume 抹平到 volume (废单专用)
 
     返回更新后的 order 对象, 由主协程负责 ws push (主协程才有 event loop).
-    异常向外抛, 由 _handle_ord_stk_reply_junk 顶层 try/except 兜底.
+    异常向外抛, 由 _handle_ord_stk_reply 顶层 try/except 兜底.
     """
     # 延迟 import: tables 层依赖 MySQL 连接, 启动时不应触发
     from server.tables import Orders
     order = Orders.query_one(trd_date=trd_date, order_no=order_no)
     if not order:
-        log.warning("v84 junk update: trd_date=%s order_no=%s not found in Orders", trd_date, order_no)
+        log.warning("v91 reply update: trd_date=%s order_no=%s not found in Orders", trd_date, order_no)
         return None
-    order.status = "57"  # broker JUNK 废单
-    order.status_msg = status_msg[:240] if status_msg else "broker reject"
-    if not order.cancelled_volume:
+    order.status = status
+    order.status_msg = status_msg[:240] if status_msg else ""
+    if flatten_cancelled and not order.cancelled_volume:
         order.cancelled_volume = order.volume or 0
     order.update(Orders, trd_date=trd_date, order_no=order_no)
     log.info(
-        "v84 junk order updated: trd_date=%s order_no=%s status=57 msg=%r",
-        trd_date, order_no, status_msg,
+        "v91 reply order updated: trd_date=%s order_no=%s status=%s msg=%r",
+        trd_date, order_no, status, status_msg,
     )
     return order
 
@@ -242,7 +253,7 @@ class RPClient(MessageQueueClient):
             #       错误码 == 0 → 不处理 (broker ord_cfm push 会异步更新真实状态)
             # 时序: place.py _submit_rpc_async 同步等 ack 已被改写跳过 code!=0 写, 所以不会双重更新
             if func == "ord_stk" and msg_id:
-                await self._handle_ord_stk_reply_junk(pkt, msg_id)
+                await self._handle_ord_stk_reply(pkt, msg_id)
         except Exception as e:
             log.exception("RPClient decode/handle error: %s", e)
 
@@ -447,16 +458,17 @@ class RPClient(MessageQueueClient):
         except Exception:
             pass  # 日志失败不影响业务
 
-    async def _handle_ord_stk_reply_junk(self, reply_pkt: "MsgPacket", msg_id: str) -> None:
-        """v84: 处理 ord_stk 应答的废单路径 (code != 0).
+    async def _handle_ord_stk_reply(self, reply_pkt: "MsgPacket", msg_id: str) -> None:
+        """v91: 处理 ord_stk 应答 (统一以 ord_cfm 格式广播到前端).
 
-        流程:
-          1. 解 ack.code / ack.msg
-          2. code == 0 → 跳过 (broker ord_cfm push 会异步推真实状态)
-          3. code != 0 → 按 msgid 在 cache 中查 (order_no, trd_date, stock_code)
-             → 用 Tables API 更新 Order 为 status=57 + status_msg + cancelled_volume=volume
-             → ws_manager.broadcast('order_update') 通知前端
-             → 清 cache (避免长期占用)
+        应答与委托确认推送格式统一 (用户需求):
+          - code == 0 → 推 status=49 (待报) 给前端, 前端状态刷成待报
+          - code != 0 → 推 status=57 (废单) + 错误信息给前端, 前端刷成废单
+        两条路径都走 _broadcast_order_cfm helper (与 push/dispatcher.py 同协议).
+
+        状态倒退守门 (code=0 路径):
+          - 仅当当前 status=48 (未报) 时才推进到 49
+          - broker ord_cfm 可能先于 RPC reply 到达 (已推 50/55/56), 此时跳过避免覆盖
 
         异常隔离: 整个函数 try/except 包裹, 不影响 reply listener 继续跑.
         线程模型: 此函数在 reply listener 协程中执行; DB 写入 run_in_executor 不阻塞 event loop.
@@ -469,44 +481,63 @@ class RPClient(MessageQueueClient):
             except (TypeError, ValueError):
                 code_int = -1
 
-            if code_int == 0:
-                log.debug("v84 ord_stk reply code=0 skip (broker ord_cfm will async update)")
-                return
-
             entry = _lookup_msgid_orderno(msg_id)
             if not entry:
                 log.warning(
-                    "v84 ord_stk reply code=%s but msgid=%s NOT in cache (expired or never registered)",
+                    "v91 ord_stk reply code=%s but msgid=%s NOT in cache (expired or never registered)",
                     code_int, msg_id,
                 )
                 return
             order_no, trd_date, stock_code, _ts = entry
 
-            log.warning(
-                "v84 ord_stk JUNK detected: msgid=%s code=%s msg=%r order_no=%s trd_date=%s stock_code=%s",
-                msg_id, code_int, ack_msg, order_no, trd_date, stock_code,
-            )
+            # v91: 分两路径 - code=0 待报 / code!=0 废单
+            if code_int == 0:
+                # code=0 → 待报 (49). 防状态倒退: 仅当前 status=48 时推进
+                # (broker ord_cfm 可能先到已推 50/55/56, 此时跳过避免覆盖)
+                from server.tables import Orders as _Orders
+                cur = _Orders.query_one(trd_date=trd_date, order_no=order_no)
+                if cur and cur.status not in ('48', '49'):
+                    log.info(
+                        "v91 ord_stk reply code=0 skip: order_no=%s current status=%s (broker ord_cfm 已先到, 不倒退)",
+                        order_no, cur.status,
+                    )
+                    _evict_msgid_orderno(msg_id)
+                    return
+                log.info(
+                    "v91 ord_stk reply code=0 → 待报(49): msgid=%s order_no=%s trd_date=%s stock_code=%s",
+                    msg_id, order_no, trd_date, stock_code,
+                )
+                loop = asyncio.get_event_loop()
+                updated_order = await loop.run_in_executor(
+                    None, _do_reply_update_sync, order_no, trd_date, "49", "待报", False,
+                )
+            else:
+                # code!=0 → 废单 (57) + 抹平 cancelled_volume
+                log.warning(
+                    "v91 ord_stk JUNK detected: msgid=%s code=%s msg=%r order_no=%s trd_date=%s stock_code=%s",
+                    msg_id, code_int, ack_msg, order_no, trd_date, stock_code,
+                )
+                loop = asyncio.get_event_loop()
+                updated_order = await loop.run_in_executor(
+                    None, _do_reply_update_sync, order_no, trd_date, "57",
+                    ack_msg or f"broker reject code={code_int}", True,
+                )
 
-            # 异步线程池执行 DB 写入 (避免阻塞 reply listener event loop)
-            loop = asyncio.get_event_loop()
-            updated_order = await loop.run_in_executor(
-                None, _do_junk_update_sync, order_no, trd_date, ack_msg or f"broker reject code={code_int}",
-            )
             # ws push 必须在主 event loop (run_in_executor 线程没有 loop)
-            # v84.3: 改用 _broadcast_order_cfm helper 包装成 {type:'ord_cfm', channel, ts, data}
-            #   前端 ws_dispatch.js t='ord_cfm' 才识别 (裸 dict 之前被默默丢)
+            # v84.3: 走 _broadcast_order_cfm helper 包装成 {type:'ord_cfm', channel, ts, data}
+            #   前端 ws_dispatch.js t='ord_cfm' 才识别 (与 push/ord.py 推送同协议)
             if updated_order is not None:
                 try:
                     from server.services.push.order_broadcast import _broadcast_order_cfm
                     # _broadcast_order_cfm 内部用 asyncio.ensure_future, 在主 event loop 自动调度
                     _broadcast_order_cfm(updated_order, trace_id=msg_id)
                 except Exception as push_err:
-                    log.warning("v84.3 junk update ws push failed: %s", push_err)
+                    log.warning("v91 ws push failed: %s", push_err)
 
             # 显式清 cache (无论 DB 更新成功与否, 避免长期占用)
             _evict_msgid_orderno(msg_id)
         except Exception as e:
-            log.exception("v84 _handle_ord_stk_reply_junk error: %s", e)
+            log.exception("v91 _handle_ord_stk_reply error: %s", e)
 
     def _count_reply_rows(self, reply_pkt: MsgPacket) -> int:
         """估算 reply 第二结果集的 row 数（不强制解析，避免开销）。"""

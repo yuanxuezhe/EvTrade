@@ -567,14 +567,13 @@ const orderStatusLabel = (s) => STATUS_LABEL[s] || String(s || '—')
 const orderStatusTagType = (s) => STATUS_TYPE[s] || 'default'
 
 // ---- v74: T0Trade 委托表加撤单按钮 ----
-// 终态集 (与 TodayOrdersPanel 一致): 51=已报待撤, 52=已撤, 53=部撤待撤, 54=部撤, 55=废单, 56=已成, 57=已撤(部)
-// 可撤单: 非 cancel-row + 非终态
-const TERMINAL_STATUSES = new Set(['51', '52', '53', '54', '55', '56', '57'])
+// v91: 可撤状态白名单 - 仅 已报(50) / 部成(55) 可撤 (与 TodayOrdersPanel 一致)
+const CANCELLABLE_STATUSES = new Set(['50', '55'])
 const cancellingOrderNo = ref('')
 function canCancel(row) {
   if (!row) return false
   if (Number(row.order_flag) === 1) return false  // 本地代理撤单委托行,不能再撤
-  return !TERMINAL_STATUSES.has(String(row.status))
+  return CANCELLABLE_STATUSES.has(String(row.status))
 }
 async function handleCancel(row) {
   if (!row || !canCancel(row)) return
