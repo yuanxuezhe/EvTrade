@@ -145,7 +145,7 @@
         :total="todayOrders.length"
         :page-sizes="[10, 20, 50, 100]"
         layout="total, sizes, prev, pager, next"
-        small
+        size="small"
         background
         @current-change="onPageChange"
       />
@@ -227,7 +227,7 @@
         :total="todayTrades.length"
         :page-sizes="[10, 20, 50, 100]"
         layout="total, sizes, prev, pager, next"
-        small
+        size="small"
         background
         @current-change="onPageChange"
       />
@@ -277,21 +277,23 @@ watch(activeTab, async () => {
 })
 
 // 当日委托: trd_date === activeTrdDate + 排除 cancel-row (volume=0 会污染统计口径)
+// v90: 按 order_time 倒序 (最新在上), 数据层排序保证分页/新增推送都在顶部
 const todayOrders = computed(() => {
   const day = holdingsStore.activeTrdDate
   if (!day) return []
-  return holdingsStore.orders.filter(
-    (o) => o.trd_date === day && Number(o.order_flag) !== 1
-  )
+  return holdingsStore.orders
+    .filter((o) => o.trd_date === day && Number(o.order_flag) !== 1)
+    .sort((a, b) => (b.order_time || '').localeCompare(a.order_time || ''))
 })
 
 // v30.1: 当日成交: trd_date === activeTrdDate + 排除 cancel-fill (trade_type=1)
+// v90: 按 trade_time 倒序 (最新在上)
 const todayTrades = computed(() => {
   const day = holdingsStore.activeTrdDate
   if (!day) return []
-  return holdingsStore.trades.filter(
-    (t) => t.trd_date === day && Number(t.trade_type) !== 1
-  )
+  return holdingsStore.trades
+    .filter((t) => t.trd_date === day && Number(t.trade_type) !== 1)
+    .sort((a, b) => (b.trade_time || '').localeCompare(a.trade_time || ''))
 })
 
 // 分页 (panel-local state)

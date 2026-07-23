@@ -33,6 +33,7 @@ import {
 } from './holdings_helpers'
 import { saveOrder, saveTrade } from './holdings_idb'
 import { useT0Stats } from '../composables/useT0Stats'
+import { statusRank } from '../utils/format'  // v90: 状态阶段守门
 // v12: IDB 写通 — ws push 时 fire-and-forget 写 IDB (不阻塞 push)
 // v13: 改复合 key 单行存 (saveOrder/saveTrade 替代 saveOrdersForDate/saveTradesForDate),
 //      O(1) idbPut, 不再读全量 / 写全量
@@ -92,6 +93,16 @@ export function createPushHandlers(deps) {
     // v9 短路: cancel-row (order_flag=1) 不走 metaMerge（其 status 由 DELETE 端点写死, 不重算）
     if (Number(row.order_flag) === 1) {
       const idx = orders.value.findIndex((o) => o.order_no === row.order_no)
+      const ref = idx >= 0 ? orders.value[idx] : null
+      // v90: 状态阶段守门 - 倒退则丢弃 (不更新不弹窗)
+      if (ref) {
+        const curRank = statusRank(ref.status)
+        const newRank = statusRank(row.status)
+        if (newRank < curRank) {
+          log('warn', '交易', 'ws', `撤单审计丢弃(状态倒退): ${row.stock_code} ${row.order_no} ${ref.status}->${row.status}`)
+          return null
+        }
+      }
       if (idx >= 0) {
         orders.value[idx] = { ...orders.value[idx], ...row }
       } else {
@@ -113,6 +124,17 @@ export function createPushHandlers(deps) {
     const idx = orders.value.findIndex((o) => o.order_no === row.order_no)
     const ref = idx >= 0 ? orders.value[idx] : null
     const merged = metaMerge(row, ref)
+    // v90: 状态阶段守门 - new_rank < current_rank 视为倒退, 丢弃 (不更新不弹窗)
+    //   防止 broker 重推旧状态导致表格倒着刷 (如已成 56 回已报 50)
+    //   new_rank >= current_rank 放行 (含 rank 3 并行: 51 撤单中 <-> 55 部成 互不倒退)
+    if (ref) {
+      const curRank = statusRank(ref.status)
+      const newRank = statusRank(merged.status)
+      if (newRank < curRank) {
+        log('warn', '交易', 'ws', `委托推送丢弃(状态倒退): ${row.stock_code} ${row.order_no} ${ref.status}->${merged.status}`)
+        return null
+      }
+    }
     if (idx >= 0) {
       orders.value[idx] = merged
       log('info', '交易', 'ws', `委托状态: ${merged.stock_code} ${action} (${merged.status || ''})`)

@@ -128,8 +128,7 @@ def handle_ord_cfm(db, row: Dict[str, Any], ts: str) -> Optional[Dict[str, Any]]
 
     print(f"[ord_cfm] updated trd_date={trd_date} order_no={order_no} order_id={order_id} status={order.status} (broker_status={broker_status}, cum={order.traded_volume}/{order.volume}, avg={order.avg_price})")
 
-    # v79.2: 只推 ws 50/57, 其他 return None 让 dispatcher._broadcast_generic 跳过 ws 广播
-    #   但 DB 已经 commit, 前端 bootstrap refreshAll 也能拿到正确累计
-    if order.status not in ('50', '57'):
-        return None
+    # v90: 委托推送始终广播, 让前端委托表实时刷新成交数量/成交均价/成交金额/状态
+    #   v79.2 之前只推 50/57, 导致部成(51)/已成(55)/已撤(52)/部撤(53/54)状态前端不刷新,
+    #   只能等 bootstrap refreshAll 兜底 (纯撤单无成交时永远不刷新)
     return _order_to_out_dict(order)

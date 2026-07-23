@@ -130,7 +130,9 @@ function _onOrderCfm(row) {
   // v13: 拿 applyOrderPush 返回的 final status (merged.status / row.status)
   //   之前用 row.status (broker 原始) 与表格显示 (merged.status 推断) 不一致
   //   守门/跳过返 null, 不发通知
-  // v79 (REQ-TRADE-032): 前端不做去重过滤, 后端只推 50/57, 收到即通知
+  // v79 (REQ-TRADE-032): 前端不做去重过滤
+  // v90: 后端改为始终广播 (委托表实时刷新成交数量/均价/金额/状态);
+  //   通知只在已报(50)/废单(57)弹, 其他状态仅更新表格不弹通知
   let finalStatus = null
   try {
     const holdings = useHoldingsStore()
@@ -141,9 +143,11 @@ function _onOrderCfm(row) {
 
   if (finalStatus == null) return
 
-  // v79 (REQ-TRADE-032): 控制台日志 — 委托确认: 交易日、委托编号、证券代码、状态
+  // v90: 委托确认日志 (所有状态推进都记, 便于调试推送链路)
   log.info(`[ord_cfm] 委托确认: trd_date=${row.trd_date || '-'} order_no=${row.order_no} code=${row.stock_code} status=${finalStatus}`)
 
+  // v90: 状态向后推进即弹窗 (applyOrderPush 已用 statusRank 守门, 倒退的不会到这里)
+  //   去掉 v79 的 50/57 限制, 让部成/已成/撤单等状态推进都通知用户
   _notifyOrder(row.stock_code, finalStatus, row)
 }
 
@@ -188,8 +192,7 @@ function _onTradeCfm(row) {
 
 function _notifyOrder(code, status, row) {
   // v79 (REQ-TRADE-032): 文案统一 — 交易日、委托编号、证券代码、状态
-  //   后端 ord_cfm 只推 50 (已报) / 57 (废单), 前端不做 4 类状态判断
-  //   之前 line 210-215 的 56/55/52/57/54/53/50/49 分支全部不再触发
+  // v90: _onOrderCfm 已守门只对 50/57 调本函数, 这里不再判状态
   const s = String(status || '')
   const label = STATUS_LABEL[s] || s || '已报'
   const trdDate = row.trd_date || '-'

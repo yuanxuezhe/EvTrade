@@ -140,6 +140,33 @@ export const STATUS_TYPE = {
   '255': 'info'       // 未知
 }
 
+/**
+ * v90: 委托状态阶段 rank (订单生命周期单调递增)
+ * 用于前端 ws 推送守门: new_rank >= current_rank 才更新+弹窗, 防止状态倒退
+ *
+ * 阶段划分 (broker xtconstant 码):
+ *   rank 1: 48/49  待报/未报 (初始)
+ *   rank 2: 50     已报
+ *   rank 3: 51     已报待撤 (撤单流程开始)
+ *          55     部成 (成交流程进行中)
+ *   rank 4: 52     部成待撤
+ *   rank 5: 53/54/56/57/255  终态 (部成部撤/已撤/已成/废单/未知)
+ *
+ * rank 3 并行: 51(撤单中) 与 55(部成) 互不倒退, 业务上 55->52(部成后撤单) rank 3->4 向后推进放行
+ */
+export const STATUS_RANK = {
+  '48': 1,  '49': 1,
+  '50': 2,
+  '51': 3,  '55': 3,
+  '52': 4,
+  '53': 5,  '54': 5,  '56': 5,  '57': 5,  '255': 5,
+}
+
+/** v90: 取状态阶段 rank; 未知状态返 0 (放行, 不阻塞首次写入) */
+export function statusRank(s) {
+  return STATUS_RANK[String(s)] ?? 0
+}
+
 /** 状态色调分组：pending=等待中, working=进行中, done=终态成功, terminal=终态撤销/废单 */
 export const STATUS_TONE = {
   '48':  'pending',// v84.3 待报
