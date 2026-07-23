@@ -25,9 +25,11 @@ export function useT0OrderSubmit({ stockCode, priceType, balanceCoeff, submittin
   async function submitOrder({ orderType, volume, price, taskId = null, stockCodeOverride = null }) {
     submitting.value = true
     try {
+      // v83: 价格类型协议 11=限价 5=最新价 44=市价 (与 xtconstant 一致)
       const priceTypeCode = priceType.value === 'market' ? 44
-        : priceType.value === 'oppose' ? 14
-        : 11  // 'latest' / 'limit'
+        : priceType.value === 'oppose' ? 44  // v83: oppose → 市价 (对手方最优价 ≈ 市价)
+        : priceType.value === 'latest' ? 5
+        : 11  // 'limit'
       // change 2026-07-21-t0-balance-stock-code-guard: 优先用 stockCodeOverride 兜底,
       //   防止 balanceStockCode 为空时 (selectedTaskId 失效) 后端 place.py:84 校验失败.
       //   T0Trade.vue onBalanceTask 在 selectedTaskId/tasksById 失效时, 从 taskRows 直接取 row.stock_code 传入.

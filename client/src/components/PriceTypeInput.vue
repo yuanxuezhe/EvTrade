@@ -4,7 +4,7 @@
   沿用 v28 StockCodePicker (.scp- 前缀) 视觉骨架 (实测贴一起, baseline 对齐), 改前缀 pti-:
   - 左 50% el-input (类型 number, 无 controls): 输入价格 (FIX_PRICE 启用; 市价/最新价 只读)
   - 右 50% el-select: 价格类型 (限价/最新价/市价)
-  - 默认 PriceType.FIX_PRICE (0 = 限价)
+  - 默认 PriceType.FIX_PRICE (11 = 限价)
 
   用户反馈 v33 上线后样式丑 ("委托价格组件很丑"), 原因:
     - 用了 el-input-number 自带 +/- controls → "上下箭头" 与 StockCodePicker 风格不一致
@@ -15,7 +15,7 @@
 
   Props:
     - price      (Number|String) : v-model:price
-    - priceType  (Number)        : v-model:priceType, 默认 PriceType.FIX_PRICE (0)
+    - priceType  (Number)        : v-model:priceType, 默认 PriceType.FIX_PRICE (11)
     - disabled   (Boolean)       : 是否禁用整个组件
     - placeholder(String)        : 左 input 占位符
     - size       (String)        : 'default' (默认) | 'small' | 'large'

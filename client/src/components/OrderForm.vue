@@ -131,8 +131,8 @@ const form = reactive({
   stock_name: '',
   // 柜台 order_type：股票 23=买入，24=卖出
   order_type: OrderType.BUY,
-  // v__: 柜台 price_type: 0=限价 1=最新价 2=市价 (与 xtconstant 柜台协议 1:1 对齐)
-  //   UI 默认 FIX_PRICE = 0
+  // v83: 柜台 price_type: 11=限价 5=最新价 44=市价 (与 xtconstant 柜台协议 1:1 对齐)
+  //   UI 默认 FIX_PRICE = 11
   price_type: PriceType.FIX_PRICE,
   price: 0,
   volume: 100

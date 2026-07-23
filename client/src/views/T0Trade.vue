@@ -911,7 +911,11 @@ async function onSellTask(row) {
 // 二次确认 dialog 用户点"确认下单" 才真正下单
 async function _submitOrder(p) {
   try {
-    const priceTypeCode = p.priceType === 'market' ? 44 : 11
+    // v83: 11=限价 5=最新价 44=市价 (与 xtconstant 一致)
+    const priceTypeCode = p.priceType === 'market' ? 44
+      : p.priceType === 'oppose' ? 44
+      : p.priceType === 'latest' ? 5
+      : 11  // 'limit'
     const res = await orderStore.placeOrder({
       stock_code: p.stockCode,
       order_type: p.orderType,
