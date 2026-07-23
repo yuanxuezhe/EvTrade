@@ -4,15 +4,16 @@
 EvTrade 一键启停 — 开发期进程生命周期管理 (跨平台单一 Python 入口)
 
 Usage:
-    python scripts/evctl.py start                  # 起三个
-    python scripts/evctl.py stop                   # 停三个
-    python scripts/evctl.py restart                # 停 + 起
-    python scripts/evctl.py status                 # 看状态
-    python scripts/evctl.py start backend          # 只起后端
-    python scripts/evctl.py stop frontend hqserver # 停指定
+    uv run python scripts/evctl.py start                  # 起三个
+    uv run python scripts/evctl.py stop                   # 停三个
+    uv run python scripts/evctl.py restart                # 停 + 起
+    uv run python scripts/evctl.py status                 # 看状态
+    uv run python scripts/evctl.py start backend          # 只起后端
+    uv run python scripts/evctl.py stop frontend hqserver # 停指定
 
 约束:
-    - Python 3.6.8 兼容 (无 dataclasses / walrus / capture_output+text)
+    - 通过 `uv run` 启动时, sys.executable 自动指向 .venv 的 Python,
+      子进程 (uvicorn / hqserver.py) 继承同一解释器, 无需手动激活 venv.
     - 端口 8000 / 50998 / 8765 硬编码, 不读 env
     - 仅用标准库 (无 psutil / colorama)
 """

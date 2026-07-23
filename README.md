@@ -7,17 +7,31 @@ A 股智能交易终端。Vue 3 + FastAPI + msgpacket RPC + XtQuant / QMT 柜台
 - 鉴权：JWT + RBAC（admin / trader / viewer）。
 - 开发流程：spec-driven（详见 [`openspec/AGENTS.md`](openspec/AGENTS.md)）。
 
+## 环境准备
+
+项目用 [uv](https://docs.astral.sh/uv/) 管理 Python 与依赖，跨机器零文档即可启动。
+
+```bash
+# 1. 装 uv (一次性)
+#    Windows (Scoop):  scoop install uv
+#    macOS/Linux:      curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# 2. 同步环境 (clone 后首次必跑)
+uv sync
+# uv 会按 .python-version 自动下载 Python 3.10、按 uv.lock 还原依赖到 .venv/
+```
+
 ## 启动
 
 ```bash
-# 一键启动 backend / frontend / hqserver
-python scripts/evctl.py start
+# 一键启动 backend / frontend / hqserver (默认走 .venv)
+uv run python scripts/evctl.py start
 
 # 查看状态
-python scripts/evctl.py status
+uv run python scripts/evctl.py status
 
 # 停止
-python scripts/evctl.py stop
+uv run python scripts/evctl.py stop
 ```
 
 端口：backend `:8000`、frontend `:50998`、hqserver `:8765`。

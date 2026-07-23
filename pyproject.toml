@@ -1,0 +1,31 @@
+[project]
+name = "evtrade"
+version = "0.1.0"
+requires-python = ">=3.10"
+dependencies = [
+    "aio-pika>=7.0.0,<8.0.0",
+    "bcrypt>=4.0.0,<5.0.0",
+    "cryptography>=42.0.0",
+    "fastapi>=0.83.0,<1.0.0",
+    "msgpacket",
+    "passlib>=1.7.0,<2.0.0",
+    "pydantic>=1.9.0,<2.0.0",
+    "pymysql>=1.1.0,<2.0.0",
+    "pypinyin>=0.50.0,<1.0.0",
+    "python-dotenv>=1.2.2",
+    "python-jose>=3.3.0,<4.0.0",
+    "python-multipart>=0.0.5,<1.0.0",
+    "requests>=2.34.2",
+    "sqlalchemy>=1.4.0,<2.0.0",
+    "uvicorn>=0.20,<0.30",
+    "websockets>=9.0,<11.0",
+]
+
+[tool.uv.sources]
+msgpacket = { path = "vendor/msgpacket-1.1.0-py3-none-any.whl" }
+
+[dependency-groups]
+dev = [
+    "httpx>=0.28.1",
+    "pytest>=9.1.1",
+]
