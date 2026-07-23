@@ -112,7 +112,7 @@ export function priceTypeLabel(p) {
  * v11 删除旧 14 个英文 fall-back 兼容 key（grep 0 处外部引用）。
  */
 export const STATUS_LABEL = {
-  '48':  '待报',   # v84.3: 与后端一致 (broker 反馈前)
+  '48':  '待报',   // v84.3: 与后端一致 (broker 反馈前)
   '49':  '待报',
   '50':  '已报',
   '51':  '已报待撤',
