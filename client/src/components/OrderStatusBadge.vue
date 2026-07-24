@@ -103,11 +103,11 @@ const tooltipContent = computed(() => {
   font-variant-numeric: tabular-nums;
 }
 
-/* Tone: pending —— 蓝色，等待/待报状态 */
+/* Tone: pending —— 蓝色，等待/待报/已报状态 */
 .tone-pending {
-  background: rgba(95, 168, 255, 0.10);
+  background: rgba(95, 168, 255, 0.12);
   color: #3a7bd5;
-  border-color: rgba(95, 168, 255, 0.25);
+  border-color: rgba(95, 168, 255, 0.30);
 }
 
 /* Tone: working —— 橙色，部成/部成待撤等中间态 */
@@ -117,18 +117,18 @@ const tooltipContent = computed(() => {
   border-color: rgba(255, 167, 38, 0.30);
 }
 
-/* Tone: done —— 绿色，已成 */
+/* Tone: done —— 绿色，已成/部成 */
 .tone-done {
-  background: rgba(22, 181, 114, 0.10);
-  color: #16b572;
+  background: rgba(22, 181, 114, 0.12);
+  color: #15a362;
   border-color: rgba(22, 181, 114, 0.30);
 }
 
-/* Tone: terminal —— 灰色，已撤/废单/部撤等终止态 */
+/* Tone: terminal —— 深灰，已撤/部成部撤/废单等终止态 */
 .tone-terminal {
-  background: rgba(160, 174, 192, 0.12);
-  color: #6b7785;
-  border-color: rgba(160, 174, 192, 0.30);
+  background: rgba(100, 110, 130, 0.10);
+  color: #5a6474;
+  border-color: rgba(100, 110, 130, 0.25);
 }
 
 /* Pulse 动画 —— 给仍可能变化的中间态 */

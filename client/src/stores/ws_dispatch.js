@@ -3,8 +3,9 @@
  *
  * 职责:
  * - dispatchPayload(payload) — type → store
- * - _onOrderCfm / _onTradeCfm / _onQuote
- * - _notifyOrder — 委托状态变更通知
+ * - _onOrderCfm — 委托推送: 更新缓存 + 智能通知 (仅字段变化时弹)
+ * - _onTradeCfm — 成交通知: 每一笔都弹, 显示进度
+ * - _onQuote — 行情写入
  *
  * 不持有 WebSocket 连接，纯函数式（依赖注入 store getter）
  * 这样 ws_heartbeat.js 持有连接，dispatch 拿 payload 就行
@@ -15,6 +16,12 @@
  * change consolidate-position-data-flow:
  *   _onPositionCfm / _onAssetCfm 已删除 (xtquant broker 不发 pos_cfm / ast_cfm)
  *   position.js / asset.js 通过 computed 桥接 holdings.positions / cachedAsset
+ *
+ * v96 推送优化:
+ *   - 委托: 只在 status/traded_volume/avg_price/traded_amount 变化时才弹窗
+ *   - 成交: 每一笔都推
+ *   - 弹窗颜色: 已报=蓝色, 成交=绿色, 废单=红色, 已撤/部成部撤=黑色
+ *   - 成交弹窗: 显示委托状态 + 成交进度 (traded/volume) + 成交均价
  */
 import { ElNotification } from 'element-plus'
 import { useQuoteStore } from './quote'
@@ -25,7 +32,7 @@ import { useWsStore } from './ws'
 // change 2026-07-15-system-init-broadcast: 收到 init_completed 时需要刷新 asset/position store
 import { useAssetStore } from './asset'
 import { usePositionStore } from './position'
-import { STATUS_LABEL } from '../utils/format'
+import { STATUS_LABEL, STATUS_TONE } from '../utils/format'
 import { makeLogger } from '../utils/logger'
 
 const log = makeLogger('ws')
@@ -120,22 +127,24 @@ function _onQuote(row) {
   } catch (_) { /* 同上 */ }
 }
 
+/**
+ * v96: 委托推送处理 — 更新缓存 + 智能通知
+ * 只有在 status/traded_volume/avg_price/traded_amount 实际变化时才弹窗
+ * 弹窗按状态分组显示不同颜色和内容
+ */
 function _onOrderCfm(row) {
-  // 后端重组包后，row 已是 OrderOut 格式（order_no/status/stock_code 等）
   if (!row || !row.order_no) {
     log.warn('_onOrderCfm 缺 order_no, 跳过:', row)
     return
   }
 
-  // v13: 拿 applyOrderPush 返回的 final status (merged.status / row.status)
-  //   之前用 row.status (broker 原始) 与表格显示 (merged.status 推断) 不一致
-  //   守门/跳过返 null, 不发通知
-  // v79 (REQ-TRADE-032): 前端不做去重过滤
-  // v90: 后端改为始终广播 (委托表实时刷新成交数量/均价/金额/状态);
-  //   通知只在已报(50)/废单(57)弹, 其他状态仅更新表格不弹通知
+  // 1. 先查推送前的旧状态 (用于 diff)
+  const holdings = useHoldingsStore()
+  const oldOrder = (holdings.orders || []).find((o) => o.order_no === row.order_no)
+
+  // 2. 写入缓存 (applyOrderPush 内部有 statusRank 守门, 倒退则跳过)
   let finalStatus = null
   try {
-    const holdings = useHoldingsStore()
     finalStatus = holdings.applyOrderPush(row, 'update')
   } catch (e) {
     log.error('_onOrderCfm applyOrderPush failed:', e)
@@ -143,16 +152,131 @@ function _onOrderCfm(row) {
 
   if (finalStatus == null) return
 
-  // v90: 委托确认日志 (所有状态推进都记, 便于调试推送链路)
+  // 3. 日志: 委托确认
   log.info(`[ord_cfm] 委托确认: trd_date=${row.trd_date || '-'} order_no=${row.order_no} code=${row.stock_code} status=${finalStatus}`)
 
-  // v90: 状态向后推进即弹窗 (applyOrderPush 已用 statusRank 守门, 倒退的不会到这里)
-  //   去掉 v79 的 50/57 限制, 让部成/已成/撤单等状态推进都通知用户
-  _notifyOrder(row.stock_code, finalStatus, row)
+  // 4. 智能 diff: 只有关键字段变化才弹窗
+  const hasChange = _hasOrderFieldChange(oldOrder, row, finalStatus)
+  if (!hasChange) return
+
+  // 5. 按状态分类弹窗
+  _notifyOrderSmart(row, finalStatus)
 }
 
+/**
+ * v96: 判断委托推送是否有关键字段变化 (status / traded_volume / avg_price / traded_amount)
+ */
+function _hasOrderFieldChange(oldOrder, newRow, finalStatus) {
+  if (!oldOrder) {
+    // 新委托一定变化
+    return true
+  }
+  const newStatus = String(finalStatus)
+  const oldStatus = String(oldOrder.status || '')
+  if (newStatus !== oldStatus) return true
+  // 成交量变化
+  if (Number(newRow.traded_volume) !== Number(oldOrder.traded_volume)) return true
+  // 成交均价变化
+  if (Number(newRow.avg_price) !== Number(oldOrder.avg_price)) return true
+  // 成交金额变化
+  if (Number(newRow.traded_amount) !== Number(oldOrder.traded_amount)) return true
+  // 撤单量变化
+  if (Number(newRow.cancelled_volume) !== Number(oldOrder.cancelled_volume)) return true
+  return false
+}
+
+/**
+ * v96: 委托智能通知 — 按状态分颜色/内容
+ */
+function _notifyOrderSmart(row, status) {
+  const s = String(status || '')
+  const label = STATUS_LABEL[s] || s || '已报'
+  const trdDate = row.trd_date || '-'
+  const orderNo = row.order_no || '-'
+  const code = row.stock_code || ''
+
+  // 根据状态/阶段决定通知类型和显示内容
+  switch (s) {
+    case '50': {
+      // 已报 — 蓝色, 简洁
+      ElNotification({
+        title: `${code} 委托已报`,
+        message: `${trdDate} ${orderNo} ${label}`,
+        type: 'info',
+        duration: 3000,
+        grouping: true,
+      })
+      break
+    }
+    case '55': {
+      // 部成 — 绿色, 显示进度
+      const traded = Number(row.traded_volume) || 0
+      const total = Number(row.volume) || 0
+      const avgPx = row.avg_price != null ? Number(row.avg_price).toFixed(2) : '-'
+      ElNotification({
+        title: `${code} 部分成交`,
+        message: `${trdDate} ${orderNo} 成交 ${traded}/${total} 均价 ${avgPx}`,
+        type: 'success',
+        duration: 3500,
+        grouping: true,
+      })
+      break
+    }
+    case '56': {
+      // 已成 — 绿色, 全部成交
+      const total = Number(row.volume) || 0
+      const avgPx = row.avg_price != null ? Number(row.avg_price).toFixed(2) : '-'
+      ElNotification({
+        title: `${code} 全部成交`,
+        message: `${trdDate} ${orderNo} 成交 ${total} 均价 ${avgPx}`,
+        type: 'success',
+        duration: 3500,
+        grouping: true,
+      })
+      break
+    }
+    case '57': {
+      // 废单 — 红色
+      const msg = row.status_msg || row.remark || ''
+      ElNotification({
+        title: `${code} 废单`,
+        message: `${trdDate} ${orderNo}${msg ? ' - ' + msg : ''}`,
+        type: 'error',
+        duration: 5000,
+        grouping: true,
+      })
+      break
+    }
+    case '54':
+    case '53': {
+      // 已撤 / 部成部撤 — 灰黑色
+      ElNotification({
+        title: `${code} ${label}`,
+        message: `${trdDate} ${orderNo} ${s === '53' ? '部成部撤' : '已撤'}`,
+        type: 'info',
+        duration: 3000,
+        grouping: true,
+      })
+      break
+    }
+    default: {
+      // 其他状态 (待报/已报待撤/部成待撤等)
+      ElNotification({
+        title: '委托确认',
+        message: `${trdDate} ${orderNo} ${code} ${label}`,
+        type: 'info',
+        duration: 2500,
+        grouping: true,
+      })
+    }
+  }
+}
+
+/**
+ * v96: 成交通知 — 每一笔都推
+ * 显示: 委托状态 + 成交进度 + 成交均价
+ */
 function _onTradeCfm(row) {
-  // 后端重组包后，row 已是 TradeOut 格式（trade_id/volume/price 等）
   if (!row || !row.trade_id) {
     log.warn('_onTradeCfm 缺 trade_id, 跳过:', row)
     return
@@ -166,42 +290,40 @@ function _onTradeCfm(row) {
   }
 
   const dir = String(row.order_type) === '24' ? '卖' : '买'
-  // 状态: 累计成交后从订单表取 status (部成/已成), trd_cfm 本身不直接给 status
-  //   用 holdings.orders 找原订单取 status_msg 或 status
-  let orderStatus = '-'
-  let orderStatusLabel = '-'
+  const code = row.stock_code || ''
+  const trdDate = row.trd_date || '-'
+  const orderNo = row.order_no || '-'
+
+  // 从 holdings.orders 找原订单, 取最新状态和累计进度
+  let orderLabel = '-'
+  let tradedVol = 0
+  let totalVol = 0
+  let avgPx = '-'
   try {
     const holdings = useHoldingsStore()
     const ord = (holdings.orders || []).find((o) => o.order_no === row.order_no)
     if (ord) {
-      orderStatus = ord.status || '-'
-      orderStatusLabel = STATUS_LABEL[orderStatus] || orderStatus
+      orderLabel = STATUS_LABEL[ord.status] || ord.status
+      tradedVol = Number(ord.traded_volume) || 0
+      totalVol = Number(ord.volume) || 0
+      avgPx = ord.avg_price != null ? Number(ord.avg_price).toFixed(2) : '-'
     }
   } catch (_) { /* 取不到状态兜底 */ }
 
-  // v79 (REQ-TRADE-032): 控制台日志 — 成交推送: 交易日、委托编号、证券代码、成交数量@成交价格、状态
-  log.info(`[trd_cfm] 成交推送: trd_date=${row.trd_date || '-'} order_no=${row.order_no} code=${row.stock_code} ${row.volume}@${row.price} status=${orderStatusLabel}`)
+  // 日志
+  log.info(`[trd_cfm] 成交推送: trd_date=${trdDate} order_no=${orderNo} code=${code} ${row.volume}@${row.price} status=${orderLabel}`)
 
+  // 通知 — 绿色, 显示进度
   ElNotification({
-    title: '成交通知',
-    message: `${row.trd_date || '-'} ${row.order_no} ${row.stock_code} ${row.volume}@${row.price} ${orderStatusLabel}`,
+    title: `${code} ${dir}入成交`,
+    message: `${trdDate} ${orderNo} 本次 ${row.volume}@${row.price} 累计 ${tradedVol}/${totalVol} 均价 ${avgPx} ${orderLabel}`,
     type: 'success',
-    duration: 4000
+    duration: 4000,
+    grouping: true,
   })
 }
 
-function _notifyOrder(code, status, row) {
-  // v79 (REQ-TRADE-032): 文案统一 — 交易日、委托编号、证券代码、状态
-  // v90: _onOrderCfm 已守门只对 50/57 调本函数, 这里不再判状态
-  const s = String(status || '')
-  const label = STATUS_LABEL[s] || s || '已报'
-  const trdDate = row.trd_date || '-'
-  const orderNo = row.order_no || '-'
-  let nType = 'info'
-  let msg = `${trdDate} ${orderNo} ${code} ${label}`
-
-  ElNotification({ title: '委托确认', message: msg, type: nType, duration: 3500 })
-}
+// (removed: _notifyOrder — replaced by _notifyOrderSmart v96)
 
 /**
  * change strategy_trade task 12: strategy_update 频道分发
