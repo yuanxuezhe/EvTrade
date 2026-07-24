@@ -116,6 +116,18 @@
               <span class="text-mono">{{ row.trade_unit ?? 1 }}</span>
             </template>
           </el-table-column>
+          <el-table-column label="类型" width="80" align="center">
+            <template #default="{ row }">
+              <el-tag :type="row.stktype === 1 ? 'warning' : ''" size="small">
+                {{ row.stktype === 1 ? 'ETF' : '股票' }}
+              </el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column prop="scale" label="精度" width="70" align="center">
+            <template #default="{ row }">
+              <span class="text-mono">{{ row.scale ?? 2 }}</span>
+            </template>
+          </el-table-column>
           <!-- v46+ short-name-auto: 首字母列已隐藏 (后端自动生成, 前端无需展示) -->
           <el-table-column label="操作" width="100" fixed="right">
             <template #default="{ row }">
