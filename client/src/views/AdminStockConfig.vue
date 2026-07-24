@@ -94,23 +94,23 @@
           empty-text="无数据"
           style="margin-top: 12px"
         >
-          <el-table-column prop="stock_code" label="代码" min-width="100" />
+          <el-table-column prop="stock_code" label="代码" width="110" />
 
-          <el-table-column prop="stock_name" label="名称" min-width="120">
+          <el-table-column prop="stock_name" label="名称" min-width="90" show-overflow-tooltip>
             <template #default="{ row }">
               <span v-if="!row._editing">{{ row.stock_name }}</span>
               <el-input v-else v-model="row._draft.stock_name" size="small" maxlength="64" />
             </template>
           </el-table-column>
 
-          <el-table-column prop="sector" label="板块" min-width="120">
+          <el-table-column prop="sector" label="板块" min-width="90" show-overflow-tooltip>
             <template #default="{ row }">
               <span v-if="!row._editing">{{ row.sector || '-' }}</span>
               <el-input v-else v-model="row._draft.sector" size="small" maxlength="64" />
             </template>
           </el-table-column>
 
-          <el-table-column label="回转标志" width="110" align="center">
+          <el-table-column label="回转" width="100" align="center">
             <template #default="{ row }">
               <template v-if="!row._editing">
                 <el-tag v-if="row.is_t0_able" type="success" size="small">T+0</el-tag>
@@ -133,7 +133,7 @@
             </template>
           </el-table-column>
 
-          <el-table-column prop="trade_unit" label="买卖单位" width="100" align="right">
+          <el-table-column prop="trade_unit" label="单位" width="90" align="right">
             <template #default="{ row }">
               <span v-if="!row._editing" class="text-mono">{{ row.trade_unit ?? 1 }}</span>
               <el-input-number v-else v-model="row._draft.trade_unit" :min="1" size="small" controls-position="right" style="width: 100%" />
@@ -161,7 +161,7 @@
             </template>
           </el-table-column>
 
-          <el-table-column label="操作" width="140" fixed="right">
+          <el-table-column label="操作" width="130">
             <template #default="{ row }">
               <template v-if="!row._editing">
                 <el-button size="small" link type="primary" @click="startEdit(row)">
