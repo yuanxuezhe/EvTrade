@@ -118,7 +118,7 @@
           </el-table-column>
           <el-table-column label="类型" width="80" align="center">
             <template #default="{ row }">
-              <el-tag :type="row.stktype === 1 ? 'warning' : ''" size="small">
+              <el-tag :type="row.stktype === 1 ? 'warning' : 'info'" size="small">
                 {{ row.stktype === 1 ? 'ETF' : '股票' }}
               </el-tag>
             </template>
