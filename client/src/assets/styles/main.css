@@ -345,6 +345,10 @@ h1, h2, h3, h4, h5, h6 {
   /* v32: 列总宽超出容器时自动出横向滚动 (列最小 100px 兜底) */
   overflow-x: auto !important;
 }
+/* v98: 斑马纹行柔和化 - 浅色轻微灰、暗色微弱提亮 */
+.el-table--striped .el-table__body tr.el-table__row--striped td {
+  background: var(--bg-soft) !important;
+}
 .el-table__body-wrapper {
   /* v32: body wrapper 也需要 overflow-x, 避免内部列宽溢出后没有横向滚动 */
   overflow-x: auto !important;
