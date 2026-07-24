@@ -61,6 +61,19 @@ export const useStocksStore = defineStore('stocks', () => {
   // ==================== IDB 持久化 ====================
 
   /**
+   * 安全深拷贝 → 纯 JS 对象 (剥离 Vue Proxy / 不可克隆属性)
+   */
+  function toPlainObject(obj) {
+    try {
+      return JSON.parse(JSON.stringify(obj))
+    } catch (e) {
+      // 极罕见情况 (循环引用/函数), 返原对象让调用方 catch
+      console.warn('[stocks] toPlainObject failed, returning as-is:', e?.message)
+      return obj
+    }
+  }
+
+  /**
    * 启动时从 IDB 加载到 Map (秒开, F5 不再拉后端)
    * v97: IDB key = stock_code, value = stock object, 用 getAll 一次性读出
    */
@@ -102,7 +115,7 @@ export const useStocksStore = defineStore('stocks', () => {
       const store = tx.objectStore(IDB_STORE)
       store.clear()
       for (const s of cacheMap.values()) {
-        if (s && s.stock_code) store.put(structuredClone(s), s.stock_code)
+        if (s && s.stock_code) store.put(toPlainObject(s), s.stock_code)
       }
       await new Promise((resolve, reject) => {
         tx.oncomplete = resolve
@@ -314,7 +327,7 @@ export const useStocksStore = defineStore('stocks', () => {
           db.deleteObjectStore('kv')
         }
       })
-      await idbPut(db, IDB_STORE, code, structuredClone(stock))
+      await idbPut(db, IDB_STORE, code, toPlainObject(stock))
     } catch (e) {
       console.warn('[stocks] persistSingleStock failed:', e?.message || e)
     }
