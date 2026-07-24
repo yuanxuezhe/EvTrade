@@ -80,7 +80,6 @@
       <el-select v-model="globalQtyBase" size="small" style="width: 110px">
         <el-option v-for="o in qtyBaseOptions" :key="o.value" :value="o.value" :label="o.label" />
       </el-select>
-      <el-checkbox v-model="requireConfirm" size="small">下单前二次确认</el-checkbox>
       <span class="t0-config-hint">（按行触发"买/卖"，数量 = 持仓×百分比，价格按所选类型）</span>
     </div>
 
@@ -361,59 +360,6 @@
       :close-on-click-modal="false">
       <T0TaskDetail v-if="tasksDetailVisible" :task-id="viewingTaskId" embedding="drawer" />
     </el-drawer>
-
-    <!-- v57 commit.2: 二次确认 dialog — 用户勾选☑二次确认 后按下"买/卖" 才弹出此 dialog -->
-    <el-dialog
-      v-model="confirmDialogVisible"
-      :title="confirmDialogPayload ? `二次确认下单（${confirmDialogPayload.direction}单）` : '二次确认下单'"
-      width="460px"
-      :close-on-click-modal="false"
-      class="confirm-order-dialog"
-    >
-      <div v-if="confirmDialogPayload" class="confirm-detail">
-        <div class="confirm-row">
-          <span class="label">标的:</span>
-          <span class="value">{{ confirmDialogPayload.stockCode }}</span>
-        </div>
-        <div class="confirm-row">
-          <span class="label">方向:</span>
-          <span class="value" :class="confirmDialogPayload.direction === '买' ? 'up' : 'down'">
-            <el-tag :type="confirmDialogPayload.direction === '买' ? 'success' : 'danger'" size="small">
-              {{ confirmDialogPayload.direction }}
-            </el-tag>
-          </span>
-        </div>
-        <div class="confirm-row">
-          <span class="label">数量:</span>
-          <span class="value">
-            {{ confirmDialogPayload.volume.toLocaleString() }} 股
-            <span class="hint">
-              ({{ confirmDialogPayload.qtyBase }} × {{ (confirmDialogPayload.pct * 100).toFixed(0) }}%
-              <template v-if="confirmDialogPayload.tradeUnit > 1 || confirmDialogPayload.minBuyQty > 0">,
-                raw {{ Math.round(confirmDialogPayload.raw).toLocaleString() }} →
-                按 unit={{ confirmDialogPayload.tradeUnit }} 取整 →
-                ≥ min={{ confirmDialogPayload.minBuyQty.toLocaleString() }}
-              </template>)
-            </span>
-          </span>
-        </div>
-        <div class="confirm-row">
-          <span class="label">价格:</span>
-          <span class="value">
-            {{ confirmDialogPayload.priceType === 'market' ? '市价' : '¥' + formatPrice(confirmDialogPayload.price, confirmDialogPayload.stockCode) }}
-            <span class="hint">({{ confirmDialogPayload.priceType === 'market' ? '柜台撮合价' : '最新价' }})</span>
-          </span>
-        </div>
-        <div v-if="confirmDialogPayload.taskId" class="confirm-row">
-          <span class="label">关联 task:</span>
-          <span class="value">#{{ confirmDialogPayload.taskId }}</span>
-        </div>
-      </div>
-      <template #footer>
-        <el-button @click="onConfirmCancel">取消</el-button>
-        <el-button type="primary" @click="onConfirmOk">确认下单</el-button>
-      </template>
-    </el-dialog>
   </div>
 </template>
 
@@ -460,11 +406,11 @@ const viewingTaskId = ref(null)
 const globalPct = ref(0.25)                 // 百分比 25%
 const globalPriceType = ref('latest')       // 价格 'latest' (最新价 11) | 'market' (市价 44)
 const globalQtyBase = ref('vol')            // 数量基数 'vol' (当前) | 'avl_vol' (可用) | 'last_vol' (期初)
-const requireConfirm = ref(false)           // 二次确认开关 (勾选 → 弹 dialog 二次确认)
-
-// 二次确认 dialog state
+// v93: 二次确认开关挪到 sysconfig.confirm_before_order (见 client/src/stores/order.js)
+//   本地不再持有 requireConfirm ref
+//   T0Trade 不再自己弹二次确认 dialog — 改由 order.js 的 placeOrder 统一拦截
 const confirmDialogVisible = ref(false)
-const confirmDialogPayload = ref(null)      // {direction: '买'|'卖', stockCode, price, volume, taskId, action: 'submit'|'配平'}
+const confirmDialogPayload = ref(null)
 
 // 添加任务 dialog
 const createDialogVisible = ref(false)
@@ -882,22 +828,14 @@ async function onBuyTask(row) {
   if (!canOpRow(row)) return
   const payload = _prepareOrderPayload(row, '买')
   if (!payload) return
-  if (requireConfirm.value) {
-    confirmDialogPayload.value = payload
-    confirmDialogVisible.value = true
-    return
-  }
+  // v93: 二次确认由 order.js 统一拦截, 这里直接下单
   await _submitOrder(payload)
 }
 async function onSellTask(row) {
   if (!canOpRow(row)) return
   const payload = _prepareOrderPayload(row, '卖')
   if (!payload) return
-  if (requireConfirm.value) {
-    confirmDialogPayload.value = payload
-    confirmDialogVisible.value = true
-    return
-  }
+  // v93: 二次确认由 order.js 统一拦截, 这里直接下单
   await _submitOrder(payload)
 }
 
@@ -928,17 +866,10 @@ async function _submitOrder(p) {
   }
 }
 
-function onConfirmCancel() {
-  confirmDialogVisible.value = false
-  confirmDialogPayload.value = null
-}
 async function onConfirmOk() {
-  const p = confirmDialogPayload.value
-  confirmDialogVisible.value = false
-  confirmDialogPayload.value = null
-  if (!p) return
-  await _submitOrder(p)
-  await t0TasksStore.loadTasks()
+  // v93: T0Trade 不再自己弹二次确认 dialog (由 order.js 统一拦截), 此函数保留空实现
+  //   以避免极端情况下模板/外部仍持有引用时崩 — 不应被调用
+  //   注意: 不再调用 _submitOrder, 避免和 order.js 的拦截逻辑重复执行下单
 }
 async function onCloseTask(taskId) {
   try {

@@ -1,6 +1,8 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
+import { ElMessageBox } from 'element-plus'
 import { api } from '../api'
+import { sysconfigApi } from '../api/sysconfig'
 import { useHoldingsStore } from './holdings'
 
 /**
@@ -52,7 +54,62 @@ export const useOrderStore = defineStore('order', () => {
 
   async function placeOrder(orderData) {
     // v8: placeOrder 跟 createOrder 等价(后端同一接口, 现在统一返 list[0])
+    // v93: 下单前 sysconfig 检查 — confirm_before_order=true → 弹二次确认 (全站生效)
+    //   此处统一拦截所有 placeOrder 调用方: Trade.vue / T0Trade.vue / useT0OrderSubmit.js
+    //   sysconfig 缺失视为关闭 (默认 false)
+    if (await _shouldConfirmBeforeOrder()) {
+      try {
+        await ElMessageBox.confirm(
+          _buildConfirmMessage(orderData),
+          '下单前二次确认',
+          { confirmButtonText: '确认下单', cancelButtonText: '取消', type: 'warning' }
+        )
+      } catch (e) {
+        // 用户取消 → 不下单, 抛错让调用方 catch
+        throw new Error('用户取消下单')
+      }
+    }
     return await createOrder(orderData)
+  }
+
+  /**
+   * v93: 读 sysconfig.confirm_before_order, 缓存 60s 避免每次下单打后端
+   *   - 返回 bool: true = 需要弹二次确认
+   *   - sysconfig 读取失败 → 默认 false (不弹)
+   *   - 简单内存缓存, 进程内; 用户改 sysconfig 后等 ≤60s 生效 (或刷新页面)
+   */
+  let _confirmCache = null
+  let _confirmCacheAt = 0
+  async function _shouldConfirmBeforeOrder() {
+    const now = Date.now()
+    if (_confirmCache !== null && (now - _confirmCacheAt) < 60000) return _confirmCache
+    try {
+      const r = await sysconfigApi.get('confirm_before_order')
+      // r 可能 {cfg_val: 'true'|'false', value: 'true'|...} - 多后端字段兼容
+      const val = r?.cfg_val ?? r?.value ?? r
+      _confirmCache = val === true || val === 'true' || val === 1 || val === '1'
+    } catch {
+      _confirmCache = false
+    }
+    _confirmCacheAt = now
+    return _confirmCache
+  }
+
+  /**
+   * v93: 二次确认弹窗展示文案的精简版 (避免弹窗太高)
+   *   只列最关键的: 标的 / 方向 / 数量 / 价格 (限价时)
+   */
+  function _buildConfirmMessage(d) {
+    const direction = d.order_type === '23' ? '买' : d.order_type === '24' ? '卖' : d.order_type
+    const lines = [
+      `标的: ${d.stock_code || '—'}`,
+      `方向: ${direction}`,
+      `数量: ${(d.volume ?? 0).toLocaleString()} 股`,
+    ]
+    if (d.price !== undefined && d.price !== null && Number(d.price) > 0) {
+      lines.push(`价格: ¥${d.price}`)
+    }
+    return lines.join('\n')
   }
 
   async function cancelOrder(orderNo, trdDate) {
