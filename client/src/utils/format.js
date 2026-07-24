@@ -275,6 +275,9 @@ export function inferOrderStatus(order, brokerStatus = null) {
   if (cumCancelled > 0 && cum === 0) return '54'    // broker 已撤 (部分撤单无成交)
 
   // 3. broker 推了撤单类 status (v11: 含 broker 51 已报待撤)
+  // v94 (REQ-TRADE-035): 废单 57 直接保留 — broker 拒单不可能有任何成交/撤单,
+  //   之前 fall-through 到第 4 段会被错判成 '50' 已报
+  if (brokerStatus && String(brokerStatus) === '57') return '57'
   if (brokerStatus && ['51', '52', '53', '54'].includes(String(brokerStatus))) {
     if (cum === 0) return '54'      // broker 已撤
     if (cum < vol) return '53'      // broker 部成部撤
