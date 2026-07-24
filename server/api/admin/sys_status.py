@@ -87,6 +87,14 @@ async def init_trading_day(
             detail={"code": "BAD_TRD_DATE", "msg": "trd_date 必须是 8 位数字字符串"}
         )
 
+    # v99: RPC 通信异常 → 拒绝初始化, 不切日
+    from server.services.rpc_health import check_ok as _rpc_check_ok
+    if not _rpc_check_ok():
+        raise HTTPException(
+            status_code=503,
+            detail={"code": "RPC_COMM_ERROR", "msg": "RPC 通信异常，无法初始化"},
+        )
+
     by_user = str(admin_user.id)
 
     result = await do_reconcile(db, req.trd_date, by_user)

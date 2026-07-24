@@ -120,12 +120,20 @@ async def on_startup_rpc():
         return
     try:
         await get_rpc_client()
+        # v99: RPC 连接建立后启动资金定时同步 + 健康监测
+        from server.services.rpc_health import start_sync
+        await start_sync()
     except Exception as e:
         print(f"[INIT] RPC client failed to start: {e}")
 
 
 @app.on_event("shutdown")
 async def on_shutdown_rpc():
+    try:
+        from server.services.rpc_health import stop_sync
+        await stop_sync()
+    except Exception as e:
+        print(f"[SHUTDOWN] rpc_health stop error: {e}")
     try:
         await close_rpc_client()
     except Exception as e:

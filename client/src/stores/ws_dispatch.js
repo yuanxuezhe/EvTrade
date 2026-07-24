@@ -47,6 +47,8 @@ export function dispatchPayload(payload) {
   else if (t === 'trd_cfm') _onTradeCfm(payload.data)
   else if (t === 'quote') _onQuote(payload.data)
   else if (t === 'strategy_update') _onStrategyUpdate(payload.data)
+  // v99: 资金定时同步推送
+  else if (t === 'asset_update') _onAssetUpdate(payload.data)
   // 2026-07-09 quote-snapshot-subscribe
   else if (t === 'subscribe_ack') _onSubscribeAck(payload.data)
   else if (t === 'unsubscribe_ack') _onUnsubscribeAck(payload.data)
@@ -333,6 +335,26 @@ function _onStrategyUpdate(row) {
 function _todayYYYYMMDD() {
   const d = new Date()
   return `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`
+}
+
+// ============================================================
+// v99: 资金推送 — 后端每 5 秒 qry_asset 推送，直接覆盖 holdings.cachedAsset
+// ============================================================
+function _onAssetUpdate(data) {
+  if (!data) return
+  try {
+    const hs = useHoldingsStore()
+    hs.cachedAsset = {
+      cash: data.cash ?? hs.cachedAsset?.cash ?? 0,
+      frozen_cash: data.frozen_cash ?? hs.cachedAsset?.frozen_cash ?? 0,
+      market_value: data.market_value ?? hs.cachedAsset?.market_value ?? 0,
+      total_asset: data.total_asset ?? hs.cachedAsset?.total_asset ?? 0,
+      synced_at: data.synced_at || hs.cachedAsset?.synced_at || null,
+      synced_from: 'rpc_sync',
+    }
+  } catch (e) {
+    log.warn('_onAssetUpdate failed:', e?.message)
+  }
 }
 
 // ============================================================

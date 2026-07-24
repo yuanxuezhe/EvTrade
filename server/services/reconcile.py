@@ -80,18 +80,13 @@ async def do_reconcile(
         rpc_errors.append(f"qry_positions: {e}")
         positions_data = []
 
-    try:
-        assets_data = _safe_dict_list(await qry_asset())
-        diffs['assets_count'] = len(assets_data)
-    except Exception as e:
-        rpc_errors.append(f"qry_asset: {e}")
-        assets_data = []
-
-    # 2. 写对账报告
-    import json
+    # v99: 初始化只同步持仓, 不同步资金 (资金由 rpc_health 定时 5s 同步)
+    #   保留 diffs['assets_count'] = 0 占位, 不拉 qry_asset
+    diffs['assets_count'] = 0
+    assets_data = []
     rpc_status = "ok"
     if rpc_errors:
-        rpc_status = "failed" if not any([positions_data, assets_data]) else "partial"
+        rpc_status = "failed" if not positions_data else "partial"
 
     # 解析本地快照（对比用; 委托/成交不参与对账）
     local_positions = [
@@ -161,30 +156,18 @@ async def do_reconcile(
     # 同日重 init: 走同一行, 更新 status='active' + 初始化元数据
     # 切到新日: 同一行 UPDATE trd_date, 历史由 reconcile_report.trd_date 记录
     if applied or not cfg["auto_reconcile"]:
-        row = SysStatus.query_one(id=1)
-        if not row:
-            SysStatus.add_one({
-                'id': 1,
-                'trd_date': new_trd_date,
-                'status': 'active',
-                'initialized_at': now,
-                'initialized_by': int(by_user) if by_user.isdigit() else None,
-                'created_at': now,
-                'updated_at': now,
-                'is_half_day': 0,
-                'remark': '',
-            })
-        else:
-            # 单行 UPDATE: 切日 = 改 trd_date 字段; 状态变 active
-            row.trd_date = new_trd_date
-            row.status = 'active'
-            row.is_half_day = 0
-            row.initialized_at = now
-            row.initialized_by = int(by_user) if by_user.isdigit() else None
-            row.closed_at = None
-            row.closed_by = None
-            row.updated_at = now
-            row.update(SysStatus, id=1)
+        SysStatus.upsert_one({
+            'id': 1,
+            'trd_date': new_trd_date,
+            'status': 'active',
+            'initialized_at': now,
+            'initialized_by': int(by_user) if by_user.isdigit() else None,
+            'closed_at': None,
+            'closed_by': None,
+            'updated_at': now,
+            'is_half_day': 0,
+            'remark': '',
+        }, return_row=False)
 
     return {
         'ok': True,
@@ -225,11 +208,10 @@ def _apply_broker_data(
             synced_from='rpc_reconcile',
         ))
 
-    # Assets: 单行；Asset ORM 无主键，先清空再写入
-    # Asset broker 字段名已与 DB 列名一致 (cash/frozen_cash/market_value/total_asset),
-    # 无需 remap。
-    db.query(Asset).delete()
+    # Assets: v99 初始化不同步资金 (由 rpc_health 定时 5s 同步)
+    #   assets_data 为空时跳过, 不删除已有资产行
     if assets_data:
+        db.query(Asset).delete()
         a = assets_data[0]
         db.add(Asset(
             cash=float(a.get('cash', 0) or 0),

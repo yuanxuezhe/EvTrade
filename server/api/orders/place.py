@@ -70,6 +70,14 @@ def register_place(router):
         if req.order_type not in ("23", "24"):
             raise HTTPException(status_code=400, detail={"code": "BAD_ORDER_TYPE", "msg": "order_type 必须 23(买) 24(卖)"})
 
+        # v99: RPC 通信异常 → 直接拒绝, 不往 RPC 报单
+        from server.services.rpc_health import check_ok as _rpc_check_ok
+        if not _rpc_check_ok():
+            raise HTTPException(
+                status_code=503,
+                detail={"code": "RPC_COMM_ERROR", "msg": "RPC 通信异常，无法报单"},
+            )
+
         # v80: stktype 可交易校验 + 价格按 stock.scale 四舍五入
         # v80.1: 用 GetStockInfo() 一次性拿 stktype + scale
         info = GetStockInfo(req.stock_code)

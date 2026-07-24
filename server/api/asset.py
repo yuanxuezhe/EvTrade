@@ -57,3 +57,10 @@ async def get_account_asset(db: Session = Depends(get_db)):
         synced_at=format_db_dt(row.synced_at) if row.synced_at else None,
         synced_from=row.synced_from,
     )])
+
+
+@router.get("/rpc-status")
+async def get_rpc_status():
+    """v99: 返回 RPC 通信健康状态"""
+    from server.services.rpc_health import get_status
+    return get_status()
