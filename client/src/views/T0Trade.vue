@@ -1,6 +1,11 @@
 <!--
   T0Trade.vue — 快速做T 主页面
 
+  v93 (本轮): UI 整改 (二次确认挪到 sysconfig 见上一个 feat commit)
+    - 去标题 "⚡ 快速做T"
+    - 顶部独立按钮行删除: (刷新/添加任务/任务筛选) 全部挪到做T配置行末尾 (从右到左: 刷新 → 添加任务 → 任务筛选)
+    - 标的列宽 180 → 90 (减一半)
+
   v74 (本轮): 委托表 11→15 列对齐今日委托
     - 加列: 交易日 / 类型(委托/撤单) / 标的(代码+名称合并) / 操作(撤单按钮)
     - 改: 委托号→委托编号(label); 状态列 el-tag→OrderStatusBadge(对齐今日委托);
@@ -39,36 +44,9 @@
 -->
 <template>
   <div class="t0-trade fade-in-up">
-    <!-- Header: 标题 + 任务快速选择 + 添加任务按钮 + 刷新 -->
-    <div class="t0-header">
-      <span class="t0-title">⚡ 快速做T</span>
-      <div class="qs-row">
-        <el-tooltip content="选择/取消当前做T归属的 task；新建请用添加任务入口" placement="top">
-          <el-select
-            v-model="selectedTaskId"
-            placeholder="选 task"
-            size="small"
-            clearable
-            filterable
-            class="qs-task-select"
-            style="width: 200px"
-            @change="onTaskChange"
-          >
-            <el-option
-              v-for="t in filteredActiveTasks"
-              :key="t.id"
-              :value="t.id"
-              :label="`#${t.id} ${t.stock_code}`"
-            />
-          </el-select>
-        </el-tooltip>
-        <el-button type="primary" size="small" :icon="Plus" @click="onAddTaskOpen">添加任务</el-button>
-        <el-button size="small" @click="onRefresh" :loading="refreshing">刷新</el-button>
-      </div>
-    </div>
-
-    <!-- v57 commit.2: 全局操作配置 row (4 select + 1 checkbox, 影响所有主表"买/卖"按钮) -->
-    <!-- v57 实测: 全局配置不依赖 selectedTaskId, 配置可独立设; 操作列按钮按 row.stock_code 读配置 -->
+    <!-- v93: 整页只剩一条工具栏行 — 做T配置 + (任务筛选 / 添加任务 / 刷新) 全部靠右集中 -->
+    <!--   顺序(从右到左): 刷新 → 添加任务 → 任务筛选 → 提示文案 → 3 个 select -->
+    <!--   顶部 t0-header 已删除 (无标题、无独立按钮行) -->
     <div class="t0-config-bar">
       <span class="t0-config-label">做T配置:</span>
       <el-select v-model="globalPct" size="small" style="width: 90px">
@@ -81,6 +59,27 @@
         <el-option v-for="o in qtyBaseOptions" :key="o.value" :value="o.value" :label="o.label" />
       </el-select>
       <span class="t0-config-hint">（按行触发"买/卖"，数量 = 持仓×百分比，价格按所选类型）</span>
+      <span class="t0-spacer"></span>
+      <el-tooltip content="选择/取消当前做T归属的 task；新建请用添加任务入口" placement="top">
+        <el-select
+          v-model="selectedTaskId"
+          placeholder="任务筛选"
+          size="small"
+          clearable
+          filterable
+          class="qs-task-select"
+          @change="onTaskChange"
+        >
+          <el-option
+            v-for="t in filteredActiveTasks"
+            :key="t.id"
+            :value="t.id"
+            :label="`#${t.id} ${t.stock_code}`"
+          />
+        </el-select>
+      </el-tooltip>
+      <el-button type="primary" size="small" :icon="Plus" @click="onAddTaskOpen">添加任务</el-button>
+      <el-button size="small" @click="onRefresh" :loading="refreshing">刷新</el-button>
     </div>
 
     <!-- v55.1 上下分区: 上半主表 + 下半委托表 -->
@@ -113,8 +112,8 @@
         </template>
       </el-table-column>
 
-      <!-- 3. 标的 (180: 代码 100 + 名称 80) -->
-      <el-table-column label="标的" min-width="180">
+      <!-- 3. 标的 (90: 代码 90, 名称挤到 hover tooltip - v93 列宽减半) -->
+      <el-table-column label="标的" min-width="90">
         <template #default="{ row }">
           <span class="text-mono tp-stock-code">{{ row.stock_code }}</span>
           <span class="text-secondary" style="margin-left: 6px">{{ stockName(row.stock_code) || '—' }}</span>
@@ -951,22 +950,7 @@ onMounted(async () => {
   flex-direction: column;
   gap: 0;
 }
-.t0-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 12px;
-}
-.t0-title {
-  font-size: 18px;
-  font-weight: 700;
-  color: var(--el-text-color-primary, #303133);
-}
-.qs-row {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-}
+/* v93: .t0-header / .t0-title / .qs-row 已删除 — 工具栏合并到 .t0-config-bar */
 .task-table {
   width: 100%;
 }
@@ -1073,6 +1057,14 @@ onMounted(async () => {
   font-weight: 600;
   color: var(--el-text-color-primary, #303133);
   margin-right: 4px;
+}
+/* v93: 选 task 选择器靠右固定宽度 — 推到右的力交给 .t0-spacer (flex:1) 吃 */
+.t0-config-bar .qs-task-select {
+  width: 200px;
+}
+/* v93: 弹性占位 — 把 (刷新/添加任务/选 task) 整体推到最右 */
+.t0-config-bar .t0-spacer {
+  flex: 1;
 }
 .t0-config-bar .t0-config-hint {
   color: var(--el-text-color-secondary, #909399);
