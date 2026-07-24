@@ -97,16 +97,15 @@ def upsert(db=None, stock_code: str = "", data: Optional[Dict] = None) -> str:
     # data 可能有 stock_code 字段,剔除(参数 stock_code 为准)
     payload = {k: v for k, v in (data or {}).items() if k != 'stock_code'}
     existing = Stocks.query_one(stock_code=stock_code)
-    if existing is None:
-        Stocks.add_one({'stock_code': stock_code, **payload})
-        return 'inserted'
+
     # 已存在 -> 检查 7 天阈值
-    if existing.updated_at and existing.updated_at > (datetime.utcnow() - timedelta(days=SKIP_THRESHOLD_DAYS)):
+    if existing is not None and existing.updated_at and existing.updated_at > (datetime.utcnow() - timedelta(days=SKIP_THRESHOLD_DAYS)):
         return 'skipped'
-    update_data = {k: v for k, v in payload.items() if hasattr(existing, k)}
-    if update_data:
-        Stocks.update_one(update_data, stock_code=stock_code)
-    return 'updated'
+
+    # 原生 ON DUPLICATE KEY UPDATE (一行搞定 INSERT or UPDATE)
+    update_data = {k: v for k, v in payload.items() if existing is None or hasattr(existing, k)}
+    Stocks.upsert_one({'stock_code': stock_code, **update_data}, return_row=False)
+    return 'inserted' if existing is None else 'updated'
 
 
 def get_by_code(db=None, stock_code: str = "") -> Optional[Row]:
@@ -117,10 +116,11 @@ def get_by_code(db=None, stock_code: str = "") -> Optional[Row]:
 # v23 slim-stocks-table: admin 显式编辑 stocks 行
 # v25 stocks-cache-and-short-name: +short_name (6 -> 7 字段)
 # 允许覆盖的字段白名单（stock_code 是 PK,created_at/updated_at 由 DB 维护）
-# 7 字段:stock_name/sector/is_t0_able/min_buy_qty/trade_unit/short_name
+# 8 字段:stock_name/sector/is_t0_able/min_buy_qty/trade_unit/stktype/scale/short_name
 _ADMIN_EDITABLE_FIELDS = (
     'stock_name', 'sector',
     'is_t0_able', 'min_buy_qty', 'trade_unit',
+    'stktype', 'scale',
     'short_name',
 )
 

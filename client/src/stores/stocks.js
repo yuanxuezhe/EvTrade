@@ -255,7 +255,9 @@ export const useStocksStore = defineStore('stocks', () => {
       is_t0_able: data.is_t0_able ?? false,
       min_buy_qty: data.min_buy_qty ?? 100,
       trade_unit: data.trade_unit ?? 1,
-      short_name: data.short_name || ''
+      short_name: data.short_name || '',
+      stktype: data.stktype ?? 0,
+      scale: data.scale ?? 2,
     })
     return true
   }

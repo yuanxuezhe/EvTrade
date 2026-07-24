@@ -146,11 +146,11 @@ async def get_stock(stock_code: str, db=Depends(get_db)):
 # ============================================================
 
 class StockUpdateRequest(BaseModel):
-    """admin 编辑 stocks 行的可编辑字段白名单(v46+ 6 字段, short_name 自动生成)
+    """admin 编辑 stocks 行的可编辑字段白名单(v98+ 8 字段, short_name 自动生成)
 
     所有字段可选 — 前端可能只改其中几个,Pydantic 默认 None。
-    8 字段中 stock_code 是 PK(created_at/updated_at 由 DB 维护,不可改)
-    → 实际可编辑 6 字段: stock_name/sector/is_t0_able/min_buy_qty/trade_unit
+    11 字段中 stock_code 是 PK,created_at/updated_at 由 DB 维护,不可改
+    → 实际可编辑 8 字段: stock_name/sector/is_t0_able/min_buy_qty/trade_unit/stktype/scale
     (v46+ 移除 short_name 字段:由 stock_name 自动派生, REQ-STOCK-007)
 
     v23 严格白名单:`extra=forbid` 让 industry/market/intro 等 9 旧字段
@@ -161,6 +161,8 @@ class StockUpdateRequest(BaseModel):
     is_t0_able: Optional[bool] = None
     min_buy_qty: Optional[int] = Field(None, ge=1)
     trade_unit: Optional[int] = Field(None, ge=1)
+    stktype: Optional[int] = Field(None, ge=0, le=1)
+    scale: Optional[int] = Field(None, ge=0, le=6)
 
     class Config:
         extra = "forbid"
@@ -196,11 +198,12 @@ STOCK_CODE_REGEX = r"^\d{6}\.(SH|SZ|BJ)$"
 class StockCreateRequest(BaseModel):
     """admin 添加 stocks 行的字段白名单(REQ-STOCK-006 + REQ-STOCK-007)
 
-    8 字段:
+    11 字段:
     - stock_code: PK, 必填, regex 校验(000001.SZ / 600000.SH / 920169.BJ)
     - stock_name: 必填, max 64 (用于自动生成 short_name)
     - sector: 可选
     - is_t0_able / min_buy_qty / trade_unit: 有默认值
+    - stktype / scale: 证券类型/价格精度, 有默认值
     (v46+ 移除 short_name 字段:由 stock_name 自动派生, REQ-STOCK-007)
 
     v46 严格白名单:`extra=forbid` 让 industry/market/intro 等 v22 旧字段
@@ -212,6 +215,8 @@ class StockCreateRequest(BaseModel):
     is_t0_able: bool = False
     min_buy_qty: int = Field(100, ge=1)
     trade_unit: int = Field(1, ge=1)
+    stktype: int = Field(0, ge=0, le=1)
+    scale: int = Field(2, ge=0, le=6)
 
     class Config:
         extra = "forbid"

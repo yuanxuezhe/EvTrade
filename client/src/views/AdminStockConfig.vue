@@ -205,6 +205,22 @@
             style="width: 100%"
           />
         </el-form-item>
+        <el-form-item label="类型">
+          <el-select v-model="store.editForm.stktype" style="width: 100%">
+            <el-option label="股票 (0)" :value="0" />
+            <el-option label="ETF (1)" :value="1" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="价格精度">
+          <el-input-number
+            v-model="store.editForm.scale"
+            :min="0"
+            :max="6"
+            :step="1"
+            style="width: 100%"
+          />
+          <span style="margin-left: 8px; color: #909399; font-size: 12px;">小数位 (默认 2)</span>
+        </el-form-item>
       </el-form>
 
       <template #footer>
@@ -239,6 +255,16 @@
         <el-form-item label="买卖单位">
           <el-input-number v-model="createForm.trade_unit" :min="1" :step="1" />
           <span style="margin-left: 8px; color: #909399; font-size: 12px;">手</span>
+        </el-form-item>
+        <el-form-item label="类型">
+          <el-select v-model="createForm.stktype" style="width: 100%">
+            <el-option label="股票 (0)" :value="0" />
+            <el-option label="ETF (1)" :value="1" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="价格精度">
+          <el-input-number v-model="createForm.scale" :min="0" :max="6" :step="1" />
+          <span style="margin-left: 8px; color: #909399; font-size: 12px;">小数位 (默认 2)</span>
         </el-form-item>
       </el-form>
       <template #footer>
@@ -316,7 +342,9 @@ const emptyCreateForm = () => ({
   sector: '',
   is_t0_able: false,
   min_buy_qty: 100,
-  trade_unit: 1
+  trade_unit: 1,
+  stktype: 0,
+  scale: 2
 })
 const createForm = ref(emptyCreateForm())
 
@@ -336,7 +364,9 @@ const createRules = {
   ],
   sector: [{ max: 64, message: '最长 64 字符', trigger: 'blur' }],
   min_buy_qty: [{ type: 'number', min: 1, message: '≥ 1', trigger: 'blur' }],
-  trade_unit: [{ type: 'number', min: 1, message: '≥ 1', trigger: 'blur' }]
+  trade_unit: [{ type: 'number', min: 1, message: '≥ 1', trigger: 'blur' }],
+  stktype: [{ type: 'number', min: 0, max: 1, message: '0 或 1', trigger: 'blur' }],
+  scale: [{ type: 'number', min: 0, max: 6, message: '0-6', trigger: 'blur' }]
 }
 
 // 打开 dialog:重置 form + 清校验
@@ -361,7 +391,9 @@ async function onCreateSave() {
     // v46+ short-name-auto: short_name 字段已移除 (后端根据 stock_name 自动生成)
     is_t0_able: createForm.value.is_t0_able,
     min_buy_qty: createForm.value.min_buy_qty,
-    trade_unit: createForm.value.trade_unit
+    trade_unit: createForm.value.trade_unit,
+    stktype: createForm.value.stktype,
+    scale: createForm.value.scale
   }
   const r = await store.createStock(payload)
   if (r.ok) {
