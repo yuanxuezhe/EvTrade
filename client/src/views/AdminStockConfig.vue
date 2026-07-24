@@ -242,7 +242,7 @@
 <script setup>
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
-import { Search, Refresh, Sync } from '@element-plus/icons-vue'
+import { Search, Refresh } from '@element-plus/icons-vue'
 import { useStocksStore } from '../stores/stocks'
 import StockCodePicker from '../components/StockCodePicker.vue'
 
