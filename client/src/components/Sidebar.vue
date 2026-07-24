@@ -98,8 +98,6 @@ const menuItems = computed(() => {
     base.push({ path: '/system-init', label: '系统初始化', icon: Setting })
     base.push({ path: '/system-config', label: '系统配置', icon: Operation })
     base.push({ path: '/users', label: '用户管理', icon: UserFilled })
-    // v21 stock-info-crawler: 证券同步管理入口
-    base.push({ path: '/admin/sync', label: '证券同步', icon: Refresh })
     // v21 stock-info-crawler: 基础信息分类 → 证券信息设置（占位）
     base.push({ divider: true, label: '基础信息' })
     base.push({ path: '/admin/stock-config', label: '证券信息设置', icon: DataBoard })

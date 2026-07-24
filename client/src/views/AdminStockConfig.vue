@@ -36,8 +36,9 @@
             刷新
           </el-button>
           <!-- v90: 同步缓存按钮 (手动重刷 IDB, 用于其他页面改动后强制同步) -->
+          <!-- v93: Sync icon 在 element-plus/icons-vue 不存在, 改用 Refresh -->
           <el-button
-            :icon="Sync"
+            :icon="Refresh"
             :loading="store.cacheLoading"
             @click="onSyncCache"
           >

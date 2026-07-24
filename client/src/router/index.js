@@ -24,7 +24,8 @@ const CachePositions = () => import('../views/CachePositions.vue')
 const CacheOrders = () => import('../views/CacheOrders.vue')
 const CacheTrades = () => import('../views/CacheTrades.vue')
 // v21 stock-info-crawler: 股票信息同步管理页面 (admin-only)
-const AdminSync = () => import('../views/AdminSync.vue')
+// v93: 证券同步独立页面已移除, AdminSync 组件删除 — 同步状态/启动由 stock-config 页面承担
+// const AdminSync = () => import('../views/AdminSync.vue')
 // v21 stock-info-crawler: 证券信息设置页面 (admin-only 占位)
 const AdminStockConfig = () => import('../views/AdminStockConfig.vue')
 
@@ -76,7 +77,8 @@ const routes = [
   { path: '/admin/cache/orders', name: 'CacheOrders', component: CacheOrders, meta: { title: '缓存: 委托', requiresAdmin: true } },
   { path: '/admin/cache/trades', name: 'CacheTrades', component: CacheTrades, meta: { title: '缓存: 成交', requiresAdmin: true } },
   // v21 stock-info-crawler: 股票同步管理 (admin-only, 启动/停止/进度/错误流)
-  { path: '/admin/sync', name: 'AdminSync', component: AdminSync, meta: { title: '证券同步', requiresAdmin: true } },
+  // v93: 证券同步独立页面已移除, 启动/停止/进度由 stock-config 页面承担
+  // { path: '/admin/sync', name: 'AdminSync', component: AdminSync, meta: { title: '证券同步', requiresAdmin: true } },
   // v21 stock-info-crawler: 证券信息设置 (admin-only, sync_config 占位)
   { path: '/admin/stock-config', name: 'AdminStockConfig', component: AdminStockConfig, meta: { title: '证券信息设置', requiresAdmin: true } },
   { path: '/:pathMatch(.*)*', redirect: '/' }

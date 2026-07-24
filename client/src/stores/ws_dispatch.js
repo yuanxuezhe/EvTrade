@@ -325,11 +325,14 @@ function _onInitCompleted(data) {
 }
 
 /**
- * 订阅 sync_update WS 频道（前端 /admin/sync 页面 mount 时调用）
+ * 订阅 sync_update WS 频道（原 /admin/sync 页面专用，v93 页面已移除）
  * 返回一个 unsubscribe 函数（页面 unmount 时调用）
  *
  * 注：sync_update 不需要 client 主动 subscribe 协议——只要连上 /ws/sync_update 就推
  *     所以这里只是包装一层，方便组件 onBeforeUnmount 调用
+ *
+ * v93: AdminSync.vue 页面已删除, 此函数暂无调用方. 保留 export 作为未来 admin 工具的
+ *   现成 API; 若确定不再需要, 可删除整个函数.
  */
 export function subscribeSync() {
   // 目前 sync_update 是 server-push（无 ack 协议），直接标记已连接
