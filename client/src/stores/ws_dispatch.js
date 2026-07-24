@@ -273,8 +273,8 @@ function _notifyOrderSmart(row, status) {
 }
 
 /**
- * v96: 成交通知 — 每一笔都推
- * 显示: 委托状态 + 成交进度 + 成交均价
+ * v96.1: 成交推送 — 只更新成交表缓存, 不弹窗
+ * 成交信息已通过委托推送 (ord_cfm) 的 traded_volume/avg_price 弹窗展示
  */
 function _onTradeCfm(row) {
   if (!row || !row.trade_id) {
@@ -289,38 +289,7 @@ function _onTradeCfm(row) {
     log.error('_onTradeCfm applyTradePush failed:', e)
   }
 
-  const dir = String(row.order_type) === '24' ? '卖' : '买'
-  const code = row.stock_code || ''
-  const trdDate = row.trd_date || '-'
-  const orderNo = row.order_no || '-'
-
-  // 从 holdings.orders 找原订单, 取最新状态和累计进度
-  let orderLabel = '-'
-  let tradedVol = 0
-  let totalVol = 0
-  let avgPx = '-'
-  try {
-    const holdings = useHoldingsStore()
-    const ord = (holdings.orders || []).find((o) => o.order_no === row.order_no)
-    if (ord) {
-      orderLabel = STATUS_LABEL[ord.status] || ord.status
-      tradedVol = Number(ord.traded_volume) || 0
-      totalVol = Number(ord.volume) || 0
-      avgPx = ord.avg_price != null ? Number(ord.avg_price).toFixed(2) : '-'
-    }
-  } catch (_) { /* 取不到状态兜底 */ }
-
-  // 日志
-  log.info(`[trd_cfm] 成交推送: trd_date=${trdDate} order_no=${orderNo} code=${code} ${row.volume}@${row.price} status=${orderLabel}`)
-
-  // 通知 — 绿色, 显示进度
-  ElNotification({
-    title: `${code} ${dir}入成交`,
-    message: `${trdDate} ${orderNo} 本次 ${row.volume}@${row.price} 累计 ${tradedVol}/${totalVol} 均价 ${avgPx} ${orderLabel}`,
-    type: 'success',
-    duration: 4000,
-    grouping: true,
-  })
+  log.info(`[trd_cfm] 成交推送: trd_date=${row.trd_date || '-'} order_no=${row.order_no} code=${row.stock_code} ${row.volume}@${row.price}`)
 }
 
 // (removed: _notifyOrder — replaced by _notifyOrderSmart v96)
