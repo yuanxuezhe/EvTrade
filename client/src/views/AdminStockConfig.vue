@@ -1,5 +1,5 @@
 <!--
-  AdminStockConfig.vue — 证券信息设置 (admin-only)
+  AdminStockConfig.vue — 证券信息 (admin-only)
   v25 stocks-cache-and-short-name: 表格分页走后端 + 编辑弹窗用 autocomplete
 
   - 查询:stocks 表列表(后端分页 page/page_size/total,服务端筛选 sector/keyword/is_t0_able)
@@ -400,7 +400,7 @@ async function onSyncCache() {
 onMounted(async () => {
   // 1. 拉首屏表格
   await store.fetchPage()
-  // 2. 初始化 stocks cache (IDB 秒载 -> 后台静默 refresh)
+  // 2. 初始化 stocks cache (IDB 秒载, IDB 空则首次拉)
   if (!store.cacheLoaded && !store.cacheLoading) {
     store.initCache().catch((e) => {
       console.warn('[AdminStockConfig] cache 加载失败:', e)

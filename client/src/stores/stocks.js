@@ -146,8 +146,9 @@ export const useStocksStore = defineStore('stocks', () => {
   }
 
   /**
-   * 启动入口: 先 IDB 秒载, IDB 空则首次拉; 否则后台静默 refresh
+   * 启动入口: 仅从 IDB 秒载, IDB 空则首次拉; 有数据则不后台刷新
    * App.vue onMounted / StockCodePicker.ensureCache 调这个
+   * 手动全量刷新: 去"证券信息"页面点"同步缓存"按钮 -> refreshCache()
    */
   let _initPromise = null
   async function initCache() {
@@ -155,16 +156,12 @@ export const useStocksStore = defineStore('stocks', () => {
     _initPromise = (async () => {
       await loadFromIDB()
       if (!cacheLoaded.value) {
-        // IDB 空 - 首次直接拉 (阻塞, 让调用方拿到数据)
+        // IDB 空 - 首次拉取 (阻塞, 让调用方拿到数据)
         await refreshCache().catch((e) => {
           console.warn('[stocks] initCache refresh failed:', e?.message || e)
         })
-      } else {
-        // IDB 命中 - 后台静默刷新 (不阻塞)
-        refreshCache().catch((e) => {
-          console.warn('[stocks] initCache background refresh failed:', e?.message || e)
-        })
       }
+      // IDB 有数据 -> 直接使用, 不后台刷新
     })()
     return _initPromise
   }

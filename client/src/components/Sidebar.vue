@@ -100,7 +100,7 @@ const menuItems = computed(() => {
     base.push({ path: '/users', label: '用户管理', icon: UserFilled })
     // v21 stock-info-crawler: 基础信息分类 → 证券信息设置（占位）
     base.push({ divider: true, label: '基础信息' })
-    base.push({ path: '/admin/stock-config', label: '证券信息设置', icon: DataBoard })
+    base.push({ path: '/admin/stock-config', label: '证券信息', icon: DataBoard })
     base.push({ divider: true, label: '缓存查看' })
     base.push({ path: '/admin/cache/asset', label: '资金', icon: Wallet })
     base.push({ path: '/admin/cache/positions', label: '持仓', icon: Box })
