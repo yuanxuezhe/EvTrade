@@ -405,11 +405,6 @@ const viewingTaskId = ref(null)
 const globalPct = ref(0.25)                 // 百分比 25%
 const globalPriceType = ref('latest')       // 价格 'latest' (最新价 11) | 'market' (市价 44)
 const globalQtyBase = ref('vol')            // 数量基数 'vol' (当前) | 'avl_vol' (可用) | 'last_vol' (期初)
-// v93: 二次确认开关挪到 sysconfig.confirm_before_order (见 client/src/stores/order.js)
-//   本地不再持有 requireConfirm ref
-//   T0Trade 不再自己弹二次确认 dialog — 改由 order.js 的 placeOrder 统一拦截
-const confirmDialogVisible = ref(false)
-const confirmDialogPayload = ref(null)
 
 // 添加任务 dialog
 const createDialogVisible = ref(false)
@@ -865,11 +860,6 @@ async function _submitOrder(p) {
   }
 }
 
-async function onConfirmOk() {
-  // v93: T0Trade 不再自己弹二次确认 dialog (由 order.js 统一拦截), 此函数保留空实现
-  //   以避免极端情况下模板/外部仍持有引用时崩 — 不应被调用
-  //   注意: 不再调用 _submitOrder, 避免和 order.js 的拦截逻辑重复执行下单
-}
 async function onCloseTask(taskId) {
   try {
     await ElMessageBox.confirm(
