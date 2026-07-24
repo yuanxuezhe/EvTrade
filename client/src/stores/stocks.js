@@ -1,24 +1,28 @@
 import { defineStore } from 'pinia'
 import { reactive, ref, computed } from 'vue'
 import { stocksApi } from '../api'
-import { openDB, idbGet, idbPut } from '../utils/idb'
+import { openDB, idbPut, idbGetAll } from '../utils/idb'
 
 /**
- * 股票基础信息 store (v90 IndexedDB + Map 重构)
+ * 股票基础信息 store (v97 IndexedDB per-stock key 重构)
  *
- * v90 核心改造:
- *   - cache: ref([]) -> cacheMap: reactive(new Map())  O(1) 查找
- *   - loadCache() 串行 56 次分页 -> initCache() + refreshCache() 1 次 /stocks/all
+ * v97 核心改造:
+ *   - IDB key: 'all' -> stock_code, value -> 单个 stock object
+ *   - 读: getAll() 全量秒载 Map; 按 code 直接 idbGet(code) 单条 O(1)
+ *   - 写: 逐条 put(stock, stock_code); upsertLocal 单条 put 不需全量覆盖
+ *
+ * v90 保留:
+ *   - cacheMap: reactive(new Map())  O(1) 查找
+ *   - initCache() + refreshCache() 1 次 /stocks/all
  *   - 启动顺序: loadFromIDB() 秒载 Map -> 后台 refreshCache() 静默更新
- *   - 持久化: 全量数组写 IDB 单 key, 刷新页面 F5 秒开
  *   - CRUD 同步: saveEdit/createStock 成功后 upsertLocal() 同步 Map + IDB
  *
  * 数据源:
- *   1. IDB 'EvTrade-stocks/kv[all]'             启动秒载 (F5 不再拉后端)
- *   2. REST GET /api/stocks/all                  全量刷新 (首次 / 手动同步)
- *   3. REST GET /api/stocks?page=N&page_size=20  单页拉 -> pageRows (表格分页)
- *   4. REST PATCH /api/stocks/{code}             admin 编辑 + upsertLocal
- *   5. REST POST /api/stocks                     admin 添加 + upsertLocal
+ *   1. IDB 'EvTrade-stocks/stocks[code]'         启动秒载 (F5 不再拉后端)
+ *   2. REST GET /api/stocks/all                   全量刷新 (首次 / 手动同步)
+ *   3. REST GET /api/stocks?page=N&page_size=20   单页拉 -> pageRows (表格分页)
+ *   4. REST PATCH /api/stocks/{code}              admin 编辑 + upsertLocal
+ *   5. REST POST /api/stocks                      admin 添加 + upsertLocal
  *
  * 兼容字段 (外部模板依赖):
  *   - cache:        computed, 返 Array.from(cacheMap.values()) (StockCodePicker/AdminStockConfig 用 .length)
@@ -26,8 +30,7 @@ import { openDB, idbGet, idbPut } from '../utils/idb'
  *   - stockName(code) / stockScale(code) / stockStktype(code): 签名不变, 内部改 Map.get
  */
 const IDB_DB_NAME = 'stocks'
-const IDB_STORE = 'kv'
-const IDB_KEY = 'all'  // 单 key 存全量数组, 启动一次 get
+const IDB_STORE = 'stocks'  // v97: key = stock_code, value = stock object
 
 export const useStocksStore = defineStore('stocks', () => {
   // ==================== 状态 ====================
@@ -59,15 +62,20 @@ export const useStocksStore = defineStore('stocks', () => {
 
   /**
    * 启动时从 IDB 加载到 Map (秒开, F5 不再拉后端)
-   * IDB 空 (首次/清缓存) -> cacheLoaded 保持 false, 由调用方触发 refreshCache
+   * v97: IDB key = stock_code, value = stock object, 用 getAll 一次性读出
    */
   async function loadFromIDB() {
     try {
-      const db = await openDB(IDB_DB_NAME, 1, [IDB_STORE])
-      const arr = await idbGet(db, IDB_STORE, IDB_KEY)
-      if (Array.isArray(arr) && arr.length > 0) {
+      const db = await openDB(IDB_DB_NAME, 2, [IDB_STORE], (db, oldV) => {
+        // v97 migration: delete old v1 'kv' store if exists
+        if (oldV < 2 && db.objectStoreNames.contains('kv')) {
+          db.deleteObjectStore('kv')
+        }
+      })
+      const records = await idbGetAll(db, IDB_STORE)
+      if (Array.isArray(records) && records.length > 0) {
         cacheMap.clear()
-        for (const s of arr) {
+        for (const s of records) {
           if (s && s.stock_code) cacheMap.set(s.stock_code, s)
         }
         cacheLoaded.value = true
@@ -80,29 +88,37 @@ export const useStocksStore = defineStore('stocks', () => {
   }
 
   /**
-   * 把当前 cacheMap 全量写回 IDB (单 key, 覆盖)
-   * 内部防抖: 多次 upsertLocal 短时间内只写 1 次
+   * 全量写回 IDB (v97: refreshCache 用, clear + 逐条 put)
+   * upsertLocal 走 _persistSingleStock 单条写, 不走全量
    */
-  let _persistTimer = null
-  function _persistIDB() {
-    if (_persistTimer) return
-    _persistTimer = setTimeout(async () => {
-      _persistTimer = null
-      try {
-        const db = await openDB(IDB_DB_NAME, 1, [IDB_STORE])
-        const arr = Array.from(cacheMap.values())
-        await idbPut(db, IDB_STORE, IDB_KEY, arr)
-      } catch (e) {
-        console.warn('[stocks] persistIDB failed:', e?.message || e)
+  async function _persistIDB() {
+    try {
+      const db = await openDB(IDB_DB_NAME, 2, [IDB_STORE], (db, oldV) => {
+        if (oldV < 2 && db.objectStoreNames.contains('kv')) {
+          db.deleteObjectStore('kv')
+        }
+      })
+      const tx = db.transaction(IDB_STORE, 'readwrite')
+      const store = tx.objectStore(IDB_STORE)
+      store.clear()
+      for (const s of cacheMap.values()) {
+        if (s && s.stock_code) store.put(s, s.stock_code)
       }
-    }, 300)
+      await new Promise((resolve, reject) => {
+        tx.oncomplete = resolve
+        tx.onerror = () => reject(tx.error)
+      })
+    } catch (e) {
+      console.warn('[stocks] persistIDB failed:', e?.message || e)
+    }
   }
 
   // ==================== cache 加载 ====================
 
   /**
    * 全量拉取并落 IDB (首次 / 手动刷新用)
-   * 调 GET /api/stocks/all 1 次拿全 5529 条, 覆盖 Map + IDB
+   * 调 GET /api/stocks/all 1 次拿全量, 覆盖 Map + IDB
+   * v97: IDB key = stock_code, 逐条 put
    */
   async function refreshCache() {
     if (cacheLoading.value) return
@@ -118,12 +134,9 @@ export const useStocksStore = defineStore('stocks', () => {
       cacheLoaded.value = true
       cacheProgress.value = 1
       // 写 IDB (异步, 不阻塞)
-      try {
-        const db = await openDB(IDB_DB_NAME, 1, [IDB_STORE])
-        await idbPut(db, IDB_STORE, IDB_KEY, res.list)
-      } catch (e) {
-        console.warn('[stocks] IDB put failed:', e?.message || e)
-      }
+      _persistIDB().catch((e) => {
+        console.warn('[stocks] IDB persist failed:', e?.message || e)
+      })
     } catch (e) {
       cacheError.value = e?.message || 'cache 加载失败'
       throw e
@@ -284,12 +297,30 @@ export const useStocksStore = defineStore('stocks', () => {
 
   /**
    * 本地 Map + IDB 同步 upsert (CRUD 成功后调用)
+   * v97: 单条 put, 不需全量覆盖
    * @param {Object} stock 完整 stock dict (含 stock_code)
    */
   function upsertLocal(stock) {
     if (!stock || !stock.stock_code) return
     cacheMap.set(stock.stock_code, stock)
-    _persistIDB()
+    // v97: 单条写 IDB, 不触发全量 clear+rewrite
+    _persistSingleStock(stock.stock_code, stock)
+  }
+
+  /**
+   * 单条写入 IDB (v97: upsertLocal 用, 避免全量覆盖)
+   */
+  async function _persistSingleStock(code, stock) {
+    try {
+      const db = await openDB(IDB_DB_NAME, 2, [IDB_STORE], (db, oldV) => {
+        if (oldV < 2 && db.objectStoreNames.contains('kv')) {
+          db.deleteObjectStore('kv')
+        }
+      })
+      await idbPut(db, IDB_STORE, code, stock)
+    } catch (e) {
+      console.warn('[stocks] persistSingleStock failed:', e?.message || e)
+    }
   }
 
   /**

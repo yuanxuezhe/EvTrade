@@ -582,11 +582,15 @@ h1, h2, h3, h4, h5, h6 {
   width: 100% !important;
   min-width: 0 !important;
   display: block !important;  /* el-table 自身 block, 让 colgroup 不再控制宽度 */
-/* 关闭 el-table 内部所有 table/row/cell 的 table-layout, 转 block 模型让卡片占满容器 */
+}
 .is-mobile .el-table table,
 .is-mobile .el-table .el-table__inner-wrapper,
 .is-mobile .el-table .el-table__body,
-.is-mobi...[truncated]
+.is-mobile .el-table .el-table__header {
+  display: block !important;
+  width: 100% !important;
+  min-width: 0 !important;
+}
 .is-mobile .el-table col {
   /* 卡片模式忽略 colgroup / 内部 table 设定的列宽 */
   display: block !important;

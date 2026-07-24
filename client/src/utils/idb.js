@@ -135,6 +135,19 @@ export function idbGetAllKeys(db, store) {
 }
 
 /**
+ * 取 store 内全部 records (getAll)
+ * @returns {Promise<any[]>}
+ */
+export function idbGetAll(db, store) {
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(store, 'readonly')
+    const req = tx.objectStore(store).getAll()
+    req.onsuccess = () => resolve(req.result || [])
+    req.onerror = () => reject(req.error || new Error('[IDB] getAll failed'))
+  })
+}
+
+/**
  * 关闭并清理 connection 缓存（测试 teardown 用）
  */
 export function _resetForTests() {
