@@ -102,7 +102,7 @@ export const useStocksStore = defineStore('stocks', () => {
       const store = tx.objectStore(IDB_STORE)
       store.clear()
       for (const s of cacheMap.values()) {
-        if (s && s.stock_code) store.put(s, s.stock_code)
+        if (s && s.stock_code) store.put(structuredClone(s), s.stock_code)
       }
       await new Promise((resolve, reject) => {
         tx.oncomplete = resolve
@@ -314,7 +314,7 @@ export const useStocksStore = defineStore('stocks', () => {
           db.deleteObjectStore('kv')
         }
       })
-      await idbPut(db, IDB_STORE, code, stock)
+      await idbPut(db, IDB_STORE, code, structuredClone(stock))
     } catch (e) {
       console.warn('[stocks] persistSingleStock failed:', e?.message || e)
     }
