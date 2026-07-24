@@ -94,20 +94,18 @@
           </router-link>
         </div>
         <el-table :data="topPositions" :show-header="true" size="default">
-          <el-table-column prop="stock_code" label="代码" width="100">
+          <el-table-column prop="stock_code" label="标的" show-overflow-tooltip v-bind="COL.STOCK_TARGET">
             <template #default="{ row }">
-              <div class="stock-cell">
-                <div class="stock-code">{{ row.stock_code }}</div>
-                <div class="stock-name">{{ stockName(row.stock_code) || '--' }}</div>
-              </div>
+              <span class="text-mono tp-stock-code">{{ row.stock_code }}</span>
+              <span class="text-secondary" style="margin-left: 6px">{{ stockName(row.stock_code) || '—' }}</span>
             </template>
           </el-table-column>
-          <el-table-column prop="vol" label="持仓量" align="right">
+          <el-table-column prop="vol" label="持仓量" align="right" width="100">
             <template #default="{ row }">
               <span class="text-mono">{{ formatNumber(row.vol) }}</span>
             </template>
           </el-table-column>
-          <el-table-column prop="avl_vol" label="可用" align="right">
+          <el-table-column prop="avl_vol" label="可用" align="right" width="100">
             <template #default="{ row }">
               <span class="text-mono">{{ formatNumber(row.avl_vol) }}</span>
             </template>
@@ -171,6 +169,7 @@ import { useUiStore } from '../stores/ui'
 import { formatMoney, formatNumber, STATUS_LABEL, STATUS_TYPE } from '../utils/format'
 import { formatPrice } from '../composables/usePricePrecision'
 import { stockName } from '../utils/stockNames'
+import { COL } from '../utils/tableColumns'
 
 const assetStore = useAssetStore()
 const orderStore = useOrderStore()
@@ -456,22 +455,6 @@ onBeforeUnmount(() => {
 .order-stat-value {
   color: var(--text-primary);
   font-weight: 600;
-}
-
-.stock-cell {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.stock-code {
-  font-weight: 600;
-  color: var(--text-primary);
-}
-
-.stock-name {
-  font-size: 11px;
-  color: var(--text-secondary);
 }
 
 .change-cell {

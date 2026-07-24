@@ -1,39 +1,5 @@
 <template>
   <div class="system-init fade-in-up">
-    <!-- 当前交易日状态 -->
-    <el-card class="status-card" shadow="hover">
-      <template #header>
-        <span class="card-title">📅 当前交易日</span>
-      </template>
-      <div v-loading="loading.current">
-        <el-descriptions :column="3" border>
-          <el-descriptions-item label="状态">
-            <el-tag v-if="currentDay?.status === 'active'" type="success">活跃</el-tag>
-            <el-tag v-else-if="currentDay?.status === 'pending'" type="warning">未激活</el-tag>
-            <el-tag v-else-if="currentDay?.status === 'closed'" type="info">已收盘</el-tag>
-            <el-tag v-else type="info">未知</el-tag>
-          </el-descriptions-item>
-          <el-descriptions-item label="交易日">
-            {{ currentDay?.trd_date || '—' }}
-          </el-descriptions-item>
-          <el-descriptions-item label="服务器时间">
-            {{ clock.now }}
-          </el-descriptions-item>
-          <el-descriptions-item label="交易时段">
-            <el-tag v-if="clock.in_session" type="success" size="small">交易中</el-tag>
-            <el-tag v-else type="danger" size="small">休市</el-tag>
-            {{ clock.session_label }}
-          </el-descriptions-item>
-          <el-descriptions-item label="激活于">
-            {{ currentDay?.activated_at || '—' }}
-          </el-descriptions-item>
-          <el-descriptions-item label="最近对账">
-            {{ currentDay?.last_reconcile_at || '—' }}
-          </el-descriptions-item>
-        </el-descriptions>
-      </div>
-    </el-card>
-
     <!-- 触发日初 -->
     <el-card class="action-card" shadow="hover">
       <template #header>
@@ -119,13 +85,13 @@
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column prop="error_message" label="错误信息" />
-        <el-table-column prop="created_at" label="创建时间" width="180" />
+        <el-table-column prop="error_message" label="错误信息" min-width="120" show-overflow-tooltip />
         <el-table-column label="操作" width="100">
           <template #default="{ row }">
             <el-button size="small" @click="viewReport(row)">查看</el-button>
           </template>
         </el-table-column>
+        <el-table-column prop="created_at" label="创建时间" width="150" />
       </el-table>
     </el-card>
 
@@ -141,7 +107,6 @@ import { ref, onMounted, reactive, onUnmounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Setting } from '@element-plus/icons-vue'
 import { sysStatusApi, reconcileApi } from '../api/admin'
-import { http } from '../api'
 // change 2026-07-15-system-init-broadcast: handleInit 成功后同步刷新 holdings/asset/position
 //   双保险: 即便 ws init_completed 推送丢失/未连, 用户也能立即看到新持仓
 import { useHoldingsStore } from '../stores/holdings'
@@ -150,54 +115,29 @@ import { usePositionStore } from '../stores/position'
 // change 2026-07-15-system-init-broadcast end
 
 // change 2026-07-21-system-init-page-refresh: 监听 ws 系统事件 'evtrade:day-init-completed'
-//   - 其他 tab 或本 tab 通过 ws 收到 init_completed 时, 当前页面"当前交易日"卡片自动刷新
+//   - 其他 tab 或本 tab 通过 ws 收到 init_completed 时, 刷新历史报告列表
 //   - 用 CustomEvent 解耦 (ws_dispatch 不直接 import view)
-//   - 与 handleInit 内部 loadCurrent 形成双保险: handleInit 是同 tab 同步路径,
-//     ws 事件是异步路径 (覆盖多 tab / 跨用户场景)
 
 const loading = reactive({
-  current: false,
   init: false,
   reconcile: false,
   reports: false
 })
 
-const currentDay = ref(null)
 const reports = ref([])
 const reportDialog = ref(false)
 const reportDetail = ref('')
 
+// 本机日期 YYYYMMDD
+function _todayYYYYMMDD() {
+  const d = new Date()
+  return `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`
+}
+
 const initForm = reactive({
-  date: '',
+  date: _todayYYYYMMDD(),
   mode: 'auto'
 })
-
-const clock = reactive({ now: '', in_session: false, session_label: '' })
-let _tickHandle = null
-
-function tickClock() {
-  const d = new Date()
-  clock.now = d.toLocaleString('zh-CN', { hour12: false })
-  const h = d.getHours(), m = d.getMinutes()
-  const t = h * 60 + m
-  const ms = 9 * 60 + 15, me = 11 * 60 + 30
-  const as = 13 * 60, ae = 15 * 60
-  if (t >= ms && t <= me) { clock.in_session = true; clock.session_label = '上午' }
-  else if (t >= as && t <= ae) { clock.in_session = true; clock.session_label = '下午' }
-  else { clock.in_session = false; clock.session_label = '休市' }
-}
-
-async function loadCurrent() {
-  loading.current = true
-  try {
-    const data = await sysStatusApi.current()
-    currentDay.value = data
-  } catch (e) {
-    currentDay.value = null
-  } finally {
-    loading.current = false
-  }
-}
 
 async function loadReports() {
   loading.reports = true
@@ -228,7 +168,6 @@ async function handleInit() {
     const result = await sysStatusApi.init(initForm.date)
     if (result.code === 0 || result.ok) {
       ElMessage.success(`日初成功：${result.report_id || ''}`)
-      loadCurrent()
       loadReports()
       // change 2026-07-15-system-init-broadcast: 双保险 — 即便 ws init_completed 推送丢失/未连, 也能立即刷新
       //   ws 是主路径（多 tab 自动同步）, 此处是兜底（同 tab 立即可见）
@@ -289,26 +228,19 @@ async function viewReport(row) {
 
 // change 2026-07-21-system-init-page-refresh: ws 'evtrade:day-init-completed' 事件 handler
 //   - 触发时机: ws_dispatch._onInitCompleted 收到后端 system_update 推送后
-//   - 行为: loadCurrent 重拉当前交易日卡片, loadReports 重拉历史报告 (新报告刚生成)
-//   - 不依赖 handleInit 同步路径 (即使用户从别的 tab 或直接由后端触发也能刷新)
+//   - 行为: loadReports 重拉历史报告 (新报告刚生成)
 function _onDayInitCompleted(e) {
-  loadCurrent()
   loadReports()
-  // ElMessage 已在 handleInit 成功路径上弹过, 这里静默刷新避免重复
 }
 
 onMounted(() => {
-  loadCurrent()
   loadReports()
-  tickClock()
-  _tickHandle = setInterval(tickClock, 1000)
   // change 2026-07-21-system-init-page-refresh: 注册 ws 系统事件监听
   if (typeof window !== 'undefined') {
     window.addEventListener('evtrade:day-init-completed', _onDayInitCompleted)
   }
 })
 onUnmounted(() => {
-  if (_tickHandle) clearInterval(_tickHandle)
   // change 2026-07-21-system-init-page-refresh: 注销 ws 系统事件监听
   if (typeof window !== 'undefined') {
     window.removeEventListener('evtrade:day-init-completed', _onDayInitCompleted)
@@ -318,7 +250,7 @@ onUnmounted(() => {
 
 <style scoped>
 .system-init { padding: 16px; }
-.status-card, .action-card, .config-card, .reports-card {
+.action-card, .config-card, .reports-card {
   margin-bottom: 16px;
 }
 .card-title { font-weight: 600; }

@@ -20,7 +20,7 @@
       <div class="market-status">
         <span class="status-dot" :class="marketOpen ? 'open' : 'closed'"></span>
         <span v-if="!uiStore.isMobile" class="status-text">{{ marketOpen ? '交易中' : '休市' }}</span>
-        <span class="status-time text-mono">{{ currentTime }}</span>
+        <span class="status-time text-mono">{{ tradingDate }}</span>
       </div>
 
       <div v-if="!uiStore.isMobile && assetStore.asset.total_asset > 0" class="asset-mini">
@@ -109,7 +109,11 @@ const holdingsStore = useHoldingsStore()
 const authStore = useAuthStore()
 
 const refreshing = ref(false)
-const currentTime = ref('')
+const tradingDate = computed(() => {
+  const d = holdingsStore.activeTrdDate
+  if (!d) return ''
+  return `${d.slice(0, 4)}-${d.slice(4, 6)}-${d.slice(6, 8)}`
+})
 // 交易时段：以后端 /api/trading/clock 为准（DB 配的 trading_session）
 const tradingClock = ref({ is_in_session: false })
 
@@ -148,14 +152,7 @@ const avatarText = computed(() => {
   return n ? n.charAt(0).toUpperCase() : '?'
 })
 
-let timer = null
 let clockTimer = null
-
-function updateTime() {
-  const d = new Date()
-  const pad = (n) => String(n).padStart(2, '0')
-  currentTime.value = `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
-}
 
 async function refreshClock() {
   try {
@@ -170,14 +167,11 @@ function formatLastLogin(iso) {
 }
 
 onMounted(() => {
-  updateTime()
-  timer = setInterval(updateTime, 1000)
   refreshClock()
   clockTimer = setInterval(refreshClock, 30000)
 })
 
 onUnmounted(() => {
-  if (timer) clearInterval(timer)
   if (clockTimer) clearInterval(clockTimer)
 })
 

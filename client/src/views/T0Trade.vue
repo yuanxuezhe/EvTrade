@@ -113,7 +113,7 @@
       </el-table-column>
 
       <!-- 3. 标的 (90: 代码 90, 名称挤到 hover tooltip - v93 列宽减半) -->
-      <el-table-column label="标的" min-width="90">
+      <el-table-column label="标的" show-overflow-tooltip v-bind="COL.STOCK_TARGET">
         <template #default="{ row }">
           <span class="text-mono tp-stock-code">{{ row.stock_code }}</span>
           <span class="text-secondary" style="margin-left: 6px">{{ stockName(row.stock_code) || '—' }}</span>
@@ -246,13 +246,13 @@
             <span v-else class="text-secondary">委托</span>
           </template>
         </el-table-column>
-        <el-table-column label="标的" v-bind="COL.STOCK_TARGET">
+        <el-table-column label="标的" show-overflow-tooltip v-bind="COL.STOCK_TARGET">
           <template #default="{ row }">
             <span class="text-mono tp-stock-code">{{ row.stock_code }}</span>
             <span class="text-secondary" style="margin-left: 6px">{{ stockName(row.stock_code) || '—' }}</span>
           </template>
         </el-table-column>
-        <el-table-column prop="order_type" label="方向" v-bind="COL.makeDict('direction', { width: 100, align: 'center', headerAlign: 'center' })">
+        <el-table-column prop="order_type" label="方向" v-bind="COL.DIRECTION">
           <template #default="{ row }">
             <el-tag :type="row.order_type === '23' ? 'danger' : 'success'" size="small">
               {{ row.order_type === '23' ? '买' : '卖' }}
@@ -284,7 +284,7 @@
             <span class="text-mono">{{ row.traded_volume > 0 ? formatMoney(row.traded_amount) : '—' }}</span>
           </template>
         </el-table-column>
-        <el-table-column prop="cancelled_volume" label="撤单量" v-bind="COL.makeDict('number', { width: 85, align: 'right', headerAlign: 'right' })">
+        <el-table-column prop="cancelled_volume" label="撤单量" v-bind="COL.NUMBER">
           <template #default="{ row }">
             <span class="text-mono">{{ formatNumber(row.cancelled_volume || 0) }}</span>
           </template>
@@ -292,11 +292,6 @@
         <el-table-column label="状态" v-bind="COL.STATUS">
           <template #default="{ row }">
             <OrderStatusBadge :status="row.status" :status_msg="row.status_msg" :remark="row.user_def" />
-          </template>
-        </el-table-column>
-        <el-table-column prop="order_time" label="下单时间" v-bind="COL.TIME">
-          <template #default="{ row }">
-            <span class="text-mono">{{ row.order_time || '—' }}</span>
           </template>
         </el-table-column>
         <el-table-column label="操作" width="100" fixed="right" align="center">
@@ -313,6 +308,11 @@
         <el-table-column prop="user_def" label="备注" min-width="120">
           <template #default="{ row }">
             <span class="text-secondary">{{ row.user_def || '—' }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column prop="order_time" label="下单时间" v-bind="COL.TIME">
+          <template #default="{ row }">
+            <span class="text-mono">{{ row.order_time || '—' }}</span>
           </template>
         </el-table-column>
         </el-table>

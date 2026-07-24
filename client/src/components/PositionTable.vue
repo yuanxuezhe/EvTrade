@@ -10,12 +10,10 @@
   >
     <!-- v73: 7 列接入 COL 常量 -->
     <el-table-column type="index" label="#" width="50" align="center" />
-    <el-table-column prop="stock_code" label="股票代码" v-bind="COL.makeDict('stock', { minWidth: 140 })">
+    <el-table-column prop="stock_code" label="标的" show-overflow-tooltip v-bind="COL.STOCK_TARGET">
       <template #default="{ row }">
-        <div class="stock-cell">
-          <div class="stock-code">{{ row.stock_code }}</div>
-          <div class="stock-name">{{ row.stock_name || '--' }}</div>
-        </div>
+        <span class="text-mono tp-stock-code">{{ row.stock_code }}</span>
+        <span class="text-secondary" style="margin-left: 6px">{{ row.stock_name || '—' }}</span>
       </template>
     </el-table-column>
     <el-table-column prop="last_vol" label="期初" v-bind="COL.NUMBER">
@@ -83,24 +81,6 @@ function getRatio(row) {
 </script>
 
 <style scoped>
-.stock-cell {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.stock-code {
-  font-family: var(--font-mono);
-  font-weight: 600;
-  color: var(--text-primary);
-  font-size: 13px;
-}
-
-.stock-name {
-  font-size: 11px;
-  color: var(--text-secondary);
-}
-
 .total-cell {
   font-weight: 600;
   color: var(--brand-primary);

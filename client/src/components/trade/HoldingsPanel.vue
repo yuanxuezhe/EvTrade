@@ -23,10 +23,7 @@
     - 无 export 按钮 (完整导出走 /holdings 全页)
     - 保留: 实时行情 + 市值/盈亏/收益率计算 + 红涨绿跌配色
 
-  列 (v31.1 字段与 Holdings.vue 全页对齐, 共 10 列, 紧凑列宽:
-    代码 76 (fixed left) / 名称 64 / 期初 64 / 持仓 64 / 可用 64 / 成本 68 /
-    最新 68 / 市值 80 / 浮盈 90 / 收益 80 (fixed right) → 总宽 ~718
-    适配窄列右栏 (~856px viewport): 10 列全 fit, 横向滚动由 el-table 默认处理)
+  列 (9 列: 标的 160 fixed left / 期初/持仓/可用 100 / 成本/最新/市值/浮盈 100 / 收益率 100 fixed right)
 -->
 <template>
   <div class="hp-shell content-card">
@@ -56,14 +53,10 @@
         @row-dblclick="onRowDblclick"
       >
         <!-- v70: 10 列走 COL 常量 (持仓 mini panel 列宽压缩 100/100, 总宽 ~720 fit 856 viewport) -->
-        <el-table-column prop="stock_code" label="代码" fixed="left" v-bind="COL.STOCK_CODE">
+        <el-table-column prop="stock_code" label="标的" fixed="left" show-overflow-tooltip v-bind="COL.STOCK_TARGET">
           <template #default="{ row }">
             <span class="tp-stock-code">{{ row.stock_code }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column prop="stock_name" label="名称" show-overflow-tooltip v-bind="COL.STOCK_CODE">
-          <template #default="{ row }">
-            <span class="text-secondary">{{ stockName(row.stock_code) || '—' }}</span>
+            <span class="text-secondary" style="margin-left: 6px">{{ stockName(row.stock_code) || '—' }}</span>
           </template>
         </el-table-column>
         <el-table-column prop="last_vol" label="期初" v-bind="COL.NUMBER">
@@ -116,7 +109,7 @@
             <span v-else class="text-muted">—</span>
           </template>
         </el-table-column>
-        <el-table-column label="收益率" fixed="right" v-bind="COL.makeDict('percent', { width: 100, align: 'right', headerAlign: 'right' })">
+        <el-table-column label="收益率" fixed="right" v-bind="COL.NUMBER">
           <template #default="{ row }">
             <template v-if="getReturnRate(row) != null">
               <span class="text-mono" :class="profitClass(getReturnRate(row))">

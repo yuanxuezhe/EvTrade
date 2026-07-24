@@ -96,11 +96,6 @@
             <span class="text-mono text-secondary">{{ row.trd_date }}</span>
           </template>
         </el-table-column>
-        <el-table-column prop="order_time" label="时间" sortable v-bind="COL.TIME">
-          <template #default="{ row }">
-            <span class="text-mono text-secondary">{{ row.order_time }}</span>
-          </template>
-        </el-table-column>
         <el-table-column prop="order_no" label="委托编号" show-overflow-tooltip v-bind="COL.STOCK_CODE">
           <template #default="{ row }">
             <span class="text-mono text-secondary">{{ row.order_no }}</span>
@@ -112,17 +107,13 @@
             <span v-else class="text-secondary">委托</span>
           </template>
         </el-table-column>
-        <el-table-column prop="stock_code" label="股票代码" v-bind="COL.STOCK_CODE">
+        <el-table-column prop="stock_code" label="标的" show-overflow-tooltip v-bind="COL.STOCK_TARGET">
           <template #default="{ row }">
-            <span class="stock-code">{{ row.stock_code }}</span>
+            <span class="text-mono tp-stock-code">{{ row.stock_code }}</span>
+            <span class="text-secondary" style="margin-left: 6px">{{ stockName(row.stock_code) || '—' }}</span>
           </template>
         </el-table-column>
-        <el-table-column prop="stock_name" label="名称" show-overflow-tooltip v-bind="COL.STOCK_CODE">
-          <template #default="{ row }">
-            <span class="text-secondary">{{ stockName(row.stock_code) || '—' }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column prop="order_type" label="方向" v-bind="COL.makeDict('direction', { width: 100, align: 'center', headerAlign: 'center' })">
+        <el-table-column prop="order_type" label="方向" v-bind="COL.DIRECTION">
           <template #default="{ row }">
             <span class="dir-chip" :class="row.order_type === '23' ? 'buy' : 'sell'">
               {{ row.order_type === '23' ? '买入' : '卖出' }}
@@ -154,7 +145,7 @@
             <span class="text-mono">{{ row.traded_volume > 0 ? formatAmount(row.traded_amount) : '—' }}</span>
           </template>
         </el-table-column>
-        <el-table-column prop="cancelled_volume" label="撤单量" v-bind="COL.makeDict('number', { width: 85, align: 'right', headerAlign: 'right' })">
+        <el-table-column prop="cancelled_volume" label="撤单量" v-bind="COL.NUMBER">
           <template #default="{ row }">
             <span class="text-mono">{{ formatNumber(row.cancelled_volume || 0) }}</span>
           </template>
@@ -164,9 +155,14 @@
             <OrderStatusBadge :status="row.status" :remark="row.remark" :status_msg="row.status_msg" />
           </template>
         </el-table-column>
-        <el-table-column prop="order_id" label="合同序号" show-overflow-tooltip v-bind="COL.makeDict('id', { minWidth: 100 })">
+        <el-table-column prop="order_id" label="合同序号" show-overflow-tooltip v-bind="COL.STOCK_CODE">
           <template #default="{ row }">
             <span class="text-mono text-secondary">{{ row.order_id }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column prop="order_time" label="委托时间" sortable v-bind="COL.TIME">
+          <template #default="{ row }">
+            <span class="text-mono text-secondary">{{ row.order_time }}</span>
           </template>
         </el-table-column>
         <template #empty>
@@ -430,11 +426,6 @@ function exportCSV() {
 }
 .pill-label { font-size: 12px; color: var(--text-secondary); }
 .pill-value { font-size: 16px; font-weight: 700; }
-
-.stock-code {
-  font-family: var(--font-mono);
-  font-weight: 600;
-}
 
 .dir-chip {
   display: inline-flex;

@@ -27,8 +27,8 @@
     </div>
 
     <!--
-      列顺序 (v67 调整, v69 接入通用列样式):
-        交易日 → 委托编号 → 类型 → 标的 → 方向 → 委托量/价/成交量/均价/金额/撤单量 → 状态 → 下单时间 → 操作
+      列顺序:
+        交易日 → 委托编号 → 类型 → 标的 → 方向 → 委托量/价/成交量/均价/金额/撤单量 → 状态 → 操作 → 下单时间
       v69 接入: 表格列宽/对齐走 utils/tableColumns.js COL 常量, 业务 prop/label 保留
       隐藏: T0任务/策略 (T0Trade.vue 内嵌面板仍可见)
       下单时间 width=185: 容纳 String(23) "YYYY-MM-DD HH:MM:SS.fff" 全显
@@ -62,14 +62,13 @@
             <span v-else class="text-secondary">委托</span>
           </template>
         </el-table-column>
-        <!-- change 2026-07-21-stock-target-col-width: 固定 width=160 + show-overflow-tooltip 防止名称撑宽 -->
-        <el-table-column prop="stock_code" label="标的" sortable width="160" show-overflow-tooltip v-bind="COL.STOCK_TARGET">
+        <el-table-column prop="stock_code" label="标的" sortable show-overflow-tooltip v-bind="COL.STOCK_TARGET">
           <template #default="{ row }">
             <span class="text-mono tp-stock-code">{{ row.stock_code }}</span>
             <span class="text-secondary" style="margin-left: 6px">{{ stockName(row.stock_code) || '—' }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="方向" v-bind="COL.makeDict('direction', { width: 100, align: 'center', headerAlign: 'center' })">
+        <el-table-column label="方向" v-bind="COL.DIRECTION">
           <template #default="{ row }">
             <span class="tp-dir-chip" :class="row.order_type === '23' ? 'buy' : 'sell'">
               {{ row.order_type === '23' ? '买' : '卖' }}
@@ -97,12 +96,12 @@
             <span class="text-mono">{{ row.traded_volume > 0 ? formatPrice(row.avg_price, row.stock_code) : '—' }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="成交金额" v-bind="COL.makeDict('money', { width: 105, align: 'right', headerAlign: 'right' })">
+        <el-table-column label="成交金额" v-bind="COL.MONEY">
           <template #default="{ row }">
             <span class="text-mono">{{ row.traded_volume > 0 ? formatMoney(row.traded_amount) : '—' }}</span>
           </template>
         </el-table-column>
-        <el-table-column prop="cancelled_volume" label="撤单量" sortable v-bind="COL.makeDict('number', { width: 85, align: 'right', headerAlign: 'right' })">
+        <el-table-column prop="cancelled_volume" label="撤单量" sortable v-bind="COL.NUMBER">
           <template #default="{ row }">
             <span class="text-mono">{{ formatNumber(row.cancelled_volume || 0) }}</span>
           </template>
@@ -110,11 +109,6 @@
         <el-table-column label="状态" v-bind="COL.STATUS">
           <template #default="{ row }">
             <OrderStatusBadge :status="row.status" :remark="row.remark" :status_msg="row.status_msg" />
-          </template>
-        </el-table-column>
-        <el-table-column prop="order_time" label="下单时间" sortable v-bind="COL.TIME">
-          <template #default="{ row }">
-            <span class="text-mono text-secondary">{{ row.order_time }}</span>
           </template>
         </el-table-column>
         <el-table-column label="操作" width="100" fixed="right">
@@ -128,6 +122,11 @@
             >
               撤单
             </el-button>
+          </template>
+        </el-table-column>
+        <el-table-column prop="order_time" label="下单时间" sortable v-bind="COL.TIME">
+          <template #default="{ row }">
+            <span class="text-mono text-secondary">{{ row.order_time }}</span>
           </template>
         </el-table-column>
         <template #empty>
@@ -177,14 +176,13 @@
             <span v-else class="text-secondary">成交</span>
           </template>
         </el-table-column>
-        <!-- change 2026-07-21-stock-target-col-width: 与委托 tab 标的列同步 (width=160) -->
-        <el-table-column prop="stock_code" label="标的" sortable width="160" show-overflow-tooltip v-bind="COL.STOCK_TARGET">
+        <el-table-column prop="stock_code" label="标的" sortable show-overflow-tooltip v-bind="COL.STOCK_TARGET">
           <template #default="{ row }">
             <span class="text-mono tp-stock-code">{{ row.stock_code }}</span>
             <span class="text-secondary" style="margin-left: 6px">{{ stockName(row.stock_code) || '—' }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="方向" v-bind="COL.makeDict('direction', { width: 100, align: 'center', headerAlign: 'center' })">
+        <el-table-column label="方向" v-bind="COL.DIRECTION">
           <template #default="{ row }">
             <span class="tp-dir-chip" :class="row.order_type === '23' ? 'buy' : 'sell'">
               {{ row.order_type === '23' ? '买' : '卖' }}

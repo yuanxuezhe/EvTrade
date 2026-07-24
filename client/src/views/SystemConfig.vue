@@ -31,7 +31,7 @@
           </template>
         </el-table-column>
         <el-table-column prop="cfg_key" label="Key" width="180" />
-        <el-table-column prop="cfg_val" label="值">
+        <el-table-column prop="cfg_val" label="值" min-width="120" show-overflow-tooltip>
           <template #default="{ row }">
             <span v-if="!row._editing" class="mono">{{ row.cfg_val }}</span>
             <el-input v-else v-model="row._draft.cfg_val" size="small" />

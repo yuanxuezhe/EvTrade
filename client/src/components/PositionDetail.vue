@@ -78,7 +78,7 @@
                 </el-tag>
               </template>
             </el-table-column>
-            <el-table-column prop="order_type" label="方向" v-bind="COL.makeDict('direction', { width: 100, align: 'center', headerAlign: 'center' })">
+            <el-table-column prop="order_type" label="方向" v-bind="COL.DIRECTION">
               <template #default="{ row }">
                 <span class="dir-chip" :class="row.order_type === '23' ? 'buy' : 'sell'">
                   {{ row.order_type === '23' ? '买' : '卖' }}

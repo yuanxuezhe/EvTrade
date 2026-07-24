@@ -39,11 +39,11 @@ export const STOCK_CODE = {
 /**
  * 2. STOCK_TARGET — 标的 (代码+名称合并)
  *    适用: 单列显示 stock_code + 名称 (仿 T0Trade.vue 标的列)
- *    模板: 参见 T0Trade.vue 主表标的列 (text-mono 代码 + 6px + text-secondary 名称)
- *    width 用 min-width (名称长度可变, 让列自然撑宽)
+ *    模板: <span class="text-mono tp-stock-code">{{ code }}</span> + 6px + <span class="text-secondary">{{ name }}</span>
+ *    固定 width=160 + show-overflow-tooltip (防名称过长撑爆列)
  */
 export const STOCK_TARGET = {
-  minWidth: 140,
+  width: 160,
   align: 'left',
   headerAlign: 'left',
 }
@@ -51,11 +51,11 @@ export const STOCK_TARGET = {
 /**
  * 3. TIME — 时间列 (下单时间/委托时间)
  *    适用: 容纳 String(23) "YYYY-MM-DD HH:MM:SS.fff" 全显
- *    width=185: 23 字符 mono + 8px 左右 padding
+ *    width=150: 截断显示日期+时间, 完整内容 hover tooltip 查看
  *    模板: <span class="text-mono text-secondary">{{ row.xxx }}</span>
  */
 export const TIME = {
-  width: 185,
+  width: 150,
   align: 'left',
   headerAlign: 'left',
 }
@@ -101,7 +101,7 @@ export const MONEY = {
 
 /** 委托方向 (23买/24卖) — chip 风格 + 颜色 */
 export const DIRECTION = makeDict('DIRECTION', {
-  width: 60,
+  width: 80,
   align: 'center',
   headerAlign: 'center',
 })

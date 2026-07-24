@@ -49,10 +49,10 @@
         empty-text="数据为空 (Pinia 内存)"
       >
         <!-- v73: 10 列接入 COL 常量 -->
-        <el-table-column prop="stock_code" label="股票代码" show-overflow-tooltip v-bind="COL.STOCK_CODE" />
-        <el-table-column label="股票名称" show-overflow-tooltip v-bind="COL.STOCK_CODE">
+        <el-table-column prop="stock_code" label="标的" show-overflow-tooltip v-bind="COL.STOCK_TARGET">
           <template #default="{ row }">
-            <span class="text-secondary">{{ stockName(row.stock_code) || '—' }}</span>
+            <span class="text-mono tp-stock-code">{{ row.stock_code }}</span>
+            <span class="text-secondary" style="margin-left: 6px">{{ stockName(row.stock_code) || '—' }}</span>
           </template>
         </el-table-column>
         <el-table-column prop="last_vol" label="期初" v-bind="COL.NUMBER">
@@ -80,11 +80,6 @@
             <span class="text-mono">{{ formatMoney(row.market_value) }}</span>
           </template>
         </el-table-column>
-        <el-table-column prop="synced_at" label="同步时间" show-overflow-tooltip v-bind="COL.TIME">
-          <template #default="{ row }">
-            <span class="text-mono text-secondary">{{ row.synced_at || '-' }}</span>
-          </template>
-        </el-table-column>
         <el-table-column prop="synced_from" label="来源" width="100">
           <template #default="{ row }">
             <el-tag v-if="row.synced_from === 'manual'" type="warning" size="small">manual</el-tag>
@@ -95,6 +90,11 @@
         <el-table-column label="操作" width="100" fixed="right">
           <template #default="{ row }">
             <el-button size="small" type="primary" plain @click="openAdjust(row)">调平</el-button>
+          </template>
+        </el-table-column>
+        <el-table-column prop="synced_at" label="同步时间" show-overflow-tooltip v-bind="COL.TIME">
+          <template #default="{ row }">
+            <span class="text-mono text-secondary">{{ row.synced_at || '-' }}</span>
           </template>
         </el-table-column>
       </el-table>
