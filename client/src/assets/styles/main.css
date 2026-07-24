@@ -86,27 +86,27 @@
 }
 
 html.dark {
-  --bg-base: #0b1020;
-  --bg-elevated: #141a2e;
-  --bg-soft: #1a2138;
-  --bg-overlay: rgba(20, 26, 46, 0.72);
-  --bg-hover: rgba(79, 124, 255, 0.12);
+  --bg-base: #0d1117;
+  --bg-elevated: #161b22;
+  --bg-soft: #1c2333;
+  --bg-overlay: rgba(22, 27, 34, 0.80);
+  --bg-hover: rgba(79, 124, 255, 0.10);
 
-  --text-primary: #e7ecf5;
-  --text-regular: #b9c2d4;
-  --text-secondary: #8a93a8;
-  --text-placeholder: #5b6478;
-  --text-inverse: #1a2238;
+  --text-primary: #e6edf3;
+  --text-regular: #b1bac4;
+  --text-secondary: #8b949e;
+  --text-placeholder: #6e7681;
+  --text-inverse: #0d1117;
 
-  --border-base: #23314f;
-  --border-light: #1c2640;
-  --border-strong: #2e3e60;
+  --border-base: #2a313a;
+  --border-light: #21262d;
+  --border-strong: #364151;
 
-  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.3);
-  --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.35);
-  --shadow-md: 0 6px 20px rgba(0, 0, 0, 0.45);
-  --shadow-lg: 0 12px 40px rgba(0, 0, 0, 0.55);
-  --shadow-glow: 0 8px 32px rgba(79, 124, 255, 0.35);
+  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.25);
+  --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.30);
+  --shadow-md: 0 6px 20px rgba(0, 0, 0, 0.38);
+  --shadow-lg: 0 12px 40px rgba(0, 0, 0, 0.45);
+  --shadow-glow: 0 8px 32px rgba(79, 124, 255, 0.25);
 }
 
 /* ============================================================
@@ -194,11 +194,7 @@ h1, h2, h3, h4, h5, h6 {
   background: var(--bg-elevated);
   border: 1px solid var(--border-base);
   border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-sm);
-  transition: box-shadow var(--transition-base), transform var(--transition-base);
-}
-.content-card:hover {
-  box-shadow: var(--shadow-md);
+  box-shadow: var(--shadow-xs);
 }
 
 /* 渐变文字 */
@@ -382,8 +378,6 @@ h1, h2, h3, h4, h5, h6 {
   color: var(--text-secondary) !important;
   font-weight: 600 !important;
   font-size: 12px !important;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
 }
 .el-table td.el-table__cell {
   border-bottom: 1px solid var(--border-light) !important;
@@ -455,6 +449,39 @@ h1, h2, h3, h4, h5, h6 {
 /* 描述项的 cell */
 .el-descriptions .el-descriptions__cell.is-bordered-label {
   background: var(--bg-soft) !important;
+}
+
+/* ============================================================
+   ElNotification 自定义样式 (v96 推送优化)
+   ============================================================ */
+.el-notification {
+  border-radius: var(--radius-md) !important;
+  border: 1px solid var(--border-base) !important;
+  box-shadow: var(--shadow-md) !important;
+  overflow: hidden;
+}
+.el-notification__title {
+  font-weight: 600 !important;
+  font-size: 13px !important;
+}
+.el-notification__content {
+  font-size: 12px !important;
+  line-height: 1.5 !important;
+}
+/* 成功 (成交) — 绿色左边框 */
+.el-notification--success {
+  border-left: 4px solid var(--color-down) !important;
+}
+/* 错误 (废单) — 红色左边框 */
+.el-notification--error {
+  border-left: 4px solid var(--color-up) !important;
+}
+/* 信息 (已报/已撤) — 蓝色/灰色左边框 */
+.el-notification--info {
+  border-left: 4px solid var(--color-info) !important;
+}
+.el-notification--warning {
+  border-left: 4px solid var(--color-warning) !important;
 }
 
 /* ============================================================
@@ -610,6 +637,7 @@ h1, h2, h3, h4, h5, h6 {
   flex-shrink: 0;
   margin-right: 8px;
 }
+.is-mobile .el-table tbody tr td.col-标的::before       { content: '标的'; }
 .is-mobile .el-table tbody tr td.col-代码::before       { content: '代码'; }
 .is-mobile .el-table tbody tr td.col-名称::before       { content: '名称'; }
 .is-mobile .el-table tbody tr td.col-期初::before       { content: '期初'; }
@@ -632,7 +660,38 @@ h1, h2, h3, h4, h5, h6 {
 .is-mobile .el-table tbody tr td.col-方向::before       { content: '方向'; }
 .is-mobile .el-table tbody tr td.col-状态::before       { content: '状态'; }
 .is-mobile .el-table tbody tr td.col-备注::before       { content: '备注'; }
-/* 卡片顶部: 代码 + 名称 突出 */
+.is-mobile .el-table tbody tr td.col-操作::before       { content: ''; }
+.is-mobile .el-table tbody tr td.col-委托量::before      { content: '委托量'; }
+.is-mobile .el-table tbody tr td.col-委托价::before      { content: '委托价'; }
+.is-mobile .el-table tbody tr td.col-成交量::before      { content: '成交量'; }
+.is-mobile .el-table tbody tr td.col-成交均价::before    { content: '成交均价'; }
+.is-mobile .el-table tbody tr td.col-成交金额::before    { content: '成交金额'; }
+.is-mobile .el-table tbody tr td.col-撤单量::before      { content: '撤单量'; }
+.is-mobile .el-table tbody tr td.col-期初::before        { content: '期初'; }
+.is-mobile .el-table tbody tr td.col-持仓::before        { content: '持仓'; }
+.is-mobile .el-table tbody tr td.col-可用::before        { content: '可用'; }
+.is-mobile .el-table tbody tr td.col-成本::before        { content: '成本'; }
+.is-mobile .el-table tbody tr td.col-市值::before        { content: '市值'; }
+.is-mobile .el-table tbody tr td.col-金额::before        { content: '金额'; }
+.is-mobile .el-table tbody tr td.col-交易日::before      { content: '日期'; }
+.is-mobile .el-table tbody tr td.col-类型::before        { content: '类型'; }
+.is-mobile .el-table tbody tr td.col-合同序号::before    { content: '合同号'; }
+.is-mobile .el-table tbody tr td.col-成交编号::before    { content: '成交号'; }
+.is-mobile .el-table tbody tr td.col-时间::before        { content: '时间'; }
+.is-mobile .el-table tbody tr td.col-下单时间::before    { content: '时间'; }
+/* 卡片顶部: 标的列突出显示 (代码+名称合并列) */
+.is-mobile .el-table tbody tr td.col-标的 {
+  font-size: 16px !important;
+  font-weight: 600 !important;
+  color: var(--brand-primary, #4f7cff) !important;
+  border-bottom: 1px solid var(--el-border-color-lighter, #ebeef5) !important;
+  padding-bottom: 8px !important;
+  margin-bottom: 4px !important;
+}
+.is-mobile .el-table tbody tr td.col-标的::before {
+  display: none !important;  /* 标的行不加 label */
+}
+/* 卡片顶部: 代码 + 名称 突出 (兼容旧表) */
 .is-mobile .el-table tbody tr td.col-代码 {
   font-size: 16px !important;
   font-weight: 600 !important;
@@ -711,7 +770,7 @@ h1, h2, h3, h4, h5, h6 {
   transform: translateX(0);
 }
 
-/* 移动端 content padding 收紧 */
+/* 移动端 content padding 收紧 (App.vue 已处理, 这里保留兜底) */
 .is-mobile .app-content {
-  padding: var(--space-2) !important;
+  /* 不覆盖, 让 App.vue 控制 */
 }

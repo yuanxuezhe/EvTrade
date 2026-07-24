@@ -15,7 +15,7 @@
       <!-- 移动端遮罩 -->
       <div v-if="uiStore.isMobile && uiStore.mobileSidebarOpen" class="sidebar-mask" @click="uiStore.toggleSidebar"></div>
 
-      <Sidebar />
+      <Sidebar v-if="!uiStore.isMobile || uiStore.mobileSidebarOpen" />
       <div class="app-main">
         <AppHeader @toggle-sidebar="onToggleSidebar" />
         <main class="app-content">
@@ -30,8 +30,11 @@
     <!-- 页面底部固定操作记录栏（贴底 fixed）
          v-model:expanded 共享给 uiStore,让其它视图（如 Trade.vue）能跟随高度变化 -->
     <OperationLog
-      v-if="authStore.isAuthenticated"
+      v-if="authStore.isAuthenticated && !uiStore.isMobile"
       v-model:expanded="uiStore.oplogExpanded"
+    />
+    <BottomNav
+      v-if="authStore.isAuthenticated && uiStore.isMobile"
     />
   </template>
 </template>
@@ -42,6 +45,7 @@ import { useRoute } from 'vue-router'
 import Sidebar from './components/Sidebar.vue'
 import AppHeader from './components/AppHeader.vue'
 import OperationLog from './components/OperationLog.vue'
+import BottomNav from './components/BottomNav.vue'
 import { useUiStore } from './stores/ui'
 import { useAuthStore } from './stores/auth'
 import { useWsStore } from './stores/ws'
@@ -178,6 +182,12 @@ watch(
   /* 给底部固定操作记录栏留出空间（折叠态 44px） */
   padding-bottom: 60px;
   -webkit-overflow-scrolling: touch;
+}
+
+/* 移动端: 给底部导航栏留空间 (56px nav + 16px buffer) */
+.app-layout.is-mobile .app-content {
+  padding: var(--space-3);
+  padding-bottom: 72px;
 }
 
 /* 页面切换动画 */
