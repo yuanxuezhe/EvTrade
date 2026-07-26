@@ -129,20 +129,16 @@ const selectBoxStyle = computed(() => ({
   minWidth: 0,
 }))
 
-// el-input type=number 输入处理: 保留字符串; 父组件 orderForm handleSubmit 时 Number() 转换
-// 不强制 number 转换避免零卡小数点
+// el-input type=number 输入处理
 //
-// v105: 输入过程不再按 scale 四舍五入 — 原 v82 onPriceInput 在 @input 实时 round,
-//   导致用户输 "11.123" (scale=2) 时被强制改写为 "11.12", 光标跳动+无法流畅输入.
-//   新规则: 输入时直接 emit 原值 (保留字符串/数字), 失焦/提交时才 round.
+// v106: 输入过程实时按 scale 截断小数位 (truncate, 不四舍五入).
+//   用户输入 "11.123" (scale=2) → 立即截断为 "11.12" → 光标保持原位.
+//   vs v105 (失焦才 round): 用户能流畅看到自己输入被即时截断, 体验更可控.
+//   vs v82 (输入时 round): 不会把 11.126 错误"提前 round"成 11.13, 而是 11.12.
+//
+// 截断后保留小数位数 (toFixed(p)) 避免显示 "11.1" (scale=2 应该是 "11.10"),
+// 但保留小数点后位数等于 scale. 用户后续输入超 scale 位仍按 truncate 处理.
 function onPriceInput(v) {
-  emit('update:price', v)
-}
-
-// v105: 失焦时按 scale 四舍五入 — 用户输完焦点移开后才 round, 不影响输入流.
-//   同时清理非法字符 (空/null/非数字) → 不更新父组件.
-function onPriceBlur() {
-  const v = localPrice.value
   if (v === '' || v === null || v === undefined) {
     emit('update:price', v)
     return
@@ -154,11 +150,27 @@ function onPriceBlur() {
     return
   }
   const p = priceScale.value
-  const rounded = Number(n.toFixed(p))
-  // 只有 round 变化时才 emit, 避免光标跳动
-  if (Number(localPrice.value) !== rounded) {
-    emit('update:price', rounded)
+  // 截断小数位 (Math.trunc 不四舍五入) — 避免输入 11.126 被预先 round 成 11.13
+  const truncated = Math.trunc(n * Math.pow(10, p)) / Math.pow(10, p)
+  const truncatedStr = truncated.toFixed(p)
+  // 只有 truncate 变化时才 emit, 避免光标跳动
+  if (String(n) !== truncatedStr) {
+    emit('update:price', truncatedStr)
+  } else {
+    emit('update:price', v)
   }
+}
+
+// v106: 失焦防御性 round — 输入过程已 truncate, 失焦不再需要 round.
+//   仅清理: 非数字 → 清空; 空值 → 保留.
+function onPriceBlur() {
+  const v = localPrice.value
+  if (v === '' || v === null || v === undefined) return  // 空值不动
+  const n = Number(v)
+  if (!Number.isFinite(n)) {
+    emit('update:price', '')
+  }
+  // 已有 truncate 处理, 失焦不再 round
 }
 </script>
 
