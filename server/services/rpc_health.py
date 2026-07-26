@@ -88,8 +88,9 @@ async def _sync_loop():
                 now = datetime.now(timezone.utc).replace(tzinfo=None)
 
                 # 写入 assets 表 (单行, id=1)
+                # v102: update_one(data, **pk) 要求 data 不含主键字段,
+                #   'id' 必须作为 pk kwarg 传入, 不能放进 data dict
                 Assets.update_one({
-                    "id": 1,
                     "cash": float(a.get("cash", 0) or 0),
                     "frozen_cash": float(a.get("frozen_cash", 0) or 0),
                     "market_value": float(a.get("market_value", 0) or 0),
