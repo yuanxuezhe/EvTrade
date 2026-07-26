@@ -39,6 +39,7 @@
         :size="size"
         class="pti-el-input"
         @input="onPriceInput"
+        @blur="onPriceBlur"
       />
     </div>
     <!-- 右: 价格类型 select -->
@@ -130,24 +131,33 @@ const selectBoxStyle = computed(() => ({
 
 // el-input type=number 输入处理: 保留字符串; 父组件 orderForm handleSubmit 时 Number() 转换
 // 不强制 number 转换避免零卡小数点
+//
+// v105: 输入过程不再按 scale 四舍五入 — 原 v82 onPriceInput 在 @input 实时 round,
+//   导致用户输 "11.123" (scale=2) 时被强制改写为 "11.12", 光标跳动+无法流畅输入.
+//   新规则: 输入时直接 emit 原值 (保留字符串/数字), 失焦/提交时才 round.
 function onPriceInput(v) {
-  // v82: 按证券 scale 四舍五入 — 兼容股票(2)/ETF(3)/可转债(3)
+  emit('update:price', v)
+}
+
+// v105: 失焦时按 scale 四舍五入 — 用户输完焦点移开后才 round, 不影响输入流.
+//   同时清理非法字符 (空/null/非数字) → 不更新父组件.
+function onPriceBlur() {
+  const v = localPrice.value
   if (v === '' || v === null || v === undefined) {
     emit('update:price', v)
     return
   }
   const n = Number(v)
   if (!Number.isFinite(n)) {
-    emit('update:price', v)
+    // 非数字: 清空, 让用户重输
+    emit('update:price', '')
     return
   }
   const p = priceScale.value
-  const rounded = n.toFixed(p)
+  const rounded = Number(n.toFixed(p))
   // 只有 round 变化时才 emit, 避免光标跳动
-  if (String(n) !== rounded) {
+  if (Number(localPrice.value) !== rounded) {
     emit('update:price', rounded)
-  } else {
-    emit('update:price', v)
   }
 }
 </script>
