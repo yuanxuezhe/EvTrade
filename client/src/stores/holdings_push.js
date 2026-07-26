@@ -253,5 +253,5 @@ export function createPushHandlers(deps) {
     return true
   }
 
-  return { applyOrderPush, applyTradePush, applyQuote }
+  return { applyOrderPush, applyTradePush, applyQuote, applyPositionUpdate }
 }
