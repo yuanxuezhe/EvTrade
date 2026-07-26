@@ -131,13 +131,16 @@ const selectBoxStyle = computed(() => ({
 
 // el-input type=number 输入处理
 //
-// v106: 输入过程实时按 scale 截断小数位 (truncate, 不四舍五入).
-//   用户输入 "11.123" (scale=2) → 立即截断为 "11.12" → 光标保持原位.
-//   vs v105 (失焦才 round): 用户能流畅看到自己输入被即时截断, 体验更可控.
-//   vs v82 (输入时 round): 不会把 11.126 错误"提前 round"成 11.13, 而是 11.12.
+// v107: 输入过程实时按 scale 截断小数位 (truncate, 不四舍五入).
+//   关键 UX 修复: emit 原 Number, 不 emit toFixed 字符串.
+//   v106 emit "1.00" 字符串 → el-input v-model 转 Number 后变 1 → 输入流被锁死,
+//   用户输 1.2 时变成 1.002 → truncate 回 1 → 光标卡住, "只能是 1.00".
+//   v107 emit 原 truncated 数字 (1.23 / 1.2 / 1) → el-input 正常显示, 不锁光标.
 //
-// 截断后保留小数位数 (toFixed(p)) 避免显示 "11.1" (scale=2 应该是 "11.10"),
-// 但保留小数点后位数等于 scale. 用户后续输入超 scale 位仍按 truncate 处理.
+// scale 来源: stocksStore.stockScale(props.stockCode)
+//   股票 (000001.SZ): scale=2
+//   ETF (513050.SH): scale=3
+//   cache miss → 兜底 2 (v105 已落)
 function onPriceInput(v) {
   if (v === '' || v === null || v === undefined) {
     emit('update:price', v)
@@ -145,32 +148,33 @@ function onPriceInput(v) {
   }
   const n = Number(v)
   if (!Number.isFinite(n)) {
-    // 非数字: 清空, 让用户重输
-    emit('update:price', '')
+    // 非数字 (含 "." "." 等中间态) → 保留原值让 el-input 处理, 不强制清空
+    emit('update:price', v)
     return
   }
   const p = priceScale.value
-  // 截断小数位 (Math.trunc 不四舍五入) — 避免输入 11.126 被预先 round 成 11.13
+  // 截断小数位 (Math.trunc 不四舍五入) — 避免 11.126 被预先 round 成 11.13
   const truncated = Math.trunc(n * Math.pow(10, p)) / Math.pow(10, p)
-  const truncatedStr = truncated.toFixed(p)
-  // 只有 truncate 变化时才 emit, 避免光标跳动
-  if (String(n) !== truncatedStr) {
-    emit('update:price', truncatedStr)
+  // emit Number (不是 toFixed 字符串) — 让 el-input 自然显示
+  // 例: scale=2, 输 "1.23" → n=1.23 → truncated=1.23 → emit 1.23 → 显示 "1.23"
+  //     scale=2, 输 "1.236" → n=1.236 → truncated=1.23 → emit 1.23 → 显示 "1.23"
+  //     scale=2, 输 "1" → n=1 → truncated=1 → emit 1 → 显示 "1" (不会变 "1.00")
+  if (n !== truncated) {
+    emit('update:price', truncated)
   } else {
-    emit('update:price', v)
+    emit('update:price', n)
   }
 }
 
-// v106: 失焦防御性 round — 输入过程已 truncate, 失焦不再需要 round.
-//   仅清理: 非数字 → 清空; 空值 → 保留.
+// v107: 失焦不再做任何处理 — 输入过程已 truncate + 已 emit 原数字,
+//   失焦时再操作只会引起光标跳动. 仅防御: 非数字 → 清空.
 function onPriceBlur() {
   const v = localPrice.value
-  if (v === '' || v === null || v === undefined) return  // 空值不动
+  if (v === '' || v === null || v === undefined) return
   const n = Number(v)
   if (!Number.isFinite(n)) {
     emit('update:price', '')
   }
-  // 已有 truncate 处理, 失焦不再 round
 }
 </script>
 
