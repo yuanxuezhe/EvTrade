@@ -3,12 +3,14 @@
  *
  * 职责:
  * - WS URL 构造 (含 hqserver 直连 quote_update 特例)
- * - 3 个 channel 的 _openChannel / _scheduleReconnect（order_update / trade_update + quote_update）
- *   change consolidate-position-data-flow:
- *     position_update / asset_update channel 已删除
- *     (xtquant broker 不发 pos_cfm / ast_cfm, 改由 day-init reconcile + holdings 内存缓存)
+ * - 多个 channel 的 _openChannel / _scheduleReconnect
  * - 客户端主动 30s ping, 累计 3 次 (90s) 未回 pong 触发重连
  * - 指数退避: delay = min(1000 * 2^retryCount, 30000)
+ *
+ * v95: 新增 position_update 频道 — 后端 trd_cfm 完成后主动推该标的完整持仓行,
+ *      前端 applyPositionUpdate 按 stock_code 整条 ref 替换 (不增量/不 spread).
+ *      (change consolidate-position-data-flow 当年删了 pos_cfm/ast_cfm channel,
+ *       现在 v95 重新引入 - 但只是 position_update, 没有 asset_update)
  *
  * 暴露 createWsManager() 工厂, 返回 { connect, disconnect, connected (ref), lastEvent (ref) }
  * 通过依赖注入 onMessage 回调（ws_dispatch.dispatchPayload）, 不直接 import dispatch
@@ -24,6 +26,10 @@ const log = makeLogger('ws')
 //   - 前端 ws_dispatch._onInitCompleted 接收后做：active day 切换 + force bootstrap
 //   - 之前 ws_dispatch._onInitCompleted 写了但永远收不到 (CHANNELS 没列)，导致日初后页面不切日
 export const CHANNELS = ['order_update', 'trade_update', 'quote_update', 'strategy_update', 'system_update']
+//                                                                            ^^^^^^^^^^^^^^^^
+//                                                                            v99: 日初完成后推 init_completed
+//                                                                            v95: trd_cfm payload.data.position 同时携带持仓行, 前端 _onTradeCfm 内部处理
+//                                                                                  (不需要独立 position_update channel, position 行嵌入 trd_cfm payload)
 
 // v7 改: WS 重连从固定 3s 改为指数退避
 //   delay = min(1000 * 2^retryCount, 30000)

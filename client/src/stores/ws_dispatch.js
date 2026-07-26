@@ -291,6 +291,18 @@ function _onTradeCfm(row) {
     log.error('_onTradeCfm applyTradePush failed:', e)
   }
 
+  // v95: trd_cfm payload.data.position 同时携带最新 Position 行 (后端嵌入).
+  //   applyPositionUpdate 按 stock_code 整条 ref 替换 (不增量/不 spread).
+  //   trade_type=1 (cancel-trade) 时 position 字段为 None, 跳过.
+  if (row.position && row.position.stock_code) {
+    try {
+      const holdings = useHoldingsStore()
+      holdings.applyPositionUpdate(row.position)
+    } catch (e) {
+      log.error('_onTradeCfm applyPositionUpdate failed:', e)
+    }
+  }
+
   log.info(`[trd_cfm] 成交推送: trd_date=${row.trd_date || '-'} order_no=${row.order_no} code=${row.stock_code} ${row.volume}@${row.price}`)
 }
 

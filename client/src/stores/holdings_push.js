@@ -215,6 +215,29 @@ export function createPushHandlers(deps) {
     }
   }
 
+  /** v95: ws._onTradeCfm 调用 — 后端 trd_cfm payload.data.position 携带最新 Position 行.
+   *   前端按 stock_code find → 整条 ref 替换 (不 spread/merge/计算).
+   *   这是 "前端 dumb, 完全依赖后端权威" 的统一规则
+   *   (与 applyOrderPush 不同: 委托 metaMerge 保留 ref 累计字段,
+   *    是因为 ord_cfm 推送仍可能漏 broker.traded_volume 等字段, 前端兜底)
+   *   Position 行内所有字段都是后端权威的最终值, 不需要前端推断.
+   *
+   *   - 找到: positions[idx] = row (整条 ref 替换, 触发 reactive)
+   *   - 找不到: positions.unshift(row) (新持仓 — 比如首次买入)
+   *   - 无 stock_code: 跳过 (防御)
+   */
+  function applyPositionUpdate(row) {
+    if (!row || !row.stock_code) return
+    const idx = positions.value.findIndex((p) => p.stock_code === row.stock_code)
+    if (idx >= 0) {
+      positions.value[idx] = row  // v95: 整条 ref 替换, 不 spread
+      log('info', '持仓', 'ws', `持仓刷新: ${row.stock_code} vol=${row.vol} avl=${row.avl_vol} cost=${row.cost_price}`)
+    } else {
+      positions.value.unshift(row)
+      log('info', '持仓', 'ws', `新持仓: ${row.stock_code} vol=${row.vol} avl=${row.avl_vol} cost=${row.cost_price}`)
+    }
+  }
+
   /** ws._onQuote 调用：白名单过滤 + 写入 quote store */
   function applyQuote(row) {
     if (!row || !row.stock_code) return false

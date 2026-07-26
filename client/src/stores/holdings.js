@@ -60,7 +60,7 @@ export const useHoldingsStore = defineStore('holdings', () => {
   // change consolidate-position-data-flow: applyPositionPush / applyAssetPush 已删除
   //   (xtquant broker 不发 pos_cfm / ast_cfm, Position/Asset 状态由 day-init reconcile 覆盖)
   const {
-    applyOrderPush, applyTradePush, applyQuote,
+    applyOrderPush, applyTradePush, applyQuote, applyPositionUpdate,
   } = createPushHandlers({
     positions, orders, trades, cachedAsset, activeTrdDate,
     log, positionCodes, getQuoteStore: () => useQuoteStore(),
@@ -140,7 +140,7 @@ export const useHoldingsStore = defineStore('holdings', () => {
     bootstrap, refreshAll, resetForNewDay,
     refreshPositions, refreshAsset,
     getLivePrice, getMarketValue, getProfit, getReturnRate,
-    applyOrderPush, applyTradePush, applyQuote,
+    applyOrderPush, applyTradePush, applyQuote, applyPositionUpdate,
     log, clearHistory,
     _startWatchers, _stopWatchers
   }
