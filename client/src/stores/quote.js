@@ -88,6 +88,50 @@ export const useQuoteStore = defineStore('quote', () => {
       if (s.bid1_vol != null) {
         next.bid_vols = [s.bid1_vol, s.bid2_vol, s.bid3_vol, s.bid4_vol, s.bid5_vol].map(Number)
       }
+      // v108: 从 snapshot 派生 xtquant-layout fields 数组 — QuotePanel.vue 用
+      //   quote.fields[F.ASK_PRICE + (level-1)] 读五档, 但 ws payload 在
+      //   REST /api/quote/snapshots 路径不传 fields (只有 snapshot dict).
+      //   之前 fields=[] 导致 QuotePanel 五档全空, 用户只看到最新价.
+      //   按 xtquant 31 字段 layout 重建: 2=last, 3=open, 4=high, 5=low,
+      //   6=prev_close, 7=volume, 8=amount, 11..15=ask_prices, 16..20=bid_prices,
+      //   21..25=ask_vols, 26..30=bid_vols
+      const fields = new Array(31).fill('')
+      if (s.last_price != null) fields[2] = Number(s.last_price)
+      if (s.open_price != null) fields[3] = Number(s.open_price)
+      if (s.high_price != null) fields[4] = Number(s.high_price)
+      if (s.low_price != null) fields[5] = Number(s.low_price)
+      if (s.prev_close != null) fields[6] = Number(s.prev_close)
+      if (s.volume != null) fields[7] = Number(s.volume)
+      if (s.amount != null) fields[8] = Number(s.amount)
+      if (s.ask1_price != null) {
+        fields[11] = Number(s.ask1_price)
+        if (s.ask2_price != null) fields[12] = Number(s.ask2_price)
+        if (s.ask3_price != null) fields[13] = Number(s.ask3_price)
+        if (s.ask4_price != null) fields[14] = Number(s.ask4_price)
+        if (s.ask5_price != null) fields[15] = Number(s.ask5_price)
+      }
+      if (s.bid1_price != null) {
+        fields[16] = Number(s.bid1_price)
+        if (s.bid2_price != null) fields[17] = Number(s.bid2_price)
+        if (s.bid3_price != null) fields[18] = Number(s.bid3_price)
+        if (s.bid4_price != null) fields[19] = Number(s.bid4_price)
+        if (s.bid5_price != null) fields[20] = Number(s.bid5_price)
+      }
+      if (s.ask1_vol != null) {
+        fields[21] = Number(s.ask1_vol)
+        if (s.ask2_vol != null) fields[22] = Number(s.ask2_vol)
+        if (s.ask3_vol != null) fields[23] = Number(s.ask3_vol)
+        if (s.ask4_vol != null) fields[24] = Number(s.ask4_vol)
+        if (s.ask5_vol != null) fields[25] = Number(s.ask5_vol)
+      }
+      if (s.bid1_vol != null) {
+        fields[26] = Number(s.bid1_vol)
+        if (s.bid2_vol != null) fields[27] = Number(s.bid2_vol)
+        if (s.bid3_vol != null) fields[28] = Number(s.bid3_vol)
+        if (s.bid4_vol != null) fields[29] = Number(s.bid4_vol)
+        if (s.bid5_vol != null) fields[30] = Number(s.bid5_vol)
+      }
+      next.fields = fields
     }
     byCode.value.set(payload.stock_code, next)
     // v32+: 手动触发响应 — shallowRef 不会追踪 Map 内部变化

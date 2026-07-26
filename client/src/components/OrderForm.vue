@@ -134,7 +134,9 @@ const form = reactive({
   // v83: 柜台 price_type: 11=限价 5=最新价 44=市价 (与 xtconstant 柜台协议 1:1 对齐)
   //   UI 默认 FIX_PRICE = 11
   price_type: PriceType.FIX_PRICE,
-  price: 0,
+  // v108: 默认 null 而非 0 — input 不显示 "0", 显示空 placeholder.
+  //   0 让 el-input type=number 显示 "0", 误导用户以为已输入.
+  price: null,
   volume: 100
 })
 
@@ -262,7 +264,7 @@ const availableText = computed(() => {
 watch(() => form.price_type, (newType, oldType) => {
   if (newType !== PriceType.FIX_PRICE) {
     // 市价/最新价不依赖具体价格，但保留作为显示用也行；这里清空避免误读
-    form.price = 0
+    form.price = null  // v108: null 而非 0, input 显示空
   }
 })
 
@@ -354,7 +356,7 @@ async function handleSubmit() {
 }
 
 function handleReset() {
-  form.price = 0
+  form.price = null  // v108: null 而非 0
   form.volume = 100
 }
 </script>
