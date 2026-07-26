@@ -30,7 +30,7 @@ from typing import Any, Dict, Optional
 
 from server.tables import Orders, Trades, Positions  # v81: tables API
 from server.repo.orders import _get_active_trd_date
-from server.services.push.helpers import _float, _int, _str, _order_to_out_dict, _trade_to_out_dict
+from server.services.push.helpers import _float, _int, _str, _order_to_out_dict, _trade_to_out_dict, _position_to_out_dict  # v95: position 推送
 from server.utils.time import _utcnow, parse_broker_ts
 from server.repo.stocks import get_stock_scale
 
@@ -86,15 +86,18 @@ def handle_trd_cfm(db, row: Dict[str, Any], ts: str) -> Optional[Dict[str, Any]]
         print(f"[trd_cfm] WARN: no order for trade_id={trade_id} (order_no={order_no}, order_id={order_id}) — Trade 行已留存")
 
     if trade.trade_type == 0:
-        _update_position_vol(db, trade.stock_code, trade.order_type, trade.volume,
+        position_dict = _update_position_vol(db, trade.stock_code, trade.order_type, trade.volume,
                              order_no=order_no, trade_id=trade_id,
                              trade_price=trade.price)
+    else:
+        position_dict = None  # v95: trade_type=1 跳过 Position 更新, 不推送 position_update
 
     print(f"[trd_cfm] inserted trade_id={trade_id} order_no={order_no} vol={trade.volume} px={trade.price}")
 
     return {
         "trade": _trade_to_out_dict(trade),
         "order": _order_to_out_dict(order),
+        "position": position_dict,  # v95: trd_cfm 同时携带最新 Position 行, dispatcher 广播 position_update
     }
 
 
@@ -107,8 +110,12 @@ def _update_position_vol(
     order_no: str = "",
     trade_id: str = "",
     trade_price: float = 0.0,
-) -> None:
+) -> Optional[dict]:
     """v78.3: trd_cfm 增量更新 Position（按 T0/非 T0 规则）
+
+    v95: 返回更新后 Position 行的 out_dict (供 dispatcher 广播 position_update 用)
+         - Position 不存在 + 买入自动创建 → 同样返回 out_dict
+         - Position 不存在 + 卖出跳过 → 返回 None
 
     设计要点:
     - vol 永远按 order_type 累加: 买 += qty, 卖 -= qty
@@ -133,7 +140,7 @@ def _update_position_vol(
     # Position 不存在 → 买入自动创建
     if pos is None:
         if order_type == "23":  # 买
-            Positions.add_one({
+            new_row = Positions.add_one({
                 'stock_code': stock_code,
                 'stock_name': "",
                 'last_vol': 0,
@@ -150,7 +157,8 @@ def _update_position_vol(
                     order_no, trade_id,
                 )
             )
-            return
+            # v95: 返回新建行的 out_dict, 让 dispatcher 推 position_update
+            return _position_to_out_dict(new_row)
         else:  # 卖
             print(
                 "[TRD→POSITION] WARN: sell but no Position for stock_code={}, "
@@ -158,7 +166,7 @@ def _update_position_vol(
                     stock_code, order_no, trade_id, volume,
                 )
             )
-            return
+            return None
 
     # Position 存在 → 按规则增量
     if order_type == "23":  # 买
@@ -195,3 +203,7 @@ def _update_position_vol(
             order_no, trade_id,
         )
     )
+
+    # v95: 返回 update 后 Position 行的 out_dict, dispatcher 会推 position_update
+    #   关键: 必须在 pos.update() 之后返回 (字段已刷新), 否则前端 vol/avl_vol 会差一帧
+    return _position_to_out_dict(pos)

@@ -79,3 +79,25 @@ def _trade_to_out_dict(trade) -> Optional[dict]:
         "trade_time": _str(trade.trade_time or ''),
         "trade_type": _int(trade.trade_type or 0),
     }
+
+
+def _position_to_out_dict(pos) -> Optional[dict]:
+    """v95: ORM Position → PositionOut 兼容 dict（WS 推送 position_update 用）
+
+    设计: 全量行推送, 前端按 stock_code 整条 ref 替换 (不做 spread/merge/累计).
+          前端 dumb layer, 完全依赖后端权威 vol/avl_vol/cost_price.
+
+    字段: 8 列全推 (stock_code/stock_name/last_vol/avl_vol/vol/cost_price/synced_at/synced_from)
+    """
+    if pos is None:
+        return None
+    return {
+        "stock_code": _str(pos.stock_code),
+        "stock_name": _str(pos.stock_name or ''),
+        "last_vol": _int(pos.last_vol or 0),
+        "avl_vol": _int(pos.avl_vol or 0),
+        "vol": _int(pos.vol or 0),
+        "cost_price": _float(pos.cost_price or 0),
+        "synced_at": _str(pos.synced_at or ''),
+        "synced_from": _str(pos.synced_from or ''),
+    }
