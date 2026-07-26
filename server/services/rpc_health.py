@@ -20,7 +20,8 @@ import time
 from datetime import datetime, timezone
 from typing import Optional
 
-from server.rpc.client import qry_asset
+from server.rpc.client import qry_asset, get_rpc_client
+from server.rpc.transport import MAX_PENDING
 from server.tables import Assets
 from server.ws.manager import ws_manager
 
@@ -60,6 +61,21 @@ async def _sync_loop():
 
     while True:
         try:
+            # v100: 队列深度先检 — 积压时直接判 RPC 不通 + 跳过本轮,
+            #   避免每次 15s timeout 浪费 + 自己又把 pending 队列填满
+            #   (broker 端无应答时, sync_loop 自己也是 pending 占用方之一)
+            try:
+                rpc = await get_rpc_client()
+                pending_count = len(rpc.pending)
+            except Exception:
+                pending_count = 0  # 取不到时不阻塞同步
+            if pending_count >= MAX_PENDING:
+                _rpc_ok = False
+                _last_err_msg = f"RPC 队列积压 ({pending_count}>={MAX_PENDING})"
+                log.warning("rpc_health skip qry_asset: %s", _last_err_msg)
+                await asyncio.sleep(SYNC_INTERVAL_SEC)
+                continue
+
             start = time.monotonic()
             data = await asyncio.wait_for(qry_asset(), timeout=TIMEOUT_SEC)
 
