@@ -27,6 +27,7 @@ from server.models.orm import (
     Position, Asset,  # ORM-only: Position / Asset 保留 v_next 老逻辑 (Position 行 insert/delete via db.add)
 )
 from server.tables import Positions, Assets, SysStatus, ReconcileReport  # v81.11: 修复 /api/admin/sys-status/init 500 (tables API)
+import json  # v103: 修复 do_reconcile 抛 NameError: name 'json' is not defined
 import logging
 
 log = logging.getLogger(__name__)
