@@ -23,6 +23,7 @@ v_next 改动（2026-07-22, 用户明令）:
 - 删除 GET /api/admin/sys-status 列表端点（用户接受此损失）
 """
 from fastapi import APIRouter, HTTPException, Depends
+from server.api.deps import require_rpc_ok  # v101: RPC 健康统一 deps
 from pydantic import BaseModel
 from typing import Optional
 from sqlalchemy.orm import Session
@@ -74,7 +75,8 @@ class ReconcileRequest(BaseModel):
     mode: str = "manual"
 
 
-@router.post("/init", response_model=InitResponse)
+@router.post("/init", response_model=InitResponse,
+             dependencies=[Depends(require_rpc_ok)])  # v101: 切日前 RPC 健康
 async def init_trading_day(
     req: InitRequest,
     db: Session = Depends(get_db),
@@ -87,13 +89,7 @@ async def init_trading_day(
             detail={"code": "BAD_TRD_DATE", "msg": "trd_date 必须是 8 位数字字符串"}
         )
 
-    # v99: RPC 通信异常 → 拒绝初始化, 不切日
-    from server.services.rpc_health import check_ok as _rpc_check_ok
-    if not _rpc_check_ok():
-        raise HTTPException(
-            status_code=503,
-            detail={"code": "RPC_COMM_ERROR", "msg": "RPC 通信异常，无法初始化"},
-        )
+    # v101: RPC 健康检查已通过 Depends(require_rpc_ok) 在路由层拦截 (替换 v99 内联)
 
     by_user = str(admin_user.id)
 

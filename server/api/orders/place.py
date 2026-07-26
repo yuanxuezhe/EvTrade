@@ -34,6 +34,7 @@ from fastapi import Depends, HTTPException
 from server.auth.deps import get_current_user
 from server.models.user import User
 from server.services.guards import require_trader, require_trading_day, require_trading_session
+from server.api.deps import require_rpc_ok  # v101: RPC 健康统一 deps (替换 v99 内联)
 from server.repo.orders import (
     _get_active_trd_date,
     insert_pending_order,
@@ -58,7 +59,9 @@ def register_place(router):
     """注册 POST /place 端点到 FastAPI router。"""
 
     @router.post("/place", response_model=PlaceOrderResponse,
-                 dependencies=[Depends(require_trader), Depends(require_trading_day), Depends(require_trading_session)])
+                 dependencies=[Depends(require_trader), Depends(require_trading_day),
+                               Depends(require_trading_session),
+                               Depends(require_rpc_ok)])  # v101: 替换 v99 内联 check_ok
     async def place_order(req: PlaceOrderRequest, user: User = Depends(get_current_user)):
         """下单（v77 两阶段：DB 写入立即应答，RPC 后台异步回报）
 
@@ -70,13 +73,7 @@ def register_place(router):
         if req.order_type not in ("23", "24"):
             raise HTTPException(status_code=400, detail={"code": "BAD_ORDER_TYPE", "msg": "order_type 必须 23(买) 24(卖)"})
 
-        # v99: RPC 通信异常 → 直接拒绝, 不往 RPC 报单
-        from server.services.rpc_health import check_ok as _rpc_check_ok
-        if not _rpc_check_ok():
-            raise HTTPException(
-                status_code=503,
-                detail={"code": "RPC_COMM_ERROR", "msg": "RPC 通信异常，无法报单"},
-            )
+        # v101: RPC 健康检查已通过 Depends(require_rpc_ok) 在路由层拦截 (替换 v99 内联)
 
         # v80: stktype 可交易校验 + 价格按 stock.scale 四舍五入
         # v80.1: 用 GetStockInfo() 一次性拿 stktype + scale

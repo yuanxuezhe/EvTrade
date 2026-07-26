@@ -38,6 +38,7 @@ from fastapi import Depends, HTTPException, Query
 from server.auth.deps import get_current_user
 from server.models.user import User
 from server.services.guards import require_trader, require_trading_day, require_trading_session
+from server.api.deps import require_rpc_ok  # v101: RPC 健康检查 (统一 deps)
 from server.repo.orders import next_order_no, insert_cancel_row  # v13: insert_cancel_row helper (v80.3 迁 tables)
 from server.utils.time import format_ts
 from server.api.orders.schemas import (
@@ -68,7 +69,9 @@ def register_cancel(router):
     """注册 DELETE /{order_no} 端点到 FastAPI router。"""
 
     @router.delete("/{order_no}", response_model=CancelResponse,
-                   dependencies=[Depends(require_trader), Depends(require_trading_day), Depends(require_trading_session)])
+                   dependencies=[Depends(require_trader), Depends(require_trading_day),
+                                 Depends(require_trading_session),
+                                 Depends(require_rpc_ok)])  # v101: 调 RPC 前阻塞
     async def cancel_order(order_no: str, trd_date: str = Query(..., description="8 位数字 YYYYMMDD"),
                           user: User = Depends(get_current_user)):
         """撤单（v9 重写:本地代理 cancel-order 行 + cancel-trade 行；v13 增 raw_id 写入）
