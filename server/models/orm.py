@@ -196,6 +196,7 @@ class Asset(Base):
 
     id = Column(Integer, primary_key=True, default=1)
     cash = Column(Float, nullable=False, default=0.0)         # 可用
+    available = Column(Float, nullable=False, default=0.0)    # v110: 可用资金 (= cash, 单独字段供前端命名直接读)
     frozen_cash = Column(Float, nullable=False, default=0.0)   # 冻结
     market_value = Column(Float, nullable=False, default=0.0)
     total_asset = Column(Float, nullable=False, default=0.0)

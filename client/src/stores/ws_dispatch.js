@@ -32,6 +32,7 @@ import { useWsStore } from './ws'
 // change 2026-07-15-system-init-broadcast: 收到 init_completed 时需要刷新 asset/position store
 import { useAssetStore } from './asset'
 import { usePositionStore } from './position'
+import { useRpcStatusStore } from './rpc_status'
 import { STATUS_LABEL, STATUS_TONE } from '../utils/format'
 import { makeLogger } from '../utils/logger'
 
@@ -52,6 +53,9 @@ export function dispatchPayload(payload) {
   // 2026-07-09 quote-snapshot-subscribe
   else if (t === 'subscribe_ack') _onSubscribeAck(payload.data)
   else if (t === 'unsubscribe_ack') _onUnsubscribeAck(payload.data)
+  // RPC 三态心跳推送: 来自 server/services/rpc_health._broadcast_rpc_status
+  // 前端 AppHeader 右上角图标根据 status 字段显示绿/红/黄
+  else if (t === 'rpc_status') _onRpcStatus(payload.data)
   // v21 stock-info-crawler: sync_update 频道 (sync_started/progress/completed/failed/stopped/stock_synced)
   else if (t === 'sync_started') _onSyncStarted(payload.data)
   else if (t === 'sync_progress') _onSyncProgress(payload.data)
@@ -61,6 +65,15 @@ export function dispatchPayload(payload) {
   else if (t === 'stock_synced') _onStockSynced(payload.data)
   // change 2026-07-15-system-init-broadcast: 日初成功后推 init_completed → 全量刷新缓存
   else if (t === 'init_completed') _onInitCompleted(payload.data)
+}
+
+function _onRpcStatus(data) {
+  if (!data) return
+  try {
+    useRpcStatusStore().setFromPayload(data)
+  } catch (e) {
+    log.warn('_onRpcStatus:', e?.message)
+  }
 }
 
 /**
@@ -358,6 +371,7 @@ function _onAssetUpdate(data) {
     const hs = useHoldingsStore()
     hs.cachedAsset = {
       cash: data.cash ?? hs.cachedAsset?.cash ?? 0,
+      available: data.available ?? hs.cachedAsset?.available ?? data.cash ?? hs.cachedAsset?.cash ?? 0,  // v110
       frozen_cash: data.frozen_cash ?? hs.cachedAsset?.frozen_cash ?? 0,
       market_value: data.market_value ?? hs.cachedAsset?.market_value ?? 0,
       total_asset: data.total_asset ?? hs.cachedAsset?.total_asset ?? 0,

@@ -496,6 +496,8 @@ class TableBase:
                     data_out[col_name] = datetime.now()
                 elif "int" in col_type or "tinyint" in col_type:
                     data_out[col_name] = 0
+                elif "float" in col_type or "double" in col_type or "decimal" in col_type or "numeric" in col_type:
+                    data_out[col_name] = 0.0
                 elif "varchar" in col_type or "char" in col_type or "text" in col_type:
                     data_out[col_name] = ""
                 else:
@@ -559,6 +561,101 @@ class TableBase:
             conn.execute(sql, params)
         # 回读更新后的行
         return cls.query_one(**pk_dict)  # type: ignore[return-value]
+
+    @classmethod
+    def upsert_one(cls, data: Dict[str, Any], *, return_row: bool = False, **pk) -> Optional[Row]:
+        """按主键 UPSERT 一行 (MySQL: INSERT ... ON DUPLICATE KEY UPDATE).
+
+        v110 通用方法, 替代先 add_one 再 update_one 的两段写法 (rpc 同步资金等场景)。
+
+        Args:
+            data: 要写入的字段 (PK 列从 **pk 自动注入或 data 含 PK)
+                  - 若 PK 在 data 里: 视作用户传入 (例 Assets.update_one({'id':1, 'cash':...}))
+                  - 若 PK 在 **pk: 自动注入
+            return_row: True 时回读一行返回 (默认 False - upsert 通常不关心回值)
+            **pk: 主键字段作为关键字参数
+                    复合 PK: upsert_one({'field':val}, trd_date='20260722', order_no='10000048')
+
+        Returns:
+            None 默认; return_row=True 时返回 Row 或 None
+            行为: 1) PK 不存在 → INSERT; 2) PK 已存在 → UPDATE 该行 fields
+            字段值与 data 完全一致 (UPSERT 是 id 维度的更新/插入)
+
+        Examples:
+            # 单 PK (Assets id=1 upsert 资金):
+            Assets.upsert_one({'cash': x, 'available': x, ...}, id=1)
+            # 复合 PK (trd_date + order_no):
+            Orders.upsert_one({'status':'50'}, trd_date='20260722', order_no='10000048')
+        """
+        cls._validate_subclass()
+        pk_dict = cls._pk_from_kwargs(pk) if pk else {}
+        # 防呆: PK 不能两处都有 (避免 PK = data.PK vs **pk 谁优先困惑)
+        if pk_dict:
+            for pk_field in cls.__pk_fields__:
+                if pk_field in data:
+                    raise ValueError(
+                        f"{cls.__name__}.upsert_one: PK 字段 {pk_field!r} 已从 **pk 传入, "
+                        f"data 不应再含"
+                    )
+        else:
+            # 从 data 拿 PK
+            for pk_field in cls.__pk_fields__:
+                if pk_field in data:
+                    pk_dict[pk_field] = data[pk_field]
+        if not pk_dict or set(pk_dict.keys()) != set(cls.__pk_fields__):
+            raise ValueError(
+                f"{cls.__name__}.upsert_one: 必须提供全部 PK ({cls.__pk_fields__!r}), 当前 {pk_dict}"
+            )
+        # 构造完整 data: 含 PK + user data
+        full_data = dict(data)
+        for k, v in pk_dict.items():
+            full_data.setdefault(k, v)
+        # 跳过 _ 内部字段 + AUTO_INCREMENT (让 DB 生成)
+        out_data = {}
+        for k, v in full_data.items():
+            if k.startswith('_'):
+                continue
+            if cls.__auto_increment_pk__ and k == cls.__auto_increment_pk__:
+                continue
+            out_data[k] = v
+        # 自动填 NOT NULL 无 default 列 (与 add_one 同模式)
+        for col_name, col_type in cls._get_required_columns():
+            if col_name not in out_data:
+                if "datetime" in col_type or "timestamp" in col_type:
+                    out_data[col_name] = datetime.now()
+                elif "int" in col_type or "tinyint" in col_type:
+                    out_data[col_name] = 0
+                elif "float" in col_type or "double" in col_type or "decimal" in col_type or "numeric" in col_type:
+                    out_data[col_name] = 0.0
+                elif "varchar" in col_type or "char" in col_type or "text" in col_type:
+                    out_data[col_name] = ""
+                else:
+                    out_data[col_name] = ""
+        if not out_data:
+            raise ValueError(f"{cls.__name__}.upsert_one: 没有任何有效列可 UPSERT")
+        engine = get_engine()
+        cols = list(out_data.keys())
+        col_list = ", ".join(f"`{c}`" for c in cols)
+        placeholders = ", ".join(f":{c}" for c in cols)
+        # ON DUPLICATE KEY UPDATE: 排除 PK 列 (PK 已经在 INSERT 里, 不能重复 SET)
+        update_cols = [c for c in cols if c not in cls.__pk_fields__]
+        if update_cols:
+            update_list = ", ".join(f"`{c}` = VALUES(`{c}`)" for c in update_cols)
+            sql = text(
+                f"INSERT INTO `{cls.__tablename__}` ({col_list}) VALUES ({placeholders}) "
+                f"ON DUPLICATE KEY UPDATE {update_list}"
+            )
+        else:
+            # 全部列都是 PK (边界场景) — INSERT IGNORE
+            sql = text(
+                f"INSERT IGNORE INTO `{cls.__tablename__}` ({col_list}) VALUES ({placeholders})"
+            )
+        params = dict(out_data)
+        with engine.begin() as conn:
+            conn.execute(sql, params)
+        if return_row:
+            return cls.query_one(**pk_dict)
+        return None
 
     @classmethod
     def delete_one(cls, **pk) -> bool:

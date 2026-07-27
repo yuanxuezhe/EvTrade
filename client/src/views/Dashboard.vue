@@ -195,8 +195,10 @@ const displayTotalAsset = computed(() => {
   return holdingsStore.liveTotalAsset || holdingsStore.cachedAsset.total_asset
     || assetStore.asset.total_asset || 0
 })
+// v110: 可用资金 (available 字段) — 优先读 available, 缺失时回退 cash
 const displayCash = computed(() =>
-  holdingsStore.cachedAsset.cash || assetStore.asset.cash || 0
+  holdingsStore.cachedAsset.available ?? assetStore.asset.available
+  ?? holdingsStore.cachedAsset.cash ?? assetStore.asset.cash ?? 0
 )
 const displayFrozen = computed(() =>
   holdingsStore.cachedAsset.frozen_cash || assetStore.asset.frozen_cash || 0

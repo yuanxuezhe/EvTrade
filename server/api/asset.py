@@ -31,6 +31,7 @@ register_adjust(router)  # v12: PUT /adjust（admin 调平）
 
 class AssetOut(BaseModel):
     cash: float
+    available: float           # v110: 可用资金 (= cash), 单独字段供前端直接读
     frozen_cash: float
     market_value: float
     total_asset: float
@@ -49,8 +50,11 @@ async def get_account_asset(db: Session = Depends(get_db)):
     row = Assets.query_one(id=1)
     if not row:
         return AssetResponse(code=0, msg="无资产数据", list=[])
+    # v110: 兼容 RPC 还没推过来导致 row 没有 available 列 (例如重启瞬间老 ORM 实例化)
+    _available = getattr(row, 'available', None)
     return AssetResponse(code=0, msg="", list=[AssetOut(
         cash=row.cash,
+        available=float(_available) if _available is not None else float(row.cash or 0),
         frozen_cash=row.frozen_cash,
         market_value=row.market_value,
         total_asset=row.total_asset,
