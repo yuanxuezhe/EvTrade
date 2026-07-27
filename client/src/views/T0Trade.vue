@@ -694,11 +694,17 @@ function _calcT0Pnl(code, taskId, base, tgv, orders) {
 // change 2026-07-27-v109-pnl-reactive: PnL / 收益率反应式 — 行情推过来时由依赖触发 recompute
 //   - t0PnlMap: 字典 { "taskId|stock_code": { pnl, rate, diff, ... } }
 //   - template 从 t0PnlMap.value[rowKey(row)] 读, 函数 t0PnlForRow 改成 thin wrapper (回退兼容)
-//   - 写过的第三方代码 (e.g. _taskSortValue case 't0_pnl') 调 t0PnlForRow 时不再响应, 改这里
+// change 2026-07-27-v109.5: t0PnlMap computed 显式订阅 quoteStore.tick.value
+//   - quoteStore.byCode 是 shallowRef(Map), triggerRef(byCode) 在某些
+//     el-table cell render 路径下不广播 (cell render 是 v-once 函数 cache 不更新)
+//   - 兜底: tick 是 ref, 每次 quote update() 自增, computed 读 tick.value
+//     自动订阅 — tick 变 → computed 重算 → t0PnlMap.value 引用变 → cell 重渲.
 const t0PnlMap = computed(() => {
+  const _tick = quoteStore.tick.value  // 显式订阅
+  void _tick
   const out = {}
   const orders = holdingsStore.orders || []
-  const tasks = t0TasksStore.tasks || []
+  const tasks = t0TasksStore.tasks || []  
   for (const row of tasks) {
     if (!row || row.status === 'archived') continue
     const code = row.stock_code
@@ -735,11 +741,12 @@ const t0PnlMap = computed(() => {
   return out
 })
 function _rowKey(row) { return row ? `${row.id}|${row.stock_code}` : '' }
-// change 2026-07-27-v109-pnl-reactive: t0PnlCell 走 computed map, 让 template el-table 跟随响应
-//   - 调 t0PnlCell(row) 时访问 t0PnlMap.value → 自动订阅 byCode + tasks + orders 依赖
-//   - byCode triggerRef 后 computed 重算 → 函数引用返回新对象 → Vue 重渲 cell
-//   - 注意: 函数表达式本身不被 Vue 依赖追踪, 但函数体内 .value 访问会触发 computed 子节点追踪
+// change 2026-07-27-v109.5: t0PnlCell 显式订阅 quoteStore.tick, 确保 el-table 重渲
+//   - tick 是 ref, 读 .value 才是当前值 (Vue 收集依赖是基于 .value 访问)
+//   - 因为函数在 render 函数上下文执行, .value 访问会被 render 收集依赖
+//   - 兜底如果 t0PnlMap.value 不在依赖图 (e.g. el-table 模板缓存), tick 自增能强制刷
 function t0PnlCell(row) {
+  void quoteStore.tick.value    // ← 显式订阅, 触发 render 重跑
   return t0PnlMap.value[_rowKey(row)] || null
 }
 function t0PnlForRow(row) {
