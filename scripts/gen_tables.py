@@ -1,17 +1,18 @@
 #!/usr/bin/env python3
 """
-scripts/gen_tables.py — v80.2 代码生成器
+scripts/gen_tables.py — tables-codegen 代码生成器
 
 读 MySQL INFORMATION_SCHEMA, 为每张表生成 server/tables/<表名>.py
 每个文件包含:
   - 一个类 (PascalCase 表名) 继承 TableBase
   - __tablename__, __pk_fields__, __fields__, __field_types__, __auto_increment_pk__
   - 全部字段作为类属性 type hint (供 IDE 智能提示)
+  - 统一使用 upsert_one 作为写入入口，不单独宣传 add_one/update_one
 
 用法:
-  python3 scripts/gen_tables.py             # 生成所有表
-  python3 scripts/gen_tables.py --table orders  # 只生成单张表
-  python3 scripts/gen_tables.py --dry-run    # 只打印, 不写文件
+  python scripts/gen_tables.py             # 生成所有表
+  python scripts/gen_tables.py --table orders  # 只生成单张表
+  python scripts/gen_tables.py --dry-run    # 只打印, 不写文件
 
 新表 / 字段改动后:
   重新跑此脚本即可, 已存在的文件会被覆盖.
@@ -191,13 +192,13 @@ def render_table_file(schema: Dict) -> str:
     # 表注释作为类 docstring 第一行
     table_doc = schema["comment"].strip() or f"MySQL table `{table}`"
 
-    code = f'''"""\nserver/tables/{table}.py — 自动生成 (v80.2 tables-codegen skill)
+    code = f'''"""
+server/tables/{table}.py — 自动生成 (tables-codegen skill)
 
 表: `{table}`  ({len(columns)} 字段, 主键: {pk_fields})
 描述: {table_doc}
 
-⚠️ 不要手动修改本文件 — 任何字段/主键变更请重新跑 scripts/gen_tables.py
-   (skill: evtrade-table-codegen)
+⚠️ 不要手动修改本文件 — 任何字段/主键变更请重新跑 tables-codegen
 """
 {chr(10).join(sorted(imports))}
 
@@ -205,12 +206,13 @@ def render_table_file(schema: Dict) -> str:
 class {cls}(TableBase):
     """{table_doc}
 
-    自动生成于 v80.2 架构调整, 继承 TableBase 获得 5 个标准方法:
-      - query_one(**pk)            按主键查单行 → Row | None
-      - add_one(data: dict)        INSERT 一行 → Row
-      - update_one(data, **pk)     按主键 UPDATE → Row
-      - delete_one(**pk)           按主键 DELETE → bool
-      - query_all(order, page, page_size)  分页查询 → List[Row]
+    自动生成，继承 TableBase 获得标准方法:
+      - query_one(**pk)              按主键查单行 → Row | None
+      - upsert_one(data, **pk)       INSERT OR UPDATE（统一写入入口）
+      - delete_one(**pk)             按主键 DELETE → bool
+      - query_all(order)             全表查询 → List[Row]
+      - query_by(field, value)       单字段过滤
+      - query_by_fields(filters)     多字段 AND 过滤
 
     主键: {pk_fields}
     """
