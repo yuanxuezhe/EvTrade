@@ -179,11 +179,14 @@
         </template>
       </el-table-column>
 
+      <!-- change 2026-07-27-v109-pnl-reactive: template 走 t0PnlCell(row) 函数, 但函数体读 t0PnlMap computed -->
+      <!--   - 直接调 t0PnlMap[`${...}`] 会有模板字符串解析问题, 用函数封装 -->
+      <!--   - 关键: 函数内访问 t0PnlMap.value → Vue 自动追踪 computed 依赖 (byCode triggerRef → 重渲) -->
       <!-- 6. 做T盈亏 (110, sortable) — realized + 实时 unrealized (ws 推送最新价) -->
       <el-table-column prop="t0_pnl" label="做T盈亏" align="right" width="110" sortable="custom">
         <template #default="{ row }">
-          <span class="text-mono" :class="t0PnlForRow(row) >= 0 ? 'up' : 'down'">
-            {{ t0PnlForRow(row) >= 0 ? '+' : '' }}{{ formatMoney(t0PnlForRow(row)) }}
+          <span class="text-mono" :class="(t0PnlCell(row)?.pnl ?? 0) >= 0 ? 'up' : 'down'">
+            {{ (t0PnlCell(row)?.pnl ?? 0) >= 0 ? '+' : '' }}{{ formatMoney(t0PnlCell(row)?.pnl ?? 0) }}
           </span>
         </template>
       </el-table-column>
@@ -191,8 +194,8 @@
       <!-- 7. 做T收益率% (120, sortable) — PnL / (cost_basis × |task_net_volume|) -->
       <el-table-column prop="t0_return_rate" label="做T收益率%" align="right" width="120" sortable="custom">
         <template #default="{ row }">
-          <span class="text-mono" :class="t0ReturnRateForRow(row) >= 0 ? 'up' : 'down'">
-            {{ (t0ReturnRateForRow(row) * 100).toFixed(2) }}%
+          <span class="text-mono" :class="(t0PnlCell(row)?.rate ?? 0) >= 0 ? 'up' : 'down'">
+            {{ ((t0PnlCell(row)?.rate ?? 0) * 100).toFixed(2) }}%
           </span>
         </template>
       </el-table-column>
@@ -655,15 +658,8 @@ function _taskSortValue(row, key) {
 // v77: 纯委托+实时盘口 PnL — 实现放在 setup 内 (上方注释见)
 //   v77.5: 不再调 quoteStore.getDepth(code) (那是另封装), 直接 quoteStore.get(code) 拿整个行情结构体, 然后取结构体已有字段 bid_prices[0] / ask_prices[0]
 //   quoteStore.byCode 是 shallowRef(Map), update() 内 byCode.value.set(...) + triggerRef(byCode) 让 cell 自动重渲
-function t0PnlForRow(row) {
-  if (!row) return 0
-  const code = row.stock_code
-  const taskId = row.id
-  const orders = (holdingsStore.orders || []).filter(
-    o => o.stock_code === code
-      && Number(o.task_id) === Number(taskId)  // v77.1: 必须按 task_id 过滤, 同一票多 task 不串数据
-      && o.order_flag !== 1
-  )
+function _calcT0Pnl(code, taskId, base, tgv, orders) {
+  // 不调用 quoteStore / holdingsStore, 仅凭参数算 — 方便纯算或给 computed 喂值
   let buyAmt = 0, buyVol = 0, sellAmt = 0, sellVol = 0
   for (const o of orders) {
     const tv = Number(o.traded_volume) || 0
@@ -680,65 +676,83 @@ function t0PnlForRow(row) {
   }
   const realized = sellAmt - buyAmt
   const cur = buyVol - sellVol
-  const base = Number(row.base_volume) || 0
-  const tgv = Number(row.target_volume) || 0
-  const target = base + tgv
+  const target = (Number(base) || 0) + (Number(tgv) || 0)
   const diff = target - cur
-  if (diff === 0) return realized
-  // v77.5: 直接读行情表结构体已有字段 bid_prices[0] / ask_prices[0] — 不另存 bid1_price / ask1_price
-  const quote = quoteStore.get(code) || {}
-  const ask1 = Number(quote.ask_prices?.[0]) || 0
-  const bid1 = Number(quote.bid_prices?.[0]) || 0
+  if (diff === 0) return { pnl: realized, diff, ask1: 0, bid1: 0 }
+  const q = quoteStore.get(code) || {}     // ← 这里 quoteStore.byCode.get(code) 触发响应追踪
+  const ask1 = Number(q.ask_prices?.[0]) || 0
+  const bid1 = Number(q.bid_prices?.[0]) || 0
+  let pnl = realized
   if (diff > 0) {
-    if (!ask1) return realized
-    return realized - diff * ask1
+    if (ask1) pnl = realized - diff * ask1
+  } else {
+    if (bid1) pnl = realized + (-diff) * bid1
   }
-  if (!bid1) return realized
-  return realized + (-diff) * bid1
+  return { pnl, diff, ask1, bid1 }
 }
 
+// change 2026-07-27-v109-pnl-reactive: PnL / 收益率反应式 — 行情推过来时由依赖触发 recompute
+//   - t0PnlMap: 字典 { "taskId|stock_code": { pnl, rate, diff, ... } }
+//   - template 从 t0PnlMap.value[rowKey(row)] 读, 函数 t0PnlForRow 改成 thin wrapper (回退兼容)
+//   - 写过的第三方代码 (e.g. _taskSortValue case 't0_pnl') 调 t0PnlForRow 时不再响应, 改这里
+const t0PnlMap = computed(() => {
+  const out = {}
+  const orders = holdingsStore.orders || []
+  const tasks = t0TasksStore.tasks || []
+  for (const row of tasks) {
+    if (!row || row.status === 'archived') continue
+    const code = row.stock_code
+    if (!code) continue
+    const taskId = row.id
+    const base = Number(row.base_volume) || 0
+    const tgv = Number(row.target_volume) || 0
+    const rs = orders.filter(
+      o => o.stock_code === code
+        && Number(o.task_id) === Number(taskId)
+        && o.order_flag !== 1
+    )
+    const { pnl, diff, ask1, bid1 } = _calcT0Pnl(code, taskId, base, tgv, rs)
+    // rate: pnl / (累计成交金额 + 配平盘口金额)
+    let rate = 0
+    if (pnl !== 0 && Number.isFinite(pnl)) {
+      let tradedCost = 0
+      for (const o of rs) {
+        const v = Number(o.traded_volume) || 0
+        const ap = Number(o.avg_price) || 0
+        if (v > 0 && ap) tradedCost += ap * v
+      }
+      let balCost = 0
+      if (diff > 0 && ask1) balCost = diff * ask1
+      else if (diff < 0 && bid1) balCost = (-diff) * bid1
+      const denom = tradedCost + balCost
+      if (denom > 0) {
+        const r = pnl / denom
+        rate = Number.isFinite(r) ? r : 0
+      }
+    }
+    out[`${taskId}|${code}`] = { pnl, rate, diff, ask1, bid1 }
+  }
+  return out
+})
+function _rowKey(row) { return row ? `${row.id}|${row.stock_code}` : '' }
+// change 2026-07-27-v109-pnl-reactive: t0PnlCell 走 computed map, 让 template el-table 跟随响应
+//   - 调 t0PnlCell(row) 时访问 t0PnlMap.value → 自动订阅 byCode + tasks + orders 依赖
+//   - byCode triggerRef 后 computed 重算 → 函数引用返回新对象 → Vue 重渲 cell
+//   - 注意: 函数表达式本身不被 Vue 依赖追踪, 但函数体内 .value 访问会触发 computed 子节点追踪
+function t0PnlCell(row) {
+  return t0PnlMap.value[_rowKey(row)] || null
+}
+function t0PnlForRow(row) {
+  // change 2026-07-27-v109-pnl-reactive: 改从 t0PnlMap 读 (响应式), 不再实时算
+  const m = t0PnlMap.value
+  const it = m[_rowKey(row)]
+  return it ? it.pnl : 0
+}
 function t0ReturnRateForRow(row) {
-  if (!row) return 0
-  const pnl = t0PnlForRow(row)
-  // v77.3: 之前误用 || (Number.isFinite(pnl) || pnl === 0) 当 pnl=-100 时会落 true 分支返回 0,
-  //   改为 &&: 只在 pnl 不是有限数 (= NaN/Infinity) 或 =0 时返回 0
-  if (!Number.isFinite(pnl) || pnl === 0) return 0
-  const code = row.stock_code
-  const taskId = row.id
-  const orders = (holdingsStore.orders || []).filter(
-    o => o.stock_code === code
-      && Number(o.task_id) === Number(taskId)  // v77.1: 同上
-      && o.order_flag !== 1
-  )
-  let tradedCost = 0
-  for (const o of orders) {
-    const tv = Number(o.traded_volume) || 0
-    const ap = Number(o.avg_price) || 0
-    if (tv > 0 && ap) tradedCost += ap * tv
-  }
-  const base = Number(row.base_volume) || 0
-  const tgv = Number(row.target_volume) || 0
-  const target = base + tgv
-  let buyVol = 0, sellVol = 0
-  for (const o of orders) {
-    const v = Number(o.traded_volume) || 0
-    if (v <= 0) continue
-    if (o.order_type === '23') buyVol += v
-    else if (o.order_type === '24') sellVol += v
-  }
-  const cur = buyVol - sellVol
-  const diff = target - cur
-  // v77.5: 直接读行情表结构体已有字段 bid_prices[0] / ask_prices[0] — 不另存 bid1_price / ask1_price
-  const quote = quoteStore.get(code) || {}
-  const ask1 = Number(quote.ask_prices?.[0]) || 0
-  const bid1 = Number(quote.bid_prices?.[0]) || 0
-  let balanceCost = 0
-  if (diff > 0 && ask1) balanceCost = diff * ask1
-  else if (diff < 0 && bid1) balanceCost = (-diff) * bid1
-  const denom = tradedCost + balanceCost
-  if (denom <= 0) return 0
-  const r = pnl / denom
-  return Number.isFinite(r) ? r : 0
+  // change 2026-07-27-v109-pnl-reactive: 同上, 走 map
+  const m = t0PnlMap.value
+  const it = m[_rowKey(row)]
+  return it ? it.rate : 0
 }
 const sortedTaskRows = computed(() => {
   const list = [...taskRows.value]
