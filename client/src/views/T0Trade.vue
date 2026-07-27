@@ -658,6 +658,11 @@ function _taskSortValue(row, key) {
 // v77: 纯委托+实时盘口 PnL — 实现放在 setup 内 (上方注释见)
 //   v77.5: 不再调 quoteStore.getDepth(code) (那是另封装), 直接 quoteStore.get(code) 拿整个行情结构体, 然后取结构体已有字段 bid_prices[0] / ask_prices[0]
 //   quoteStore.byCode 是 shallowRef(Map), update() 内 byCode.value.set(...) + triggerRef(byCode) 让 cell 自动重渲
+// change 2026-07-27-v109-pnl-formula: PnL 公式重构 (用户口径: diff 语义变化)
+//   - 老语义: diff = target - cur, diff>0 多买, diff<0 多卖 (公式按 ask1/bid1)
+//   - 新语义 (2026-07-27): diff = cur - target, diff<0 需买, diff>0 需卖
+//   - 价格不再区分 ask1/bid1, 统一用最新价 (last_price), PnL = realized + diff × last_price
+//   - 配平盘口金额 rate 分母: 统一 diff × last_price (按"按最近价平掉"的市值估算)
 function _calcT0Pnl(code, taskId, base, tgv, orders) {
   // 不调用 quoteStore / holdingsStore, 仅凭参数算 — 方便纯算或给 computed 喂值
   let buyAmt = 0, buyVol = 0, sellAmt = 0, sellVol = 0
@@ -675,20 +680,15 @@ function _calcT0Pnl(code, taskId, base, tgv, orders) {
     }
   }
   const realized = sellAmt - buyAmt
-  const cur = buyVol - sellVol
+  const cur = buyVol - sellVol                         // 净持仓 (正=持仓多)
   const target = (Number(base) || 0) + (Number(tgv) || 0)
-  const diff = target - cur
-  if (diff === 0) return { pnl: realized, diff, ask1: 0, bid1: 0 }
-  const q = quoteStore.get(code) || {}     // ← 这里 quoteStore.byCode.get(code) 触发响应追踪
-  const ask1 = Number(q.ask_prices?.[0]) || 0
-  const bid1 = Number(q.bid_prices?.[0]) || 0
-  let pnl = realized
-  if (diff > 0) {
-    if (ask1) pnl = realized - diff * ask1
-  } else {
-    if (bid1) pnl = realized + (-diff) * bid1
-  }
-  return { pnl, diff, ask1, bid1 }
+  // 新语义: diff = 净持仓 - 目标, 负表示需买, 正表示需卖
+  const diff = cur - target
+  if (diff === 0) return { pnl: realized, diff, last: 0 }
+  const q = quoteStore.get(code) || {}
+  const last = Number(q.last_price) || 0
+  const pnl = last ? realized + diff * last : realized
+  return { pnl, diff, last }
 }
 
 // change 2026-07-27-v109-pnl-reactive: PnL / 收益率反应式 — 行情推过来时由依赖触发 recompute
@@ -717,8 +717,9 @@ const t0PnlMap = computed(() => {
         && Number(o.task_id) === Number(taskId)
         && o.order_flag !== 1
     )
-    const { pnl, diff, ask1, bid1 } = _calcT0Pnl(code, taskId, base, tgv, rs)
-    // rate: pnl / (累计成交金额 + 配平盘口金额)
+    const { pnl, diff, last } = _calcT0Pnl(code, taskId, base, tgv, rs)
+    // change 2026-07-27-v109-pnl-formula: rate 分母 = 累计成交金额 + |diff × last_price|
+    //   (= 成交总市值 + 按最新价平掉配平部分的市值估算)
     let rate = 0
     if (pnl !== 0 && Number.isFinite(pnl)) {
       let tradedCost = 0
@@ -728,15 +729,14 @@ const t0PnlMap = computed(() => {
         if (v > 0 && ap) tradedCost += ap * v
       }
       let balCost = 0
-      if (diff > 0 && ask1) balCost = diff * ask1
-      else if (diff < 0 && bid1) balCost = (-diff) * bid1
+      if (diff !== 0 && last) balCost = Math.abs(diff * last)
       const denom = tradedCost + balCost
       if (denom > 0) {
         const r = pnl / denom
         rate = Number.isFinite(r) ? r : 0
       }
     }
-    out[`${taskId}|${code}`] = { pnl, rate, diff, ask1, bid1 }
+    out[`${taskId}|${code}`] = { pnl, rate, diff, last }
   }
   return out
 })
