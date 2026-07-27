@@ -17,6 +17,13 @@
     </div>
 
     <div class="header-right">
+      <el-tooltip :content="`RPC 状态: ${rpcTooltip}`" placement="bottom">
+        <div class="rpc-status" :class="rpcClass" data-el="rpc-status-indicator">
+          <span class="rpc-dot"></span>
+          <span v-if="!uiStore.isMobile" class="rpc-label">{{ rpcLabel }}</span>
+        </div>
+      </el-tooltip>
+
       <div class="market-status">
         <span class="status-dot" :class="marketOpen ? 'open' : 'closed'"></span>
         <span v-if="!uiStore.isMobile" class="status-text">{{ marketOpen ? '交易中' : '休市' }}</span>
@@ -94,6 +101,7 @@ import { useOrderStore } from '../stores/order'
 import { usePositionStore } from '../stores/position'
 import { useHoldingsStore } from '../stores/holdings'
 import { useAuthStore } from '../stores/auth'
+import { useRpcStatusStore } from '../stores/rpc_status'
 import { formatMoney } from '../utils/format'
 import { api } from '../api'
 // 修改密码弹窗已移入 Profile.vue, AppHeader 不再需要
@@ -107,6 +115,7 @@ const orderStore = useOrderStore()
 const positionStore = usePositionStore()
 const holdingsStore = useHoldingsStore()
 const authStore = useAuthStore()
+const rpcStatusStore = useRpcStatusStore()
 
 const refreshing = ref(false)
 const tradingDate = computed(() => {
@@ -152,6 +161,34 @@ const avatarText = computed(() => {
   return n ? n.charAt(0).toUpperCase() : '?'
 })
 
+// RPC 三态状态图标: 0=绿色 1=红色 2=黄色
+// 状态/标签/提示文本由后端 rpc_status 推送, 这里只读展示
+const rpcStatus = computed(() => Number(rpcStatusStore.status ?? 0))
+const rpcClass = computed(() => {
+  const s = rpcStatus.value
+  if (s === 0) return 'ok'
+  if (s === 1) return 'comm-error'
+  return 'data-error'
+})
+const rpcLabel = computed(() => {
+  const s = rpcStatus.value
+  if (s === 0) return 'RPC OK'
+  if (s === 1) return 'RPC 异常'
+  return 'RPC 数据异常'
+})
+const rpcTooltip = computed(() => {
+  const s = rpcStatus.value
+  if (s === 0) return rpcStatusStore.message || 'RPC通讯正常'
+  return `${rpcStatusStore.message || '未知状态'} | ${rpcStatusStore.status}`
+})
+
+async function _refreshRpcStatusOnce() {
+  try {
+    const data = await api.getRpcStatus()
+    if (data) rpcStatusStore.setFromPayload(data)
+  } catch (_) { /* 首屏静默, 后续 ws 推送覆盖 */ }
+}
+
 let clockTimer = null
 
 async function refreshClock() {
@@ -169,6 +206,8 @@ function formatLastLogin(iso) {
 onMounted(() => {
   refreshClock()
   clockTimer = setInterval(refreshClock, 30000)
+  // 首屏拉一次 RPC 状态 (ws 推送之前的兜底, 避免用户登录后图标一直显示"OK"占位)
+  _refreshRpcStatusOnce()
 })
 
 onUnmounted(() => {
@@ -303,6 +342,53 @@ async function handleUserCmd(cmd) {
 
 .status-dot.closed {
   background: var(--text-secondary);
+}
+
+.rpc-status {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 4px 10px;
+  border-radius: var(--radius-full);
+  font-size: 12px;
+  font-weight: 600;
+  border: 1px solid var(--border-base);
+  background: var(--bg-soft);
+  transition: background var(--transition-fast);
+  cursor: default;
+}
+.rpc-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--text-secondary);
+  flex-shrink: 0;
+}
+.rpc-status.ok .rpc-dot {
+  background: #67c23a;
+  box-shadow: 0 0 0 3px rgba(103, 194, 58, 0.18);
+}
+.rpc-status.comm-error {
+  background: rgba(245, 108, 108, 0.12);
+  border-color: rgba(245, 108, 108, 0.4);
+  color: #c45656;
+}
+.rpc-status.comm-error .rpc-dot {
+  background: #f56c6c;
+  box-shadow: 0 0 0 3px rgba(245, 108, 108, 0.2);
+  animation: pulse 1.4s infinite;
+}
+.rpc-status.data-error {
+  background: rgba(230, 162, 60, 0.12);
+  border-color: rgba(230, 162, 60, 0.4);
+  color: #b07b18;
+}
+.rpc-status.data-error .rpc-dot {
+  background: #e6a23c;
+  box-shadow: 0 0 0 3px rgba(230, 162, 60, 0.2);
+}
+.rpc-label {
+  white-space: nowrap;
 }
 
 .status-text {

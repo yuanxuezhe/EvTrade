@@ -129,13 +129,6 @@ function onApplyHolding({ stock_code, stock_name }) {
   } else {
     quickStock.value = stock_code  // 兜底: prop 通路留给未来扩展
   }
-  const label = stock_name ? `${stock_name} (${stock_code})` : stock_code
-  ElMessage({
-    message: `已带入 ${label} 到下单面板`,
-    type: 'info',
-    duration: 1800,
-    grouping: true,
-  })
 }
 </script>
 

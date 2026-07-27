@@ -184,6 +184,13 @@ export const api = {
     return res.data
   },
 
+  // RPC 三态健康状态 (来自 server/services/rpc_health 心跳)
+  // AppHeader 右上角图标首屏用此接口初始化, 之后由 ws 推送 rpc_status 覆盖
+  async getRpcStatus() {
+    const res = await http.get('/asset/rpc-status')
+    return res.data
+  },
+
   // 交易时段（公开接口）
   async getTradingClock() {
     const res = await http.get('/trading/clock')
