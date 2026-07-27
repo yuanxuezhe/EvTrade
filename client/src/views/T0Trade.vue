@@ -440,7 +440,7 @@ const viewingTaskId = ref(null)
 const globalMode = ref('pct')              // 模式 'pct' (按比例) | 'qty' (按数量)
 const globalPctInput = ref(25)             // 百分数 (用户视角 25 = 25%, 支持小数 0.001-100)
 const globalQtyInput = ref(100)            // 股数 (整数 ≥ 1)
-const globalPriceType = ref('latest')      // 价格 'latest' (最新价 11) | 'market' (市价 44)
+const globalPriceType = ref('market')      // change 2026-07-27-v109-default-market: 价格 'latest' (最新价 11) | 'market' (市价 44), 默认改为市价
 const globalQtyBase = ref('last_vol')      // 数量基数 'vol'/'avl_vol'/'last_vol' (pct 模式下的基数)
 
 // 添加任务 dialog
