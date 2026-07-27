@@ -58,7 +58,18 @@
       <el-select v-model="globalQtyBase" size="small" style="width: 110px">
         <el-option v-for="o in qtyBaseOptions" :key="o.value" :value="o.value" :label="o.label" />
       </el-select>
-      <span class="t0-config-hint">（按行触发"买/卖"，数量 = 持仓×百分比，价格按所选类型）</span>
+      <!-- change 2026-07-27-v109-quantity-input: 选"按数量"时出输入框（条件显隐）；pct 下拉已在右侧位置固定显隐 -->
+      <el-input-number
+        v-if="globalQtyBase === 'count'"
+        v-model="globalManualVolume"
+        :min="1"
+        :step="100"
+        size="small"
+        controls-position="right"
+        style="width: 120px"
+        placeholder="股数"
+      />
+      <span class="t0-config-hint">（按行触发"买/卖"，按比例=持仓×百分比，按数量=直接输入股数，价格按所选类型）</span>
       <span class="t0-spacer"></span>
       <el-tooltip content="选择/取消当前做T归属的 task；新建请用添加任务入口" placement="top">
         <el-select
@@ -404,7 +415,8 @@ const viewingTaskId = ref(null)
 // v57: 操作列改造 — 全局配置 (页面顶部 row 共用)
 const globalPct = ref(0.25)                 // 百分比 25%
 const globalPriceType = ref('latest')       // 价格 'latest' (最新价 11) | 'market' (市价 44)
-const globalQtyBase = ref('vol')            // 数量基数 'vol' (当前) | 'avl_vol' (可用) | 'last_vol' (期初)
+const globalQtyBase = ref('last_vol')       // 数量基数 'vol'/'avl_vol'/'last_vol' 按比例 | 'count' 按数量 (v109)
+const globalManualVolume = ref(100)         // change 2026-07-27-v109-quantity-input: 按数量输入的股数 (默认 100)
 
 // 添加任务 dialog
 const createDialogVisible = ref(false)
@@ -527,22 +539,32 @@ async function handleCancel(row) {
   }
 }
 
-// v57 commit.2: 全局配置下拉框选项
+// change 2026-07-27-v109-quantity-options: 全局配置下拉框选项
+//   pct: 9 档 (千分之1 / 百分 1/5/10/20/25/50/75/100), 升序
+//   qtyBase: 4 选项 (按比例: 当前/可用/期初持仓 + 按数量: count)
 const pctOptions = [
-  { value: 0.25, label: '25%' },
-  { value: 0.50, label: '50%' },
-  { value: 0.75, label: '75%' },
-  { value: 1.00, label: '100%' },
+  { value: 0.001, label: '千分之1' },
+  { value: 0.01,  label: '1%' },
+  { value: 0.05,  label: '5%' },
+  { value: 0.10,  label: '10%' },
+  { value: 0.20,  label: '20%' },
+  { value: 0.25,  label: '25%' },
+  { value: 0.50,  label: '50%' },
+  { value: 0.75,  label: '75%' },
+  { value: 1.00,  label: '100%' },
 ]
 const priceTypeOptions = [
   { value: 'latest', label: '最新价' },
   { value: 'market', label: '市价' },
 ]
 const qtyBaseOptions = [
-  { value: 'vol', label: '当前持仓' },
-  { value: 'avl_vol', label: '可用持仓' },
-  { value: 'last_vol', label: '期初持仓' },
-]
+  // 按比例 (基数 × 百分比)
+  { value: 'vol',       label: '当前持仓', group: '按比例' },
+  { value: 'avl_vol',   label: '可用持仓', group: '按比例' },
+  { value: 'last_vol',  label: '期初持仓', group: '按比例' },
+  // 按数量 (直接输入)
+  { value: 'count',     label: '按数量',   group: '按数量' },
+]  
 
 // v57 commit.4: vol 计算 — 按 globalQtyBase × globalPct + 按 trade_unit 取整 + ≥ min_buy_qty
 //   数据源:
@@ -550,14 +572,25 @@ const qtyBaseOptions = [
 //     - trade_unit/min_buy_qty: stocksStore.stocks (按 stock_code 实时匹配)
 //   取整规则: floor(raw / unit) * unit  (浮点→整数倍)
 //   下界: max(unit_adjusted, min_buy_qty)  (允许小幅超出 raw 一档 unit)
+//   change 2026-07-27-v109-quantity-mode: 新增 'count' 分支 — 选"按数量"时
+//     直接用手动输入的股数 (globalManualVolume), 跳过 base × pct, 但仍走
+//     trade_unit 取整 + min_buy_qty 下界 (用户口径: "具体到某一个任务的标的
+//     的时候, 按标的的交易数量和单位, 重新计算数量")
 function computeOrderVolume(stockCode) {
-  if (!stockCode) return { volume: 0, raw: 0, trade_unit: 1, min_buy_qty: 100 }
-  const pos = (holdingsStore.positions || []).find(p => p.stock_code === stockCode)
-  if (!pos) return { volume: 0, raw: 0, trade_unit: 1, min_buy_qty: 100 }
-  const stock = stocksStore.cacheMap.get(stockCode) || {}
+  const stock = (stockCode ? stocksStore.cacheMap.get(stockCode) : {}) || {}
   const trade_unit = Number(stock.trade_unit) || 1
   const min_buy_qty = Number(stock.min_buy_qty) || 100
-  const base = Number(pos[globalQtyBase.value]) || 0
+  if (!stockCode) return { volume: 0, raw: 0, trade_unit, min_buy_qty, base: 0, pct: 0 }
+  // v109: 按数量 — 用手动股数, 与持仓无关, 不取 base × pct
+  if (globalQtyBase.value === 'count') {
+    const manual = Number(globalManualVolume.value) || 0
+    const unit_adjusted = Math.floor(manual / trade_unit) * trade_unit
+    const volume = Math.max(unit_adjusted, min_buy_qty)  // 仍保 min_buy_qty 下界
+    return { volume, raw: manual, trade_unit, min_buy_qty, base: manual, pct: 1, manual: true }
+  }
+  // 按比例 — base × pct
+  const pos = (holdingsStore.positions || []).find(p => p.stock_code === stockCode)
+  const base = Number(pos?.[globalQtyBase.value]) || 0
   const pct = Number(globalPct.value) || 0
   const raw = base * pct
   const unit_adjusted = Math.floor(raw / trade_unit) * trade_unit
