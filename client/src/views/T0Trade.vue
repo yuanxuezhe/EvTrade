@@ -46,30 +46,50 @@
   <div class="t0-trade fade-in-up">
     <!-- v93: 整页只剩一条工具栏行 — 做T配置 + (任务筛选 / 添加任务 / 刷新) 全部靠右集中 -->
     <!--   顺序(从右到左): 刷新 → 添加任务 → 任务筛选 → 提示文案 → 3 个 select -->
-    <!--   顶部 t0-header 已删除 (无标题、无独立按钮行) -->
+    <!-- change 2026-07-27-v109-mode-toggle: 工具栏 — 百分数 vs 股数 单选互斥输入框 -->
     <div class="t0-config-bar">
       <span class="t0-config-label">做T配置:</span>
-      <el-select v-model="globalPct" size="small" style="width: 90px">
-        <el-option v-for="o in pctOptions" :key="o.value" :value="o.value" :label="o.label" />
-      </el-select>
+      <!-- 模式一: 按比例 (el-radio-group 二选一, 互斥单选) -->
+      <el-radio-group v-model="globalMode" size="small">
+        <el-radio-button label="pct">按比例</el-radio-button>
+        <el-radio-button label="qty">按数量</el-radio-button>
+      </el-radio-group>
+      <!-- 输入框按模式条件显隐 + 单位提示 -->
+      <!-- change 2026-07-27-v109-mode-toggle: 输入框按模式条件显隐 + 单位提示 (两个分支各自独立 v-if, 不用 v-else 防中间被截断) -->
+      <template v-if="globalMode === 'pct'">
+        <el-input-number
+          v-model="globalPctInput"
+          :min="0.001"
+          :max="100"
+          :step="0.1"
+          :precision="3"
+          size="small"
+          controls-position="right"
+          style="width: 130px"
+          placeholder="百分数"
+        />
+        <span class="t0-unit-hint">%</span>
+      </template>
+      <template v-else>
+        <el-input-number
+          v-model="globalQtyInput"
+          :min="1"
+          :step="100"
+          size="small"
+          controls-position="right"
+          style="width: 130px"
+          placeholder="股数"
+        />
+        <span class="t0-unit-hint">股</span>
+      </template>
+      <!-- 价格类型 + 持仓基数 (保留不动) -->
       <el-select v-model="globalPriceType" size="small" style="width: 100px">
         <el-option v-for="o in priceTypeOptions" :key="o.value" :value="o.value" :label="o.label" />
       </el-select>
       <el-select v-model="globalQtyBase" size="small" style="width: 110px">
         <el-option v-for="o in qtyBaseOptions" :key="o.value" :value="o.value" :label="o.label" />
       </el-select>
-      <!-- change 2026-07-27-v109-quantity-input: 选"按数量"时出输入框（条件显隐）；pct 下拉已在右侧位置固定显隐 -->
-      <el-input-number
-        v-if="globalQtyBase === 'count'"
-        v-model="globalManualVolume"
-        :min="1"
-        :step="100"
-        size="small"
-        controls-position="right"
-        style="width: 120px"
-        placeholder="股数"
-      />
-      <span class="t0-config-hint">（按行触发"买/卖"，按比例=持仓×百分比，按数量=直接输入股数，价格按所选类型）</span>
+      <span class="t0-config-hint">（按比例=持仓×百分数（支持小数）/ 按数量=直接输入股数，价格按所选类型）</span>
       <span class="t0-spacer"></span>
       <el-tooltip content="选择/取消当前做T归属的 task；新建请用添加任务入口" placement="top">
         <el-select
@@ -413,10 +433,15 @@ const tasksDetailVisible = ref(false)
 const viewingTaskId = ref(null)
 
 // v57: 操作列改造 — 全局配置 (页面顶部 row 共用)
-const globalPct = ref(0.25)                 // 百分比 25%
-const globalPriceType = ref('latest')       // 价格 'latest' (最新价 11) | 'market' (市价 44)
-const globalQtyBase = ref('last_vol')       // 数量基数 'vol'/'avl_vol'/'last_vol' 按比例 | 'count' 按数量 (v109)
-const globalManualVolume = ref(100)         // change 2026-07-27-v109-quantity-input: 按数量输入的股数 (默认 100)
+// change 2026-07-27-v109-mode-toggle: ref 重写
+//   globalMode: 'pct' | 'qty' 二选一互斥单选
+//   globalPctInput: 直接是百分数 (用户视角 25 表示 25%, 支持小数), 计算时除以 100
+//   globalQtyInput: 直接是股数 (整数)
+const globalMode = ref('pct')              // 模式 'pct' (按比例) | 'qty' (按数量)
+const globalPctInput = ref(25)             // 百分数 (用户视角 25 = 25%, 支持小数 0.001-100)
+const globalQtyInput = ref(100)            // 股数 (整数 ≥ 1)
+const globalPriceType = ref('latest')      // 价格 'latest' (最新价 11) | 'market' (市价 44)
+const globalQtyBase = ref('last_vol')      // 数量基数 'vol'/'avl_vol'/'last_vol' (pct 模式下的基数)
 
 // 添加任务 dialog
 const createDialogVisible = ref(false)
@@ -539,63 +564,48 @@ async function handleCancel(row) {
   }
 }
 
-// change 2026-07-27-v109-quantity-options: 全局配置下拉框选项
-//   pct: 9 档 (千分之1 / 百分 1/5/10/20/25/50/75/100), 升序
-//   qtyBase: 4 选项 (按比例: 当前/可用/期初持仓 + 按数量: count)
-const pctOptions = [
-  { value: 0.001, label: '千分之1' },
-  { value: 0.01,  label: '1%' },
-  { value: 0.05,  label: '5%' },
-  { value: 0.10,  label: '10%' },
-  { value: 0.20,  label: '20%' },
-  { value: 0.25,  label: '25%' },
-  { value: 0.50,  label: '50%' },
-  { value: 0.75,  label: '75%' },
-  { value: 1.00,  label: '100%' },
-]
+// change 2026-07-27-v109-mode-toggle: 选项列表 (清理 v109.1 的 9 档 pct + count 项)
 const priceTypeOptions = [
   { value: 'latest', label: '最新价' },
   { value: 'market', label: '市价' },
 ]
 const qtyBaseOptions = [
-  // 按比例 (基数 × 百分比)
-  { value: 'vol',       label: '当前持仓', group: '按比例' },
-  { value: 'avl_vol',   label: '可用持仓', group: '按比例' },
-  { value: 'last_vol',  label: '期初持仓', group: '按比例' },
-  // 按数量 (直接输入)
-  { value: 'count',     label: '按数量',   group: '按数量' },
+  { value: 'vol',       label: '当前持仓' },
+  { value: 'avl_vol',   label: '可用持仓' },
+  { value: 'last_vol',  label: '期初持仓' },
 ]  
 
-// v57 commit.4: vol 计算 — 按 globalQtyBase × globalPct + 按 trade_unit 取整 + ≥ min_buy_qty
+// v57 commit.4: vol 计算 — 按 globalMode × globalPctInput / globalQtyInput + trade_unit 取整 + ≥ min_buy_qty
 //   数据源:
-//     - base: holdingsStore.positions[stockCode][globalQtyBase]  (实时)
+//     - base (pct 模式): holdingsStore.positions[stockCode][globalQtyBase]  (实时)
+//     - pct (pct 模式): globalPctInput / 100 (用户输入百分数 → 比例)
+//     - qty (qty 模式): globalQtyInput (用户直接输入股数)
 //     - trade_unit/min_buy_qty: stocksStore.stocks (按 stock_code 实时匹配)
 //   取整规则: floor(raw / unit) * unit  (浮点→整数倍)
 //   下界: max(unit_adjusted, min_buy_qty)  (允许小幅超出 raw 一档 unit)
-//   change 2026-07-27-v109-quantity-mode: 新增 'count' 分支 — 选"按数量"时
-//     直接用手动输入的股数 (globalManualVolume), 跳过 base × pct, 但仍走
-//     trade_unit 取整 + min_buy_qty 下界 (用户口径: "具体到某一个任务的标的
-//     的时候, 按标的的交易数量和单位, 重新计算数量")
+//   change 2026-07-27-v109-mode-toggle: 重写分发
+//     - mode='pct': pct 模式, 用 globalPctInput(百分数)/100 × base
+//     - mode='qty': qty 模式, 直接用 globalQtyInput (股数), 与持仓无关
 function computeOrderVolume(stockCode) {
   const stock = (stockCode ? stocksStore.cacheMap.get(stockCode) : {}) || {}
   const trade_unit = Number(stock.trade_unit) || 1
   const min_buy_qty = Number(stock.min_buy_qty) || 100
   if (!stockCode) return { volume: 0, raw: 0, trade_unit, min_buy_qty, base: 0, pct: 0 }
-  // v109: 按数量 — 用手动股数, 与持仓无关, 不取 base × pct
-  if (globalQtyBase.value === 'count') {
-    const manual = Number(globalManualVolume.value) || 0
-    const unit_adjusted = Math.floor(manual / trade_unit) * trade_unit
-    const volume = Math.max(unit_adjusted, min_buy_qty)  // 仍保 min_buy_qty 下界
-    return { volume, raw: manual, trade_unit, min_buy_qty, base: manual, pct: 1, manual: true }
+  // qty 模式: 直接用股数输入, 与持仓无关
+  if (globalMode.value === 'qty') {
+    const raw = Number(globalQtyInput.value) || 0
+    const unit_adjusted = Math.floor(raw / trade_unit) * trade_unit
+    const volume = Math.max(unit_adjusted, min_buy_qty)
+    return { volume, raw, trade_unit, min_buy_qty, base: raw, pct: 1, mode: 'qty' }
   }
-  // 按比例 — base × pct
+  // pct 模式: globalPctInput(百分数) / 100 × base
   const pos = (holdingsStore.positions || []).find(p => p.stock_code === stockCode)
   const base = Number(pos?.[globalQtyBase.value]) || 0
-  const pct = Number(globalPct.value) || 0
+  const pct = (Number(globalPctInput.value) || 0) / 100
   const raw = base * pct
   const unit_adjusted = Math.floor(raw / trade_unit) * trade_unit
   const volume = Math.max(unit_adjusted, min_buy_qty)
-  return { volume, raw, trade_unit, min_buy_qty, base, pct }
+  return { volume, raw, trade_unit, min_buy_qty, base, pct, mode: 'pct' }
 }
 
 // v57: 价格获取 — 'latest' → quoteStore.getLastPrice, 'market' → 后端实际是柜台撮合价 (前端展示为最新价作参考)
@@ -841,8 +851,10 @@ function _prepareOrderPayload(row, direction) {
     direction, stockCode, price, volume: volInfo.volume,
     orderType,                                       // v58 commit.5 fix: 后端 Pydantic 必填, 之前漏掉 → 422
     taskId: row.id,
-    qtyBase: globalQtyBase.value,
-    pct: globalPct.value,
+    mode: globalMode.value,                          // change 2026-07-27-v109-mode-toggle: 'pct' | 'qty'
+    qtyBase: globalQtyBase.value,                    // 仅 pct 模式有意义
+    pct: globalPctInput.value,                       // change 2026-07-27-v109-mode-toggle: 直接是百分数 (用户视角 25 = 25%)
+    qty: globalQtyInput.value,                       // change 2026-07-27-v109-mode-toggle: 仅 qty 模式有意义
     priceType: globalPriceType.value,
     // v57 commit.4: 取整提示信息 (供 dialog 显示)
     base: volInfo.base,
@@ -1093,6 +1105,14 @@ onMounted(async () => {
   color: var(--el-text-color-secondary, #909399);
   font-size: 11px;
   margin-left: 8px;
+}
+/* change 2026-07-27-v109-mode-toggle: 单位提示 (%/股) 紧贴 el-input-number 右侧 */
+.t0-config-bar .t0-unit-hint {
+  color: var(--el-text-color-regular, #606266);
+  font-size: 12px;
+  margin-left: -8px;     /* 覆盖 el-input-number 后侧 wrap-padding, 让 % 紧贴输入框 */
+  margin-right: 6px;
+  user-select: none;
 }
 .t0-upper,
 .t0-lower {
