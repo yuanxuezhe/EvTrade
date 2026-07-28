@@ -175,8 +175,8 @@ const trendClass = computed(() => {
 }
 
 .trend-flat {
-  color: var(--text-secondary);
-  background: var(--bg-soft);
+  color: #000;            /* v114.1: 用户口径 0 = 黑色 */
+  background: transparent; /* v114.1: 0 状态无背景色 (保持原卡片背景) */
 }
 
 .stat-sublabel {

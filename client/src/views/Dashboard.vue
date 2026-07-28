@@ -6,9 +6,9 @@
         label="总资产"
         :value="displayTotalAsset"
         prefix="¥"
-        :trend="0.85"
+        :trend="todayPnLPercent"
         icon="Wallet"
-        accent="primary"
+        :accent="todayPnLPercent > 0 ? 'up' : todayPnLPercent < 0 ? 'down' : 'primary'"
         sublabel="账户总市值"
       />
       <StatCard
@@ -33,8 +33,8 @@
         prefix="¥"
         :trend="todayPnLPercent"
         icon="TrendCharts"
-        :accent="todayPnL >= 0 ? 'up' : 'down'"
-        sublabel="基于今日成交估算"
+        :accent="todayPnL > 0 ? 'up' : todayPnL < 0 ? 'down' : 'primary'"
+        sublabel="总资产相对期初变化"
       />
     </section>
 
