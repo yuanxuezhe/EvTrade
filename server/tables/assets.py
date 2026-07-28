@@ -28,32 +28,35 @@ class Assets(TableBase):
     __tablename__: ClassVar[str] = 'assets'
     __pk_fields__: ClassVar[Tuple[str, ...]] = ('id',)
     __auto_increment_pk__: ClassVar[str | None] = None
-
     __fields__: ClassVar[dict] = {
         'id': '',
         'cash': '',
+        'available': '',         # v110: 可用资金
         'frozen_cash': '',
         'market_value': '',
         'total_asset': '',
+        'last_asset': '',         # v114: 期初总资产 (早上 init 锁定)
         'synced_at': '',
         'synced_from': ''
     }
-
     __field_types__: ClassVar[dict] = {
         'id': 'int',
         'cash': 'float',
+        'available': 'float',
         'frozen_cash': 'float',
         'market_value': 'float',
         'total_asset': 'float',
+        'last_asset': 'float',    # v114
         'synced_at': 'datetime',
         'synced_from': 'varchar(16)'
     }
-
     # 字段 type hints (IDE 智能提示用, 运行时不影响行为)
     id: int
     cash: float
+    available: float
     frozen_cash: float
     market_value: float
     total_asset: float
+    last_asset: float           # v114
     synced_at: datetime
     synced_from: str

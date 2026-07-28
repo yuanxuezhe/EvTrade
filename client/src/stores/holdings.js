@@ -31,7 +31,7 @@ export const useHoldingsStore = defineStore('holdings', () => {
   const orders = ref([])             // 后端 orders
   const trades = ref([])             // 后端 trades
   const cachedAsset = ref({         // 后端 asset 接口初值
-    cash: 0, frozen_cash: 0, market_value: 0, total_asset: 0
+    cash: 0, frozen_cash: 0, market_value: 0, total_asset: 0, last_asset: 0  // v114: last_asset
   })
 
   // ---- v8: 激活交易日权威源 -----------------------------------------

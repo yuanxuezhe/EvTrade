@@ -35,6 +35,7 @@ class AssetOut(BaseModel):
     frozen_cash: float
     market_value: float
     total_asset: float
+    last_asset: float          # v114: 期初总资产 (早上 init 锁定, 当天不变, 前端算当日盈亏)
     synced_at: Optional[str] = None
     synced_from: str
 
@@ -58,6 +59,7 @@ async def get_account_asset(db: Session = Depends(get_db)):
         frozen_cash=row.frozen_cash,
         market_value=row.market_value,
         total_asset=row.total_asset,
+        last_asset=float(getattr(row, 'last_asset', 0) or 0),  # v114
         synced_at=format_db_dt(row.synced_at) if row.synced_at else None,
         synced_from=row.synced_from,
     )])

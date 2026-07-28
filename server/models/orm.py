@@ -200,6 +200,8 @@ class Asset(Base):
     frozen_cash = Column(Float, nullable=False, default=0.0)   # 冻结
     market_value = Column(Float, nullable=False, default=0.0)
     total_asset = Column(Float, nullable=False, default=0.0)
+    # v114: 期初总资产 (早上 do_reconcile 系统初始化时计算: 可用资金 + sum(昨收 * 持仓))
+    last_asset = Column(Float, nullable=False, default=0.0)
     synced_at = Column(DateTime, nullable=False, default=_utcnow)
     synced_from = Column(String(16), nullable=False, default="")  # rpc_full / push_partial / manual
 

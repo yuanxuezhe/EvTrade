@@ -223,5 +223,55 @@ def _apply_broker_data(
             synced_from='rpc_reconcile',
         ))
 
+    # v114: 计算期初总资产 last_asset = 可用资金 + sum(持仓量 * 标的昨收盘)
+    #   数据源:
+    #     - 资金: 刚从 broker 同步来的 cash 字段 (本次 init 推到 assets.id=1)
+    #     - 持仓: 刚从 broker 同步来的 positions_data (用 last_vol 持仓量)
+    #     - 昨收盘: quote_snapshots.prev_close 表 (broker sync 写入)
+    #   last_asset 当天不变, 前端算当日盈亏 = 总资产(now) - last_asset
+    _update_last_asset(db)
+
     db.commit()
     return True
+
+
+def _update_last_asset(db: Session) -> None:
+    """v114: 计算并写入 assets.id=1 的 last_asset
+
+    last_asset = cash + sum(positions.last_vol * positions.stock_code's prev_close)
+
+    注: positions_data 已经在 _apply_broker_data 内 UPDATE 进 positions 表 (commit 前)
+       quote_snapshots.prev_close 由 broker qry_snapshots / qry_ast 同步写入
+       这里 db.query 直接读 (因为还没 commit, 但同一事务内可见)
+    """
+    try:
+        from server.models.orm import Asset, Position
+        from server.tables.quote_snapshots import QuoteSnapshots
+        from server.tables.base import TableBase
+
+        asset_row = db.query(Asset).filter(Asset.id == 1).first()
+        if not asset_row:
+            log.warning("reconcile: assets row not found, skip last_asset update")
+            return
+        cash_now = float(asset_row.cash or 0)
+
+        # sum(last_vol * prev_close) — LEFT JOIN quote_snapshots 拿 prev_close, 没快照的按 0
+        # SQL: SELECT p.last_vol, COALESCE(qs.prev_close, 0) FROM positions p
+        #      LEFT JOIN quote_snapshots qs ON p.stock_code = qs.stock_code
+        prev_close_sum = 0.0
+        for p in db.query(Position).all():
+            v = float(p.last_vol or 0)
+            if v <= 0:
+                continue
+            qs = db.query(QuoteSnapshots).filter(QuoteSnapshots.stock_code == p.stock_code).first()
+            prev = float(qs.prev_close or 0) if qs else 0.0
+            prev_close_sum += v * prev
+
+        last_asset = cash_now + prev_close_sum
+        asset_row.last_asset = last_asset
+        log.info(
+            "reconcile: last_asset = %.2f (cash=%.2f + positions_prev_close_sum=%.2f)",
+            last_asset, cash_now, prev_close_sum,
+        )
+    except Exception as e:
+        log.exception("_update_last_asset failed (非致命, last_asset 留 default 0): %s", e)

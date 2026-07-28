@@ -217,18 +217,20 @@ const recentOrders = computed(() =>
     .slice(0, 6)
 )
 
+// v114: 当日盈亏 = 总资产(now) - last_asset (早上 init 锁定)
+//   总资产 = 可用资金 + 实时持仓市值
+//   last_asset = 可用资金 + sum(昨收 × 持仓)  — do_reconcile 计算后写库, 当天不变
+//   因此 todayPnL 等价于实时市值变化 (持仓 × (现价 - 昨收))
 const todayPnL = computed(() => {
-  let buy = 0
-  let sell = 0
-  for (const t of holdingsStore.trades) {
-    if (t.order_type === '23') buy += t.volume * t.price
-    else if (t.order_type === '24') sell += t.volume * t.price
-  }
-  return sell - buy
+  const cur = (holdingsStore.liveTotalAsset || holdingsStore.cachedAsset.total_asset
+    || assetStore.asset.total_asset || 0)
+  const last = holdingsStore.cachedAsset.last_asset || 0
+  return cur - last
 })
 
 const todayPnLPercent = computed(() => {
-  const base = assetStore.asset.total_asset || 1
+  const last = holdingsStore.cachedAsset.last_asset || 0
+  const base = last > 0 ? last : 1
   return (todayPnL.value / base) * 100
 })
 

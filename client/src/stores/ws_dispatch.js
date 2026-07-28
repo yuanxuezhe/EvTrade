@@ -375,6 +375,7 @@ function _onAssetUpdate(data) {
       frozen_cash: data.frozen_cash ?? hs.cachedAsset?.frozen_cash ?? 0,
       market_value: data.market_value ?? hs.cachedAsset?.market_value ?? 0,
       total_asset: data.total_asset ?? hs.cachedAsset?.total_asset ?? 0,
+      last_asset: data.last_asset ?? hs.cachedAsset?.last_asset ?? 0,    // v114: 期初资产锁定, ws 推过来覆盖
       synced_at: data.synced_at || hs.cachedAsset?.synced_at || null,
       synced_from: 'rpc_sync',
     }
