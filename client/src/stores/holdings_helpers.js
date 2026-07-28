@@ -33,9 +33,11 @@ export function parseAsset(resp) {
   if (!a) return null
   return {
     cash: Number(a.cash) || 0,
+    available: Number(a.available) || Number(a.cash) || 0,  // v110: available 透传 (兼容 v110 前的 api 响应无该字段)
     frozen_cash: Number(a.frozen_cash) || 0,
     market_value: Number(a.market_value) || 0,
-    total_asset: Number(a.total_asset) || 0
+    total_asset: Number(a.total_asset) || 0,
+    last_asset: Number(a.last_asset) || 0   // v114: 期初总资产 (早上 init 锁定)
   }
 }
 
