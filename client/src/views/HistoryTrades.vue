@@ -242,10 +242,18 @@ async function runQuery() {
   const [startDate, endDate] = dateRange.value
   loading.value = true
   try {
+    // v113: 改走 holdingsStore.trades 全量缓存 + 前端 trd_date 区间过滤
+    //   不再独立 RPC 拉 (与 startup cache 一致, 统一单一可信源)
     const opts = { startDate, endDate }
     if (stockCode.value) opts.stockCode = stockCode.value
-    const data = await api.getTrades(opts)
-    results.value = Array.isArray(data) ? data : []
+    const all = holdingsStore.trades || []
+    const inRange = all.filter((t) => {
+      const td = String(t.trd_date || '')
+      if (td < startDate || td > endDate) return false
+      if (opts.stockCode && t.stock_code !== opts.stockCode) return false
+      return true
+    })
+    results.value = inRange
     hasQueried.value = true
     page.value = 1
   } catch (e) {

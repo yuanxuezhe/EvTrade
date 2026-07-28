@@ -14,12 +14,17 @@ v10 改动（order-trade-query-by-trd-date）：
 - 缺省模式: trd_date = 激活日 (向后兼容)
 - 排序: created_at DESC → trade_time DESC, trade_id DESC
   - trade_time 同秒时 trade_id 二级稳定排序
+
+v113 改动（startup-full-cache-pull）：
+- 新增 all=true (admin/trader 可用)
+  - 跳过 trd_date 默认值, 返所有 trades 行不限日期 (前端 startup 缓存用)
 """
 from fastapi import APIRouter, Depends, Query
 from typing import Optional, List
 from pydantic import BaseModel
 
-from server.db import get_db
+from server.auth.deps import get_current_user
+from server.models.user import User
 from server.tables.trades import Trades
 from server.services.guards import resolve_default_trd_date
 
@@ -57,10 +62,14 @@ async def list_trades(
         None, regex=r"^\d{8}$",
         description="结束交易日 YYYYMMDD（含）",
     ),
+    all: Optional[bool] = Query(False, description="v113: 返全部 trades 不限日期 (前端 startup 缓存)"),
+    limit: int = Query(2000, le=10000),  # v113: 默认 2000 (覆盖全量拉取上限)
+    user: User = Depends(get_current_user),
 ):
     """成交列表
 
     过滤语义:
+    - all=true → 跳过滤返全部 (前端启动一次性缓存)
     - start_date/end_date 任一存在 → 走区间模式 (start_date <= trd_date <= end_date)
     - 都不存在 → 走缺省模式 (trd_date = 激活日, 向后兼容)
     - 区间模式优先级高于 trd_date: start_date/end_date 存在时 trd_date 被忽略
@@ -69,19 +78,24 @@ async def list_trades(
     """
     rows = Trades.query_all()
 
-    if start_date or end_date:
+    if all:
+        # v113: startup 缓存模式 — 不过滤, 倒序取 limit
+        rows = sorted(rows, key=lambda row: (row.trade_time, row.trade_id), reverse=True)[:limit]
+    elif start_date or end_date:
         if start_date:
             rows = [row for row in rows if row.trd_date >= start_date]
         if end_date:
             rows = [row for row in rows if row.trd_date <= end_date]
+        if stock_code:
+            rows = [row for row in rows if row.stock_code == stock_code]
+        rows = sorted(rows, key=lambda row: (row.trade_time, row.trade_id), reverse=True)[:500]
     else:
-        trd = trd_date or resolve_default_trd_date(db)
+        trd = trd_date or resolve_default_trd_date(None)  # v113: 兼容 None
         rows = [row for row in rows if row.trd_date == trd]
+        if stock_code:
+            rows = [row for row in rows if row.stock_code == stock_code]
+        rows = sorted(rows, key=lambda row: (row.trade_time, row.trade_id), reverse=True)[:500]
 
-    if stock_code:
-        rows = [row for row in rows if row.stock_code == stock_code]
-
-    rows = sorted(rows, key=lambda row: (row.trade_time, row.trade_id), reverse=True)[:500]
     return TradesListResponse(code=0, msg="", list=[
         TradeOut(
             trade_id=r.trade_id,

@@ -295,10 +295,19 @@ async function runQuery() {
   const [startDate, endDate] = dateRange.value
   loading.value = true
   try {
+    // v113: 改走 holdingsStore.orders 全量缓存 + 前端 trd_date 区间过滤
+    //   不再独立 RPC 拉 (避免 IDB/RPC 双源漂移, 与 startup cache 一致)
     const opts = { startDate, endDate }
     if (stockCode.value) opts.stockCode = stockCode.value
-    const data = await api.getOrders(opts)
-    results.value = Array.isArray(data) ? data : []
+    // 后端 filter 缺失的场景: 用前端缓存过滤 (start_date <= trd_date <= end_date)
+    const all = holdingsStore.orders || []
+    const inRange = all.filter((o) => {
+      const td = String(o.trd_date || '')
+      if (td < startDate || td > endDate) return false
+      if (opts.stockCode && o.stock_code !== opts.stockCode) return false
+      return true
+    })
+    results.value = inRange
     hasQueried.value = true
     page.value = 1  // 重新分页
   } catch (e) {

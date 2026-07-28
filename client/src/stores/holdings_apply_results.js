@@ -11,12 +11,61 @@
  *
  * 调用者：holdings_bootstrap.js 内的 createBootstrap 工厂
  *
+ * v113 改动（startup-full-cache-pull）：
+ *   applyOrdersResult / applyTradesResult 不再"整 dict 覆盖" — 改成按主键去重合并
+ *     - orders 主键: trd_date + order_no
+ *     - trades 主键: trd_date + order_no + trade_id
+ *   解决 startup 拉 all=true 后, refresh/refreshAll 部分覆盖丢失全量行
+ *   (旧行为 — 拉一次覆盖一次, 全量行被擦掉)
+ *
  * change system-delegation-price-fill-calc:
  *   applyOrdersRefresh/applyOrdersResult   — 调 normalizeOrder 重算 avg_price + status
  *   applyTradesRefresh/applyTradesResult   — map 调 normalizeTrade 重算 amount
  */
 import { parseAsset, normalizeOrder, normalizeTrade } from './holdings_helpers'
 import { saveTrade } from './holdings_idb'
+
+// ---- v113: 按主键去重 merge helper (保持 array 视图层接口不变) ----
+
+/**
+ * v113: 按 (trd_date, order_no) 主键去重合并
+ * incoming 视为最新覆盖对应行; 不在 existing 的直接 push.
+ * 返回新 array (不 mutate 入参)
+ */
+function _mergeOrders(existing, incoming) {
+    const keyOf = (o) => `${o.trd_date || ''}|${o.order_no || ''}`
+    const m = new Map(existing.map((o) => [keyOf(o), { ...o }]))
+    for (const inc of incoming) {
+        const k = keyOf(inc)
+        if (m.has(k)) {
+            // 已存在 → 字段覆盖 (incoming 通常字段更全)
+            m.set(k, { ...m.get(k), ...inc })
+        } else {
+            m.set(k, { ...inc })
+        }
+    }
+    return Array.from(m.values())
+}
+
+/**
+ * v113: 按 (trd_date, order_no, trade_id) 主键去重合并
+ */
+function _mergeTrades(existing, incoming) {
+    const keyOf = (t) => `${t.trd_date || ''}|${t.order_no || ''}|${t.trade_id || ''}`
+    const m = new Map(existing.map((t) => [keyOf(t), { ...t }]))
+    for (const inc of incoming) {
+        const k = keyOf(inc)
+        if (m.has(k)) {
+            m.set(k, { ...m.get(k), ...inc })
+        } else {
+            m.set(k, { ...inc })
+        }
+    }
+    return Array.from(m.values())
+}
+
+// v113 暴露给 bootstrap (跨 IDB/RPC 合并用)
+export { _mergeOrders, _mergeTrades }
 
 // ---- refreshAll 用：返回 summary 字符串 --------------------------------
 
@@ -47,7 +96,9 @@ export function applyOrdersRefresh(r, refs) {
   if (r.status === 'fulfilled') {
     // change system-delegation-price-fill-calc: 保留 row 累计字段, 重算 avg_price + status
     const rawOrders = Array.isArray(r.value) ? r.value : []
-    refs.orders.value = rawOrders.map(normalizeOrder)
+    const normalized = rawOrders.map(normalizeOrder)
+    // v113: 按主键去重合并, 不替换全量 (保留未在响应中的行 — refresh 是增量)
+    refs.orders.value = _mergeOrders(refs.orders.value || [], normalized)
     refs.refCounts.value.orders = 'ok'
     return `委托 ${refs.orders.value.length} 条`
   }
@@ -60,9 +111,10 @@ export function applyTradesRefresh(r, refs) {
   if (r.status === 'fulfilled') {
     // change system-delegation-price-fill-calc: amount 本地算 (price × volume)
     const rawTrades = Array.isArray(r.value) ? r.value : []
-    refs.trades.value = rawTrades.map(normalizeTrade)
+    const normalized = rawTrades.map(normalizeTrade)
+    // v113: 按主键去重合并
+    refs.trades.value = _mergeTrades(refs.trades.value || [], normalized)
     // change fix-trades-direction-reversed: bootstrap/refresh 路径兜底, broker trd_cfm 不带 order_type
-    //   从 orders 表反查 order.order_type 填充 trade.order_type (broker 漏推, 后端透传空串)
     _fillTradesDirection(refs)
     refs.refCounts.value.trades = 'ok'
     return `成交 ${refs.trades.value.length} 条`
@@ -104,7 +156,9 @@ export function applyOrdersResult(r, refs, source) {
     const rawOrders = Array.isArray(r.value) ? r.value
       : (Array.isArray(r.value?.list) ? r.value.list : [])
     // change system-delegation-price-fill-calc: 保留 row 累计字段, 重算 avg_price + status
-    refs.orders.value = rawOrders.map(normalizeOrder)
+    const normalized = rawOrders.map(normalizeOrder)
+    // v113: 按主键去重合并 (orders 主键 trd_date+order_no), 不替换全量
+    refs.orders.value = _mergeOrders(refs.orders.value || [], normalized)
     refs.refCounts.value.orders = 'ok'
     refs.log('ok', '缓存', source, `委托加载成功 (${refs.orders.value.length} 条)`)
   } else {
@@ -118,7 +172,9 @@ export function applyTradesResult(r, refs, source) {
     // change system-delegation-price-fill-calc: amount 本地算 (price × volume)
     const rawTrades = Array.isArray(r.value) ? r.value
       : (Array.isArray(r.value?.list) ? r.value.list : [])
-    refs.trades.value = rawTrades.map(normalizeTrade)
+    const normalized = rawTrades.map(normalizeTrade)
+    // v113: 按主键去重合并 (trades 主键 trd_date+order_no+trade_id)
+    refs.trades.value = _mergeTrades(refs.trades.value || [], normalized)
     // change fix-trades-direction-reversed: bootstrap 路径兜底 (orders 已先于 trades 写入, 反查必中)
     _fillTradesDirection(refs)
     refs.refCounts.value.trades = 'ok'

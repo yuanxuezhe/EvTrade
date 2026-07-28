@@ -25,10 +25,14 @@ import { parseAsset } from './holdings_helpers'
 import {
   applyAssetResult, applyPositionsResult, applyOrdersResult, applyTradesResult,
   applyAssetRefresh, applyPositionsRefresh, applyOrdersRefresh, applyTradesRefresh,
+  _mergeOrders, _mergeTrades,  // v113: IDB/RPC 合并 helper
 } from './holdings_apply_results'
 import {
   initIDB,
-  loadOrdersForDate, loadTradesForDate,
+  loadOrdersForDate,
+  loadTradesForDate,
+  loadAllOrders,            // v113: 全部跨日 orders cache (startup 一次拉)
+  loadAllTrades,            // v113: 全部跨日 trades cache
   saveOrder, saveTrade,
   clearDate,
 } from './holdings_idb'
@@ -167,17 +171,23 @@ export function createBootstrap({
       // ─── v12: IDB 命中优先 ───
       const idbHit = await _tryIDBFirst()
 
-      // build 委托/成交 拉取范围：仅在 IDB miss 时拉 30 天窗口
-      const dateRange = idbHit ? null : _buildWindow()
+      // v113: 启动一次性拉全量 orders/trades (不限日期) — 配合 _mergeOrders/_mergeTrades 按主键合并
+      //   IDB 命中时跳过 RPC (orders/trades 完全由 IDB 接管)
+      //   v112 BOOTSTRAP_WINDOW_DAYS 限定已废除: 不再分窗口, 一次性拉全表
+      const useFullPull = !idbHit
+      const dateRange = useFullPull ? null : null  // 兼容旧变量, 实际使用 allQuery
+
+      // 全量拉取参数 (v113)
+      const allQuery = { all: true, limit: 10000 }
 
       // v12: IDB hit 时 orders/trades 不发 RPC；asset / positions 仍拉
       const tasks = [
         api.getAsset().catch((e) => { throw e }),
         api.getHoldings().catch((e) => { throw e }),
       ]
-      if (dateRange) {
-        tasks.push(api.getOrders(dateRange).catch((e) => { throw e }))
-        tasks.push(api.getTrades(dateRange).catch((e) => { throw e }))
+      if (useFullPull) {
+        tasks.push(api.getOrders(allQuery).catch((e) => { throw e }))
+        tasks.push(api.getTrades(allQuery).catch((e) => { throw e }))
       } else {
         // IDB hit 时占位 fulfilled（applyOrdersResult / applyTradesResult 不会动 orders / trades）
         tasks.push(Promise.resolve({ code: 0, list: [] }))
@@ -227,38 +237,39 @@ export function createBootstrap({
    * @returns {Promise<boolean>} 是否 IDB hit
    */
   async function _tryIDBFirst() {
-    const activeDay = activeTrdDate.value
-    if (!activeDay) return false
+    if (!activeTrdDate.value) return false
 
     try {
       await initIDB()  // 可能 reject（Node / SSR），跳 IDB 路径
+      // v113: 跨所有日期拉 orders/trades IDB (loadAllOrders/loadAllTrades)
+      //   之前只拉 activeDay, 跨日数据丢失; 现在一次性拉全表, 内存 cache = IDB 全量
       const [cachedOrders, cachedTrades] = await Promise.all([
-        loadOrdersForDate(activeDay),
-        loadTradesForDate(activeDay),
+        loadAllOrders(),
+        loadAllTrades(),
       ])
 
-      // IDB 跨日检查（防御性：理论上 IDB key 已限定 activeDay，但保留检查）
-      // IDB miss 是合法（首次启动 / 新交易日）— 走 RPC fallback 即可
+      // 全 miss 是合法 (首次启动 / IDB 没东西) — 走 RPC fallback
       if (cachedOrders === null && cachedTrades === null) {
-        log('info', '缓存', 'idb', `IDB miss for ${activeDay} → 走 RPC`)
+        log('info', '缓存', 'idb', `IDB miss → 走 RPC 全量拉`)
         return false
       }
 
-      // 命中：立刻写 Pinia（orders/trades ref 是 readonly interface，写入触发响应）
+      // v113: 命中: 立刻写 Pinia (orders/trades ref 是 readonly interface, 写入触发响应)
+      //   _mergeOrders/_mergeTrades 按主键去重 — IDB 与 RPC 返回合并也安全
       if (Array.isArray(cachedOrders)) {
-        orders.value = cachedOrders
+        orders.value = _mergeOrders(orders.value || [], cachedOrders)
         refCounts.value.orders = 'ok'
       }
       if (Array.isArray(cachedTrades)) {
-        trades.value = cachedTrades
+        trades.value = _mergeTrades(trades.value || [], cachedTrades)
         refCounts.value.trades = 'ok'
       }
       log('info', '缓存', 'idb',
-        `IDB 命中 (orders=${cachedOrders?.length ?? 0}, trades=${cachedTrades?.length ?? 0}) — 跳过 RPC 拉取`)
+        `IDB 命中 (orders=${cachedOrders?.length ?? 0}, trades=${cachedTrades?.length ?? 0}) — 跳过 RPC 全量拉`)
       return true
     } catch (e) {
       // IDB 不可用（隐私模式 / quota）：静默降级
-      log('warn', '缓存', 'idb', `IDB 不可用 → 走 RPC: ${e?.message || e}`)
+      log('warn', '缓存', 'idb', `IDB 读失败 (降级走 RPC): ${e?.message || e}`)
       return false
     }
   }

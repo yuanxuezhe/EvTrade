@@ -158,7 +158,12 @@ async function querySearch(queryString, cb) {
         cb([])
         return
     }
-    const results = store.searchCache(queryString, 50)
+    // v113: 空 query 也返结果 (默认弹全量前 N 条), 不再"不输入无候选"
+    //   旧行为: inputText 为空时 cb([]) → autocomplete 无候选 → 用户看不到任何股票
+    //   新行为: 空 query 返 cache 前 50 条, 鼓励用户直接看到列表选
+    const results = queryString
+        ? store.searchCache(queryString, 50)
+        : store.searchCache('', 50)  // 空 query 走 searchCache 默认分支 (全部)
     cb(results)
 }
 

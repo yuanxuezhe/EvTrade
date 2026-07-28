@@ -247,10 +247,10 @@ const store = useStocksStore()
 // 筛选
 const filters = reactive({ keyword: '', sector: '', is_t0_able: null })
 
-// 板块下拉
+// 板块下拉 — v113: 从全量 cache 拿所有 sector (之前从 pageRows, 只看到当前页 sector)
 const sectorOptions = computed(() => {
   const set = new Set()
-  for (const s of store.pageRows) {
+  for (const s of store.cache || []) {
     if (s.sector) set.add(s.sector)
   }
   return [...set].sort()
@@ -395,11 +395,27 @@ async function onCreateSave() {
 }
 
 async function onRefresh() {
+  // v113: keyword 走全量缓存 (store.searchCache) — 之前 bug:
+  //   走 fetchPage 后端分页 + 仅过滤当前页, 关键字结果可能散在多页被截断
+  //   现在: keyword 优先走 cache 全量搜 (cache 5529 条内存 O(n) 毫秒级), 不走后端分页
+  if (filters.keyword) {
+    const matches = store.searchCache(filters.keyword.trim(), 10000)  // 全量搜
+    // 同时配合 sector / is_t0_able 在前端过滤
+    const filtered = matches.filter((s) => {
+      if (filters.sector && s.sector !== filters.sector) return false
+      if (filters.is_t0_able != null && Boolean(s.is_t0_able) !== Boolean(filters.is_t0_able)) return false
+      return true
+    })
+    store.pageRows = filtered
+    store.total = filtered.length
+    return
+  }
+  // 无 keyword: 走原分页路径
   await store.fetchPage({
     sector: filters.sector || undefined,
     is_t0_able: filters.is_t0_able === null ? undefined : filters.is_t0_able
   })
-  if (filters.keyword) {
+  if (filters.keyword) {  // unreachable — keep for safety
     const kw = filters.keyword.trim().toLowerCase()
     store.pageRows = store.pageRows.filter((s) => {
       const code = (s.stock_code || '').toLowerCase()

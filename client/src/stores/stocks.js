@@ -187,9 +187,14 @@ export const useStocksStore = defineStore('stocks', () => {
    * @returns {Array} 候选 stock 列表
    */
   function searchCache(query, limit = 50) {
-    if (!query) return []
-    const q = query.trim().toLowerCase()
-    if (!q) return []
+    // v113: 空 query 也返结果 (默认弹全量前 limit 条, 鼓励用户看到列表选)
+    const q = (query || '').trim().toLowerCase()
+    if (!q) {
+      // 全量返回前 limit 条 (按 stock_code 排序保证稳定)
+      return Array.from(cacheMap.values())
+        .sort((a, b) => String(a.stock_code).localeCompare(String(b.stock_code)))
+        .slice(0, limit)
+    }
     const matches = []
     for (const s of cacheMap.values()) {
       const code = (s.stock_code || '').toLowerCase()

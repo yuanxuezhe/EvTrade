@@ -171,6 +171,24 @@ async function _loadByDate(storeName, trdDate) {
 }
 
 /**
+ * v113: 加载某 store 全部 row (不限日期, 跨所有交易日)
+ *   - 启动一次性 cache pull 用: orders/trades IDB 全量读出到内存
+ * @returns {Promise<Array|null>}
+ */
+async function _loadAll(storeName) {
+  try {
+    const db = await initIDB()
+    const allKeys = await idbGetAllKeys(db, storeName)
+    if (!allKeys || allKeys.length === 0) return null
+    const rows = await Promise.all(allKeys.map((k) => idbGet(db, storeName, k)))
+    return rows.filter(Boolean)
+  } catch (e) {
+    log.warn(`_loadAll(${storeName}) failed:`, e?.message || e)
+    return null
+  }
+}
+
+/**
  * Internal: 清掉指定日期在某 store 内的全部 key（按复合 key 前缀扫描）
  */
 async function _clearByDate(storeName, trdDate) {
@@ -217,6 +235,20 @@ export function saveOrder(order) {
  */
 export function loadOrdersForDate(trdDate) {
   return _loadByDate(STORE_ORDERS, trdDate)
+}
+
+/**
+ * v113: 加载 IDB 中全部 orders (跨所有交易日) — 启动一次性缓存用
+ */
+export function loadAllOrders() {
+  return _loadAll(STORE_ORDERS)
+}
+
+/**
+ * v113: 加载 IDB 中全部 trades (跨所有交易日)
+ */
+export function loadAllTrades() {
+  return _loadAll(STORE_TRADES)
 }
 
 /**
