@@ -18,6 +18,8 @@ from __future__ import annotations
 import logging
 from typing import Dict, Iterable, List, Optional
 
+from sqlalchemy import text
+
 from server.tables.quote_snapshots import QuoteSnapshots
 
 # Backward-compatible alias for callers that import the table symbol.
@@ -54,44 +56,51 @@ def _coerce_value(col: str, v) -> object:
         return 0 if col.endswith("_vol") or col == "volume" else 0.0
 
 
+def _build_snapshot_sql(data: Dict) -> str:
+    """v111: 原子 UPSERT SQL, 不依赖预查 existing
+
+    📌 取代 v84.4 之前 "get_latest → if existing: update else: add" 的双段式:
+       - 之前必须 add_one (会跳过 id 列) + _get_required_columns 自动填 NOT NULL 列
+         → id 列被填了 0 进 INSERT（v111 bug: 没跳过 auto_increment 列）
+       - 之前 + query_by_fields 在新连接 REPEATABLE READ 看不到刚 commit 的行
+         → get_latest 误返 None → 走 add_one → 撞 stock_code UNIQUE
+    📌 修法: 直接 INSERT … ON DUPLICATE KEY UPDATE 走 stock_code UNIQUE 索引,
+       原子 + race-safe + 不依赖 get_latest
+    """
+    cols = ["`stock_code`"] + [f"`{c}`" for c in _SNAPSHOT_COLUMNS] + ["`ts`"]
+    placeholders = [":stock_code"] + [f":{c}" for c in _SNAPSHOT_COLUMNS] + ["CURRENT_TIMESTAMP"]
+    # UPDATE 子句: 全部数据列 + ts 重置为 NOW
+    parts = [f"`{c}` = VALUES(`{c}`)" for c in _SNAPSHOT_COLUMNS] + ["`ts` = VALUES(`ts`)"]
+    sql = (
+        f"INSERT INTO quote_snapshots ({', '.join(cols)}) "
+        f"VALUES ({', '.join(placeholders)}) "
+        f"ON DUPLICATE KEY UPDATE {', '.join(parts)}"
+    )
+    return sql
+
+
 def upsert(db, snapshot: Dict) -> None:
-    """写入或覆盖一行 snapshot（latest-only，v20 MySQL-only）。
+    """写入或覆盖一行 snapshot（latest-only，MySQL only）。
 
-    snapshot 字段：stock_code + 23 数据字段（可选 ts）
-    MySQL ON DUPLICATE KEY UPDATE 兜底成 UPDATE（依赖 UNIQUE 索引）
+    v111 重写: 用 INSERT … ON DUPLICATE KEY UPDATE 原子 UPSERT，
+    不再 get_latest → if/else。两层修:
+    1) 消除 race (REPEATABLE READ 看不到刚 commit 行)
+    2) 消除 _get_required_columns 把 id 列填 0 进 INSERT 的 bug
 
-    📌 设计权衡：
-    - latest-only 模型 → 不增加历史行
-    - 单 tick → 单 SQL UPSERT，O(1) 写入
-    - 失败抛 IntegrityError（重复 stock_code 已由 UNIQUE 兜底成 UPDATE）
-    - 调用方负责 commit
+    📌 调用方负责 commit
     """
     stock_code = snapshot.get("stock_code")
     if not stock_code:
         log.warning("upsert: missing stock_code, skip")
         return
 
-    # 1. 组装列→值（白名单过滤）
-    cols = ["stock_code"]
-    vals = [stock_code]
-    placeholders = [":stock_code"]
+    params = {"stock_code": stock_code}
     for col in _SNAPSHOT_COLUMNS:
-        cols.append(col)
-        placeholders.append(f":{col}")
-        v = _coerce_value(col, snapshot.get(col))
-        vals.append(v)
-    # ts 单独处理（默认 NOW）
-    cols.append("ts")
-    placeholders.append("CURRENT_TIMESTAMP")
+        params[col] = _coerce_value(col, snapshot.get(col))
 
-    # tables 层按复合键 (stock_code, ts) 提供标准 CRUD；latest-only 由应用层覆盖现有行。
-    existing = get_latest(db, stock_code)
+    sql = _build_snapshot_sql(params)
     try:
-        data = {col: val for col, val in zip(cols, vals) if col not in ("stock_code", "ts")}
-        if existing:
-            QuoteSnapshots.update_one(data, id=existing.id)
-        else:
-            QuoteSnapshots.add_one({"stock_code": stock_code, **data})
+        db.execute(text(sql), params)
     except Exception as e:
         log.exception("quote_snapshots.upsert failed stock=%s: %s", stock_code, e)
         raise
@@ -130,32 +139,63 @@ def _build_batch_sql(cols: List[str]) -> str:
 
 
 def upsert_batch(db, snapshots: List[Dict]) -> int:
-    """批量 UPSERT 多个 snapshot（latest-only，v20 MySQL-only）。
+    """批量 UPSERT 多个 snapshot（latest-only，MySQL only）。
 
-    📌 2026-07-10 batch-flush：MySQL 走 raw pymysql cursor.executemany。
+    📌 v111: 走真正的 executemany 批量 + stock_code UNIQUE 索引 ON DUPLICATE KEY
+       单 SQL 一次插入 = O(1) round-trip / row (pymysql vs N round-trips)
+       之前 v84.4 的循环单条是规避 IntegrityError 的兜底;
+       现在原子 UPSERT 不会报 IntegrityError, 直接 executemany
 
-    性能数据（pymysql raw cursor.executemany, MySQL, 2026-07-10 实测）:
+    性能 (pymysql raw cursor.executemany, MySQL, 2026-07-10 实测):
       - 单条 cursor.execute(N=100):   239 rows/s
       - executemany(N=100):            430 rows/s   (1.8x)
       - executemany(N=200):            666 rows/s   (2.8x)
       - executemany(N=500):            944 rows/s   (4.0x)
       - executemany(N=1000):         1,120 rows/s   (4.7x)
-
-    📌 行为：
-    - 同 stock_code 重复 → UNIQUE 索引 + ON DUPLICATE KEY 兜底成 UPDATE
-    - 任何一行无 stock_code → 跳过
-    - 整批失败 → 回退到逐条 upsert()（让单条失败不影响其他）
-
-    📌 v20 MySQL-only：参数构造走 tuple-of-tuple 对齐 %s placeholders
     """
     if not snapshots:
         return 0
-    ok = 0
-    for snap in snapshots:
-        if snap.get("stock_code"):
-            upsert(db, snap)
-            ok += 1
-    return ok
+    valid_snaps = [s for s in snapshots if s.get("stock_code")]
+    if not valid_snaps:
+        return 0
+    try:
+        # v111.1: ts 也进 VALUES (timestamp NOT NULL, 不能漏)
+        #   INSERT 用 %s (current_ts 是 SQL 字面量, 不走 pymysql param)
+        col_names = ["stock_code"] + _SNAPSHOT_COLUMNS  # 26 + 1 stock_code
+        placeholders = ", ".join(["%s"] * len(col_names)) + ", CURRENT_TIMESTAMP"
+        update_parts = [f"`{col}`=VALUES(`{col}`)" for col in _SNAPSHOT_COLUMNS]
+        update_parts.append("`ts`=VALUES(`ts`)")  # ts 占位符在 VALUES 里, UPDATE 时也置 NOW
+        sql = (
+            f"INSERT INTO quote_snapshots ({', '.join(f'`{c}`' for c in col_names)}, `ts`) "
+            f"VALUES ({placeholders}) "
+            f"ON DUPLICATE KEY UPDATE {', '.join(update_parts)}"
+        )
+        rows = []
+        for snap in valid_snaps:
+            row = []
+            for col in col_names:
+                if col == "stock_code":
+                    row.append(snap.get("stock_code"))
+                else:
+                    row.append(_coerce_value(col, snap.get(col)))
+            rows.append(tuple(row))
+        cursor = db.connection().connection.cursor()
+        try:
+            cursor.executemany(sql, rows)
+        finally:
+            cursor.close()
+        db.commit()  # pymysql autocommit=False, 手动 commit
+        return len(rows)
+    except Exception as e:
+        log.exception("upsert_batch failed, fallback single: %s", e)
+        ok = 0
+        for snap in valid_snaps:
+            try:
+                upsert(db, snap)
+                ok += 1
+            except Exception:
+                pass
+        return ok
 
 
 def get_latest(stock_code: str, db=None) -> Optional[object]:
