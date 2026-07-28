@@ -27,13 +27,14 @@ from server.tables.base import aggregate
 
 
 def _filter_orders(rows, trd_date=None, start_date=None, end_date=None,
-                   stock_code=None, status=None):
+                   stock_code=None, status=None, task_id=None):
     """复合过滤 + 排序 + 切片 helper (v81 tables-migration 内存过滤模式)
 
     Args:
         rows: List[Row] (Orders.query_all() 默认按 (trd_date, order_no) 升序)
         trd_date / start_date / end_date: 三选一/可空, 业务见 list_orders
-        stock_code / status: 单一字段等值过滤 (None 跳过)
+        stock_code / status / task_id: 单一字段等值过滤 (None 跳过)
+            v112 增 task_id: 用户场景 "做 T 跨日管理", 单独按 task 查询所有日期
 
     Returns:
         (filtered_total, sorted_desc_rows)
@@ -50,6 +51,11 @@ def _filter_orders(rows, trd_date=None, start_date=None, end_date=None,
         rows = [r for r in rows if in_range(r)]
     elif trd_date:
         rows = [r for r in rows if r.trd_date == trd_date]
+    # v112: task_id 优先于其他过滤 — 不要 trd_date 默认激活日
+    if task_id is not None:
+        target = int(task_id) if task_id not in ("", None) else None
+        if target is not None:
+            rows = [r for r in rows if r.task_id is not None and int(r.task_id) == target]  
 
     if stock_code:
         rows = [r for r in rows if r.stock_code == stock_code]
@@ -68,6 +74,7 @@ def register_query(router):
     async def list_orders(
         stock_code: Optional[str] = None,
         status: Optional[str] = None,
+        task_id: Optional[int] = Query(None, description="v112: 按 task_id 过滤所有日期委托（做T跨日管理）"),
         trd_date: Optional[str] = Query(None, description="8 位数字 YYYYMMDD，缺省 = 激活日"),
         start_date: Optional[str] = Query(
             None, regex=r"^\d{8}$",
@@ -77,21 +84,26 @@ def register_query(router):
             None, regex=r"^\d{8}$",
             description="结束交易日 YYYYMMDD（含）",
         ),
-        limit: int = Query(100, le=500),
+        limit: int = Query(500, le=2000),  # v112: 默认 500（旧100），避免 task 跨日被截断
         offset: int = 0,
         user: User = Depends(get_current_user),
     ):
         """委托列表（纯 DB）
 
-        过滤语义：
+        v112 过滤语义升级：
+        - task_id 优先于日期过滤 → 不限日期查所有 task 委托（做T跨日管理）
         - start_date/end_date 任一存在 → 走区间模式（start_date <= trd_date <= end_date）
+        - task_id + start_date 同时 → 按 task + 日期范围 过滤
         - 都不存在 → 走缺省模式（trd_date = 激活日，向后兼容）
         - 区间模式优先级高于 trd_date：start_date/end_date 存在时 trd_date 被忽略
+
+        v112: limit 默认 500（旧 100），单一 task 跨 30+ 日可拉到 50-200 笔
 
         v81 tables-migration: 删 Depends(get_db), 改 Orders.query_all() + 内存过滤
         """
         # 缺省模式：trd_date 显式给则用，否则激活日 (v_next: SysStatus 单行 id=1)
-        if not (start_date or end_date) and not trd_date:
+        # v112: task_id 优先于 trd_date 默认行为 — 跨日管理
+        if task_id is None and not (start_date or end_date) and not trd_date:
             trd_date = _get_active_trd_date()
 
         # v81: Orders.query_all() 按 (trd_date, order_no) 升序全表 → 内存过滤
@@ -103,6 +115,7 @@ def register_query(router):
             end_date=end_date,
             stock_code=stock_code,
             status=status,
+            task_id=task_id,
         )
         total = len(filtered)
         # offset / limit 切片

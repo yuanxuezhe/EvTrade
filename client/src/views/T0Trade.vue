@@ -239,7 +239,7 @@
     </el-table>
       </section>
 
-      <!-- 下半: 当前选中 task 的实时委托表 -->
+      <!-- 下半: 当前选中 task 的实时委托表 (跨日历史) -->
       <section class="t0-lower">
         <div class="area-hint">
           <el-icon><Document /></el-icon>
@@ -252,7 +252,7 @@
                 </b> 股 — {{ selectedTaskDiff > 0 ? '需卖' : '需买' }}）
               </template>
               <template v-else>（已平衡）</template>
-              ，共 {{ filteredTaskOrders.length }} 笔委托
+              ，共 {{ filteredTaskOrders.length }} 笔委托（v112: 不限日期, 含历史做T）
             </template>
             <template v-else>请先在上方主表选择 1 个 task，下方展示其委托与实时配平数量</template>
           </span>

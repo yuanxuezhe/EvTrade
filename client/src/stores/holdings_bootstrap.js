@@ -41,7 +41,9 @@ import { useQuoteStore } from './quote'
 // v13 trade-page-redesign-v2: 单日窗口即"今日缓存"设计语义 — Trade.vue 内嵌 mini-panel
 //   (TodayOrdersPanel / TodayTradesPanel) 客户端再守门 trd_date === activeDay, 与本字段解耦;
 //   历史数据由 HistoryOrders.vue / HistoryTrades.vue 独立 RPC 路径承担, 不入此窗口。
-const BOOTSTRAP_WINDOW_DAYS = 1
+// v112: 1 → 30 注释本意就是30. 但实际值是1 (注释 30 天窗口但代码只有 1 天 = 不一致).
+//   改回 30: task 历史委托跨日管理需要拉宽 (task 跨日 1 天窗口可能漏拉).
+const BOOTSTRAP_WINDOW_DAYS = 30
 
 /**
  * 创建 bootstrap/refresh 流程工厂

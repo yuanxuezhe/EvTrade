@@ -129,8 +129,9 @@ export const api = {
   },
 
   // 委托
-  // opts: undefined | string (stockCode) | { stockCode?, startDate?, endDate? }
-  // 向后兼容: 无参 (bootstrap 当前用法) / 旧 string 调用 仍工作
+  // opts: undefined | string (stockCode) | { stockCode?, startDate?, endDate?, taskId?, limit? }
+  // v112: 新增 taskId (按 task_id 过滤, 不限日期, 用于做 T 跨日管理)
+  // 后向兼容: 无参 / 旧 string 调用 仍工作
   async getOrders(opts) {
     const params = {}
     if (typeof opts === 'string') {
@@ -139,6 +140,8 @@ export const api = {
       if (opts.stockCode) params.stock_code = opts.stockCode
       if (opts.startDate) params.start_date = opts.startDate
       if (opts.endDate) params.end_date = opts.endDate
+      if (opts.taskId != null) params.task_id = opts.taskId  // v112
+      if (opts.limit) params.limit = opts.limit              // v112
     }
     const res = await http.get('/orders', { params })
     return res.data
