@@ -31,8 +31,10 @@ const assetRef = computed({
 const fields = [
   { key: 'id', label: 'ID', width: 130, required: true },
   { key: 'cash', label: '现金', width: 140 },
+  { key: 'available', label: '可用资金', width: 150 },        // v110
   { key: 'frozen_cash', label: '冻结资金', width: 160 },
   { key: 'market_value', label: '持仓市值', width: 160 },
   { key: 'total_asset', label: '总资产', width: 150 },
+  { key: 'last_asset', label: '期初总资产', width: 150 },     // v114
 ]
 </script>
