@@ -48,13 +48,14 @@ class WSManager:
         self.active_connections: Dict[str, Set[WebSocket]] = {
             "order_update": set(),
             "trade_update": set(),
-            # change consolidate-position-data-flow: position_update / asset_update 频道已删除
-            # (xtquant broker 不发 pos_cfm / ast_cfm, 改由 trd_cfm 增量 + day-init reconcile 兜底)
+            # v118: 重新启用 position_update channel — broker pos_push 推送
+            #   (consolidate-position-data-flow 已废弃; pos_push 是 v118 后持仓唯一数据源)
+            "position_update": set(),
             "quote_update": set(),
             # change strategy_trade: 策略引擎事件频道（regime_changed / grid_triggered / regime_cooldown）
             "strategy_update": set(),
             # change 2026-07-15-system-init-broadcast: 系统级事件频道
-            #   - 日初成功 → init_completed
+            #   - 日初成功 → system_status_change (v117)
             #   - (后续) 对账失败 / 切日失败等扩展位
             #   - 与 push 事件频道并列，但触发源是 init_trading_day 业务接口而非 broker push
             "system_update": set(),

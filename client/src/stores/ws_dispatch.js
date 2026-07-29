@@ -69,6 +69,8 @@ export function dispatchPayload(payload) {
   else if (t === 'system_status_change') _onSystemStatusChange(payload.data)
   // v117 兼容过渡: 老 init_completed 仍然接收 (SystemInit.vue handleInit 兜底)
   else if (t === 'init_completed') _onInitCompleted(payload.data)
+  // v118: broker pos_push 推送 (持仓变化) — 经 handle_pos_push 落库后 broadcast position_update
+  else if (t === 'pos_push') _onPosPush(payload.data)
 }
 
 function _onRpcStatus(data) {
@@ -77,6 +79,29 @@ function _onRpcStatus(data) {
     useRpcStatusStore().setFromPayload(data)
   } catch (e) {
     log.warn('_onRpcStatus:', e?.message)
+  }
+}
+
+// v118: broker pos_push 推送 (持仓变化)
+//   - payload: { stock_code, last_vol, vol, avl_vol, avg_price }
+//   - 后端 handle_pos_push 已经把 broker 推的覆盖本地 positions 表
+//   - 前端只需要把数据写入 holdings.positions (broker 永远权威)
+//   - 不再依赖 trd_cfm 累加, 不再依赖 reconcile 兜底
+function _onPosPush(data) {
+  if (!data || !data.stock_code) return
+  try {
+    const hs = useHoldingsStore()
+    const code = data.stock_code
+    // v118: 整条 ref 替换 (broker 永远权威, 不增量)
+    hs.applyPositionUpdate({
+      stock_code: code,
+      last_vol: Number(data.last_vol) || 0,
+      vol: Number(data.vol) || 0,
+      avl_vol: Number(data.avl_vol) || 0,
+      cost_price: Number(data.avg_price) || 0,
+    })
+  } catch (e) {
+    log.warn('_onPosPush applyPositionUpdate failed:', e?.message)
   }
 }
 

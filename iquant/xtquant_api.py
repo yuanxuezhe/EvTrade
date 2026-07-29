@@ -3,11 +3,11 @@
 """
 XtQuant API + msgpacket RPC Server
 
-ÕûºÏ QMT ½»Ò×½Ó¿ÚºÍ RabbitMQ RPC£¬Ö§³Ö£º
-1. ´Ó RabbitMQ ½ÓÊÕ½»Ò×ÇëÇó£¨²é³Ö²Ö/¶©µ¥/×Ê²úµÈ£©£¬´¦Àíºó·µ»ØÓ¦´ð
-2. ½« QMT »Øµ÷ÊÂ¼þ£¨³É½»/Î¯ÍÐ/´íÎó£©ÍÆËÍµ½ RabbitMQ
+ï¿½ï¿½ï¿½ï¿½ QMT ï¿½ï¿½ï¿½×½Ó¿Úºï¿½ RabbitMQ RPCï¿½ï¿½Ö§ï¿½Ö£ï¿½
+1. ï¿½ï¿½ RabbitMQ ï¿½ï¿½ï¿½Õ½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ó£¨²ï¿½Ö²ï¿½/ï¿½ï¿½ï¿½ï¿½/ï¿½Ê²ï¿½ï¿½È£ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ó·µ»ï¿½Ó¦ï¿½ï¿½
+2. ï¿½ï¿½ QMT ï¿½Øµï¿½ï¿½Â¼ï¿½ï¿½ï¿½ï¿½É½ï¿½/Î¯ï¿½ï¿½/ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Íµï¿½ RabbitMQ
 
-ÓÃ·¨:
+ï¿½Ã·ï¿½:
     python xtquant_api.py
 """
 
@@ -29,11 +29,11 @@ from xtquant import xtconstant
 
 
 # ================================================================
-# ÅäÖÃ
+# ï¿½ï¿½ï¿½ï¿½
 # ================================================================
 
 class Config:
-    """È«¾ÖÅäÖÃ"""
+    """È«ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½"""
     RABBITMQ_URL = "amqp://192.168.10.2:5672/"
     EXCHANGE_NAME = "msgpacket.exchange"
     QUEUE_REQ = "EvTrade.Test.Req"
@@ -48,18 +48,18 @@ config = Config()
 
 
 # ================================================================
-# È«¾Ö×´Ì¬
+# È«ï¿½ï¿½×´Ì¬
 # ================================================================
 
 class GlobalState:
-    """È«¾Ö¹²Ïí×´Ì¬"""
+    """È«ï¿½Ö¹ï¿½ï¿½ï¿½×´Ì¬"""
     def __init__(self):
         self.xt_trader = None
         self.xt_acc = None
         self.event_queue = Queue()
         self.loop = None
         self.shutdown_event = None
-        # RabbitMQ ³¤Á¬½Ó
+        # RabbitMQ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
         self.mq_conn = None
         self.mq_channel = None
         self.mq_exchange = None
@@ -69,7 +69,7 @@ state = GlobalState()
 
 
 # ================================================================
-# Handler ×¢²á
+# Handler ×¢ï¿½ï¿½
 # ================================================================
 #: Return: (code: str, msg: str, data: Optional[List[Dict]])
 HandlerReturn = Tuple[str, str, Optional[List[Dict]]]
@@ -79,7 +79,7 @@ _HANDLERS: Dict[str, HandlerFunc] = {}
 
 
 def handler(func_name: str) -> Callable[[HandlerFunc], HandlerFunc]:
-    """Handler ×¢²á×°ÊÎÆ÷"""
+    """Handler ×¢ï¿½ï¿½×°ï¿½ï¿½ï¿½ï¿½"""
     def decorator(func: HandlerFunc) -> HandlerFunc:
         _HANDLERS[func_name] = func
         return func
@@ -87,10 +87,10 @@ def handler(func_name: str) -> Callable[[HandlerFunc], HandlerFunc]:
 
 
 def handle_trade_request(pkt: MsgPacket) -> HandlerReturn:
-    """·Ö·¢½»Ò×ÇëÇóµ½¶ÔÓ¦ handler"""
+    """ï¿½Ö·ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½óµ½¶ï¿½Ó¦ handler"""
     func = pkt.func().strip('\x00')
     if state.xt_trader is None:
-        return "99999", "½»Ò×½Ó¿ÚÎ´Á¬½Ó", None
+        return "99999", "ï¿½ï¿½ï¿½×½Ó¿ï¿½Î´ï¿½ï¿½ï¿½ï¿½", None
     handler = _HANDLERS.get(func)
     if handler is None:
         return "99999", f"unknown func: {func}", None
@@ -101,12 +101,12 @@ def handle_trade_request(pkt: MsgPacket) -> HandlerReturn:
 
 
 # ================================================================
-# ²éÑ¯Àà Handler
+# ï¿½ï¿½Ñ¯ï¿½ï¿½ Handler
 # ================================================================
 
 @handler("qry_pos")
 def _h_qry_pos(_pkt: MsgPacket) -> HandlerReturn:
-    """²éÑ¯³Ö²Ö"""
+    """ï¿½ï¿½Ñ¯ï¿½Ö²ï¿½"""
     positions = state.xt_trader.query_stock_positions(state.xt_acc)
     return "00000", "ok", [{
         "stock_code": pos.stock_code,
@@ -119,7 +119,7 @@ def _h_qry_pos(_pkt: MsgPacket) -> HandlerReturn:
 
 @handler("qry_ord")
 def _h_qry_ord(_pkt: MsgPacket) -> HandlerReturn:
-    """²éÑ¯¶©µ¥"""
+    """ï¿½ï¿½Ñ¯ï¿½ï¿½ï¿½ï¿½"""
     orders = state.xt_trader.query_stock_orders(state.xt_acc)
     return "00000", "ok", [{
         "order_id": order.order_sysid,
@@ -138,10 +138,10 @@ def _h_qry_ord(_pkt: MsgPacket) -> HandlerReturn:
 
 @handler("qry_ast")
 def _h_qry_ast(_pkt: MsgPacket) -> HandlerReturn:
-    """²éÑ¯×Ê²ú"""
+    """ï¿½ï¿½Ñ¯ï¿½Ê²ï¿½"""
     asset = state.xt_trader.query_stock_asset(state.xt_acc)
     if asset is None:
-        return "99999", "²éÑ¯×Ê²úÊ§°Ü", None
+        return "99999", "ï¿½ï¿½Ñ¯ï¿½Ê²ï¿½Ê§ï¿½ï¿½", None
     return "00000", "ok", [{
         "account_id": asset.account_id,
         "cash": asset.cash,
@@ -153,7 +153,7 @@ def _h_qry_ast(_pkt: MsgPacket) -> HandlerReturn:
 
 @handler("qry_mch")
 def _h_qry_mch(_pkt: MsgPacket) -> HandlerReturn:
-    """²éÑ¯³É½»"""
+    """ï¿½ï¿½Ñ¯ï¿½É½ï¿½"""
     trades = state.xt_trader.query_stock_trades(state.xt_acc)
     return "00000", "ok", [{
         "order_id": trade.order_sysid,
@@ -169,12 +169,12 @@ def _h_qry_mch(_pkt: MsgPacket) -> HandlerReturn:
 
 
 # ================================================================
-# ½»Ò×Àà Handler
+# ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ Handler
 # ================================================================
 
 @handler("ord_stk")
 def _h_ord_stk(pkt: MsgPacket) -> HandlerReturn:
-    """Òì²½ÏÂµ¥"""
+    """ï¿½ì²½ï¿½Âµï¿½"""
     stock_code = pkt.get_value_str("stock_code")
     volume = int(pkt.get_value_str("volume"))
     price_type_str = pkt.get_value_str("price_type")
@@ -210,13 +210,13 @@ def _h_cxl_ord(pkt: MsgPacket) -> HandlerReturn:
 
 
 # ================================================================
-# Ó¦´ð×é°ü
+# Ó¦ï¿½ï¿½ï¿½ï¿½ï¿½
 # ================================================================
 def build_answer(pkt: MsgPacket, req_msg_id: str,
                  code: str, msg: str, data: List[Dict]) -> MsgPacket:
-    """°´ msgpacket ¸ñÊ½×éÓ¦´ð°ü
+    """ï¿½ï¿½ msgpacket ï¿½ï¿½Ê½ï¿½ï¿½Ó¦ï¿½ï¿½ï¿½
     code != 0: RS1={code,msg}
-    code == 0: RS1={code,msg} + RS2=data±í
+    code == 0: RS1={code,msg} + RS2=dataï¿½ï¿½
     """
     ts = datetime.now().strftime('%Y%m%d%H%M%S') + '000'
     ans = MsgPacket(MSG_TYPE_ANSWER, pkt.version())
@@ -230,7 +230,7 @@ def build_answer(pkt: MsgPacket, req_msg_id: str,
     ans.set_value("code", code)
     ans.set_value("msg", msg)
 
-    # RS2: Êý¾Ý±í (code==0 ÇÒÓÐÊý¾ÝÊ±²ÅÓÐ)
+    # RS2: ï¿½ï¿½ï¿½Ý±ï¿½ (code==0 ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ê±ï¿½ï¿½ï¿½ï¿½)
     if code == "00000" and data:
         ans.add_result_set()
         cols = list(data[0].keys())
@@ -244,19 +244,19 @@ def build_answer(pkt: MsgPacket, req_msg_id: str,
     return ans
 
 # ================================================================
-# XtQuantTrader »Øµ÷ ¡ú RabbitMQ ÍÆËÍ
+# XtQuantTrader ï¿½Øµï¿½ ï¿½ï¿½ RabbitMQ ï¿½ï¿½ï¿½ï¿½
 # ================================================================
 
 class MyXtQuantTraderCallback(XtQuantTraderCallback):
-    """QMT ½»Ò×»Øµ÷£¬×ªÊÂ¼þµ½ RabbitMQ"""
+    """QMT ï¿½ï¿½ï¿½×»Øµï¿½ï¿½ï¿½×ªï¿½Â¼ï¿½ï¿½ï¿½ RabbitMQ"""
 
     def on_disconnected(self) -> None:
-        print(f"[{datetime.now().strftime('%H:%M:%S')}] [Cb] Á¬½Ó¶Ï¿ª£¬½«ÖØÁ¬", flush=True)
+        print(f"[{datetime.now().strftime('%H:%M:%S')}] [Cb] ï¿½ï¿½ï¿½Ó¶Ï¿ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½", flush=True)
         state.xt_trader = None
         state.event_queue.put(("disconnected", None))
 
     def on_stock_order(self, order) -> None:
-        """Î¯ÍÐÈ·ÈÏ"""
+        """å§”æ‰˜ç¡®è®¤"""
         push_event("ord_cfm", [{
             "order_id": order.order_sysid,
             "stock_code": order.stock_code,
@@ -271,7 +271,7 @@ class MyXtQuantTraderCallback(XtQuantTraderCallback):
         }])
 
     def on_stock_trade(self, trade) -> None:
-        """³É½»»Ø±¨"""
+        """æˆäº¤å›žæŠ¥"""
         push_event("trd_cfm", [{
             "traded_id": trade.traded_id,
             "stock_code": trade.stock_code,
@@ -282,29 +282,51 @@ class MyXtQuantTraderCallback(XtQuantTraderCallback):
             "remark": trade.order_remark,
         }])
 
+    # v118: æŒä»“å˜åŒ–æŽ¨é€å›žè°ƒ â€” broker æ¯æ¬¡æŒä»“å˜åŒ–éƒ½ä¼šè§¦å‘
+    #   è®¾è®¡: pos_push æ˜¯ v118 åŽçš„å”¯ä¸€æŒä»“æ•°æ®æº
+    #         trd_cfm ä¸å†å¤„ç†æŒä»“ (ä»…å†™ trades + orders)
+    #         reconcile ä¸å†è¦†ç›–æŒä»“ (ä»…åˆå§‹åŒ–æ—¶ç”¨ qry_positions åŒæ­¥)
+    def on_stock_position(self, position) -> None:
+        """æŒä»“å˜åŒ–æŽ¨é€ (xtquant åè®®)"""
+        try:
+            # å…¼å®¹ broker ä¸åŒç‰ˆæœ¬å­—æ®µå â€” å°½åŠ›è§£æž
+            code = getattr(position, 'stock_code', None) or getattr(position, 'm_strInstrumentID', '')
+            exchange = getattr(position, 'exchange_id', None) or getattr(position, 'm_strExchangeID', '')
+            if exchange and '.' not in code:
+                code = f"{code}.{exchange}"
+            push_event("pos_push", [{
+                "stock_code": code,
+                "last_vol": int(getattr(position, 'yesterday_volume', 0) or getattr(position, 'm_nYesterdayVolume', 0)),
+                "vol": int(getattr(position, 'volume', 0) or getattr(position, 'm_nVolume', 0)),
+                "avl_vol": int(getattr(position, 'can_use_volume', 0) or getattr(position, 'm_nCanUseVolume', 0)),
+                "avg_price": float(getattr(position, 'open_price', 0) or getattr(position, 'm_dOpenPrice', 0)),
+            }])
+        except Exception as e:
+            print(f"[Cb] pos_push è§£æžå¤±è´¥: {e}", flush=True)
+
     def on_order_error(self, order_error) -> None:
-        """±¨µ¥Ê§°Ü"""
+        """ä¸‹å•å¤±è´¥"""
         push_event("ord_err", [{
             "order_id": order_error.order_id,
             "error_msg": order_error.error_msg,
         }])
 
     def on_cancel_error(self, cancel_error) -> None:
-        """³·µ¥Ê§°Ü"""
+        """æ’¤å•å¤±è´¥"""
         push_event("cxl_err", [{
             "order_id": cancel_error.order_id,
             "error_msg": cancel_error.error_msg,
         }])
 
     def on_order_stock_async_response(self, response) -> None:
-        """Òì²½ÏÂµ¥ÏìÓ¦"""
+        """å¼‚æ­¥ä¸‹å•å“åº”"""
         push_event("ord_ack", [{
             "seq": response.seq,
             "order_id": response.order_sysid,
         }])
 
     def on_account_status(self, status) -> None:
-        """ÕËºÅ×´Ì¬"""
+        """è´¦å·çŠ¶æ€"""
         push_event("acc_sts", [{
             "account_id": status.account_id,
             "status": status.status,
@@ -312,18 +334,18 @@ class MyXtQuantTraderCallback(XtQuantTraderCallback):
 
 
 # ================================================================
-# RabbitMQ ÍÆËÍ
+# RabbitMQ ï¿½ï¿½ï¿½ï¿½
 # ================================================================
 
 def push_event(func: str, data: List[Dict]) -> None:
-    """Ïß³Ì°²È«µØÍÆËÍÊÂ¼þµ½ RabbitMQ"""
+    """ï¿½ß³Ì°ï¿½È«ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Â¼ï¿½ï¿½ï¿½ RabbitMQ"""
     if state.loop is None or state.loop.is_closed():
         return
     asyncio.run_coroutine_threadsafe(_mq_publish(func, data), state.loop)
 
 
 async def _mq_publish(func: str, data: List[Dict]) -> None:
-    """ÍÆËÍÏûÏ¢: func=¹¦ÄÜºÅ, data=RS1Êý¾Ý±í"""
+    """ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ï¢: func=ï¿½ï¿½ï¿½Üºï¿½, data=RS1ï¿½ï¿½ï¿½Ý±ï¿½"""
     if state.mq_exchange is None:
         return
     try:
@@ -346,15 +368,15 @@ async def _mq_publish(func: str, data: List[Dict]) -> None:
         _, wire = pkt.encode()
         await state.mq_exchange.publish(aio_pika.Message(body=wire), routing_key=config.QUEUE_PUSH)
     except Exception as e:
-        print(f"[Push] Ê§°Ü {func}: {e}", flush=True)
+        print(f"[Push] Ê§ï¿½ï¿½ {func}: {e}", flush=True)
 
 
 # ================================================================
-# XtQuantTrader Á¬½Ó¹ÜÀí
+# XtQuantTrader ï¿½ï¿½ï¿½Ó¹ï¿½ï¿½ï¿½
 # ================================================================
 
 def create_trader(session_id: int) -> Optional[XtQuantTrader]:
-    """´´½¨²¢Á¬½Ó½»Ò×¿Í»§¶Ë"""
+    """ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ó½ï¿½ï¿½×¿Í»ï¿½ï¿½ï¿½"""
     try:
         callback = MyXtQuantTraderCallback()
         trader = XtQuantTrader(config.ACCOUNT_PATH, session_id, callback=callback)
@@ -362,31 +384,31 @@ def create_trader(session_id: int) -> Optional[XtQuantTrader]:
         result = trader.connect()
         if result == 0:
             trader.subscribe(state.xt_acc)
-            print(f"[Trader] Á¬½Ó³É¹¦, session_id={session_id}", flush=True)
+            print(f"[Trader] ï¿½ï¿½ï¿½Ó³É¹ï¿½, session_id={session_id}", flush=True)
             return trader
-        print(f"[Trader] Á¬½ÓÊ§°Ü, session_id={session_id}, result={result}", flush=True)
+        print(f"[Trader] ï¿½ï¿½ï¿½ï¿½Ê§ï¿½ï¿½, session_id={session_id}, result={result}", flush=True)
         return None
     except Exception as e:
-        print(f"[Trader] Òì³£, session_id={session_id}: {e}", flush=True)
+        print(f"[Trader] ï¿½ì³£, session_id={session_id}: {e}", flush=True)
         return None
 
 
 def try_connect() -> Optional[XtQuantTrader]:
-    """³¢ÊÔÁ¬½Ó£¬Ê¹ÓÃËæ»ú session_id"""
+    """ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ó£ï¿½Ê¹ï¿½ï¿½ï¿½ï¿½ï¿½ session_id"""
     session_ids = list(range(100, 130))
     random.shuffle(session_ids)
     for sid in session_ids:
         trader = create_trader(sid)
         if trader:
             return trader
-        print(f"[Trader] session_id={sid} Ê§°Ü£¬³¢ÊÔÏÂÒ»¸ö...", flush=True)
+        print(f"[Trader] session_id={sid} Ê§ï¿½Ü£ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ò»ï¿½ï¿½...", flush=True)
         time.sleep(0.5)
-    print("[Trader] ËùÓÐ session_id ¶¼³¢ÊÔºóÈÔÊ§°Ü", flush=True)
+    print("[Trader] ï¿½ï¿½ï¿½ï¿½ session_id ï¿½ï¿½ï¿½ï¿½ï¿½Ôºï¿½ï¿½ï¿½Ê§ï¿½ï¿½", flush=True)
     return None
 
 
 def ensure_connected() -> bool:
-    """È·±£½»Ò×½Ó¿ÚÒÑÁ¬½Ó"""
+    """È·ï¿½ï¿½ï¿½ï¿½ï¿½×½Ó¿ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½"""
     if state.xt_trader is None:
         state.xt_trader = try_connect()
     return state.xt_trader is not None
@@ -397,7 +419,7 @@ def ensure_connected() -> bool:
 # ================================================================
 
 async def rpc_server() -> None:
-    """RPC ·þÎñÆ÷£º½ÓÊÕÇëÇó¡¢µ÷ÓÃ handler¡¢·µ»ØÓ¦´ð"""
+    """RPC ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ó¡¢µï¿½ï¿½ï¿½ handlerï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ó¦ï¿½ï¿½"""
     print(f"[RPC] Connecting to {config.RABBITMQ_URL}", flush=True)
     state.mq_conn = await aio_pika.connect_robust(config.RABBITMQ_URL)
     state.mq_channel = await state.mq_conn.channel()
@@ -411,7 +433,7 @@ async def rpc_server() -> None:
     await req_queue.bind(state.mq_exchange, routing_key=config.QUEUE_REQ)
     print(f"[RPC] Connected, Listening on [{config.QUEUE_REQ}]", flush=True)
 
-    # ÉùÃ÷²¢°ó¶¨ÍÆËÍ¶ÓÁÐ£¬¹©¿Í»§¶ËÏû·ÑÍÆËÍÊÂ¼þ
+    # ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Í¶ï¿½ï¿½Ð£ï¿½ï¿½ï¿½ï¿½Í»ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Â¼ï¿½
     push_queue = await state.mq_channel.declare_queue(config.QUEUE_PUSH, durable=True)
     await push_queue.bind(state.mq_exchange, routing_key=config.QUEUE_PUSH)
     print(f"[RPC] Push queue ready: [{config.QUEUE_PUSH}]", flush=True)
@@ -428,7 +450,7 @@ async def rpc_server() -> None:
 
 
 async def _handle_message(message) -> None:
-    """´¦Àíµ¥Ìõ RPC ÇëÇó"""
+    """ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ RPC ï¿½ï¿½ï¿½ï¿½"""
     try:
         pkt = MsgPacket.decode(message.body)
     except Exception as e:
@@ -451,11 +473,11 @@ async def _handle_message(message) -> None:
 
 
 # ================================================================
-# Ö÷³ÌÐò
+# ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
 # ================================================================
 
 def event_loop_thread() -> None:
-    """ÔËÐÐ asyncio ÊÂ¼þÑ­»·µÄÏß³Ì"""
+    """ï¿½ï¿½ï¿½ï¿½ asyncio ï¿½Â¼ï¿½Ñ­ï¿½ï¿½ï¿½ï¿½ï¿½ß³ï¿½"""
     state.loop = asyncio.new_event_loop()
     asyncio.set_event_loop(state.loop)
     state.shutdown_event = asyncio.Event()
@@ -469,17 +491,17 @@ def event_loop_thread() -> None:
 
 
 def main() -> None:
-    """Ö÷Èë¿Ú"""
+    """ï¿½ï¿½ï¿½ï¿½ï¿½"""
     state.xt_acc = StockAccount(config.ACCOUNT_ID)
-    print(f"[Main] ÕË»§: {config.ACCOUNT_ID}", flush=True)
+    print(f"[Main] ï¿½Ë»ï¿½: {config.ACCOUNT_ID}", flush=True)
 
     if not ensure_connected():
-        print("[Main] ³õÊ¼Á¬½ÓÊ§°Ü£¬RPC server ÈÔ»áÆô¶¯", flush=True)
+        print("[Main] ï¿½ï¿½Ê¼ï¿½ï¿½ï¿½ï¿½Ê§ï¿½Ü£ï¿½RPC server ï¿½Ô»ï¿½ï¿½ï¿½ï¿½ï¿½", flush=True)
 
     threading.Thread(target=event_loop_thread, daemon=True).start()
-    print("[Main] RPC server Ïß³ÌÒÑÆô¶¯", flush=True)
+    print("[Main] RPC server ï¿½ß³ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½", flush=True)
     
-    # ×èÈûÖ÷Ïß³ÌÍË³ö
+    # ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ß³ï¿½ï¿½Ë³ï¿½
     state.xt_trader.run_forever()
 
 if __name__ == "__main__":

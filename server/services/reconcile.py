@@ -54,6 +54,7 @@ async def do_reconcile(
     db: Session,
     new_trd_date: str,
     by_user: str,
+    reconcile_kind: str = "incremental",   # v118: 'init' = 系统初始化 (允许覆盖 positions); 'incremental' = 兜底 (不动 positions, 靠 pos_push)
 ) -> Dict[str, Any]:
     """执行对账
 
@@ -67,6 +68,12 @@ async def do_reconcile(
 
     NOTE: report_id 在 v5 改为 (trd_date, mode, created_at) 复合键，
     返回中只取 created_at 作为标识。
+
+    v118: reconcile_kind 区分:
+      - 'init' (系统初始化): 调 qry_positions RPC, 用返回数据**全表覆盖** positions
+        (broker 推送 pos_push 还没启动, 必须靠 RPC 一次性同步)
+      - 'incremental' (任何其他时刻): **不动 positions** (由 pos_push 驱动)
+        仍调 qry_positions 拿一次数据记录 diffs, 但不写库
     """
     cfg = get_reconcile_config(db)
 
@@ -134,13 +141,21 @@ async def do_reconcile(
         }
 
     # 4. auto_reconcile=True → 覆盖本地 (Position + Asset, 委托/成交跳过)
+    # v118: reconcile_kind 决定是否覆盖 positions
+    #   - 'init': 初始化, qry_positions RPC 一次性同步 → 覆盖 positions 表
+    #   - 'incremental': 兜底, pos_push 已接管 → 不动 positions (避免破坏 pos_push 累计态)
     applied = False
     if cfg["auto_reconcile"]:
         try:
-            applied = _apply_broker_data(
-                db, new_trd_date,
-                positions_data, assets_data
-            )
+            if reconcile_kind == 'init':
+                applied = _apply_broker_data(
+                    db, new_trd_date,
+                    positions_data, assets_data
+                )
+            else:
+                # incremental: positions 不动 (pos_push 接管), assets 由 rpc_health 5s 同步
+                # 仍记录 applied=True 标记本次 do_reconcile 成功 (切日逻辑能跑)
+                applied = True
         except Exception as e:
             log.exception("apply_broker_data failed: %s", e)
             return {

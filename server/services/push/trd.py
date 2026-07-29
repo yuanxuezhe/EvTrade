@@ -85,19 +85,17 @@ def handle_trd_cfm(db, row: Dict[str, Any], ts: str) -> Optional[Dict[str, Any]]
     if not order:
         print(f"[trd_cfm] WARN: no order for trade_id={trade_id} (order_no={order_no}, order_id={order_id}) — Trade 行已留存")
 
-    if trade.trade_type == 0:
-        position_dict = _update_position_vol(db, trade.stock_code, trade.order_type, trade.volume,
-                             order_no=order_no, trade_id=trade_id,
-                             trade_price=trade.price)
-    else:
-        position_dict = None  # v95: trade_type=1 跳过 Position 更新, 不推送 position_update
+    # v118: trd_cfm 不再处理持仓
+    #   持仓数据源改为 broker 推 pos_push (xtquant position_callback)
+    #   trd_cfm 仅写 trades + orders, 不写 positions
+    position_dict = None
 
     print(f"[trd_cfm] inserted trade_id={trade_id} order_no={order_no} vol={trade.volume} px={trade.price}")
 
     return {
         "trade": _trade_to_out_dict(trade),
         "order": _order_to_out_dict(order),
-        "position": position_dict,  # v95: trd_cfm 同时携带最新 Position 行, dispatcher 广播 position_update
+        "position": position_dict,  # v118: trd_cfm 不再带 position (pos_push 单独推送)
     }
 
 

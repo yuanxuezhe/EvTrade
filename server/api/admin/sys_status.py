@@ -102,7 +102,8 @@ async def init_trading_day(
     except Exception:
         _previous_trd_date = None
 
-    result = await do_reconcile(db, req.trd_date, by_user)
+    # v118: 系统初始化走 init 路径 (覆盖 positions 表, 一次性同步 broker 持仓)
+    result = await do_reconcile(db, req.trd_date, by_user, reconcile_kind='init')
 
     if not result['ok']:
         db.commit()
@@ -178,11 +179,12 @@ async def reconcile_only(
             detail={"code": "BAD_TRD_DATE", "msg": "trd_date 必须是 8 位数字字符串"}
         )
     by_user = str(admin_user.id)
-    result = await do_reconcile(db, req.trd_date, by_user)
+    # v118: manual reconcile 不动 positions (pos_push 已接管), 只生成报告
+    result = await do_reconcile(db, req.trd_date, by_user, reconcile_kind='incremental')
     db.commit()
     return InitResponse(
         code=0 if result['ok'] else 1,
-        msg=result.get('error') or '对账报告已生成',
+        msg=result['error'] or '对账失败' if not result['ok'] else 'manual reconcile ok',
         report_id=result['report_id'],
         applied=False,
         trading_day=None,
