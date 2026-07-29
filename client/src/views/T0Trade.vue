@@ -86,10 +86,16 @@
       <el-select v-model="globalPriceType" size="small" style="width: 100px">
         <el-option v-for="o in priceTypeOptions" :key="o.value" :value="o.value" :label="o.label" />
       </el-select>
-      <el-select v-model="globalQtyBase" size="small" style="width: 110px">
+      <el-select
+        v-model="globalQtyBase"
+        size="small"
+        style="width: 110px"
+        :disabled="globalMode === 'qty'"
+        :title="globalMode === 'qty' ? '按数量模式不依赖持仓基数' : '持仓基数 (仅按比例有效)'"
+      >
         <el-option v-for="o in qtyBaseOptions" :key="o.value" :value="o.value" :label="o.label" />
       </el-select>
-      <span class="t0-config-hint">（按比例=持仓×百分数（支持小数）/ 按数量=直接输入股数，价格按所选类型）</span>
+      <span class="t0-config-hint">（按比例 = 买: 可用金额÷最新价×pct% / 卖: 持仓基数×pct% · 按数量 = 直接输入股数买卖）</span>
       <span class="t0-spacer"></span>
       <el-tooltip content="选择/取消当前做T归属的 task；新建请用添加任务入口" placement="top">
         <el-select
@@ -574,13 +580,14 @@ const priceTypeOptions = [
 ]
 const qtyBaseOptions = [
   { value: 'vol',       label: '当前持仓' },
-  { value: 'avl_vol',   label: '可用持仓' },
+  { value: 'avl_vol',   label: '可用数量' },   // v116: '可用持仓' → '可用数量' (更精准)
   { value: 'last_vol',  label: '期初持仓' },
 ]  
 
 // v57 commit.4: vol 计算 — 按 globalMode × globalPctInput / globalQtyInput + trade_unit 取整 + ≥ min_buy_qty
 //   数据源:
-//     - base (pct 模式): holdingsStore.positions[stockCode][globalQtyBase]  (实时)
+//     - base (pct 模式): holdingsStore.positions[stockCode][globalQtyBase]  (实时) — 卖时
+//                        holdingsStore.cachedAsset.available / quoteStore.get(code).last_price — 买时 (v116)
 //     - pct (pct 模式): globalPctInput / 100 (用户输入百分数 → 比例)
 //     - qty (qty 模式): globalQtyInput (用户直接输入股数)
 //     - trade_unit/min_buy_qty: stocksStore.stocks (按 stock_code 实时匹配)
@@ -589,26 +596,43 @@ const qtyBaseOptions = [
 //   change 2026-07-27-v109-mode-toggle: 重写分发
 //     - mode='pct': pct 模式, 用 globalPctInput(百分数)/100 × base
 //     - mode='qty': qty 模式, 直接用 globalQtyInput (股数), 与持仓无关
-function computeOrderVolume(stockCode) {
+//   change 2026-07-28-v116: 按比例下, 买入 base = 可用金额 / 最新价 (可买股数)
+//     - 卖 base = qtyBaseOptions 选的 vol/avl_vol/last_vol (持仓基数)
+//     - qtyBaseOptions 仅 pct 模式有意义 (qty 模式直接读输入框)
+//   ⚠️ 注意: base 仅影响 base/raw/pct 显示字段, 实际下单 volume 用 floor(raw/unit)*unit
+//     买时 raw = available/last_price*pct, floor 到 trade_unit 倍数后 → real volume
+//     (这意味着 1 股为单位时按用户实际能买多少股, 不强制 min_buy_qty 100 — 仅做下界保护)
+function computeOrderVolume(stockCode, direction = '买') {
   const stock = (stockCode ? stocksStore.cacheMap.get(stockCode) : {}) || {}
   const trade_unit = Number(stock.trade_unit) || 1
   const min_buy_qty = Number(stock.min_buy_qty) || 100
   if (!stockCode) return { volume: 0, raw: 0, trade_unit, min_buy_qty, base: 0, pct: 0 }
-  // qty 模式: 直接用股数输入, 与持仓无关
+  // qty 模式: 直接用股数输入, 与持仓/资金无关
   if (globalMode.value === 'qty') {
     const raw = Number(globalQtyInput.value) || 0
     const unit_adjusted = Math.floor(raw / trade_unit) * trade_unit
     const volume = Math.max(unit_adjusted, min_buy_qty)
     return { volume, raw, trade_unit, min_buy_qty, base: raw, pct: 1, mode: 'qty' }
   }
-  // pct 模式: globalPctInput(百分数) / 100 × base
-  const pos = (holdingsStore.positions || []).find(p => p.stock_code === stockCode)
-  const base = Number(pos?.[globalQtyBase.value]) || 0
+  // pct 模式: 按方向取 base
+  //   - 买: base = available_cash / last_price (能买的股数上限)
+  //   - 卖: base = positions[stockCode][qtyBase] (持仓基数)
+  let base = 0
+  if (direction === '买') {
+    const a = holdingsStore.cachedAsset || {}
+    const cash = Number(a.available ?? a.cash) || 0
+    const q = quoteStore.get(stockCode) || {}
+    const last = Number(q.last_price) || 0
+    base = last > 0 ? cash / last : 0
+  } else {
+    const pos = (holdingsStore.positions || []).find(p => p.stock_code === stockCode)
+    base = Number(pos?.[globalQtyBase.value]) || 0
+  }
   const pct = (Number(globalPctInput.value) || 0) / 100
   const raw = base * pct
   const unit_adjusted = Math.floor(raw / trade_unit) * trade_unit
   const volume = Math.max(unit_adjusted, min_buy_qty)
-  return { volume, raw, trade_unit, min_buy_qty, base, pct, mode: 'pct' }
+  return { volume, raw, trade_unit, min_buy_qty, base, pct, mode: 'pct', direction }
 }
 
 // v57: 价格获取 — 'latest' → quoteStore.getLastPrice, 'market' → 后端实际是柜台撮合价 (前端展示为最新价作参考)
@@ -861,7 +885,8 @@ function canOpRow(row) {
 // v57: 买/卖按钮 (走全局配置: pct × qtyBase → vol, latest/market → price)
 function _prepareOrderPayload(row, direction) {
   const stockCode = row.stock_code
-  const volInfo = computeOrderVolume(stockCode)   // v57 commit.4: {volume, raw, trade_unit, min_buy_qty, base, pct}
+  // v116: computeOrderVolume 现在接受 direction 参数 — 买入 base=可用金额/最新价
+  const volInfo = computeOrderVolume(stockCode, direction)   // v57 commit.4: {volume, raw, trade_unit, min_buy_qty, base, pct}
   if (!volInfo || !volInfo.volume || volInfo.volume <= 0) {
     ElMessage.warning(`${row.stock_code} 按当前配置算不出可下单数量（可能持仓为空或 0%）`)
     return null
