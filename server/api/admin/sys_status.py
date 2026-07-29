@@ -93,6 +93,15 @@ async def init_trading_day(
 
     by_user = str(admin_user.id)
 
+    # v117: 切日前先读"前一交易日" — 后续 ws 推送 previous_trd_date 用
+    #   SysStatus 单行表 id=1, UPDATE 前查到的 trd_date 即切日前的
+    _previous_trd_date = None
+    try:
+        prev = db.query(SysStatus).filter(SysStatus.id == 1).first()
+        _previous_trd_date = prev.trd_date if prev else None
+    except Exception:
+        _previous_trd_date = None
+
     result = await do_reconcile(db, req.trd_date, by_user)
 
     if not result['ok']:
@@ -109,7 +118,9 @@ async def init_trading_day(
     # 切日已写入 (do_reconcile 内 UPDATE id=1 行), 这里直接读出来
     row = get_active_sysstatus(db)
 
-    # v25: 日初成功后 ws 推 init_completed, 让前端自动刷新 holdings/asset/position 缓存
+    # v25: 日初成功后 ws 推 system_status_change (v117), 让前端自动刷新 holdings/asset/position 缓存
+    #   v117: 去掉 init_completed 类型, 合并到 system_update channel — type='system_status_change'
+    #   payload 含 rpc_status 字段 + trd_date + previous_trd_date (切日轨迹)
     try:
         from server.ws.manager import ws_manager
         _init_status = 'partial' if result.get('error') else 'ok'
@@ -117,10 +128,13 @@ async def init_trading_day(
         asyncio.ensure_future(ws_manager.broadcast(
             'system_update',
             {
-                'type': 'init_completed',
-                'trd_date': req.trd_date,
+                'type': 'system_status_change',     # v117: 替换 init_completed
+                'change_kind': 'init_completed',    # 保留旧语义供前端过渡用
+                'trd_date': req.trd_date,           # v117: 交易日信息 (用户口径: 必须有)
+                'previous_trd_date': _previous_trd_date,
+                'status': _init_status,             # 'ok' / 'partial'
+                'rpc_status': _init_status,         # v117: 与 rpc_status 字段统一, 前端可以同时刷 RPC 三态
                 'report_id': result['report_id'],
-                'status': _init_status,
                 'ts': _ts,
             },
             trace_id=f"init:{req.trd_date}:{result['report_id']}",

@@ -63,7 +63,11 @@ export function dispatchPayload(payload) {
   else if (t === 'sync_failed') _onSyncFailed(payload.data)
   else if (t === 'sync_stopped') _onSyncStopped(payload.data)
   else if (t === 'stock_synced') _onStockSynced(payload.data)
-  // change 2026-07-15-system-init-broadcast: 日初成功后推 init_completed → 全量刷新缓存
+  // change 2026-07-15-system-init-broadcast: 日初成功后推 → 全量刷新缓存
+  // v117: 统一 type 为 system_status_change (rpc 状态变化 + 切日轨迹 + 交易日信息)
+  //   payload 含 trd_date / previous_trd_date / status / rpc_status / change_kind / report_id / ts
+  else if (t === 'system_status_change') _onSystemStatusChange(payload.data)
+  // v117 兼容过渡: 老 init_completed 仍然接收 (SystemInit.vue handleInit 兜底)
   else if (t === 'init_completed') _onInitCompleted(payload.data)
 }
 
@@ -431,36 +435,78 @@ function _onStockSynced(data) {
 //   change 2026-07-21-system-init-page-refresh: 升级为 force re-bootstrap (holdings.resetForNewDay)
 // ============================================================
 function _onInitCompleted(data) {
+  // v117: 兼容过渡期, init_completed 转发到 system_status_change 处理
+  _onSystemStatusChange({ ...data, change_kind: 'init_completed' })
+}
+
+// v117: 统一的系统状态变化处理 (取代 init_completed, 扩展含 rpc_status + trd_date)
+//   payload: { change_kind, trd_date, previous_trd_date, status, rpc_status, report_id, ts }
+//   用户口径: "系统状态变化里面需要包含交易日信息"
+// ============================================================
+function _onSystemStatusChange(data) {
   if (!data) return
-  log.info('init_completed 收到:', data.trd_date, 'status=', data.status, 'report_id=', data.report_id)
-  // 1) 切交易日 + 重置缓存 + 重拉 RPC (主路径)
-  //   - bootstrap 内部会调 _resolveActiveDay 拉新 activeTrdDate
-  //   - WS 推送守门、Position.vue netChange、T0Trade 当前日判断全部跟随新日
-  try {
-    const hs = useHoldingsStore()
-    if (typeof hs.resetForNewDay === 'function') {
-      hs.resetForNewDay()
-    } else {
-      // 兜底: 旧版本 store 暴露没 resetForNewDay, 降级 refreshAll
-      log.warn('holdings.resetForNewDay 缺失, 降级 refreshAll')
-      hs.refreshAll()
-      useAssetStore().fetchAsset()
-      usePositionStore().fetchPositions()
+  log.info(
+    'system_status_change 收到: kind=' + (data.change_kind || '?')
+    + ' trd_date=' + (data.trd_date || '-')
+    + ' previous_trd_date=' + (data.previous_trd_date || '-')
+    + ' status=' + (data.status || '-')
+    + ' rpc_status=' + (data.rpc_status || '-')
+    + ' report_id=' + (data.report_id || '-'),
+  )
+  // 1) 主动写 activeTrdDate (如果 payload 带了) — 让前端状态机立刻跟随后端
+  if (data.trd_date) {
+    try {
+      const hs = useHoldingsStore()
+      if (hs.activeTrdDate?.value !== data.trd_date) {
+        log.info('system_status_change 更新 activeTrdDate: ' + (hs.activeTrdDate?.value || 'null') + ' → ' + data.trd_date)
+        hs.activeTrdDate = data.trd_date
+        if (data.change_kind === 'init_completed' || data.change_kind === 'day_close') {
+          hs.activeDayStatus = 'active'
+        }
+      }
+    } catch (e) {
+      log.warn('_onSystemStatusChange activeTrdDate write failed:', e?.message)
     }
-  } catch (e) {
-    log.warn('_onInitCompleted resetForNewDay failed:', e?.message)
   }
-  // 2) 通知 SystemInit.vue 当前交易日卡片刷新 (loadCurrent 重新拉 /api/system/active)
-  //   - 用 CustomEvent 而非直接 import SystemInit: 解耦 + 避免 ws_dispatch 反向依赖 view
-  //   - SystemInit.vue onMounted 时 addEventListener, onUnmounted removeEventListener
-  try {
-    if (typeof window !== 'undefined') {
-      window.dispatchEvent(new CustomEvent('evtrade:day-init-completed', {
-        detail: { trd_date: data.trd_date, status: data.status, report_id: data.report_id }
-      }))
+  // 2) rpc_status 字段统一刷 RPC 三态 (合并 rpc_status + system_status_change)
+  if (data.rpc_status) {
+    try {
+      useRpcStatusStore().setFromPayload({ status: data.rpc_status, ...data })
+    } catch (e) {
+      log.warn('_onSystemStatusChange rpc_status write failed:', e?.message)
     }
-  } catch (e) {
-    log.warn('_onInitCompleted dispatchEvent failed:', e?.message)
+  }
+  // 3) 切日/初始化 → 走 resetForNewDay (主路径)
+  if (data.change_kind === 'init_completed' || data.change_kind === 'day_init') {
+    try {
+      const hs = useHoldingsStore()
+      if (typeof hs.resetForNewDay === 'function') {
+        hs.resetForNewDay()
+      } else {
+        log.warn('holdings.resetForNewDay 缺失, 降级 refreshAll')
+        hs.refreshAll()
+        useAssetStore().fetchAsset()
+        usePositionStore().fetchPositions()
+      }
+    } catch (e) {
+      log.warn('_onSystemStatusChange resetForNewDay failed:', e?.message)
+    }
+    // 4) 通知 SystemInit.vue 当前交易日卡片刷新
+    try {
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('evtrade:day-init-completed', {
+          detail: {
+            trd_date: data.trd_date,
+            previous_trd_date: data.previous_trd_date,
+            status: data.status,
+            rpc_status: data.rpc_status,
+            report_id: data.report_id,
+          },
+        }))
+      }
+    } catch (e) {
+      log.warn('_onSystemStatusChange dispatchEvent failed:', e?.message)
+    }
   }
 }
 
