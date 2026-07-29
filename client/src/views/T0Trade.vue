@@ -182,16 +182,25 @@
       <!-- change 2026-07-27-v109-pnl-reactive: template 走 t0PnlCell(row) 函数, 但函数体读 t0PnlMap computed -->
       <!--   - 直接调 t0PnlMap[`${...}`] 会有模板字符串解析问题, 用函数封装 -->
       <!--   - 关键: 函数内访问 t0PnlMap.value → Vue 自动追踪 computed 依赖 (byCode triggerRef → 重渲) -->
-      <!-- 6. 做T盈亏 (110, sortable) — realized + 实时 unrealized (ws 推送最新价) -->
-      <el-table-column prop="t0_pnl" label="做T盈亏" align="right" width="110" sortable="custom">
+      <!-- 6. 做T总盈亏 (110, sortable) — task 创建以来累计 realized + 实时 unrealized (v115) -->
+      <el-table-column prop="t0_pnl" label="做T总盈亏" align="right" width="110" sortable="custom">
         <template #default="{ row }">
-          <span class="text-mono" :class="(t0PnlCell(row)?.pnl ?? 0) >= 0 ? 'up' : 'down'">
-            {{ (t0PnlCell(row)?.pnl ?? 0) >= 0 ? '+' : '' }}{{ formatMoney(t0PnlCell(row)?.pnl ?? 0) }}
+          <span class="text-mono" :class="(t0PnlCell(row)?.total_pnl ?? 0) >= 0 ? 'up' : 'down'">
+            {{ (t0PnlCell(row)?.total_pnl ?? 0) >= 0 ? '+' : '' }}{{ formatMoney(t0PnlCell(row)?.total_pnl ?? 0) }}
           </span>
         </template>
       </el-table-column>
 
-      <!-- 7. 做T收益率% (120, sortable) — PnL / (cost_basis × |task_net_volume|) -->
+      <!-- v115: 当日做T盈亏 (110, sortable) — 仅当日做T操作平衡后的盈亏 (无收益率) -->
+      <el-table-column prop="t0_today_pnl" label="当日做T盈亏" align="right" width="110" sortable="custom">
+        <template #default="{ row }">
+          <span class="text-mono" :class="(t0PnlCell(row)?.today_pnl ?? 0) >= 0 ? 'up' : 'down'">
+            {{ (t0PnlCell(row)?.today_pnl ?? 0) >= 0 ? '+' : '' }}{{ formatMoney(t0PnlCell(row)?.today_pnl ?? 0) }}
+          </span>
+        </template>
+      </el-table-column>
+
+      <!-- 7. 做T收益率% (120, sortable) — PnL / (cost_basis × |task_net_volume|) (v115: 只对应 total_pnl) -->
       <el-table-column prop="t0_return_rate" label="做T收益率%" align="right" width="120" sortable="custom">
         <template #default="{ row }">
           <span class="text-mono" :class="(t0PnlCell(row)?.rate ?? 0) >= 0 ? 'up' : 'down'">
@@ -649,7 +658,8 @@ function onSortChange({ prop, order }) {
 function _taskSortValue(row, key) {
   switch (key) {
     case 'position_vol': return Number(row.summary?.position_vol) || 0
-    case 't0_pnl': return t0PnlForRow(row)            // v77: 纯委托+实时盘口口径
+    case 't0_pnl': return t0PnlForRow(row)?.total_pnl || 0   // v115: 总盈亏
+    case 't0_today_pnl': return t0PnlForRow(row)?.today_pnl || 0   // v115: 当日做T盈亏
     case 't0_return_rate': return t0ReturnRateForRow(row)
     default: return 0
   }
@@ -663,6 +673,14 @@ function _taskSortValue(row, key) {
 //   - 新语义 (2026-07-27): diff = cur - target, diff<0 需买, diff>0 需卖
 //   - 价格不再区分 ask1/bid1, 统一用最新价 (last_price), PnL = realized + diff × last_price
 //   - 配平盘口金额 rate 分母: 统一 diff × last_price (按"按最近价平掉"的市值估算)
+// change 2026-07-28-v115-t0-pnl-split: PnL 分两字段
+//   - total_pnl: task 创建以来累计 (当前公式) = realized + diff × last_price
+//   - today_pnl: 仅当日做T操作平衡后的盈亏 (只算 trd_date === activeDay 的订单)
+//     = (今日sell_amt - 今日buy_amt) - (今日净持仓 × last_price)
+//     含义: 假设今日做T完全平仓 (净持仓=0), realized = (sell-buy) → 直接是今日做T赚的;
+//          如果今日剩有净持仓 (没平完), 扣掉 净持仓 × 现价 (这部分不是做T赚的, 是持仓市值);
+//          今日纯做T部分 = (sell_amt - buy_amt) - 净持仓兑现
+//     注意: 用户口径 "收益率去掉" → 表格只显示绝对值, 不显示收益率 %
 function _calcT0Pnl(code, taskId, base, tgv, orders) {
   // 不调用 quoteStore / holdingsStore, 仅凭参数算 — 方便纯算或给 computed 喂值
   let buyAmt = 0, buyVol = 0, sellAmt = 0, sellVol = 0
@@ -684,11 +702,40 @@ function _calcT0Pnl(code, taskId, base, tgv, orders) {
   const target = (Number(base) || 0) + (Number(tgv) || 0)
   // 新语义: diff = 净持仓 - 目标, 负表示需买, 正表示需卖
   const diff = cur - target
-  if (diff === 0) return { pnl: realized, diff, last: 0 }
   const q = quoteStore.get(code) || {}
   const last = Number(q.last_price) || 0
-  const pnl = last ? realized + diff * last : realized
-  return { pnl, diff, last }
+  const total_pnl = (diff === 0)
+    ? realized
+    : (last ? realized + diff * last : realized)
+  return { total_pnl, diff, last }
+}
+
+// v115: 计算"当日做T盈亏"
+//   仅过滤 trd_date === activeDay 的订单 (只看今天)
+//   公式: today_realized - (今日净持仓 × last_price)
+//   含义: 今日做T操作的纯盈亏 (剔除持仓市值波动)
+function _calcTodayT0Pnl(code, taskId, base, tgv, orders, activeDay) {
+  let buyAmt = 0, buyVol = 0, sellAmt = 0, sellVol = 0
+  for (const o of orders) {
+    if (activeDay && String(o.trd_date) !== String(activeDay)) continue   // 仅当日
+    const tv = Number(o.traded_volume) || 0
+    if (tv <= 0) continue
+    const ap = Number(o.avg_price) || 0
+    if (!ap) continue
+    if (o.order_type === '23') {         // 买
+      buyAmt += ap * tv
+      buyVol += tv
+    } else if (o.order_type === '24') {  // 卖
+      sellAmt += ap * tv
+      sellVol += tv
+    }
+  }
+  const today_realized = sellAmt - buyAmt
+  const today_net_pos = buyVol - sellVol    // 今日净持仓 (正=还持有多)
+  const q = quoteStore.get(code) || {}
+  const last = Number(q.last_price) || 0
+  // 扣减净持仓市值 (持仓兑现 = 不是做T赚的)
+  return today_realized - (today_net_pos * last)
 }
 
 // change 2026-07-27-v109-pnl-reactive: PnL / 收益率反应式 — 行情推过来时由依赖触发 recompute
@@ -704,7 +751,8 @@ const t0PnlMap = computed(() => {
   void _tick
   const out = {}
   const orders = holdingsStore.orders || []
-  const tasks = t0TasksStore.tasks || []  
+  const tasks = t0TasksStore.tasks || []
+  const activeDay = holdingsStore.activeTrdDate || ''  // v115: 当日做T盈亏过滤用
   for (const row of tasks) {
     if (!row || row.status === 'archived') continue
     const code = row.stock_code
@@ -717,11 +765,14 @@ const t0PnlMap = computed(() => {
         && Number(o.task_id) === Number(taskId)
         && o.order_flag !== 1
     )
-    const { pnl, diff, last } = _calcT0Pnl(code, taskId, base, tgv, rs)
+    const { total_pnl, diff, last } = _calcT0Pnl(code, taskId, base, tgv, rs)
+    // v115: 当日做T盈亏 (trd_date === activeDay)
+    const today_pnl = _calcTodayT0Pnl(code, taskId, base, tgv, rs, activeDay)
     // change 2026-07-27-v109-pnl-formula: rate 分母 = 累计成交金额 + |diff × last_price|
     //   (= 成交总市值 + 按最新价平掉配平部分的市值估算)
+    // v115: rate 只对应 total_pnl (用户口径: 当日做T盈亏不显示收益率 %)
     let rate = 0
-    if (pnl !== 0 && Number.isFinite(pnl)) {
+    if (total_pnl !== 0 && Number.isFinite(total_pnl)) {
       let tradedCost = 0
       for (const o of rs) {
         const v = Number(o.traded_volume) || 0
@@ -732,11 +783,11 @@ const t0PnlMap = computed(() => {
       if (diff !== 0 && last) balCost = Math.abs(diff * last)
       const denom = tradedCost + balCost
       if (denom > 0) {
-        const r = pnl / denom
+        const r = total_pnl / denom
         rate = Number.isFinite(r) ? r : 0
       }
     }
-    out[`${taskId}|${code}`] = { pnl, rate, diff, last }
+    out[`${taskId}|${code}`] = { total_pnl, today_pnl, rate, diff, last }
   }
   return out
 })
