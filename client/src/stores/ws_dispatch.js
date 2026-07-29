@@ -83,22 +83,31 @@ function _onRpcStatus(data) {
 }
 
 // v118: broker pos_push 推送 (持仓变化)
-//   - payload: { stock_code, last_vol, vol, avl_vol, avg_price }
+//   - payload: { position: { stock_code, stock_name, last_vol, vol, avl_vol, cost_price, synced_at, synced_from } }
 //   - 后端 handle_pos_push 已经把 broker 推的覆盖本地 positions 表
 //   - 前端只需要把数据写入 holdings.positions (broker 永远权威)
 //   - 不再依赖 trd_cfm 累加, 不再依赖 reconcile 兜底
+//   - dispatcher 在 pos_push 路径走 _broadcast_generic, handler_result 直接包进 data:
+//     所以 payload.data = handler_result = { position: {...} }
 function _onPosPush(data) {
-  if (!data || !data.stock_code) return
+  if (!data) return
+  // v118: 兼容两种 payload 形态
+  //   1) 直接 payload (未来 broker 真接): { stock_code, vol, avl_vol, ... }
+  //   2) 后端 dispatcher wrap: { position: { stock_code, vol, avl_vol, ... } }
+  const row = data.position || data
+  if (!row || !row.stock_code) return
   try {
     const hs = useHoldingsStore()
-    const code = data.stock_code
     // v118: 整条 ref 替换 (broker 永远权威, 不增量)
     hs.applyPositionUpdate({
-      stock_code: code,
-      last_vol: Number(data.last_vol) || 0,
-      vol: Number(data.vol) || 0,
-      avl_vol: Number(data.avl_vol) || 0,
-      cost_price: Number(data.avg_price) || 0,
+      stock_code: row.stock_code,
+      stock_name: row.stock_name || '',
+      last_vol: Number(row.last_vol) || 0,
+      vol: Number(row.vol) || 0,
+      avl_vol: Number(row.avl_vol) || 0,
+      cost_price: Number(row.cost_price) || 0,
+      synced_at: row.synced_at || null,
+      synced_from: row.synced_from || 'pos_push',
     })
   } catch (e) {
     log.warn('_onPosPush applyPositionUpdate failed:', e?.message)
