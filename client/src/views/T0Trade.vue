@@ -731,7 +731,8 @@ function _calcTodayT0Pnl(code, taskId, base, tgv, orders, activeDay) {
   const todayOrders = activeDay
     ? orders.filter((o) => String(o.trd_date) === String(activeDay))
     : []
-  return _calcT0Pnl(code, taskId, base, tgv, todayOrders)
+  const { total_pnl, diff, last } = _calcT0Pnl(code, taskId, base, tgv, todayOrders)
+  return total_pnl   // v116.1 fix: 之前直接返回对象 {total_pnl, diff, last}, 模板当数字用显示成 0
 }
 
 // change 2026-07-27-v109-pnl-reactive: PnL / 收益率反应式 — 行情推过来时由依赖触发 recompute
@@ -764,6 +765,11 @@ const t0PnlMap = computed(() => {
     const { total_pnl, diff, last } = _calcT0Pnl(code, taskId, base, tgv, rs)
     // v115: 当日做T盈亏 (trd_date === activeDay)
     const today_pnl = _calcTodayT0Pnl(code, taskId, base, tgv, rs, activeDay)
+    // v116.1 debug: 临时诊断日志 (你测完跟我说是否要保留)
+    if (window.__t0PnlDebug && (window.__t0PnlDebug === taskId || window.__t0PnlDebug === 'all')) {
+      const todayRs = activeDay ? rs.filter(o => String(o.trd_date) === String(activeDay)) : []
+      console.log(`[t0Pnl ${taskId}|${code}] activeDay=${activeDay} rs.total=${rs.length} todayRs=${todayRs.length} total_pnl=${total_pnl} today_pnl=${today_pnl} diff=${diff} last=${last}`)
+    }
     // v115.1: rate 字段删除 (用户: 去掉做T收益率)
     out[`${taskId}|${code}`] = { total_pnl, today_pnl, diff, last }
   }
