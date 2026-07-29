@@ -115,10 +115,19 @@ SERVICES = {
         [sys.executable, '-u', 'hqserver.py'],
         preflight=['aio_pika', 'websockets'],
     ),
+    'broker': Service(
+        'broker', None,   # no TCP port — pure RabbitMQ publisher
+        os.path.join(PROJECT_ROOT, 'iquant'),
+        [sys.executable, '-u', 'xtquant_api.py'],
+        preflight=['msgpacket', 'aio_pika'],
+    ),
 }
 
 VALID_ACTIONS = ['start', 'stop', 'restart', 'status']
+# v118: broker 加入服务表 — 但 DEFAULT_SERVICES 默认跳过 (xtquant 模块依赖 QMT 客户端环境)
+#   用户可显式 `uv run python scripts/evctl.py start broker` / restart broker 启动
 DEFAULT_SERVICES = ['backend', 'frontend', 'hqserver']
+OPTIONAL_SERVICES = ['broker']   # v118: 需要 xtquant 本地模块, 默认不启动
 
 # ============================================================================
 # 输出辅助 (无 ANSI 颜色, 跨平台一致)
