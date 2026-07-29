@@ -200,15 +200,6 @@
         </template>
       </el-table-column>
 
-      <!-- 7. 做T收益率% (120, sortable) — PnL / (cost_basis × |task_net_volume|) (v115: 只对应 total_pnl) -->
-      <el-table-column prop="t0_return_rate" label="做T收益率%" align="right" width="120" sortable="custom">
-        <template #default="{ row }">
-          <span class="text-mono" :class="(t0PnlCell(row)?.rate ?? 0) >= 0 ? 'up' : 'down'">
-            {{ ((t0PnlCell(row)?.rate ?? 0) * 100).toFixed(2) }}%
-          </span>
-        </template>
-      </el-table-column>
-
       <!-- 9. 操作 (280 fixed right) — 买 / 卖 / 配平 / 归档 -->
       <!-- v57 commit.2: 改 4 按钮 (买/卖/配平/归档), 详细说明见下方 -->
       <el-table-column label="操作" align="center" width="280" fixed="right">
@@ -660,7 +651,6 @@ function _taskSortValue(row, key) {
     case 'position_vol': return Number(row.summary?.position_vol) || 0
     case 't0_pnl': return t0PnlForRow(row)?.total_pnl || 0   // v115: 总盈亏
     case 't0_today_pnl': return t0PnlForRow(row)?.today_pnl || 0   // v115: 当日做T盈亏
-    case 't0_return_rate': return t0ReturnRateForRow(row)
     default: return 0
   }
 }
@@ -768,26 +758,8 @@ const t0PnlMap = computed(() => {
     const { total_pnl, diff, last } = _calcT0Pnl(code, taskId, base, tgv, rs)
     // v115: 当日做T盈亏 (trd_date === activeDay)
     const today_pnl = _calcTodayT0Pnl(code, taskId, base, tgv, rs, activeDay)
-    // change 2026-07-27-v109-pnl-formula: rate 分母 = 累计成交金额 + |diff × last_price|
-    //   (= 成交总市值 + 按最新价平掉配平部分的市值估算)
-    // v115: rate 只对应 total_pnl (用户口径: 当日做T盈亏不显示收益率 %)
-    let rate = 0
-    if (total_pnl !== 0 && Number.isFinite(total_pnl)) {
-      let tradedCost = 0
-      for (const o of rs) {
-        const v = Number(o.traded_volume) || 0
-        const ap = Number(o.avg_price) || 0
-        if (v > 0 && ap) tradedCost += ap * v
-      }
-      let balCost = 0
-      if (diff !== 0 && last) balCost = Math.abs(diff * last)
-      const denom = tradedCost + balCost
-      if (denom > 0) {
-        const r = total_pnl / denom
-        rate = Number.isFinite(r) ? r : 0
-      }
-    }
-    out[`${taskId}|${code}`] = { total_pnl, today_pnl, rate, diff, last }
+    // v115.1: rate 字段删除 (用户: 去掉做T收益率)
+    out[`${taskId}|${code}`] = { total_pnl, today_pnl, diff, last }
   }
   return out
 })
@@ -807,10 +779,9 @@ function t0PnlForRow(row) {
   return it ? it.pnl : 0
 }
 function t0ReturnRateForRow(row) {
-  // change 2026-07-27-v109-pnl-reactive: 同上, 走 map
-  const m = t0PnlMap.value
-  const it = m[_rowKey(row)]
-  return it ? it.rate : 0
+  // v115.1: 已删除 — 用户口径"去掉做T收益率"
+  //   保留空 stub 防止外部 import 引用, 函数返回 0
+  return 0
 }
 const sortedTaskRows = computed(() => {
   const list = [...taskRows.value]
