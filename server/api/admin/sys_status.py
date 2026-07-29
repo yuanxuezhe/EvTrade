@@ -133,7 +133,7 @@ async def init_trading_day(
                 'trd_date': req.trd_date,           # v117: 交易日信息 (用户口径: 必须有)
                 'previous_trd_date': _previous_trd_date,
                 'status': _init_status,             # 'ok' / 'partial'
-                'rpc_status': _init_status,         # v117: 与 rpc_status 字段统一, 前端可以同时刷 RPC 三态
+                # v117.1: 移除 rpc_status 字段 — 用户口径: rpc_status 仍独立走自己的 type='rpc_status' 路径
                 'report_id': result['report_id'],
                 'ts': _ts,
             },

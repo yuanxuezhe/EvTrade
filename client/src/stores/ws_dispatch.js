@@ -439,9 +439,10 @@ function _onInitCompleted(data) {
   _onSystemStatusChange({ ...data, change_kind: 'init_completed' })
 }
 
-// v117: 统一的系统状态变化处理 (取代 init_completed, 扩展含 rpc_status + trd_date)
-//   payload: { change_kind, trd_date, previous_trd_date, status, rpc_status, report_id, ts }
+// v117: 统一的系统状态变化处理 (取代 init_completed)
+//   payload: { change_kind, trd_date, previous_trd_date, status, report_id, ts }
 //   用户口径: "系统状态变化里面需要包含交易日信息"
+//   v117.1: 不再带 rpc_status 字段 — rpc_status 独立走自己的 type='rpc_status' 路径
 // ============================================================
 function _onSystemStatusChange(data) {
   if (!data) return
@@ -450,7 +451,6 @@ function _onSystemStatusChange(data) {
     + ' trd_date=' + (data.trd_date || '-')
     + ' previous_trd_date=' + (data.previous_trd_date || '-')
     + ' status=' + (data.status || '-')
-    + ' rpc_status=' + (data.rpc_status || '-')
     + ' report_id=' + (data.report_id || '-'),
   )
   // 1) 主动写 activeTrdDate (如果 payload 带了) — 让前端状态机立刻跟随后端
@@ -468,15 +468,8 @@ function _onSystemStatusChange(data) {
       log.warn('_onSystemStatusChange activeTrdDate write failed:', e?.message)
     }
   }
-  // 2) rpc_status 字段统一刷 RPC 三态 (合并 rpc_status + system_status_change)
-  if (data.rpc_status) {
-    try {
-      useRpcStatusStore().setFromPayload({ status: data.rpc_status, ...data })
-    } catch (e) {
-      log.warn('_onSystemStatusChange rpc_status write failed:', e?.message)
-    }
-  }
-  // 3) 切日/初始化 → 走 resetForNewDay (主路径)
+  // v117.1: 移除 rpc_status 写入 — rpc_status 独立走 type='rpc_status' 路径 (rpc_health 5s 推一次)
+  // 2) 切日/初始化 → 走 resetForNewDay (主路径)
   if (data.change_kind === 'init_completed' || data.change_kind === 'day_init') {
     try {
       const hs = useHoldingsStore()
@@ -491,7 +484,7 @@ function _onSystemStatusChange(data) {
     } catch (e) {
       log.warn('_onSystemStatusChange resetForNewDay failed:', e?.message)
     }
-    // 4) 通知 SystemInit.vue 当前交易日卡片刷新
+    // 3) 通知 SystemInit.vue 当前交易日卡片刷新
     try {
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent('evtrade:day-init-completed', {
@@ -499,7 +492,6 @@ function _onSystemStatusChange(data) {
             trd_date: data.trd_date,
             previous_trd_date: data.previous_trd_date,
             status: data.status,
-            rpc_status: data.rpc_status,
             report_id: data.report_id,
           },
         }))
