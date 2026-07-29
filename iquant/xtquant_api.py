@@ -4,7 +4,7 @@
 XtQuant API + msgpacket RPC Server
 
 ���� QMT ���׽ӿں� RabbitMQ RPC��֧�֣�
-1. �� RabbitMQ ���ս������󣨲�ֲ�/����/�ʲ��ȣ��������󷵻�Ӧ��
+1. �� RabbitMQ ���ս������󣨲�ֲ�?/����/�ʲ��ȣ��������󷵻�Ӧ��
 2. �� QMT �ص��¼����ɽ�/ί��/�������͵� RabbitMQ
 
 �÷�:
@@ -182,9 +182,9 @@ def _h_ord_stk(pkt: MsgPacket) -> HandlerReturn:
     direction_str = pkt.get_value_str("direction")
     remark = pkt.get_value_str("remark")
 
-# v__: 价格类型与 xtconstant 架台协议 1:1 对齐
-    #   "0" -> FIX_PRICE                  (限价 / 指定价)
-    #   "1" -> LATEST_PRICE               (最新价)
+# v__: 价格类型�? xtconstant 架台协�?? 1:1 对齐
+    #   "0" -> FIX_PRICE                  (限价 / 指定�?)
+    #   "1" -> LATEST_PRICE               (�?新价)
     #   "2" -> MARKET_PEER_PRICE_FIRST    (市价 / 对手方最优价, 吃档 1)
     price_type_map = {
         "0": xtconstant.FIX_PRICE,
@@ -210,11 +210,11 @@ def _h_cxl_ord(pkt: MsgPacket) -> HandlerReturn:
 
 
 # ================================================================
-# Ӧ�����
+# Ӧ�����?
 # ================================================================
 def build_answer(pkt: MsgPacket, req_msg_id: str,
                  code: str, msg: str, data: List[Dict]) -> MsgPacket:
-    """�� msgpacket ��ʽ��Ӧ���
+    """�� msgpacket ��ʽ��Ӧ���?
     code != 0: RS1={code,msg}
     code == 0: RS1={code,msg} + RS2=data��
     """
@@ -256,7 +256,7 @@ class MyXtQuantTraderCallback(XtQuantTraderCallback):
         state.event_queue.put(("disconnected", None))
 
     def on_stock_order(self, order) -> None:
-        """委托确认"""
+        """委托�?�?"""
         push_event("ord_cfm", [{
             "order_id": order.order_sysid,
             "stock_code": order.stock_code,
@@ -282,14 +282,14 @@ class MyXtQuantTraderCallback(XtQuantTraderCallback):
             "remark": trade.order_remark,
         }])
 
-    # v118: 持仓变化推送回调 — broker 每次持仓变化都会触发
-    #   设计: pos_push 是 v118 后的唯一持仓数据源
+    # v118: 持仓变化推�?�回�? �? broker 每�?�持仓变化都会触�?
+    #   设�??: pos_push �? v118 后的�?�?持仓数据�?
     #         trd_cfm 不再处理持仓 (仅写 trades + orders)
-    #         reconcile 不再覆盖持仓 (仅初始化时用 qry_positions 同步)
+    #         reconcile 不再覆盖持仓 (仅初始化时用 qry_positions 同�??)
     def on_stock_position(self, position) -> None:
-        """持仓变化推送 (xtquant 协议)"""
+        """持仓变化推�?? (xtquant 协�??)"""
         try:
-            # 兼容 broker 不同版本字段名 — 尽力解析
+            # 兼�?? broker 不同版本字�?�名 �? 尽力解析
             code = getattr(position, 'stock_code', None) or getattr(position, 'm_strInstrumentID', '')
             exchange = getattr(position, 'exchange_id', None) or getattr(position, 'm_strExchangeID', '')
             if exchange and '.' not in code:
@@ -319,14 +319,14 @@ class MyXtQuantTraderCallback(XtQuantTraderCallback):
         }])
 
     def on_order_stock_async_response(self, response) -> None:
-        """异步下单响应"""
+        """异�?�下单响�?"""
         push_event("ord_ack", [{
             "seq": response.seq,
             "order_id": response.order_sysid,
         }])
 
     def on_account_status(self, status) -> None:
-        """账号状态"""
+        """账号状�??"""
         push_event("acc_sts", [{
             "account_id": status.account_id,
             "status": status.status,
@@ -384,7 +384,16 @@ def create_trader(session_id: int) -> Optional[XtQuantTrader]:
         result = trader.connect()
         if result == 0:
             trader.subscribe(state.xt_acc)
-            print(f"[Trader] ���ӳɹ�, session_id={session_id}", flush=True)
+            # v118: subscribe_position (xtquant protocol support) �� triggers on_stock_position push
+            #   old broker may only subscribe orders/trades, now also subscribe positions
+            #   if xtquant version does not support, AttributeError is caught
+            try:
+                if hasattr(trader, 'subscribe_position'):
+                    trader.subscribe_position(state.xt_acc)
+                    print("[Trader] subscribed position_update via subscribe_position", flush=True)
+            except Exception as _e:
+                print(f"[Trader] subscribe_position skipped (protocol unsupported): {_e}", flush=True)
+            print(f"[Trader] connected, session_id={session_id}", flush=True)
             return trader
         print(f"[Trader] ����ʧ��, session_id={session_id}, result={result}", flush=True)
         return None
@@ -394,7 +403,7 @@ def create_trader(session_id: int) -> Optional[XtQuantTrader]:
 
 
 def try_connect() -> Optional[XtQuantTrader]:
-    """�������ӣ�ʹ����� session_id"""
+    """�������ӣ�ʹ�����? session_id"""
     session_ids = list(range(100, 130))
     random.shuffle(session_ids)
     for sid in session_ids:
@@ -491,7 +500,7 @@ def event_loop_thread() -> None:
 
 
 def main() -> None:
-    """�����"""
+    """�����?"""
     state.xt_acc = StockAccount(config.ACCOUNT_ID)
     print(f"[Main] �˻�: {config.ACCOUNT_ID}", flush=True)
 
