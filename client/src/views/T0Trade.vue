@@ -700,32 +700,14 @@ function _calcT0Pnl(code, taskId, base, tgv, orders) {
   return { total_pnl, diff, last }
 }
 
-// v115: 计算"当日做T盈亏"
-//   仅过滤 trd_date === activeDay 的订单 (只看今天)
-//   公式: today_realized - (今日净持仓 × last_price)
-//   含义: 今日做T操作的纯盈亏 (剔除持仓市值波动)
+// v115.2: 当日做T盈亏 = 用总盈亏公式 (realized + diff × last_price),
+//   但 orders 仅过滤 trd_date === activeDay (只看今日委托)
+//   与做T总盈亏用相同公式, 仅订单范围不同 → 两栏对比一目了然
 function _calcTodayT0Pnl(code, taskId, base, tgv, orders, activeDay) {
-  let buyAmt = 0, buyVol = 0, sellAmt = 0, sellVol = 0
-  for (const o of orders) {
-    if (activeDay && String(o.trd_date) !== String(activeDay)) continue   // 仅当日
-    const tv = Number(o.traded_volume) || 0
-    if (tv <= 0) continue
-    const ap = Number(o.avg_price) || 0
-    if (!ap) continue
-    if (o.order_type === '23') {         // 买
-      buyAmt += ap * tv
-      buyVol += tv
-    } else if (o.order_type === '24') {  // 卖
-      sellAmt += ap * tv
-      sellVol += tv
-    }
-  }
-  const today_realized = sellAmt - buyAmt
-  const today_net_pos = buyVol - sellVol    // 今日净持仓 (正=还持有多)
-  const q = quoteStore.get(code) || {}
-  const last = Number(q.last_price) || 0
-  // 扣减净持仓市值 (持仓兑现 = 不是做T赚的)
-  return today_realized - (today_net_pos * last)
+  const todayOrders = activeDay
+    ? orders.filter((o) => String(o.trd_date) === String(activeDay))
+    : []
+  return _calcT0Pnl(code, taskId, base, tgv, todayOrders)
 }
 
 // change 2026-07-27-v109-pnl-reactive: PnL / 收益率反应式 — 行情推过来时由依赖触发 recompute
