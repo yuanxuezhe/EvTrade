@@ -89,6 +89,15 @@ def _set_status(status: int, err_msg: str = "", status_msg: str = "") -> None:
 
 # ─── 后台定时同步 ──────────────────────────────────────────────────────
 
+async def _get_pending_count() -> int:
+    """获取 RPClient 当前在途（未应答）的 RPC 请求数量。"""
+    try:
+        rpc = await get_rpc_client()
+        return len(getattr(rpc, "pending", {}))
+    except Exception:
+        return 0
+
+
 async def _get_request_queue_depth() -> int:
     """取请求队列当前 message_count。失败时返回 0。"""
     try:
@@ -125,16 +134,18 @@ async def _probe_once() -> int:
     """单轮探测：积压 → 超时 → 应答解析。返回最终状态码。"""
     global _last_ok_at, _last_queue_depth
 
-    # 1) 队列积压 → 状态 1, 跳过本轮
+    # 1) 在途请求积压 → 状态 1, 不再发 qry_ast（避免雪崩）
     depth = await _get_request_queue_depth()
     _last_queue_depth = depth
-    if depth >= MAX_PENDING:
+    pending_count = await _get_pending_count()
+    if pending_count > 0 or depth >= MAX_PENDING:
+        reason = f"RPC pending 积压 ({pending_count} in-flight)" if pending_count > 0 else f"RPC 队列积压 ({depth}>={MAX_PENDING})"
         _set_status(
             RPC_STATUS_COMM_ERROR,
-            err_msg=f"RPC 队列积压 ({depth}>={MAX_PENDING})",
+            err_msg=reason,
             status_msg=_STATUS_TEXT[RPC_STATUS_COMM_ERROR],
         )
-        log.warning("rpc_health skip qry_asset: %s", _last_err_msg)
+        log.warning("rpc_health skip qry_asset: %s", reason)
         return _rpc_status
 
     # 2) 调 RPC，超时为状态 1

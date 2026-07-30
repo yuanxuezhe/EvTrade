@@ -457,8 +457,8 @@ const createDialogVisible = ref(false)
 const createDialogLoading = ref(false)
 const externalStockCode = ref('')  // HoldingsPanel 选中 → 驱动 dialog 表单
 
-// v55.1 配平: useT0OrderSubmit 实例化（mark 'market' + balanceCoeff=1）
-const balancePriceType = ref('market')    // 市价 = priceTypeCode 44
+// v55.1 配平: useT0OrderSubmit 实例化（价格类型跟随做T配置 globalPriceType）
+const balancePriceType = computed(() => globalPriceType.value)  // 跟随做T配置，不再硬编码市价
 const balanceCoeff = ref(1)               // 配平系数（固定 1）
 const balanceSubmitting = ref(false)
 const balanceStockCode = computed(() => {
@@ -637,6 +637,38 @@ function computeOrderVolume(stockCode, direction = '买') {
 
 // v57: 价格获取 — 'latest' → quoteStore.getLastPrice, 'market' → 后端实际是柜台撮合价 (前端展示为最新价作参考)
 function computeOrderPrice(stockCode) {
+  const p = quoteStore.getLastPrice(stockCode)
+  return Number(p) || 0
+}
+
+// 市价下单保护限价（上交所要求：对手盘第五档价格）
+// 买入时对手盘 = 卖盘 → ask_prices[4]（卖五）
+// 卖出时对手盘 = 买盘 → bid_prices[4]（买五）
+// 未取到第五档 → 涨跌停价格（买入用涨停，卖出用跌停）
+// 深交所市价无需保护限价，传 0
+function _marketOrderProtectPrice(stockCode, orderType) {
+  const isSSE = stockCode.startsWith('6')
+  if (!isSSE) return 0  // 深交所无需保护限价
+  const q = quoteStore.get(stockCode) || {}
+  const isBuy = orderType === '23'
+  const oppPrices = isBuy ? q.ask_prices : q.bid_prices  // 买→看卖盘，卖→看买盘
+  if (oppPrices && oppPrices.length >= 5 && oppPrices[4]) {
+    return Number(oppPrices[4]) || 0
+  }
+  // 未取到第五档，回退涨跌停价
+  const prevClose = q.prev_close || (q.fields ? Number(q.fields[6]) : 0)
+  if (prevClose && prevClose > 0) {
+    const scale = stocksStore.stockScale(stockCode)
+    const limit = isBuy ? prevClose * 1.10 : prevClose * 0.90
+    return Number(Number(limit).toFixed(scale))
+  }
+  return 0
+}
+
+// 配平下单价格：跟随做T配置价格类型
+function _balancePrice(stockCode, orderType) {
+  const pt = globalPriceType.value
+  if (pt === 'market') return _marketOrderProtectPrice(stockCode, orderType)
   const p = quoteStore.getLastPrice(stockCode)
   return Number(p) || 0
 }
@@ -870,14 +902,14 @@ async function onBalanceTask(taskId) {
   const volume = Math.abs(diff)
   try {
     await ElMessageBox.confirm(
-      `task #${taskId} 实时差 ${diff} 股，将下市价单 ${orderType === '23' ? '买' : '卖'} ${volume} 股`,
+      `task #${taskId} 实时差 ${diff} 股，将下 ${priceTypeOptions.find(o => o.value === globalPriceType.value)?.label || globalPriceType.value} ${orderType === '23' ? '买' : '卖'} ${volume} 股`,
       '一键配平', { confirmButtonText: '确认', cancelButtonText: '取消', type: 'warning' }
     )
   } catch (e) { return }
   try {
     // change 2026-07-21-t0-balance-stock-code-guard: 用 stockCodeOverride 让 useT0OrderSubmit
     //   优先用兜底 stock_code (而不是闭包 stockCode.value, 后者可能为空)
-    await submitBalanceOrder({ orderType, volume, price: 0, taskId, stockCodeOverride: stockCodeForBalance })
+    await submitBalanceOrder({ orderType, volume, price: _balancePrice(stockCodeForBalance, orderType), taskId, stockCodeOverride: stockCodeForBalance })
     // useT0OrderSubmit 内部已 ElMessage.success
     await t0TasksStore.loadTasks()  // 刷新主表（task summary 更新）
   } catch (e) { /* ElMessage 已被 axios 拦截器弹出 */ }
@@ -942,11 +974,13 @@ async function _submitOrder(p) {
       : p.priceType === 'oppose' ? 44
       : p.priceType === 'latest' ? 5
       : 11  // 'limit'
+    // 市价下单时的保护限价（上交所要求）：对手盘第五档价格
+    const sendPrice = priceTypeCode === 44 ? _marketOrderProtectPrice(p.stockCode, p.orderType) : p.price
     const res = await orderStore.placeOrder({
       stock_code: p.stockCode,
       order_type: p.orderType,
       price_type: priceTypeCode,
-      price: p.priceType === 'market' ? 0 : p.price,  // 市价 price 传 0
+      price: sendPrice,
       volume: p.volume,
       user_def: 'T0',
       strategy_type: 1,  // v66: REQ-TRADE-026; T0Trade.vue 下单 = 快速做T
