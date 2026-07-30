@@ -1,13 +1,13 @@
 #coding:gbk
 """
 ==============================================================================
-iQuant / QMT ²ßÂÔ¼«¼òÄ£°å£ºË«¶ÓÁÐ MQ ±Õ»·Í¨ÐÅÓëÏß³Ì°²È«Ïú»Ù
+iQuant / QMT ï¿½ï¿½ï¿½Ô¼ï¿½ï¿½ï¿½Ä£ï¿½å£ºË«ï¿½ï¿½ï¿½ï¿½ MQ ï¿½Õ»ï¿½Í¨ï¿½ï¿½ï¿½ï¿½ï¿½ß³Ì°ï¿½È«ï¿½ï¿½ï¿½ï¿½
 ==============================================================================
-Á÷×ªÂ·¾¶£º
-1. [MQ Ïß³Ì] channel.consume ¶©ÔÄ MQ ÇëÇó¶ÓÁÐ ? ·ÅÈë GLOBAL_REQ_QUEUE
-2. [QMT Ö÷Ïß³Ì] run_time(100ms) È¡³ö GLOBAL_REQ_QUEUE  ´òÓ¡  ·ÅÈë GLOBAL_ANS_QUEUE
-3. [MQ Ïß³Ì] ¼àÌýµ½ GLOBAL_ANS_QUEUE ÓÐÊý¾Ý ? basic_publish Í¶µÝµ½ MQ Ó¦´ð¶ÓÁÐ
-4. [stop º¯Êý] Ö÷¶¯¹Ø±Õ Connection ´ò¶Ï Socket ×èÈû ? 100% ÎïÀíÏú»ÙÏß³Ì ? Çå¿Õ²ÐÁô¶ÓÁÐ
+ï¿½ï¿½×ªÂ·ï¿½ï¿½ï¿½ï¿½
+1. [MQ ï¿½ß³ï¿½] channel.consume ï¿½ï¿½ï¿½ï¿½ MQ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ? ï¿½ï¿½ï¿½ï¿½ GLOBAL_REQ_QUEUE
+2. [QMT ï¿½ï¿½ï¿½ß³ï¿½] run_time(100ms) È¡ï¿½ï¿½ GLOBAL_REQ_QUEUE  ï¿½ï¿½Ó¡  ï¿½ï¿½ï¿½ï¿½ GLOBAL_ANS_QUEUE
+3. [MQ ï¿½ß³ï¿½] ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ GLOBAL_ANS_QUEUE ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ? basic_publish Í¶ï¿½Ýµï¿½ MQ Ó¦ï¿½ï¿½ï¿½ï¿½ï¿½
+4. [stop ï¿½ï¿½ï¿½ï¿½] ï¿½ï¿½ï¿½ï¿½ï¿½Ø±ï¿½ Connection ï¿½ï¿½ï¿½ Socket ï¿½ï¿½ï¿½ï¿½ ? 100% ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ß³ï¿½ ? ï¿½ï¿½Õ²ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
 """
 
 import queue
@@ -17,7 +17,7 @@ from msgpacket import MsgPacket, MSG_TYPE_ANSWER, MSG_TYPE_PUSH
 from typing import Callable, Dict, List, Optional, Tuple
 
 # ================================================================
-# 1. »ù´¡ÅäÖÃÓëÈ«¾Ö¶ÓÁÐ/±äÁ¿
+# 1. ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½È«ï¿½Ö¶ï¿½ï¿½ï¿½/ï¿½ï¿½ï¿½ï¿½
 # ================================================================
 class Config:
     HOST = "192.168.10.2"
@@ -37,18 +37,18 @@ config = Config()
 ORDER_TYPE_STOCK = 1101
 QUICK_TRADE_MODEL = 1
 STRATEGY_NAME = 'EvTrade-Strategy'
-# È«¾ÖÏß³Ì°²È«¶ÓÁÐ
-GLOBAL_REQ_QUEUE = queue.Queue()  # ÇëÇó¶ÓÁÐ (MQ Ïß³Ì  Ö÷Ïß³Ì)
-GLOBAL_ANS_QUEUE = queue.Queue()  # Ó¦´ð¶ÓÁÐ (Ö÷Ïß³Ì   MQ Ïß³Ì)
-GLOBAL_PUSH_QUEUE = queue.Queue()  # Ó¦´ð¶ÓÁÐ (Ö÷Ïß³Ì   MQ Ïß³Ì)
-# È«¾ÖÔËÐÐÆÚ¾ä±ú´æ´¢
+# È«ï¿½ï¿½ï¿½ß³Ì°ï¿½È«ï¿½ï¿½ï¿½ï¿½
+GLOBAL_REQ_QUEUE = queue.Queue()  # ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ (MQ ï¿½ß³ï¿½  ï¿½ï¿½ï¿½ß³ï¿½)
+GLOBAL_ANS_QUEUE = queue.Queue()  # Ó¦ï¿½ï¿½ï¿½ï¿½ï¿½ (ï¿½ï¿½ï¿½ß³ï¿½   MQ ï¿½ß³ï¿½)
+GLOBAL_PUSH_QUEUE = queue.Queue()  # Ó¦ï¿½ï¿½ï¿½ï¿½ï¿½ (ï¿½ï¿½ï¿½ß³ï¿½   MQ ï¿½ß³ï¿½)
+# È«ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ú¾ï¿½ï¿½ï¿½æ´¢
 GLOBAL_STORE = {
-    "mq_conn": None,   # ´æ´¢ Connection£¬ÓÃÓÚ stop() ÎïÀí´ò¶Ï Socket ×èÈû
-    "mq_thread": None, # ´æ´¢ Thread ¶ÔÏó£¬ÓÃÓÚ join È·ÈÏÍË³ö
+    "mq_conn": None,   # ï¿½æ´¢ Connectionï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ stop() ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ Socket ï¿½ï¿½ï¿½ï¿½
+    "mq_thread": None, # ï¿½æ´¢ Thread ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ join È·ï¿½ï¿½ï¿½Ë³ï¿½
 }
 
 # ================================================================
-# Handler ×¢²áÇëÇó½Ó¿Ú
+# Handler ×¢ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ó¿ï¿½
 # ================================================================
 #: Return: (code: str, msg: str, data: Optional[List[Dict]])
 HandlerReturn = Tuple[str, str, Optional[List[Dict]]]
@@ -58,7 +58,7 @@ _HANDLERS: Dict[str, HandlerFunc] = {}
 
 
 def handler(func_name: str) -> Callable[[HandlerFunc], HandlerFunc]:
-    """Handler ×¢²á×°ÊÎÆ÷"""
+    """Handler ×¢ï¿½ï¿½×°ï¿½ï¿½ï¿½ï¿½"""
     def decorator(func: HandlerFunc) -> HandlerFunc:
         _HANDLERS[func_name] = func
         return func
@@ -66,7 +66,7 @@ def handler(func_name: str) -> Callable[[HandlerFunc], HandlerFunc]:
 
 
 def handle_trade_request(context: ContextInfo, pkt: MsgPacket) -> HandlerReturn:
-    """·Ö·¢½»Ò×ÇëÇóµ½¶ÔÓ¦ handler"""
+    """ï¿½Ö·ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½óµ½¶ï¿½Ó¦ handler"""
     func = pkt.func().strip('\x00')
 
     handler = _HANDLERS.get(func)
@@ -79,12 +79,12 @@ def handle_trade_request(context: ContextInfo, pkt: MsgPacket) -> HandlerReturn:
 
 
 # ================================================================
-# ²éÑ¯Àà Handler
+# ï¿½ï¿½Ñ¯ï¿½ï¿½ Handler
 # ================================================================
 
 @handler("qry_pos")
 def _h_qry_pos(_context: ContextInfo, _pkt: MsgPacket) -> HandlerReturn:
-    """²éÑ¯³Ö²Ö"""
+    """ï¿½ï¿½Ñ¯ï¿½Ö²ï¿½"""
     positions = get_trade_detail_data(config.ACCOUNT_ID, 'STOCK', 'POSITION')
     return "00000", "ok", [{
         "stock_code": pos.m_strInstrumentID + '.' + pos.m_strExchangeID,
@@ -97,7 +97,7 @@ def _h_qry_pos(_context: ContextInfo, _pkt: MsgPacket) -> HandlerReturn:
 
 @handler("qry_ord")
 def _h_qry_ord(_context: ContextInfo, _pkt: MsgPacket) -> HandlerReturn:
-    """²éÑ¯¶©µ¥"""
+    """ï¿½ï¿½Ñ¯ï¿½ï¿½ï¿½ï¿½"""
     #orders = state.xt_trader.query_stock_orders(state.xt_acc)
     orders = get_trade_detail_data(config.ACCOUNT_ID, 'STOCK', 'ORDER')
     return "00000", "ok", [{
@@ -117,10 +117,10 @@ def _h_qry_ord(_context: ContextInfo, _pkt: MsgPacket) -> HandlerReturn:
 
 @handler("qry_ast")
 def _h_qry_ast(_context: ContextInfo, _pkt: MsgPacket) -> HandlerReturn:
-    """²éÑ¯×Ê²ú"""
+    """ï¿½ï¿½Ñ¯ï¿½Ê²ï¿½"""
     assets = get_trade_detail_data(config.ACCOUNT_ID, 'stock', 'account')
     #if asset is None:
-    #    return "99999", "²éÑ¯×Ê²úÊ§°Ü", None
+    #    return "99999", "ï¿½ï¿½Ñ¯ï¿½Ê²ï¿½Ê§ï¿½ï¿½", None
     return "00000", "ok", [{
         "cash": asset.m_dAvailable,
         "available": asset.m_dAvailable,
@@ -134,7 +134,7 @@ def _h_qry_ast(_context: ContextInfo, _pkt: MsgPacket) -> HandlerReturn:
 
 @handler("qry_mch")
 def _h_qry_mch(_context: ContextInfo, _pkt: MsgPacket) -> HandlerReturn:
-    """²éÑ¯³É½»"""
+    """ï¿½ï¿½Ñ¯ï¿½É½ï¿½"""
     #trades = state.xt_trader.query_stock_trades(state.xt_acc)
     trades = get_trade_detail_data(config.ACCOUNT_ID, 'STOCK', 'DEAL')
     return "00000", "ok", [{
@@ -151,14 +151,14 @@ def _h_qry_mch(_context: ContextInfo, _pkt: MsgPacket) -> HandlerReturn:
 
 
 # ================================================================
-# ½»Ò×Àà Handler
+# ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ Handler
 # ================================================================
 
 @handler("ord_stk")
 def _h_ord_stk(context: ContextInfo, pkt: MsgPacket) -> HandlerReturn:
-    """Òì²½ÏÂµ¥´¦Àí¾ä±ú"""
+    """ï¿½ì²½ï¿½Âµï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½"""
     try:
-        # 1. ÅúÁ¿ÌáÈ¡²¢½âÎö²ÎÊý£¨½á¹¹ÇåÎú¡¢ÀàÐÍÃ÷È·£©
+        # 1. ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½È¡ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½á¹¹ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½È·ï¿½ï¿½
         stock_code = pkt.get_value_str("stock_code")
         order_type = int(pkt.get_value_str("order_type"))
         price_type = int(pkt.get_value_str("price_type"))
@@ -166,25 +166,25 @@ def _h_ord_stk(context: ContextInfo, pkt: MsgPacket) -> HandlerReturn:
         price = float(pkt.get_value_str("price"))
         remark = pkt.get_value_str("remark")
     except (ValueError, TypeError) as e:
-        return "99999", f"²ÎÊýÀàÐÍ´íÎó: {e}", []
+        return "99999", f"ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Í´ï¿½ï¿½ï¿½: {e}", []
 
-    # 2. »ù´¡ÒµÎñÐ£Ñé£¨·ÀÖ¹ÎÞÐ§/Î£ÏÕ±¨ÎÄ£©
+    # 2. ï¿½ï¿½ï¿½ï¿½Òµï¿½ï¿½Ð£ï¿½é£¨ï¿½ï¿½Ö¹ï¿½ï¿½Ð§/Î£ï¿½Õ±ï¿½ï¿½Ä£ï¿½
     if volume <= 0:
-        return "99998", f"ÏÂµ¥ÊýÁ¿[{volume}]±ØÐë´óÓÚ0", []
+        return "99998", f"ï¿½Âµï¿½ï¿½ï¿½ï¿½ï¿½[{volume}]ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½0", []
     
-    # 4. Ö´ÐÐÏÂµ¥Ö¸Áî
+    # 4. Ö´ï¿½ï¿½ï¿½Âµï¿½Ö¸ï¿½ï¿½
     passorder(
-        order_type,           # 23: ÂòÈë / 24: Âô³ö µÈ
-        ORDER_TYPE_STOCK,     # 1101 ¶©µ¥ÀàÐÍ
-        config.ACCOUNT_ID,    # ×Ê½ðÕËºÅ
-        stock_code,           # ±êµÄ´úÂë
-        price_type,           # ±¨¼ÛÀàÐÍ
-        price,                # ±¨µ¥¼Û¸ñ
-        volume,               # ±¨µ¥ÊýÁ¿
-        STRATEGY_NAME,        # ²ßÂÔÃû³Æ
-        QUICK_TRADE_MODEL,    # ¿ì½Ý½»Ò×±êÊ¶
-        remark,               # ±¸×¢
-        context               # ²ßÂÔÉÏÏÂÎÄ
+        order_type,           # 23: ï¿½ï¿½ï¿½ï¿½ / 24: ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½
+        ORDER_TYPE_STOCK,     # 1101 ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
+        config.ACCOUNT_ID,    # ï¿½Ê½ï¿½ï¿½Ëºï¿½
+        stock_code,           # ï¿½ï¿½Ä´ï¿½ï¿½ï¿½
+        price_type,           # ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
+        price,                # ï¿½ï¿½ï¿½ï¿½ï¿½Û¸ï¿½
+        volume,               # ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
+        STRATEGY_NAME,        # ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
+        QUICK_TRADE_MODEL,    # ï¿½ï¿½Ý½ï¿½ï¿½×±ï¿½Ê¶
+        remark,               # ï¿½ï¿½×¢
+        context               # ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
     )
 
     return "00000", "ok", [{"seq": 1}]
@@ -200,11 +200,11 @@ def _h_cxl_ord(context: ContextInfo, pkt: MsgPacket) -> HandlerReturn:
     return "00000", "ok", [{"result": 1}]
 
 # ================================================================
-# ÍÆËÍ»Ø°ü
+# ï¿½ï¿½ï¿½Í»Ø°ï¿½
 # ================================================================
 
 def order_callback(ContextInfo, orderInfo):
-    """Î¯ÍÐÈ·ÈÏ"""
+    """Î¯ï¿½ï¿½È·ï¿½ï¿½"""
     push_event("ord_cfm", [{
         "order_id": orderInfo.m_strOrderSysID,
         "stock_code": orderInfo.m_strInstrumentID + '.' + orderInfo.m_strExchangeID,
@@ -219,18 +219,35 @@ def order_callback(ContextInfo, orderInfo):
     }])
 
 def deal_callback(ContextInfo, dealInfo):
-    """³É½»»Ø±¨"""
+    """ æˆäº¤é€šæŠ¥ """
+    stock_code = dealInfo.m_strInstrumentID + '.' + dealInfo.m_strExchangeID
     push_event("trd_cfm", [{
         "traded_id": dealInfo.m_strTradeID,
-        "stock_code": dealInfo.m_strInstrumentID + '.' + dealInfo.m_strExchangeID,
+        "stock_code": stock_code,
         "traded_volume": dealInfo.m_nVolume,
         "traded_price": dealInfo.m_dPrice,
         "strategy_name": '',
         "remark": dealInfo.m_strRemark,
     }])
+    # v118.4: æˆäº¤åŽç«‹å³æŽ¨é€è¯¥æ ‡çš„æœ€æ–°æŒä»“å¿«ç…§ï¼Œç¡®ä¿å‰åŽç«¯æŒä»“æ•°æ®åŒæ­¥
+    #   broker position_callback å¯èƒ½ä¸åŠæ—¶ï¼Œtrd_cfm è·¯å¾„å…œåº•ä¿è¯æŒä»“åˆ·æ–°
+    try:
+        positions = get_trade_detail_data(config.ACCOUNT_ID, 'STOCK', 'POSITION')
+        for p in positions:
+            if p.m_strInstrumentID + '.' + p.m_strExchangeID == stock_code:
+                push_event("pos_push", [{
+                    "stock_code": stock_code,
+                    "last_vol": p.m_nYesterdayVolume,
+                    "volume": p.m_nVolume,
+                    "avl_amt": p.m_nCanUseVolume,
+                    "avg_price": p.m_dOpenPrice,
+                }])
+                break
+    except Exception as e:
+        print(f"[deal_callback] pos_push fallback failed: {e}")
     
 def position_callback(ContextInfo, positonInfo):
-    """ ³Ö²ÖÍÆËÍ """
+    """ ï¿½Ö²ï¿½ï¿½ï¿½ï¿½ï¿½ """
     push_event("pos_push", [{
         "stock_code": positonInfo.m_strInstrumentID + '.' + positonInfo.m_strExchangeID,
         "last_vol": positonInfo.m_nYesterdayVolume,
@@ -240,13 +257,13 @@ def position_callback(ContextInfo, positonInfo):
     }])
 
 # ================================================================
-# Ó¦´ð×é°ü
+# Ó¦ï¿½ï¿½ï¿½ï¿½ï¿½
 # ================================================================
 def build_answer(pkt: MsgPacket, req_msg_id: str,
                  code: str, msg: str, data: List[Dict]) -> MsgPacket:
-    """°´ msgpacket ¸ñÊ½×éÓ¦´ð°ü
+    """ï¿½ï¿½ msgpacket ï¿½ï¿½Ê½ï¿½ï¿½Ó¦ï¿½ï¿½ï¿½
     code != 0: RS1={code,msg}
-    code == 0: RS1={code,msg} + RS2=data±í
+    code == 0: RS1={code,msg} + RS2=dataï¿½ï¿½
     """
     ans = MsgPacket(MSG_TYPE_ANSWER, pkt.version())
     ans.set_msg_id(req_msg_id)
@@ -258,7 +275,7 @@ def build_answer(pkt: MsgPacket, req_msg_id: str,
     ans.set_value("code", code)
     ans.set_value("msg", msg)
 
-    # RS2: Êý¾Ý±í (code==0 ÇÒÓÐÊý¾ÝÊ±²ÅÓÐ)
+    # RS2: ï¿½ï¿½ï¿½Ý±ï¿½ (code==0 ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ê±ï¿½ï¿½ï¿½ï¿½)
     if code == "00000" and data:
         ans.add_result_set()
         cols = list(data[0].keys())
@@ -272,11 +289,11 @@ def build_answer(pkt: MsgPacket, req_msg_id: str,
     return ans
 
 def push_event(func: str, data: List[Dict]) -> None:
-    """Ïß³Ì°²È«µØÍÆËÍÊÂ¼þµ½ RabbitMQ"""
+    """ï¿½ß³Ì°ï¿½È«ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Â¼ï¿½ï¿½ï¿½ RabbitMQ"""
     _mq_publish(func, data)
 
 def _mq_publish(func: str, data: List[Dict]) -> None:
-    """ÍÆËÍÏûÏ¢: func=¹¦ÄÜºÅ, data=RS1Êý¾Ý±í"""
+    """ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ï¢: func=ï¿½ï¿½ï¿½Üºï¿½, data=RS1ï¿½ï¿½ï¿½Ý±ï¿½"""
     try:
         pkt = MsgPacket(MSG_TYPE_PUSH)
         pkt.set_func(func)
@@ -295,16 +312,16 @@ def _mq_publish(func: str, data: List[Dict]) -> None:
         pkt.finalize()
         print(f"PUSH:{pkt.wire_to_string()}")
         _, msg_push = pkt.encode()
-        # ½«Ó¦´ðÏûÏ¢ÏûÏ¢ÈûÈëÈ«¾ÖÓ¦´ð¶ÓÁÐ£¬½»ÓÉ MQ Ïß³Ì·¢»Ø
+        # ï¿½ï¿½Ó¦ï¿½ï¿½ï¿½ï¿½Ï¢ï¿½ï¿½Ï¢ï¿½ï¿½ï¿½ï¿½È«ï¿½ï¿½Ó¦ï¿½ï¿½ï¿½ï¿½Ð£ï¿½ï¿½ï¿½ï¿½ï¿½ MQ ï¿½ß³Ì·ï¿½ï¿½ï¿½
         GLOBAL_PUSH_QUEUE.put(msg_push)
     except Exception as e:
-        print(f"[Push] Ê§°Ü {func}: {e}", flush=True)
+        print(f"[Push] Ê§ï¿½ï¿½ {func}: {e}", flush=True)
         
 # ================================================================
-# 2. MQ ¶ÀÁ¢Ïß³Ì£¨¶©ÔÄÇëÇó + ¼àÌýÓ¦´ð¶ÓÁÐ·¢ËÍ£©
+# 2. MQ ï¿½ï¿½ï¿½ï¿½ï¿½ß³Ì£ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ + ï¿½ï¿½ï¿½ï¿½Ó¦ï¿½ï¿½ï¿½ï¿½Ð·ï¿½ï¿½Í£ï¿½
 # ================================================================
 def rabbitmq_worker(ContextInfo):
-    print(f"[MQ Ïß³Ì] ¿ªÊ¼Á¬½Ó RabbitMQ ({config.HOST}:{config.PORT})...")
+    print(f"[MQ ï¿½ß³ï¿½] ï¿½ï¿½Ê¼ï¿½ï¿½ï¿½ï¿½ RabbitMQ ({config.HOST}:{config.PORT})...")
     conn = None
     try:
         credentials = pika.PlainCredentials(config.USER, config.PASS)
@@ -315,26 +332,26 @@ def rabbitmq_worker(ContextInfo):
         conn = pika.BlockingConnection(params)
         channel = conn.channel()
 
-        # ¹ÒÔØÁ¬½Ó¶ÔÏó£¬¹© stop() ËæÊ±°²È«´ò¶Ï
+        # ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ó¶ï¿½ï¿½ó£¬¹ï¿½ stop() ï¿½ï¿½Ê±ï¿½ï¿½È«ï¿½ï¿½ï¿½
         GLOBAL_STORE["mq_conn"] = conn
 
-        # ÉùÃ÷ Exchange ºÍ Queues
+        # ï¿½ï¿½ï¿½ï¿½ Exchange ï¿½ï¿½ Queues
         channel.exchange_declare(exchange=config.EXCHANGE_NAME, exchange_type='topic', durable=True)
         channel.queue_declare(queue=config.QUEUE_REQ, durable=True)
         channel.queue_bind(queue=config.QUEUE_REQ, exchange=config.EXCHANGE_NAME, routing_key=config.QUEUE_REQ)
         channel.queue_declare(queue=config.QUEUE_REPLY, durable=True)
 
         channel.basic_qos(prefetch_count=1)
-        print("[MQ Ïß³Ì] ¶©ÔÄ³É¹¦£¬½øÈëÊÕ·¢¼àÌýÍ¨µÀ...")
+        print("[MQ ï¿½ß³ï¿½] ï¿½ï¿½ï¿½Ä³É¹ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Õ·ï¿½ï¿½ï¿½ï¿½ï¿½Í¨ï¿½ï¿½...")
 
         def process_send_queue():
-            """Ë¢³ö GLOBAL_ANS_QUEUE ÖÐµÄ´ý·¢Êý¾Ý²¢Í¶µÝµ½ RabbitMQ"""
+            """Ë¢ï¿½ï¿½ GLOBAL_ANS_QUEUE ï¿½ÐµÄ´ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ý²ï¿½Í¶ï¿½Ýµï¿½ RabbitMQ"""
             while not GLOBAL_ANS_QUEUE.empty():
                 try:
                     msg_bytes = GLOBAL_ANS_QUEUE.get_nowait()
                     if channel.is_open:
                         channel.basic_publish(
-                            exchange='',  # Ö±½ÓÍ¶µÝµ½Ö¸¶¨Ãû³ÆµÄÓ¦´ð¶ÓÁÐ
+                            exchange='',  # Ö±ï¿½ï¿½Í¶ï¿½Ýµï¿½Ö¸ï¿½ï¿½ï¿½ï¿½ï¿½Æµï¿½Ó¦ï¿½ï¿½ï¿½ï¿½ï¿½
                             routing_key=config.QUEUE_REPLY,
                             body=msg_bytes
                         )
@@ -342,15 +359,15 @@ def rabbitmq_worker(ContextInfo):
                 except queue.Empty:
                     break
                 except Exception as e:
-                    print(f"[MQ ·¢ËÍÒì³£]: {e}")
+                    print(f"[MQ ï¿½ï¿½ï¿½ï¿½ï¿½ì³£]: {e}")
                     
-            """Ë¢³ö GLOBAL_PUSH_QUEUE ÖÐµÄ´ý·¢Êý¾Ý²¢Í¶µÝµ½ RabbitMQ"""
+            """Ë¢ï¿½ï¿½ GLOBAL_PUSH_QUEUE ï¿½ÐµÄ´ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ý²ï¿½Í¶ï¿½Ýµï¿½ RabbitMQ"""
             while not GLOBAL_PUSH_QUEUE.empty():
                 try:
                     msg_bytes = GLOBAL_PUSH_QUEUE.get_nowait()
                     if channel.is_open:
                         channel.basic_publish(
-                            exchange='',  # Ö±½ÓÍ¶µÝµ½Ö¸¶¨Ãû³ÆµÄÓ¦´ð¶ÓÁÐ
+                            exchange='',  # Ö±ï¿½ï¿½Í¶ï¿½Ýµï¿½Ö¸ï¿½ï¿½ï¿½ï¿½ï¿½Æµï¿½Ó¦ï¿½ï¿½ï¿½ï¿½ï¿½
                             routing_key=config.QUEUE_PUSH,
                             body=msg_bytes
                         )
@@ -358,56 +375,56 @@ def rabbitmq_worker(ContextInfo):
                 except queue.Empty:
                     break
                 except Exception as e:
-                    print(f"[MQ ·¢ËÍÒì³£]: {e}")
+                    print(f"[MQ ï¿½ï¿½ï¿½ï¿½ï¿½ì³£]: {e}")
         
-        # Ê¹ÓÃ consume + inactivity_timeout ÊµÏÖ¶©ÔÄ½ÓÊÕÓëÓ¦´ð·¢ËÍµÄ½»ÌæÇý¶¯
+        # Ê¹ï¿½ï¿½ consume + inactivity_timeout Êµï¿½Ö¶ï¿½ï¿½Ä½ï¿½ï¿½ï¿½ï¿½ï¿½Ó¦ï¿½ï¿½ï¿½ÍµÄ½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
         for message_metadata, properties, body in channel.consume(queue=config.QUEUE_REQ, inactivity_timeout=0.2):
-            # Í£Ö¹ÐÅºÅÅÐ¶¨
+            # Í£Ö¹ï¿½Åºï¿½ï¿½Ð¶ï¿½
             if not getattr(ContextInfo, 'is_running', False):
-                print("[MQ Ïß³Ì] ÊÕµ½²ßÂÔÍ£Ö¹ÐÅºÅ£¬×¼±¸ÍË³öÑ­»·...")
+                print("[MQ ï¿½ß³ï¿½] ï¿½Õµï¿½ï¿½ï¿½ï¿½ï¿½Í£Ö¹ï¿½ÅºÅ£ï¿½×¼ï¿½ï¿½ï¿½Ë³ï¿½Ñ­ï¿½ï¿½...")
                 break
 
-            # A. ÓÅÏÈ½«È«¾ÖÓ¦´ð¶ÓÁÐÖÐµÄÊý¾ÝË¢Èë MQ
+            # A. ï¿½ï¿½ï¿½È½ï¿½È«ï¿½ï¿½Ó¦ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ðµï¿½ï¿½ï¿½ï¿½ï¿½Ë¢ï¿½ï¿½ MQ
             process_send_queue()
 
-            # B. ¶©ÔÄÊÕµ½ÇëÇó±¨ÎÄ£¬ÈûÈëÈ«¾ÖÇëÇó¶ÓÁÐ
+            # B. ï¿½ï¿½ï¿½ï¿½ï¿½Õµï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ä£ï¿½ï¿½ï¿½ï¿½ï¿½È«ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
             if body is not None:
                 GLOBAL_REQ_QUEUE.put(body)
                 channel.basic_ack(delivery_tag=message_metadata.delivery_tag)
 
     except pika.exceptions.AMQPConnectionError:
-        print("[MQ Ïß³Ì] Socket Á¬½ÓÒÑ±»Ö÷³ÌÐòÖ÷¶¯¹ØÍ££¬Ïß³Ì´ò¶Ï³É¹¦¡£")
+        print("[MQ ï¿½ß³ï¿½] Socket ï¿½ï¿½ï¿½ï¿½ï¿½Ñ±ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Í£ï¿½ï¿½ï¿½ß³Ì´ï¿½Ï³É¹ï¿½ï¿½ï¿½")
     except Exception as e:
-        print(f"[MQ Ïß³ÌÒì³£]: {e}")
+        print(f"[MQ ï¿½ß³ï¿½ï¿½ì³£]: {e}")
     finally:
-        # ×¢Òâ£ºÕâÀïÖ»Çå¿Õ¾ä±ú£¬²»ÒªÖØ¸´µ÷ÓÃ conn.close()
-        # ÒòÎª stop() ÖÐÒÑ¾­Ö÷¶¯ close ¹ýÁË£¬»òÕßÁ¬½ÓÒòÒì³£±¾ÉíÒÑ¹Ø±Õ
+        # ×¢ï¿½â£ºï¿½ï¿½ï¿½ï¿½Ö»ï¿½ï¿½Õ¾ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Òªï¿½Ø¸ï¿½ï¿½ï¿½ï¿½ï¿½ conn.close()
+        # ï¿½ï¿½Îª stop() ï¿½ï¿½ï¿½Ñ¾ï¿½ï¿½ï¿½ï¿½ï¿½ close ï¿½ï¿½ï¿½Ë£ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ì³£ï¿½ï¿½ï¿½ï¿½ï¿½Ñ¹Ø±ï¿½
         GLOBAL_STORE["mq_conn"] = None
-        print("[MQ Ïß³Ì] ÒÑÍêÈ«ÍË³ö²¢Ïú»Ù£¡")
+        print("[MQ ï¿½ß³ï¿½] ï¿½ï¿½ï¿½ï¿½È«ï¿½Ë³ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ù£ï¿½")
 
 # ================================================================
-# 3. QMT ²ßÂÔÉúÃüÖÜÆÚ & runtime ¶¨Ê±Æ÷
+# 3. QMT ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ & runtime ï¿½ï¿½Ê±ï¿½ï¿½
 # ================================================================
 def init(ContextInfo):
     print("==================================================")
-    print("iQuant Ë«¶ÓÁÐ¼«¼òÊÕ·¢ÒýÇæ Æô¶¯...")
+    print("iQuant Ë«ï¿½ï¿½ï¿½Ð¼ï¿½ï¿½ï¿½ï¿½Õ·ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½...")
     print("==================================================")
     ContextInfo.is_running = True
     ContextInfo.set_account(config.ACCOUNT_ID)
-    # 1. Æô¶¯¶ÀÁ¢ MQ Ïß³Ì
+    # 1. ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ MQ ï¿½ß³ï¿½
     t = threading.Thread(target=rabbitmq_worker, args=(ContextInfo,), daemon=True)
     GLOBAL_STORE["mq_thread"] = t
     t.start()
 
-    # 2. ×¢²á 100ms ¸ßÆµ¶¨Ê±»Øµ÷
+    # 2. ×¢ï¿½ï¿½ 100ms ï¿½ï¿½Æµï¿½ï¿½Ê±ï¿½Øµï¿½
     ContextInfo.run_time("check_and_process", "100nMilliSecond", "2020-01-01 00:00:00")
 
 def check_and_process(ContextInfo):
-    """QMT Ö÷Ïß³Ì£ºÃ¿ 100ms »Øµ÷Ò»´Î£¬È¡³öÇëÇó ? ´òÓ¡ ? Èû»ØÓ¦´ð¶ÓÁÐ"""
+    """QMT ï¿½ï¿½ï¿½ß³Ì£ï¿½Ã¿ 100ms ï¿½Øµï¿½Ò»ï¿½Î£ï¿½È¡ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ? ï¿½ï¿½Ó¡ ? ï¿½ï¿½ï¿½ï¿½Ó¦ï¿½ï¿½ï¿½ï¿½ï¿½"""
     if not getattr(ContextInfo, 'is_running', False):
         return
 
-    # ÅúÁ¿È¡³öÈ«¾ÖÇëÇó¶ÓÁÐÊý¾Ý
+    # ï¿½ï¿½ï¿½ï¿½È¡ï¿½ï¿½È«ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
     while not GLOBAL_REQ_QUEUE.empty():
         try:
             msg_recv = GLOBAL_REQ_QUEUE.get_nowait()
@@ -415,55 +432,55 @@ def check_and_process(ContextInfo):
             #_handle_message(message)
             pkt = MsgPacket.decode(msg_recv)
             req_msg_id = pkt.msg_id().strip()
-            # ´òÓ¡ÊÕµ½µÄÔ­Ê¼ÇëÇóÏûÏ¢
+            # ï¿½ï¿½Ó¡ï¿½Õµï¿½ï¿½ï¿½Ô­Ê¼ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ï¢
             print(f"[RPC] <- {pkt.wire_to_string()}")
             
             code, msg, data = handle_trade_request(ContextInfo, pkt)
             
             msg_ans = build_answer(pkt, req_msg_id, code, msg, data)
-            # ´òÓ¡·¢ËÍµÄÓ¦´ðÏûÏ¢
+            # ï¿½ï¿½Ó¡ï¿½ï¿½ï¿½Íµï¿½Ó¦ï¿½ï¿½ï¿½ï¿½Ï¢
             print(f"[RPC] -> {msg_ans.wire_to_string()}")
             
             _, msg_send = msg_ans.encode()
 
-            # ½«Ó¦´ðÏûÏ¢ÏûÏ¢ÈûÈëÈ«¾ÖÓ¦´ð¶ÓÁÐ£¬½»ÓÉ MQ Ïß³Ì·¢»Ø
+            # ï¿½ï¿½Ó¦ï¿½ï¿½ï¿½ï¿½Ï¢ï¿½ï¿½Ï¢ï¿½ï¿½ï¿½ï¿½È«ï¿½ï¿½Ó¦ï¿½ï¿½ï¿½ï¿½Ð£ï¿½ï¿½ï¿½ï¿½ï¿½ MQ ï¿½ß³Ì·ï¿½ï¿½ï¿½
             GLOBAL_ANS_QUEUE.put(msg_send)
             
         except queue.Empty:
             break
         except Exception as e:
-            print(f"[runtime ´¦ÀíÒì³£]: {e}")
+            print(f"[runtime ï¿½ï¿½ï¿½ï¿½ï¿½ì³£]: {e}")
 
 def handlebar(ContextInfo):
     pass
 
 def stop(ContextInfo):
-    """µã»÷Í£Ö¹°´Å¥£ºÎïÀí¹Ø Socket É±Ïß³Ì + Çå¿Õ¶ÓÁÐ"""
+    """ï¿½ï¿½ï¿½Í£Ö¹ï¿½ï¿½Å¥ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ Socket É±ï¿½ß³ï¿½ + ï¿½ï¿½Õ¶ï¿½ï¿½ï¿½"""
     print("\n==================================================")
-    print("ÊÕµ½Í£Ö¹Ö¸Áî£¬¿ªÊ¼Ïú»Ù MQ Ïß³Ì...")
+    print("ï¿½Õµï¿½Í£Ö¹Ö¸ï¿½î£¬ï¿½ï¿½Ê¼ï¿½ï¿½ï¿½ï¿½ MQ ï¿½ß³ï¿½...")
     print("==================================================")
     
-    # 1. ¸Ä±äÔËÐÐ×´Ì¬±ê¼ÇÎ»
+    # 1. ï¿½Ä±ï¿½ï¿½ï¿½ï¿½ï¿½×´Ì¬ï¿½ï¿½ï¿½Î»
     ContextInfo.is_running = False
 
-    # 2. °²È«µØÎïÀí¹Ø±Õ Socket£¬´ò¶Ï channel.consume ×èÈû
+    # 2. ï¿½ï¿½È«ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ø±ï¿½ Socketï¿½ï¿½ï¿½ï¿½ï¿½ channel.consume ï¿½ï¿½ï¿½ï¿½
     conn = GLOBAL_STORE.get("mq_conn")
     if conn:
         try:
-            # Ö»ÓÐÔÚÁ¬½Ó´¦ÓÚ´ò¿ª×´Ì¬ÇÒÃ»ÓÐÕýÔÚ¹Ø±ÕÊ±²Åµ÷ÓÃ close()
+            # Ö»ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ó´ï¿½ï¿½Ú´ï¿½×´Ì¬ï¿½ï¿½Ã»ï¿½ï¿½ï¿½ï¿½ï¿½Ú¹Ø±ï¿½Ê±ï¿½Åµï¿½ï¿½ï¿½ close()
             if getattr(conn, 'is_open', False) and not getattr(conn, 'is_closed', True):
                 conn.close()
         except Exception as e:
-            # ¼´Ê¹±¨´íÒ²¿ÉÒÔºöÂÔ£¬ÒòÎªÄ¿±ê¾ÍÊÇ³¹µ×¶Ï¿ª Socket
+            # ï¿½ï¿½Ê¹ï¿½ï¿½ï¿½ï¿½Ò²ï¿½ï¿½ï¿½Ôºï¿½ï¿½Ô£ï¿½ï¿½ï¿½ÎªÄ¿ï¿½ï¿½ï¿½ï¿½Ç³ï¿½ï¿½×¶Ï¿ï¿½ Socket
             pass
 
-    # 3. Join µÈ´ýÏß³ÌÎïÀí½áÊø
+    # 3. Join ï¿½È´ï¿½ï¿½ß³ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
     t = GLOBAL_STORE.get("mq_thread")
     if t and t.is_alive():
         t.join(timeout=1.0)
-        print("MQ Ïß³ÌÒÑÈ·ÈÏÏú»Ù£¡")
+        print("MQ ï¿½ß³ï¿½ï¿½ï¿½È·ï¿½ï¿½ï¿½ï¿½ï¿½Ù£ï¿½")
 
-    # 4. Çå¿Õ²ÐÁô¶ÓÁÐ
+    # 4. ï¿½ï¿½Õ²ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
     while not GLOBAL_REQ_QUEUE.empty():
         try: GLOBAL_REQ_QUEUE.get_nowait()
         except: break
@@ -471,7 +488,7 @@ def stop(ContextInfo):
         try: GLOBAL_ANS_QUEUE.get_nowait()
         except: break
 
-    print("ÇåÀíÍê±Ï£¬²ßÂÔ³É¹¦Í£Ö¹¡£")
+    print("ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ï£ï¿½ï¿½ï¿½ï¿½Ô³É¹ï¿½Í£Ö¹ï¿½ï¿½")
 
 
 
