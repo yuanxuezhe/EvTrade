@@ -73,6 +73,7 @@ class Strategy(Base):
     status = Column(String(16), nullable=False, default="active")  # active / paused / stopped / finished
     base_volume = Column(Integer, nullable=False, default=0)
     note = Column(String(255), nullable=False, default="")
+    t0_params = Column(Text, nullable=True)        # JSON: T0StrategyParams 序列化
     created_at = Column(DateTime, nullable=False, default=_utcnow)
     updated_at = Column(DateTime, nullable=False, default=_utcnow, onupdate=_utcnow)
 

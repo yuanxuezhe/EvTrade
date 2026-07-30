@@ -53,8 +53,10 @@ class QuoteConsumer:
 
     def __init__(self, url: str):
         self.url = url
-        self._engines: Dict[str, StrategyEngine] = {}   # stock_code → engine
+        self._engines: Dict[str, StrategyEngine] = {}   # stock_code → engine (general)
         self._engine_id_map: Dict[int, StrategyEngine] = {}  # strategy_id → engine（tracing 用）
+        # T0 策略引擎（strategy_id → T0StrategyEngine，独立于 general engines）
+        self._t0_engines: Dict[int, "T0StrategyEngine"] = {}
         self._latest_price: Dict[str, float] = {}
         self._stop = asyncio.Event()
         self._ws = None
@@ -268,23 +270,41 @@ class QuoteConsumer:
             delivered = await ws_manager.broadcast_to_stock(stock_code, {"type": "quote", "channel": "quote_update", "data": tick})
         except Exception:
             log.exception("ws quote broadcast failed (non-fatal)")
-        if engine is None:
+        if engine is None and not self._t0_engines:
             return  # 非活跃订阅的标的 → 静默丢弃
         # 查 position_vol（v1 简化为 DB 查）
         position_vol = self._get_position_for_stock(stock_code)
-        base_volume = engine.last_regime.base_volume if engine.last_regime else None
-        # 从 strategy 行拿 base_volume（更稳）
-        if base_volume is None:
-            base_volume = self._get_base_volume_for_stock(stock_code)
-        try:
-            await engine.evaluate_tick(
-                tick=tick,
-                position_vol=position_vol,
-                base_volume=base_volume or 0,
-                prev_close=engine.prev_close,
-            )
-        except Exception as e:
-            log.exception("evaluate_tick failed: stock=%s err=%s", stock_code, e)
+
+        # 评估 general engine
+        if engine is not None:
+            base_volume = engine.last_regime.base_volume if engine.last_regime else None
+            if base_volume is None:
+                base_volume = self._get_base_volume_for_stock(stock_code)
+            try:
+                await engine.evaluate_tick(
+                    tick=tick,
+                    position_vol=position_vol,
+                    base_volume=base_volume or 0,
+                    prev_close=engine.prev_close,
+                )
+            except Exception as e:
+                log.exception("evaluate_tick failed: stock=%s err=%s", stock_code, e)
+
+        # 评估 T0 engines（按 stock_code 匹配）
+        for sid, t0_eng in list(self._t0_engines.items()):
+            if t0_eng.stock_code != stock_code:
+                continue
+            base_volume = self._get_base_volume_for_strategy(sid)
+            try:
+                await t0_eng.evaluate_tick(
+                    tick=tick,
+                    position_vol=position_vol,
+                    base_volume=base_volume or 0,
+                    prev_close=t0_eng.prev_close,
+                )
+            except Exception as e:
+                log.exception("T0 evaluate_tick failed: stock=%s strategy=%s err=%s",
+                              stock_code, sid, e)
 
     # ── Snapshot 持久化 ──
 
@@ -334,31 +354,43 @@ class QuoteConsumer:
         """从 DB 读 status='active' strategies，为每个 stock_code 建 engine
 
         📌 同 stock_code 多个 strategy → 各自独立 engine（顺序遍历都执行）
+        📌 type='t0' → T0StrategyEngine；type='general' → StrategyEngine
         """
         try:
             with db_session() as db:
-                # list_strategies 不带 status 过滤，先全查，再筛 active
-                # 用 SQLAlchemy 直接查更清晰
                 from server.services.strategy.models import Strategy
                 strats = db.query(Strategy).filter(Strategy.status == "active").all()
                 engines = {}
                 id_map = {}
+                t0_engines = {}
                 for s in strats:
-                    eng = StrategyEngine(
-                        strategy_id=s.id,
-                        stock_code=s.stock_code,
-                        initial_params=IndicatorParams.standard(),  # v1: 标准 preset
-                    )
-                    engines[s.stock_code] = eng
-                    id_map[s.id] = eng
-                    # 灌 prev_close
+                    if s.type == "t0":
+                        from server.services.strategy.t0.engine import T0StrategyEngine
+                        from server.services.strategy.t0.models import T0StrategyParams
+                        t0_params = T0StrategyParams.from_json(s.t0_params) if s.t0_params else T0StrategyParams()
+                        eng = T0StrategyEngine(
+                            strategy_id=s.id,
+                            stock_code=s.stock_code,
+                            initial_params=t0_params,
+                        )
+                        t0_engines[s.id] = eng
+                    else:
+                        eng = StrategyEngine(
+                            strategy_id=s.id,
+                            stock_code=s.stock_code,
+                            initial_params=IndicatorParams.standard(),
+                        )
+                        engines[s.stock_code] = eng
+                        id_map[s.id] = eng
+
                     prev = self._load_prev_close(db, s.stock_code)
                     if prev is not None:
                         eng.set_prev_close(prev)
-                    log.info("quote_consumer loaded strategy id=%s stock=%s prev_close=%s",
-                             s.id, s.stock_code, prev)
+                    log.info("quote_consumer loaded strategy id=%s stock=%s type=%s prev_close=%s",
+                             s.id, s.stock_code, s.type, prev)
                 self._engines = engines
                 self._engine_id_map = id_map
+                self._t0_engines = t0_engines
         except Exception as e:
             log.exception("load_engines failed: %s", e)
 
@@ -416,28 +448,57 @@ class QuoteConsumer:
         except Exception:
             return 0
 
+    @staticmethod
+    def _get_base_volume_for_strategy(strategy_id: int) -> int:
+        """查 strategy_id 对应的 base_volume（T0 引擎用）"""
+        try:
+            with db_session() as db:
+                from server.services.strategy.models import Strategy
+                s = db.query(Strategy).filter(Strategy.id == strategy_id).first()
+                return int(s.base_volume) if s else 0
+        except Exception:
+            return 0
+
     # ── 订阅管理（v1 hqserver 不支持，仅本地字典） ──
 
-    def subscribe_strategy(self, strategy_id: int, stock_code: str) -> None:
+    def subscribe_strategy(self, strategy_id: int, stock_code: str,
+                           strategy_type: str = "general") -> None:
         """添加一个 strategy 到活跃集合（API 创建/恢复策略时调）"""
-        eng = StrategyEngine(
-            strategy_id=strategy_id,
-            stock_code=stock_code,
-            initial_params=IndicatorParams.standard(),
-        )
-        if stock_code in self._engines:
-            # 同 stock_code 多个 strategy → 顺序遍历（v1 不合并）
-            log.info("quote_consumer: stock_code=%s 已存在 engine，追加 strategy_id=%s",
-                     stock_code, strategy_id)
-        self._engines[stock_code] = eng
-        self._engine_id_map[strategy_id] = eng
+        if strategy_type == "t0":
+            from server.services.strategy.t0.engine import T0StrategyEngine
+            from server.services.strategy.t0.models import T0StrategyParams
+            eng = T0StrategyEngine(
+                strategy_id=strategy_id,
+                stock_code=stock_code,
+                initial_params=T0StrategyParams(),
+            )
+            self._t0_engines[strategy_id] = eng
+            log.info("quote_consumer: T0 subscribe strategy_id=%s stock=%s",
+                     strategy_id, stock_code)
+        else:
+            eng = StrategyEngine(
+                strategy_id=strategy_id,
+                stock_code=stock_code,
+                initial_params=IndicatorParams.standard(),
+            )
+            if stock_code in self._engines:
+                log.info("quote_consumer: stock_code=%s 已存在 engine，追加 strategy_id=%s",
+                         stock_code, strategy_id)
+            self._engines[stock_code] = eng
+            self._engine_id_map[strategy_id] = eng
 
     def unsubscribe_strategy(self, strategy_id: int) -> None:
         """从活跃集合移除（API 暂停/删除策略时调）"""
+        # 检查 T0 engines
+        t0_eng = self._t0_engines.pop(strategy_id, None)
+        if t0_eng is not None:
+            log.info("quote_consumer: T0 unsubscribe strategy_id=%s", strategy_id)
+            return
+
+        # general engines
         eng = self._engine_id_map.pop(strategy_id, None)
         if eng is None:
             return
-        # 注意：同 stock_code 多个 strategy 时只移除特定 id 的引用
         if self._engines.get(eng.stock_code) is eng:
             del self._engines[eng.stock_code]
 

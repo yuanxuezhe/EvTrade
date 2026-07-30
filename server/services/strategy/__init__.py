@@ -13,7 +13,8 @@ Public API（facade 模式）：
   grid     — 网格决策（plan_buy / plan_sell 含底仓保护 / plan_clear）
   audit    — 触发审计写入（write_audit wrapper）
   engine   — 评估入口（StrategyEngine，tick 驱动 + WS broadcast）
-  quote_consumer — 后端 WS 客户端（接 hqserver）— task 7
+  quote_consumer — 后端 WS 客户端（接 hqserver）
+  t0       — T0 日内做T策略模块（VWAP / 开盘冲跌 / 布林线）
 """
 from server.services.strategy.models import (
     Strategy,
@@ -42,6 +43,9 @@ from server.services.strategy.engine import (  # noqa: F401
 from server.services.strategy.quote_consumer import (  # noqa: F401
     QuoteConsumer, get_quote_consumer, close_quote_consumer,
 )
+from server.services.strategy.t0 import (  # noqa: F401
+    T0StrategyParams, T0StrategyEngine, T0EvaluateResult,
+)
 
 __all__ = [
     "Strategy", "StrategyRegime", "StrategyGrid", "StrategyAudit",
@@ -54,4 +58,5 @@ __all__ = [
     "write_audit",
     "StrategyEngine", "EvaluateResult", "STRATEGY_WS_CHANNEL",
     "QuoteConsumer", "get_quote_consumer", "close_quote_consumer",
+    "T0StrategyParams", "T0StrategyEngine", "T0EvaluateResult",
 ]

@@ -58,14 +58,14 @@ def _load_strategy_owned(db: Session, strategy_id: int, user: User) -> Strategy:
     return s
 
 
-async def _qc_subscribe(strategy_id: int, stock_code: str) -> None:
+async def _qc_subscribe(strategy_id: int, stock_code: str, strategy_type: str = "general") -> None:
     """best-effort subscribe to quote_consumer（仅 STRATEGY_ENGINE_ENABLED）"""
     if not settings.STRATEGY_ENGINE_ENABLED:
         return
     try:
         from server.services.strategy.quote_consumer import get_quote_consumer
         qc = await get_quote_consumer()
-        qc.subscribe_strategy(strategy_id, stock_code)
+        qc.subscribe_strategy(strategy_id, stock_code, strategy_type=strategy_type)
     except Exception as e:
         log.warning("qc subscribe failed: %s", e)
 
@@ -121,7 +121,7 @@ def register_endpoints(router):
         except Exception as e:
             db.rollback()
             raise HTTPException(status_code=400, detail={"code": "CREATE_FAILED", "msg": str(e)})
-        await _qc_subscribe(s.id, s.stock_code)
+        await _qc_subscribe(s.id, s.stock_code, s.type)
         return _load_strategy_owned(db, s.id, user)
 
     @router.get("/{strategy_id}", response_model=StrategyOut)
@@ -185,7 +185,7 @@ def register_endpoints(router):
         )
         # sync quote_consumer
         if action == "resume":
-            await _qc_subscribe(s.id, s.stock_code)
+            await _qc_subscribe(s.id, s.stock_code, s.type)
         elif action in ("pause", "stop"):
             await _qc_unsubscribe(s.id)
         db.commit()

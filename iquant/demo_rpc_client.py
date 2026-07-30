@@ -46,8 +46,12 @@ async def main():
     try:
         # 发送 5 个请求到队列1
         for i in range(1):
-            pkt = resp_pkt_ord(i)
+            
+            
+            #pkt = resp_pkt_down_hx(i)
+            pkt = resp_pkt_his_hx(i)
             print(f"  {pkt.wire_to_string()}")
+            
             
             _, wire_data = pkt.encode()
             # 发送到队列1
@@ -126,6 +130,26 @@ def resp_pkt_qry_mch(seq: int) -> MsgPacket:
     # 构建请求包
     pkt = MsgPacket(MSG_TYPE_REQUEST, "V1.0")
     pkt.set_func("qry_mch")
+    #pkt.set_value("data", f"request-{seq}")
+    pkt.finalize()
+    
+    return pkt
+    
+def resp_pkt_down_hx(seq: int) -> MsgPacket:
+    """发送请求到队列1"""
+    # 构建请求包
+    pkt = MsgPacket(MSG_TYPE_REQUEST, "V1.0")
+    pkt.set_func("down_hx")
+    #pkt.set_value("data", f"request-{seq}")
+    pkt.finalize()
+    
+    return pkt
+    
+def resp_pkt_his_hx(seq: int) -> MsgPacket:
+    """发送请求到队列1"""
+    # 构建请求包
+    pkt = MsgPacket(MSG_TYPE_REQUEST, "V1.0")
+    pkt.set_func("his_hx")
     #pkt.set_value("data", f"request-{seq}")
     pkt.finalize()
     

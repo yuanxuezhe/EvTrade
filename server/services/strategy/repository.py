@@ -18,6 +18,7 @@ from server.services.strategy.models import (
     StrategyGrid,
     StrategyAudit,
 )
+from server.services.strategy.t0.models import T0StrategyParams
 
 
 # ─────────────── Strategy CRUD ───────────────
@@ -65,10 +66,27 @@ def list_strategies(
 
 def update_strategy(db: Session, strategy: Strategy, **kwargs) -> Strategy:
     """更新策略基本信息（不修改嵌套 regimes/grids，由 caller 单独处理）"""
-    for field in ("stock_code", "type", "reference_price", "status", "base_volume", "note"):
+    for field in ("stock_code", "type", "reference_price", "status", "base_volume", "note", "t0_params"):
         if field in kwargs:
             setattr(strategy, field, kwargs[field])
     return strategy
+
+
+def save_t0_params(db: Session, strategy_id: int, params: T0StrategyParams) -> Strategy:
+    """保存 T0 策略参数到 strategy.t0_params JSON 列"""
+    s = db.query(Strategy).filter(Strategy.id == strategy_id).first()
+    if s:
+        s.t0_params = params.to_json()
+        db.flush()
+    return s
+
+
+def get_t0_params(db: Session, strategy_id: int) -> T0StrategyParams:
+    """读取 T0 策略参数（无则返默认）"""
+    s = db.query(Strategy).filter(Strategy.id == strategy_id).first()
+    if s and s.t0_params:
+        return T0StrategyParams.from_json(s.t0_params)
+    return T0StrategyParams()
 
 
 def delete_strategy(db: Session, strategy: Strategy) -> None:
