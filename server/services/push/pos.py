@@ -2,7 +2,7 @@
 push/pos.py — v118 pos_push 处理
 
 broker 端 position_callback 推送 pos_push 事件 (xtquant 协议):
-  stock_code, last_vol, vol, avl_vol, avg_price
+  stock_code, last_vol, volume, avl_amt, avg_price
 
 设计 (v118 后):
   - pos_push 是持仓数据的唯一权威源
@@ -49,21 +49,27 @@ def _fields_unchanged(existing_pos, incoming: Dict[str, Any]) -> bool:
 
 
 def handle_pos_push(db, row: Dict[str, Any], ts: str) -> Optional[Dict[str, Any]]:
-    """处理 pos_push 推送 (v118: 持仓变化直接覆盖本地)"""
+    """处理 pos_push 推送 (v118: 持仓变化直接覆盖本地)
+
+    broker wire 字段 (xtquant 协议):
+      stock_code / last_vol / volume / avl_amt / avg_price
+    与 parsers_business._parse_positions 的 rename 对齐:
+      volume → vol, avl_amt → avl_vol, avg_price → cost_price
+    """
     stock_code = _str(row.get('stock_code', ''))
     if not stock_code:
         return None
 
     last_vol = _int(row.get('last_vol', 0))
-    vol = _int(row.get('vol', 0))
-    avl_vol = _int(row.get('avl_vol', 0))
-    avg_price = _float(row.get('avg_price', 0))
+    vol = _int(row.get('volume', 0))            # broker wire: volume
+    avl_vol = _int(row.get('avl_amt', 0))       # broker wire: avl_amt
+    cost_price = _float(row.get('avg_price', 0))  # broker wire: avg_price
 
     incoming = {
         'last_vol': last_vol,
         'vol': vol,
         'avl_vol': avl_vol,
-        'cost_price': avg_price,
+        'cost_price': cost_price,
     }
 
     # 查询现有 Position
@@ -79,7 +85,7 @@ def handle_pos_push(db, row: Dict[str, Any], ts: str) -> Optional[Dict[str, Any]
             'last_vol': last_vol,
             'vol': vol,
             'avl_vol': avl_vol,
-            'cost_price': avg_price,
+            'cost_price': cost_price,
             'synced_at': _utcnow(),
             'synced_from': 'pos_push',   # v118: 标识来源
         })
@@ -94,7 +100,7 @@ def handle_pos_push(db, row: Dict[str, Any], ts: str) -> Optional[Dict[str, Any]
         'last_vol': last_vol,
         'vol': vol,
         'avl_vol': avl_vol,
-        'cost_price': avg_price,
+        'cost_price': cost_price,
         'synced_at': _utcnow(),
         'synced_from': 'pos_push',   # v118
     }, stock_code=stock_code)

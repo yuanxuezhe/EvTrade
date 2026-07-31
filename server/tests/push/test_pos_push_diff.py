@@ -76,7 +76,7 @@ def test_no_change_returns_none_and_skips_update(fake_positions):
     """REQ-PUSH-034 Scenario: pos_push 4 字段与 DB 全等 → 返回 None
 
     Given: DB 已有 {stock_code:"X", last_vol:100, vol:100, avl_vol:100, cost_price:12.5}
-    When:  broker 推 pos_push 同值
+    When:  broker 推 pos_push 同值 (broker wire 字段: volume/avl_amt/avg_price)
     Then:  handle_pos_push 返回 None
     And:   Positions.update_one 不被调用
     And:   Positions.add_one 不被调用
@@ -91,12 +91,12 @@ def test_no_change_returns_none_and_skips_update(fake_positions):
         cost_price=12.5,
     )
 
-    # act: broker 推相同快照
+    # act: broker 推相同快照 (broker wire 字段名)
     row = {
         "stock_code": "X",
         "last_vol": 100,
-        "vol": 100,
-        "avl_vol": 100,
+        "volume": 100,
+        "avl_amt": 100,
         "avg_price": 12.5,
     }
     result = handle_pos_push(db=None, row=row, ts="20260731120000")
@@ -112,8 +112,8 @@ def test_field_change_triggers_update_and_returns_position(fake_positions):
     """REQ-PUSH-034 Scenario: 字段变化 → 走 update_one + 返回 {position: ...}
 
     Given: DB 已有 {last_vol:100, vol:100, avl_vol:100, cost_price:12.5}
-    When:  broker 推 {last_vol:100, vol:200, avl_vol:150, cost_price:13.0}
-    Then:  Positions.update_one 被调用, 入参含新 4 字段
+    When:  broker 推 {volume:200, avl_amt:150, avg_price:13.0}
+    Then:  Positions.update_one 被调用, 入参含新 4 字段 (rename 为 vol/avl_vol/cost_price)
     And:   返回 dict 含 'position' key
     """
     fake_positions["store"]["X"] = _FakeRow(
@@ -128,9 +128,9 @@ def test_field_change_triggers_update_and_returns_position(fake_positions):
     row = {
         "stock_code": "X",
         "last_vol": 100,
-        "vol": 200,           # 变化
-        "avl_vol": 150,        # 变化
-        "avg_price": 13.0,    # 变化
+        "volume": 200,        # → vol=200 (变化)
+        "avl_amt": 150,       # → avl_vol=150 (变化)
+        "avg_price": 13.0,    # → cost_price=13.0 (变化)
     }
     result = handle_pos_push(db=None, row=row, ts="20260731120000")
 
@@ -149,15 +149,15 @@ def test_new_position_skips_diff_and_creates(fake_positions):
     """REQ-PUSH-034 Scenario: 新建行不走 diff, 走 add_one
 
     Given: DB 无 stock_code="X" 行
-    When:  broker 推 pos_push {stock_code:"X", ...}
-    Then:  Positions.add_one 被调用
+    When:  broker 推 pos_push {stock_code:"X", volume, avl_amt, avg_price, ...}
+    Then:  Positions.add_one 被调用, 入参含 DB-aligned 字段 (vol/avl_vol/cost_price)
     And:   返回 dict 含 'position' key
     """
     row = {
         "stock_code": "X",
         "last_vol": 100,
-        "vol": 100,
-        "avl_vol": 100,
+        "volume": 100,
+        "avl_amt": 100,
         "avg_price": 12.5,
     }
     result = handle_pos_push(db=None, row=row, ts="20260731120000")
@@ -165,13 +165,17 @@ def test_new_position_skips_diff_and_creates(fake_positions):
     assert isinstance(result, dict)
     assert "position" in result
     assert len(fake_positions["add_one_calls"]) == 1
-    assert fake_positions["add_one_calls"][0]["stock_code"] == "X"
-    assert fake_positions["add_one_calls"][0]["synced_from"] == "pos_push"
+    add_data = fake_positions["add_one_calls"][0]
+    assert add_data["stock_code"] == "X"
+    assert add_data["vol"] == 100            # volume → vol
+    assert add_data["avl_vol"] == 100        # avl_amt → avl_vol
+    assert add_data["cost_price"] == 12.5    # avg_price → cost_price
+    assert add_data["synced_from"] == "pos_push"
     assert fake_positions["update_one_calls"] == []
 
 
 def test_cost_price_only_change_triggers_update(fake_positions):
-    """4 字段任一变化都应触发更新, 这里单独测 cost_price 变化"""
+    """4 字段任一变化都应触发更新, 这里单独测 cost_price (avg_price) 变化"""
     fake_positions["store"]["X"] = _FakeRow(
         stock_code="X",
         stock_name="",
@@ -184,8 +188,8 @@ def test_cost_price_only_change_triggers_update(fake_positions):
     row = {
         "stock_code": "X",
         "last_vol": 100,
-        "vol": 100,
-        "avl_vol": 100,
+        "volume": 100,
+        "avl_amt": 100,
         "avg_price": 13.0,   # cost_price 变化, vol/avl_vol/last_vol 不变
     }
     result = handle_pos_push(db=None, row=row, ts="20260731120000")
@@ -197,10 +201,46 @@ def test_cost_price_only_change_triggers_update(fake_positions):
 
 def test_missing_stock_code_returns_none(fake_positions):
     """stock_code 缺失 → 返回 None, 不触碰 Positions"""
-    row = {"last_vol": 100, "vol": 100, "avl_vol": 100, "avg_price": 12.5}
+    row = {"last_vol": 100, "volume": 100, "avl_amt": 100, "avg_price": 12.5}
     result = handle_pos_push(db=None, row=row, ts="20260731120000")
 
     assert result is None
     assert fake_positions["query_by_calls"] == []
     assert fake_positions["add_one_calls"] == []
     assert fake_positions["update_one_calls"] == []
+
+
+def test_broker_field_rename_volume_avl_amt(fake_positions):
+    """回归: broker wire 字段 (volume/avl_amt) 必须正确 rename 到 DB 字段 (vol/avl_vol)
+
+    Bug 场景: 原 pos.py 误读 row['vol'] / row['avl_vol'], broker 实际推 'volume' / 'avl_amt',
+    导致 vol=0/avl_vol=0 永远入库, 前端持仓显示 0。
+    """
+    # arrange: DB 已有行 vol=0 (模拟历史 bug 留下的脏数据)
+    fake_positions["store"]["X"] = _FakeRow(
+        stock_code="X",
+        stock_name="",
+        last_vol=0,
+        vol=0,
+        avl_vol=0,
+        cost_price=0.0,
+    )
+
+    # act: broker 推真实持仓 (volume=200, avl_amt=180)
+    row = {
+        "stock_code": "X",
+        "last_vol": 200,
+        "volume": 200,
+        "avl_amt": 180,
+        "avg_price": 12.5,
+    }
+    result = handle_pos_push(db=None, row=row, ts="20260731120000")
+
+    # assert: 触发了 update, 入参的 vol/avl_vol 是从 broker 的 volume/avl_amt rename 来的
+    assert isinstance(result, dict)
+    assert len(fake_positions["update_one_calls"]) == 1
+    update = fake_positions["update_one_calls"][0]
+    assert update["data"]["vol"] == 200, "broker.volume 必须 rename 到 vol"
+    assert update["data"]["avl_vol"] == 180, "broker.avl_amt 必须 rename 到 avl_vol"
+    assert update["data"]["last_vol"] == 200
+    assert update["data"]["cost_price"] == 12.5
