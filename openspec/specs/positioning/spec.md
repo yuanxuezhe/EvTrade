@@ -35,6 +35,13 @@
   - `trd_cfm` 推 `order_type='23'`（买）→ `Position.vol += volume`
   - `trd_cfm` 推 `order_type='24'`（卖）→ `Position.vol -= volume`
   - 不动 `last_vol` / `avl_vol` / `cost_price`（由 day-init reconcile 兜底）
+- **pos_push** 路径（broker 主动 `position_callback` → `pos_push`，v118 引入）：
+  - handler 入口对 4 个业务字段 `{last_vol, vol, avl_vol, cost_price}` 做 diff
+  - 与 DB 现有行全等 → 返回 `None`，dispatcher 跳过 WS 广播
+  - 与 DB 现有行不等 → 走 `Positions.update_one` + broadcast `position_update`
+  - 新建行 → 走 `Positions.add_one` + broadcast（不参与 diff）
+  - `synced_from='pos_push'` 标记来源
+  - 详细契约见 `push/spec.md` REQ-PUSH-034
 - 对账路径：`do_reconcile` → `qry_positions` RPC → `_apply_broker_data` → 清空 + 批量重写 positions 表
   - **对账时全表覆盖** `last_vol` / `avl_vol` / `vol` / `cost_price`（`sync_from = 'rpc_full'`）
   - **v12 行为变化**：do_reconcile 不再写入 `today_buy` / `today_sell`（字段已删）
