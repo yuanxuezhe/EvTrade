@@ -1,7 +1,8 @@
-# coding:gbk
+# coding: gbk
 """
 ==============================================================================
-客户端 Demo（已修复连接与队列声明问题）
+Client demo: send his_hq request with configurable `fields` / `period`,
+consume all per-day replies and merge into a single pandas DataFrame.
 ==============================================================================
 """
 
@@ -16,78 +17,108 @@ MQ_USER = "guest"
 MQ_PASS = "guest"
 EXCHANGE_NAME = "quota_his.exchange"
 REQ_QUEUE = "EvTrade.Testgs.ReqHisHq"
-ANS_QUEUE = "MyClient.AnsQueue.001"  # 客户端专属接收队列
+ANS_QUEUE = "MyClient.AnsQueue.001"   # client-only answer queue
+
+# ---------------------------------------------------------------------------
+# Request knobs (tweak as needed)
+#   FIELDS : comma-separated column names; empty string = service default "close"
+#   PERIOD : tick / 1m / 5m / 15m / 30m / 1h / 1d  (must match xtquant valid set)
+# ---------------------------------------------------------------------------
+FIELDS = "open,close,volume"
+PERIOD = "1d"
+
+
+def _parse_day_payload(raw_text):
+    """Split col_header from rows, return (columns:list[str], day_df:DataFrame).
+
+    Wire format per day (returned by server):
+        <col_header>\n<row1>|<row2>|...
+    where row_i = "<stime>#<field1>#<field2>..."
+    """
+    header_line, _, body = raw_text.partition("\n")
+    columns = header_line.split(",")            # ["stime", field1, field2, ...]
+    if not body.strip():
+        return columns, pd.DataFrame(columns=columns)
+    csv_data = body.replace("|", "\n").replace("#", ",")
+    day_df = pd.read_csv(io.StringIO(csv_data), names=columns)
+    return columns, day_df
 
 
 def send_request_and_receive():
-  # 1. 建立 RabbitMQ 连接
-  credentials = pika.PlainCredentials(MQ_USER, MQ_PASS)
-  conn = pika.BlockingConnection(
-      pika.ConnectionParameters(
-          host=MQ_HOST, port=MQ_PORT, credentials=credentials, socket_timeout=5
-      )
-  )
-  channel = conn.channel()
+    # 1. RabbitMQ connection
+    credentials = pika.PlainCredentials(MQ_USER, MQ_PASS)
+    conn = pika.BlockingConnection(
+        pika.ConnectionParameters(
+            host=MQ_HOST, port=MQ_PORT, credentials=credentials, socket_timeout=5
+        )
+    )
+    channel = conn.channel()
 
-  # 【关键修复】显式声明 Exchange 和请求队列，防止服务端启动顺序不一致导致找不到 Exchange
-  channel.exchange_declare(
-      exchange=EXCHANGE_NAME, exchange_type="topic", durable=True
-  )
-  channel.queue_declare(queue=REQ_QUEUE, durable=True)
-  channel.queue_bind(
-      queue=REQ_QUEUE, exchange=EXCHANGE_NAME, routing_key=REQ_QUEUE
-  )
+    channel.exchange_declare(
+        exchange=EXCHANGE_NAME, exchange_type="topic", durable=True
+    )
+    channel.queue_declare(queue=REQ_QUEUE, durable=True)
+    channel.queue_bind(
+        queue=REQ_QUEUE, exchange=EXCHANGE_NAME, routing_key=REQ_QUEUE
+    )
+    channel.queue_declare(queue=ANS_QUEUE, durable=True)
 
-  # 声明客户端接收应答的队列
-  channel.queue_declare(queue=ANS_QUEUE, durable=True)
+    # 2. Build request packet
+    req_pkt = MsgPacket(MSG_TYPE_REQUEST)
+    req_pkt.set_func("his_hq")
 
+    req_pkt.set_headers(6, "stock_code,start_date,end_date,ans_queue,fields,period")
+    req_pkt.add_row()
+    req_pkt.set_value("stock_code", "159992.SZ")
+    req_pkt.set_value("start_date", "20220101")
+    req_pkt.set_value("end_date", "20220729")
+    req_pkt.set_value("ans_queue", ANS_QUEUE)
+    req_pkt.set_value("fields", FIELDS)
+    req_pkt.set_value("period", PERIOD)
+    req_pkt.finalize()
 
-  # 2. 构造请求包 (使用 MsgPacket)
-  req_pkt = MsgPacket(MSG_TYPE_REQUEST)
-  req_pkt.set_func("his_hq")
+    _, req_bytes = req_pkt.encode()
 
-  # RS1: 参数列表
-  req_pkt.set_headers(4, "stock_code,start_date,end_date,ans_queue")
-  req_pkt.add_row()
-  req_pkt.set_value("stock_code", "159992.SZ")
-  req_pkt.set_value("start_date", "20220101")
-  req_pkt.set_value("end_date", "20220729")
-  req_pkt.set_value("ans_queue", ANS_QUEUE)
-  req_pkt.finalize()
+    # 3. Publish request
+    channel.basic_publish(
+        exchange=EXCHANGE_NAME, routing_key=REQ_QUEUE, body=req_bytes
+    )
+    print(f"[client] request published to {REQ_QUEUE}; waiting for replies "
+          f"(fields='{FIELDS}', period='{PERIOD}')...")
 
-  _, req_bytes = req_pkt.encode()
+    # 4. Consume all per-day replies, accumulate into one DataFrame
+    merged_df = pd.DataFrame()
+    for method_frame, properties, body in channel.consume(
+        queue=ANS_QUEUE, inactivity_timeout=10
+    ):
+        if body is None:
+            print("[client] no more data (timeout).")
+            break
 
-  # 3. 发送请求
-  channel.basic_publish(
-      exchange=EXCHANGE_NAME, routing_key=REQ_QUEUE, body=req_bytes
-  )
-  print(f"[客户端] 请求已发送至 {REQ_QUEUE}，等待接收数据...")
+        raw_text = body.decode("utf-8")
+        columns, day_df = _parse_day_payload(raw_text)
+        if day_df.empty:
+            channel.basic_ack(delivery_tag=method_frame.delivery_tag)
+            continue
 
-  # 4. 循环监听应答 (接收推送的每日数据)
-  for method_frame, properties, body in channel.consume(
-      queue=ANS_QUEUE, inactivity_timeout=10
-  ):
-    if body is None:
-      print("[客户端] 超时，没有更多数据。")
-      break
+        print(f"[client] received 1 day, rows={len(day_df)}, cols={columns}")
+        merged_df = pd.concat([merged_df, day_df], ignore_index=True)
 
-    # 将收到字节解码为字符串文本
-    raw_text = body.decode("utf-8")
+        channel.basic_ack(delivery_tag=method_frame.delivery_tag)
 
-    # 解析为 Pandas DataFrame
-    csv_data = raw_text.replace("|", "\n").replace("#", ",")
-    columns = ["stime", "close"]
-    df = pd.read_csv(io.StringIO(csv_data), names=columns)
+    # 5. Final merged view
+    if not merged_df.empty:
+        # Make stime the index for nicer tabular display
+        if "stime" in merged_df.columns:
+            merged_df = merged_df.set_index("stime")
+        print(f"\n[client] merged DataFrame across all days (rows={len(merged_df)}):")
+        print(merged_df)
+    else:
+        print("[client] empty result set.")
 
-    print(f"\n[客户端] 收到当天数据 DataFrame (共 {len(df)} 行):")
-    print(df.head(len(df)))
-
-    channel.basic_ack(delivery_tag=method_frame.delivery_tag)
-
-  # 取消消费并关闭连接
-  channel.cancel()
-  conn.close()
+    channel.cancel()
+    conn.close()
 
 
 if __name__ == "__main__":
-  send_request_and_receive()
+    send_request_and_receive()

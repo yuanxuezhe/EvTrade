@@ -1,7 +1,7 @@
 #coding:gbk
 """
 ==============================================================================
-iQuant / QMT ²ßÂÔ·şÎñ£º¼«¼òÎÄ±¾Á÷Ó¦´ğÒıÇæ (ÒÑÖØ¹¹£¬ÍêÃÀ¼æÈİ±Õ»·Ïû·Ñ»úÖÆ)
+iQuant / QMT ç­–ç•¥æœåŠ¡ï¼šæç®€æ–‡æœ¬æµåº”ç­”å¼•æ“ (å·²é‡æ„ï¼Œå®Œç¾å…¼å®¹é—­ç¯æ¶ˆè´¹æœºåˆ¶)
 ==============================================================================
 """
 
@@ -15,7 +15,7 @@ from msgpacket import MsgPacket, MSG_TYPE_ANSWER
 from typing import Callable, Dict, List, Optional, Tuple, Any
 
 # ================================================================
-# 1. »ù´¡ÅäÖÃÓëÈ«¾Ö¶ÓÁĞ
+# 1. åŸºç¡€é…ç½®ä¸å…¨å±€é˜Ÿåˆ—
 # ================================================================
 class Config:
     HOST = "192.168.10.2"
@@ -30,8 +30,8 @@ class Config:
 
 config = Config()
 
-GLOBAL_REQ_QUEUE = queue.Queue()   # ÇëÇó¶ÓÁĞ (MQ Ïß³Ì -> QMT Ö÷Ïß³Ì)
-GLOBAL_ANS_QUEUE = queue.Queue()   # Ó¦´ğ¶ÓÁĞ (QMT Ö÷Ïß³Ì -> MQ Ïß³Ì) [(target_queue, bytes)]
+GLOBAL_REQ_QUEUE = queue.Queue()   # è¯·æ±‚é˜Ÿåˆ— (MQ çº¿ç¨‹ -> QMT ä¸»çº¿ç¨‹)
+GLOBAL_ANS_QUEUE = queue.Queue()   # åº”ç­”é˜Ÿåˆ— (QMT ä¸»çº¿ç¨‹ -> MQ çº¿ç¨‹) [(target_queue, bytes)]
 
 GLOBAL_STORE = {
     "mq_conn": None,
@@ -39,7 +39,7 @@ GLOBAL_STORE = {
 }
 
 # ================================================================
-# 2. Handler ×¢²áÓë·Ö·¢ÒıÇæ
+# 2. Handler æ³¨å†Œä¸åˆ†å‘å¼•æ“
 # ================================================================
 HandlerReturn = Tuple[str, str, Optional[str]]
 HandlerFunc = Callable[[Any, MsgPacket], HandlerReturn]
@@ -67,7 +67,7 @@ def handle_trade_request(context, pkt: MsgPacket) -> HandlerReturn:
         return "99999", f"Execution error: {str(e)}", None
 
 # ================================================================
-# 3. ÒµÎñ Handler: ¼«ËÙÎÄ±¾Æ´½ÓĞĞÇé (his_hq)
+# 3. ä¸šåŠ¡ Handler: æé€Ÿæ–‡æœ¬æ‹¼æ¥è¡Œæƒ… (his_hq)
 # ================================================================
 @handler("his_hq")
 def _h_his_hq(context, pkt: MsgPacket) -> HandlerReturn:
@@ -76,9 +76,11 @@ def _h_his_hq(context, pkt: MsgPacket) -> HandlerReturn:
         start_date_str = pkt.get_value_str("start_date").strip()
         end_date_str = pkt.get_value_str("end_date").strip()
         ans_queue = pkt.get_value_str("ans_queue").strip()
+        fields_str = pkt.get_value_str("fields").strip()
+        period = pkt.get_value_str("period").strip()
 
     except (ValueError, TypeError) as e:
-        print(f"²ÎÊıÀàĞÍ´íÎó: {e}")
+        print(f"å‚æ•°ç±»å‹é”™è¯¯: {e}")
 
     if not start_date_str or not stock_code or not ans_queue:
         return "10001", "Missing required parameters!", None
@@ -95,9 +97,15 @@ def _h_his_hq(context, pkt: MsgPacket) -> HandlerReturn:
     current_date = start_date
     total_days_processed = 0
 
-    print(f"[HQ Service] ¿ªÊ¼°´ÈÕ»ñÈ¡ĞĞÇé: {stock_code} ({start_date_str} ~ {end_date_str})...")
+    print(f"[HQ Service] å¼€å§‹æŒ‰æ—¥è·å–è¡Œæƒ…: {stock_code} ({start_date_str} ~ {end_date_str})...")
 
-    query_fields = ['close'] 
+    query_fields = [f.strip() for f in fields_str.split(",") if f.strip()] if fields_str else ["close"]
+    query_period = period.strip() if period else "1m"
+    if query_period not in ("tick", "1m", "5m", "15m", "30m", "1h", "1d"):
+        return "10005", f"Unsupported period: {query_period}", None
+
+    # col_header = stime + query_fields (first line of response)
+    col_header = "stime," + ",".join(query_fields) 
 
     while current_date <= end_date:
         day_str = current_date.strftime("%Y%m%d")
@@ -105,7 +113,7 @@ def _h_his_hq(context, pkt: MsgPacket) -> HandlerReturn:
         market_data = context.get_market_data_ex(
             fields=query_fields,
             stock_code=[stock_code],
-            period='1m',
+            period=query_period,
             start_time=f"{day_str}093100",
             end_time=f"{day_str}150000",
             count=-1,
@@ -131,24 +139,24 @@ def _h_his_hq(context, pkt: MsgPacket) -> HandlerReturn:
 
                 payload_str = "|".join(rows_str)
                 print(payload_str)
-                # ½«Ä¿±ê¶ÓÁĞºÍ×Ö½Ú´®ÈûÈë GLOBAL_ANS_QUEUE
-                GLOBAL_ANS_QUEUE.put((ans_queue, payload_str.encode('utf-8')))
+                # å°†ç›®æ ‡é˜Ÿåˆ—å’Œå­—èŠ‚ä¸²å¡å…¥ GLOBAL_ANS_QUEUE
+                GLOBAL_ANS_QUEUE.put((ans_queue, (col_header + '\n' + payload_str).encode('utf-8')))
                 total_days_processed += 1
-                print(f"[HQ Service] ³É¹¦ÍÆËÍ {day_str} Êı¾İÖÁ {ans_queue}£¬¹² {len(df)} ĞĞ")
+                print(f"[HQ Service] æˆåŠŸæ¨é€ {day_str} æ•°æ®è‡³ {ans_queue}ï¼Œå…± {len(df)} è¡Œ")
 
             except Exception as e:
-                print(f"[HQ Service] ´¦Àí {day_str} Êı¾İÆ´½ÓÒì³£: {e}")
+                print(f"[HQ Service] å¤„ç† {day_str} æ•°æ®æ‹¼æ¥å¼‚å¸¸: {e}")
 
         current_date += datetime.timedelta(days=1)
 
-    print(f"[HQ Service] ĞĞÇé¶ÁÈ¡Íê³É£¬¹²Í¶µİ {total_days_processed} Ìì¡£")
+    print(f"[HQ Service] è¡Œæƒ…è¯»å–å®Œæˆï¼Œå…±æŠ•é€’ {total_days_processed} å¤©ã€‚")
     return "00000", f"Success", None
 
 # ================================================================
-# 4. MQ ºËĞÄÏß³Ì (Ê¹ÓÃÄ£°åÖĞÑéÖ¤³É¹¦µÄ channel.consume Ä£Ê½)
+# 4. MQ æ ¸å¿ƒçº¿ç¨‹ (ä½¿ç”¨æ¨¡æ¿ä¸­éªŒè¯æˆåŠŸçš„ channel.consume æ¨¡å¼)
 # ================================================================
 def rabbitmq_worker(ContextInfo):
-    print(f"[MQ Ïß³Ì] ¿ªÊ¼Á¬½Ó RabbitMQ ({config.HOST}:{config.PORT})...")
+    print(f"[MQ çº¿ç¨‹] å¼€å§‹è¿æ¥ RabbitMQ ({config.HOST}:{config.PORT})...")
     conn = None
     try:
         credentials = pika.PlainCredentials(config.USER, config.PASS)
@@ -161,7 +169,7 @@ def rabbitmq_worker(ContextInfo):
 
         GLOBAL_STORE["mq_conn"] = conn
 
-        # ÉùÃ÷ Exchange ºÍ ÇëÇó Queue
+        # å£°æ˜ Exchange å’Œ è¯·æ±‚ Queue
         channel.exchange_declare(exchange=config.EXCHANGE_NAME, exchange_type='topic', durable=True)
         channel.queue_declare(queue=config.QUEUE_REQ, durable=True)
         channel.queue_bind(queue=config.QUEUE_REQ, exchange=config.EXCHANGE_NAME, routing_key=config.QUEUE_REQ)
@@ -170,12 +178,12 @@ def rabbitmq_worker(ContextInfo):
         declared_queues = set()
 
         def process_send_queue():
-            """Ë¢³ö GLOBAL_ANS_QUEUE ÖĞµÄ´ı·¢Êı¾İ²¢¶¯Ì¬Í¶µİµ½¿Í»§¶Ë¶ÓÁĞ"""
+            """åˆ·å‡º GLOBAL_ANS_QUEUE ä¸­çš„å¾…å‘æ•°æ®å¹¶åŠ¨æ€æŠ•é€’åˆ°å®¢æˆ·ç«¯é˜Ÿåˆ—"""
             while not GLOBAL_ANS_QUEUE.empty():
                 try:
                     target_queue, msg_bytes = GLOBAL_ANS_QUEUE.get_nowait()
                     if channel.is_open:
-                        # È·±£¿Í»§¶ËÄ¿±ê¶ÓÁĞ´æÔÚ
+                        # ç¡®ä¿å®¢æˆ·ç«¯ç›®æ ‡é˜Ÿåˆ—å­˜åœ¨
                         if target_queue not in declared_queues:
                             channel.queue_declare(queue=target_queue, durable=True)
                             declared_queues.add(target_queue)
@@ -188,38 +196,38 @@ def rabbitmq_worker(ContextInfo):
                 except queue.Empty:
                     break
                 except Exception as e:
-                    print(f"[MQ ·¢ËÍÒì³£]: {e}")
+                    print(f"[MQ å‘é€å¼‚å¸¸]: {e}")
 
-        print("[MQ Ïß³Ì] ¶©ÔÄ³É¹¦£¬½øÈëÊÕ·¢½»ÌæÍ¨µÀ...")
+        print("[MQ çº¿ç¨‹] è®¢é˜…æˆåŠŸï¼Œè¿›å…¥æ”¶å‘äº¤æ›¿é€šé“...")
 
-        # ºËĞÄĞŞ¸´£ºÊ¹ÓÃ consume Çı¶¯Ñ­»·£¬¼æ¹Ë½ÓÊÕÓë·¢ËÍ
+        # æ ¸å¿ƒä¿®å¤ï¼šä½¿ç”¨ consume é©±åŠ¨å¾ªç¯ï¼Œå…¼é¡¾æ¥æ”¶ä¸å‘é€
         for message_metadata, properties, body in channel.consume(queue=config.QUEUE_REQ, inactivity_timeout=0.2):
             if not getattr(ContextInfo, 'is_running', False):
-                print("[MQ Ïß³Ì] ÊÕµ½²ßÂÔÍ£Ö¹ĞÅºÅ£¬×¼±¸ÍË³öÑ­»·...")
+                print("[MQ çº¿ç¨‹] æ”¶åˆ°ç­–ç•¥åœæ­¢ä¿¡å·ï¼Œå‡†å¤‡é€€å‡ºå¾ªç¯...")
                 break
 
-            # A. ÓÅÏÈË¢³ö´ı·¢ĞĞÇéÊı¾İ
+            # A. ä¼˜å…ˆåˆ·å‡ºå¾…å‘è¡Œæƒ…æ•°æ®
             process_send_queue()
 
-            # B. ÊÕµ½ÇëÇó±¨ÎÄ£¬ÈûÈëÈ«¾ÖÇëÇó¶ÓÁĞ
+            # B. æ”¶åˆ°è¯·æ±‚æŠ¥æ–‡ï¼Œå¡å…¥å…¨å±€è¯·æ±‚é˜Ÿåˆ—
             if body is not None:
                 GLOBAL_REQ_QUEUE.put(body)
                 channel.basic_ack(delivery_tag=message_metadata.delivery_tag)
 
     except pika.exceptions.AMQPConnectionError:
-        print("[MQ Ïß³Ì] Socket Á¬½ÓÒÑ±»Ö÷³ÌĞòÖ÷¶¯¹ØÍ££¬Ïß³Ì´ò¶Ï³É¹¦¡£")
+        print("[MQ çº¿ç¨‹] Socket è¿æ¥å·²è¢«ä¸»ç¨‹åºä¸»åŠ¨å…³åœï¼Œçº¿ç¨‹æ‰“æ–­æˆåŠŸã€‚")
     except Exception as e:
-        print(f"[MQ Ïß³ÌÒì³£]: {e}")
+        print(f"[MQ çº¿ç¨‹å¼‚å¸¸]: {e}")
     finally:
         GLOBAL_STORE["mq_conn"] = None
-        print("[MQ Ïß³Ì] ÒÑÍêÈ«ÍË³ö²¢Ïú»Ù£¡")
+        print("[MQ çº¿ç¨‹] å·²å®Œå…¨é€€å‡ºå¹¶é”€æ¯ï¼")
 
 # ================================================================
-# 5. QMT ²ßÂÔÉúÃüÖÜÆÚ & runtime ¶¨Ê±Æ÷
+# 5. QMT ç­–ç•¥ç”Ÿå‘½å‘¨æœŸ & runtime å®šæ—¶å™¨
 # ================================================================
 def init(ContextInfo):
     print("==================================================")
-    print("iQuant ÀúÊ·ĞĞÇé¼«ËÙ·şÎñÒıÇæÆô¶¯...")
+    print("iQuant å†å²è¡Œæƒ…æé€ŸæœåŠ¡å¼•æ“å¯åŠ¨...")
     print("==================================================")
     ContextInfo.is_running = True
     ContextInfo.set_account(config.ACCOUNT_ID)
@@ -242,11 +250,11 @@ def check_and_process(ContextInfo):
         except queue.Empty:
             break
         except Exception as e:
-            print(f"[runtime ´¦ÀíÒì³£]: {e}")
+            print(f"[runtime å¤„ç†å¼‚å¸¸]: {e}")
 
 def stop(ContextInfo):
     print("\n==================================================")
-    print("ÊÕµ½Í£Ö¹Ö¸Áî£¬¿ªÊ¼¹ØÍ£ĞĞÇé·şÎñ...")
+    print("æ”¶åˆ°åœæ­¢æŒ‡ä»¤ï¼Œå¼€å§‹å…³åœè¡Œæƒ…æœåŠ¡...")
     print("==================================================")
     ContextInfo.is_running = False
 
@@ -269,5 +277,5 @@ def stop(ContextInfo):
         try: GLOBAL_ANS_QUEUE.get_nowait()
         except: break
 
-    print("ĞĞÇé·şÎñÇåÀíÍê±Ï£¬³É¹¦Í£Ö¹¡£")
+    print("è¡Œæƒ…æœåŠ¡æ¸…ç†å®Œæ¯•ï¼ŒæˆåŠŸåœæ­¢ã€‚")
 
