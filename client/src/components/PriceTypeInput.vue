@@ -276,17 +276,18 @@ function onPriceBlur() {
     width: 100%;
 }
 
-/* 右 select: 清左半圆角 (左 input 接管), 与 scp-tag-box 视觉一致: padding 1px 11px + 背景 rgb(248,250,252) + min-height 33px */
+/* 右 select: 清左半圆角 (左 input 接管), 与 scp-tag-box 视觉一致: padding 1px 11px + 背景 var(--bg-soft) + min-height 33px */
 .pti-el-select :deep(.el-select__wrapper) {
     border-top-left-radius: 0 !important;
     border-bottom-left-radius: 0 !important;
     border-top-right-radius: var(--el-border-radius-base, 8px) !important;
     border-bottom-right-radius: var(--el-border-radius-base, 8px) !important;
-    box-shadow: 0 0 0 1px rgb(232, 237, 245) inset !important;
+    box-shadow: 0 0 0 1px var(--border-base) inset !important;
     font-size: 13px !important;
     line-height: 30px;
     padding: 1px 11px !important; /* v28-14: 与左 input padding 同, 高度对齐 */
-    background: rgb(248, 250, 252) !important; /* v28-14: 与左 input 背景同色 */
+    /* v115: 改走 var(--bg-soft), 暗色模式下不再死白 (与表格斑马纹 --bg-soft 对齐) */
+    background: var(--bg-soft) !important;
     min-height: 33px !important; /* v33.1: 与左 input 等高 */
     box-sizing: border-box !important;
     align-items: center !important; /* 文字垂直居中 */
