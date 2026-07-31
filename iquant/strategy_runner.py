@@ -1,161 +1,299 @@
-# coding: gbk
-"""
-strategy_runner.py -- TongDaXin 1m 周期交易策略实现.
-
-通达信原公式 (TF1=26, TF2=89):
-  UP1     := EMA(H, TF1)
-  DW1     := EMA(L, TF1)
-  F1_1    := C > O AND (O > UP1 OR C < DW1)              ; 多头突破
-  F2_1    := C < O AND (O < DW1 OR C > UP1)              ; 空头突破
-  COND1_1 := UP1 > REF(UP1, 1) AND DW1 > REF(DW1, 1)     ; 双线齐升
-  COND1_2 := UP1 < REF(UP1, 1) AND DW1 < REF(DW1, 1)     ; 双线齐降
-
-BUY  条件: F1_1 AND NOT(COND1_2)   ; 多头突破 + 趋势非下行
-SELL 条件: F2_1 AND COND1_2        ; 空头突破 + 趋势下行
-入场价:  当前 bar close.
-
-实现要点:
-  - 增量 EMA (alpha = 2 / (N + 1), 首条 seed 为其自身)
-    等价于 pandas.ewm(span=N, adjust=False).mean().
-  - 缓存前一 bar UP1/DW1 用于 REF 对比.
-  - warmup 等到 bar_count > TF2 才发信号 (默认 TF2=89, 让 EMA 稳定 + 留够 prev).
-  - 缺 high/low/open/close 任一字段, 静默跳过.
-
-用法 (与 quota_his_test.send_request_and_consume 配套):
-    strat = make_strategy_runner()             # TF1=26, TF2=89
-    send_request_and_consume(on_quote=strat)   # 每根 bar 评估 + 入信号列表
-    for s in strat.get_signals():
-        print(s["stime"], s["side"], s["price"], s["trend"])
-"""
-
-from typing import Callable
-
-
-def make_strategy_runner(tf1: int = 26, tf2: int = 89) -> Callable:
-    """返回 on_quote callback, 每根 bar 评估 BUY/SELL 并入栈.
-
-    Args:
-        tf1: EMA 周期 (通达信原公式 TF1). 默认 26.
-        tf2: warmup bar 数 (bar_count > TF2 才发信号). 默认 89.
-
-    Returns:
-        Callable 与 send_request_and_consume 的 on_quote 签名一致.
-        附加方法:
-          - get_signals() -> list[dict]
-                每条: {stime, side, price, trend, up1, dw1}
-                side 取值 'BUY' / 'SELL'; trend: rising / falling / mixed
-          - get_state() -> dict
-                {bar_count, signals_count, tf1, tf2, up1, dw1}
-    """
-    alpha = 2.0 / (tf1 + 1)
-    ema_up = ema_dw = 0.0
-    up_seeded = dw_seeded = False
-    prev_up = prev_dw = None
-    state = {"bar_count": 0, "signals": []}
-
-    def _to_f(s):
-        try:
-            return float(s)
-        except (TypeError, ValueError):
-            return None
-
-    def _on_quote(columns, row):
-        nonlocal ema_up, ema_dw, up_seeded, dw_seeded, prev_up, prev_dw
-        state["bar_count"] += 1
-
-        h, l, o, c = (_to_f(row.get(k)) for k in ("high", "low", "open", "close"))
-        if None in (h, l, o, c):
-            return
-        stime = row.get("stime", "?")
-
-        # 增量 EMA: 首条 seed = 第一根 bar
-        if not up_seeded:
-            ema_up = h
-            up_seeded = True
-        else:
-            ema_up = alpha * h + (1.0 - alpha) * ema_up
-        if not dw_seeded:
-            ema_dw = l
-            dw_seeded = True
-        else:
-            ema_dw = alpha * l + (1.0 - alpha) * ema_dw
-
-        # warmup: bar_count > TF2 + 已有 prev_xxx 用于 REF 对比
-        ready = state["bar_count"] > tf2 and prev_up is not None
-        if ready:
-            f1 = (c > o) and ((o > ema_up) or (c < ema_dw))
-            f2 = (c < o) and ((o < ema_dw) or (c > ema_up))
-            cond1_1 = (ema_up > prev_up) and (ema_dw > prev_dw)
-            cond1_2 = (ema_up < prev_up) and (ema_dw < prev_dw)
-
-            # BUY 优先, SELL 次之 (同 bar 不重复触发)
-            if f1 and not cond1_2:
-                trend = "rising" if cond1_1 else "mixed"
-                state["signals"].append({
-                    "stime": stime, "side": "BUY", "price": c,
-                    "trend": trend,
-                    "up1": round(ema_up, 4), "dw1": round(ema_dw, 4),
-                })
-            elif f2 and cond1_2:
-                state["signals"].append({
-                    "stime": stime, "side": "SELL", "price": c,
-                    "trend": "falling",
-                    "up1": round(ema_up, 4), "dw1": round(ema_dw, 4),
-                })
-
-        prev_up, prev_dw = ema_up, ema_dw
-
-    _on_quote.get_signals = lambda: list(state["signals"])
-    _on_quote.get_state = lambda: {
-        "bar_count": state["bar_count"],
-        "signals_count": len(state["signals"]),
-        "tf1": tf1, "tf2": tf2,
-        "up1": ema_up, "dw1": ema_dw,
-    }
-    return _on_quote
-
-
-# ---------------------------------------------------------------------------
-# 离线 smoke: 92 bar 序列 (90 阴跌 + 1 强阴线 + 1 跳空阳线), 期望产生 1 SELL + 1 BUY.
-# 不依赖 AMQP, 仅用列表驱动 callback.
-# ---------------------------------------------------------------------------
-if __name__ == "__main__":
-    cols = ["stime", "open", "high", "low", "close"]
-
-    def _bar(stime, o, h, l, c):
-        return {"stime": stime, "open": str(o), "high": str(h),
-                "low": str(l), "close": str(c)}
-
-    def _stime(idx):
-        """idx=0 -> 09:30:00, 之后每 bar 加 1 分钟."""
-        total = 30 + idx
-        return "20260701" + str(9 + total // 60).zfill(2) \
-               + str(total % 60).zfill(2) + "00"
-
-    rows = []
-    # 90 根缓慢阴跌: UP1 / DW1 同步下行 (形成 COND1_2 趋势)
-    for i in range(90):
-        base = 1.200 - i * 0.001
-        rows.append(_bar(_stime(i), base, base + 0.005,
-                         base - 0.005, base))
-    # bar 91: 强阴线 (O=1.115 > DW1, C=1.085 << DW1 跌破下轨)
-    rows.append(_bar(_stime(90), 1.115, 1.118, 1.080, 1.085))
-    # bar 92: 跳空阳线 (O=1.150 > UP1 跳空, C=1.190 收高)
-    rows.append(_bar(_stime(91), 1.150, 1.200, 1.100, 1.190))
-
-    cb = make_strategy_runner()
-    for r in rows:
-        cb(cols, r)
-
-    state = cb.get_state()
-    sigs = cb.get_signals()
-    print("[smoke] bars=" + str(state["bar_count"]) +
-          "  tf1=" + str(state["tf1"]) +
-          "  tf2=" + str(state["tf2"]) +
-          "  up1=" + format(state["up1"], ".4f") +
-          "  dw1=" + format(state["dw1"], ".4f"))
-    print("[smoke] signals=" + str(len(sigs)))
-    for s in sigs:
-        print("  " + s["stime"] + "  " + s["side"].ljust(4) +
-              "  price=" + format(s["price"], ".4f").rjust(8) +
-              "  trend=" + s["trend"])
+# coding: gbk
+"""
+strategy_runner.py -- 黄金短线打法 (PDF 优化版)
+
+参考: iquant/指标投资应用四：黄金的短线打法实盘作业.pdf
+
+落地的 PDF 关键规则:
+1. 顺势入场: 慢线 EMA(C, slow) 作为大周期趋势代理 (PDF 中 30 分钟级别),
+   只在顺势方向开仓 (价站上慢线 -> 多; 踩下慢线 -> 空).
+2. 锤子形态 (hammer, 比 TongDaXin 原 F1_1/F2_1 更严):
+   - 阳线锤子: C>O 且 下影 >= 1.5*body 且 上影 < body
+   - 阴线锤子: C<O 且 上影 >= 1.5*body 且 下影 < body
+   - 叠加 TongDaXin 通道突破 (O > UP1 OR C < DW1 等).
+   - 实体 / bar 范围 <= 0.40 才算锤子 (PDF "你要 2:3 位置").
+3. 严格止损: 入场后每 bar 检查
+   - long: low <= stop_price -> STOP 出场 (含 PnL)
+   - short: high >= stop_price -> STOP 出场
+   阳线上 TF 上曲折价 (高于入场价 1%) -> TP 出场.
+   PDF "不要等回本, 走到止损位走".
+4. 仓位状态机: idle / long / short.
+   持仓期间不开新仓 (简化 PDF "加仓到 2 lot" 步骤).
+5. 复盘记录: 每次 ENTRY / STOP / TP 都记录到 events, 末尾一次性打印,
+   含 PnL (只在 STOP / TP 里).
+
+TongDaXin 原公式:
+  UP1 = EMA(H, tf1=26)
+  DW1 = EMA(L, tf1=26)
+仍保留, 用于锤子形态中的 "通道突破" 判定.
+但入场判定升级为 "锤子 + 顺势" 组合.
+
+事件 schema (与 quota_his_test 集成):
+  {
+    "event":  "ENTRY"|"STOP"|"TP",
+    "stime":  "20260701110000",
+    "side":   "BUY"|"SELL",      # 订单方向 (BUY=开多/平空, SELL=开空/平多)
+    "price":  float,              # 成交价
+    "trend":  "rising"|"falling",
+    "stop":   float,              # ENTRY 才有
+    "tp":     float,              # ENTRY 才有
+    "atr":    float,              # ENTRY 才有
+    "slow":   float,              # ENTRY 才有 (慢线 EMA 当时值)
+    "pnl":    float,              # STOP/TP 才有 (实现亏损)
+    "up1":    float,
+    "dw1":    float,
+  }
+"""
+
+from typing import Callable
+
+
+class _EMA:
+    """增量 EMA: alpha = 2/(N+1), 首条 seed 为其自身."""
+    __slots__ = ("alpha", "value", "seeded")
+
+    def __init__(self, period: int) -> None:
+        self.alpha = 2.0 / (period + 1)
+        self.value = 0.0
+        self.seeded = False
+
+    def update(self, x: float) -> float:
+        if not self.seeded:
+            self.value = x
+            self.seeded = True
+        else:
+            self.value = self.alpha * x + (1.0 - self.alpha) * self.value
+        return self.value
+
+
+class _ATR:
+    """SMA ATR: 维护最近 N 个 TR, 取均值. 简单稳定, 超参 RMA ATR 不多于 PDF 需求."""
+    __slots__ = ("period", "trs", "prev_close", "value")
+
+    def __init__(self, period: int) -> None:
+        self.period = period
+        self.trs = []
+        self.prev_close = None
+        self.value = 0.0
+
+    def update(self, h, l, c):
+        if self.prev_close is None:
+            tr = h - l
+        else:
+            tr = max(h - l, abs(h - self.prev_close), abs(l - self.prev_close))
+        self.trs.append(tr)
+        if len(self.trs) > self.period:
+            self.trs.pop(0)
+        if self.trs:
+            self.value = sum(self.trs) / len(self.trs)
+        self.prev_close = c
+        return self.value
+
+
+def _f(s):
+    try:
+        return float(s)
+    except (TypeError, ValueError):
+        return None
+
+
+def _is_hammer(c, o, h, l, side):
+    """锤子形态: 小实体 + 长单边影线."""
+    body = abs(c - o)
+    bar = h - l
+    if bar <= 0 or body / bar > 0.40:
+        return False
+    lower = min(c, o) - l
+    upper = h - max(c, o)
+    if side == "bull":
+        return (c > o) and (lower >= 1.5 * body) and (upper < body)
+    return (c < o) and (upper >= 1.5 * body) and (lower < body)
+
+
+def make_strategy_runner(
+    tf1: int = 26,
+    slow: int = 89,
+    atr_period: int = 14,
+    stop_atr: float = 1.5,
+    tp_pct: float = 0.01,
+) -> Callable:
+    """PDF 黄金短线打法的 on_quote 回调实现.
+
+    Args:
+        tf1: 通道 EMA 周期 (H/L). Default 26.
+        slow: 慢线 EMA 顺势过滤 (C). Default 89.
+        atr_period: ATR 周期. Default 14.
+        stop_atr: 止损距 = stop_atr * ATR. Default 1.5.
+        tp_pct: 止盈百分比. Default 1% (0.01).
+
+    Returns:
+        on_quote callback. 附加方法:
+          - get_events() / get_signals() -> list[event dict]
+                (get_signals 是 get_events 的别名, 兼容旧 API)
+          - get_state() -> dict
+    """
+    ema_h = _EMA(tf1)
+    ema_l = _EMA(tf1)
+    ema_slow = _EMA(slow)
+    atr = _ATR(atr_period)
+
+    state = {
+        "bar_count": 0,
+        "events": [],
+        "pos": "idle",
+        "entry_price": 0.0,
+        "stop_price": 0.0,
+        "tp_price": 0.0,
+        "qty": 0,
+        "last_atr": 0.0,
+        "last_slow": 0.0,
+    }
+
+    def _on_quote(columns, row):
+        h, l, o, c = (_f(row.get(k)) for k in ("high", "low", "open", "close"))
+        if None in (h, l, o, c):
+            return
+        stime = row.get("stime", "?")
+        state["bar_count"] += 1
+
+        up1 = ema_h.update(h)
+        dw1 = ema_l.update(l)
+        esl = ema_slow.update(c)
+        tr_atr = atr.update(h, l, c)
+        state["last_atr"] = tr_atr
+        state["last_slow"] = esl
+
+        # warmup: bar_count 超过 slow + atr_period 才发信号
+        if state["bar_count"] < slow + atr_period or tr_atr <= 0:
+            return
+
+        # === 持仓: 检查 stop / TP ===
+        pos = state["pos"]
+        if pos == "long":
+            if l <= state["stop_price"]:
+                _emit_close("STOP", stime, "long", state["stop_price"])
+                return
+            if h >= state["tp_price"]:
+                _emit_close("TP", stime, "long", state["tp_price"])
+                return
+        elif pos == "short":
+            if h >= state["stop_price"]:
+                _emit_close("STOP", stime, "short", state["stop_price"])
+                return
+            if l <= state["tp_price"]:
+                _emit_close("TP", stime, "short", state["tp_price"])
+                return
+
+        # === 仓位不为 idle 不重开 (简化) ===
+        if state["pos"] != "idle":
+            return
+
+        # TongDaXin 通道突破 (原 F1_1 / F2_1)
+        bull_break = (c > o) and ((o > up1) or (c < dw1))
+        bear_break = (c < o) and ((o < dw1) or (c > up1))
+        # 锤子形态 + 顺势 (价站上慢线 = 多顺势; 踩下慢线 = 空顺势)
+        bull_hammer = bull_break and _is_hammer(c, o, h, l, "bull")
+        bear_hammer = bear_break and _is_hammer(c, o, h, l, "bear")
+        trend_up = c > esl
+        trend_dn = c < esl
+
+        if bull_hammer and trend_up:
+            _enter("long", c, stime, tr_atr, up1, dw1, esl)
+        elif bear_hammer and trend_dn:
+            _enter("short", c, stime, tr_atr, up1, dw1, esl)
+
+    def _enter(side, price, stime, atr_val, up1, dw1, esl):
+        state["pos"] = side
+        state["entry_price"] = price
+        state["qty"] = 1
+        if side == "long":
+            state["stop_price"] = price - stop_atr * atr_val
+            state["tp_price"] = price * (1 + tp_pct)
+        else:
+            state["stop_price"] = price + stop_atr * atr_val
+            state["tp_price"] = price * (1 - tp_pct)
+        state["events"].append({
+            "event": "ENTRY",
+            "stime": stime,
+            "side": "BUY" if side == "long" else "SELL",
+            "price": price,
+            "trend": "rising" if side == "long" else "falling",
+            "stop": round(state["stop_price"], 4),
+            "tp": round(state["tp_price"], 4),
+            "atr": round(atr_val, 4),
+            "slow": round(esl, 4),
+            "up1": round(up1, 4),
+            "dw1": round(dw1, 4),
+        })
+
+    def _emit_close(event_kind, stime, side, fill_price):
+        if side == "long":
+            pnl = (fill_price - state["entry_price"]) * state["qty"]
+        else:
+            pnl = (state["entry_price"] - fill_price) * state["qty"]
+        state["events"].append({
+            "event": event_kind,
+            "stime": stime,
+            "side": "BUY" if side == "short" else "SELL",  # 出场方向与开仓反
+            "price": fill_price,
+            "trend": "rising" if side == "long" else "falling",
+            "pnl": round(pnl, 4),
+            "up1": round(ema_h.value, 4),
+            "dw1": round(ema_l.value, 4),
+        })
+        state["pos"] = "idle"
+        state["entry_price"] = 0.0
+        state["stop_price"] = 0.0
+        state["tp_price"] = 0.0
+        state["qty"] = 0
+
+    _on_quote.get_events = lambda: list(state["events"])
+    _on_quote.get_signals = _on_quote.get_events  # 兼容旧 API
+    _on_quote.get_state = lambda: dict(state, tf1=tf1, slow=slow,
+                                         atr_period=atr_period,
+                                         stop_atr=stop_atr,
+                                         tp_pct=tp_pct)
+    return _on_quote
+
+
+# ---------------------------------------------------------------------------
+# 离线 smoke: 验证 hammer + trend + stop + TP 主路径
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    cols = ["stime", "open", "high", "low", "close"]
+
+    def _bar(t, o, h, l, c):
+        return {"stime": t, "open": str(o), "high": str(h),
+                "low": str(l), "close": str(c)}
+
+    def _stime(idx):
+        t = 30 + idx
+        return "20260701" + str(9 + t // 60).zfill(2) + str(t % 60).zfill(2) + "00"
+
+    rows = []
+    # warmup need: slow=89 + atr_period=14 = 103 bars. 留 150 bar 充分稳化 EMA.
+    for i in range(150):
+        base = 1.20 + i * 0.0001
+        rows.append(_bar(_stime(i), base, base + 0.005, base - 0.005, base))
+    # bar 151: bullish hammer + gap-up over UP1
+    # 150 bar 后 up1 ≈ EMA(H,26) ≈ 1.215, esl ≈ EMA(C,89) ≈ 1.213
+    # O=1.2210 > up1=1.215 (gap up), H=1.2240, L=1.2070, C=1.2235
+    #   body=0.0025, bar=0.0170, body/bar=14.7% < 40% ok
+    #   lower=min(O,C)-L=1.2210-1.2070=0.0140, 1.5*body=0.00375, lower >> body ok
+    #   upper=H-max(O,C)=1.2240-1.2235=0.0005, upper < body ok
+    #   bull_break: c>o YES; o>up1 YES (1.221 > 1.215)
+    #   trend_up: c=1.2235 > esl  ok
+    rows.append(_bar(_stime(150), 1.2210, 1.2240, 1.2070, 1.2235))
+    # bar 152: 顺势上拉, 不到 TP (entry=1.2235, tp=1.2235*1.01=1.2358)
+    rows.append(_bar(_stime(151), 1.2240, 1.2330, 1.2220, 1.2310))
+    # bar 153: 到达 TP. H=1.2380 >= 1.2358  -> TP 触发
+    rows.append(_bar(_stime(152), 1.2315, 1.2380, 1.2310, 1.2360))
+
+    cb = make_strategy_runner()
+    for r in rows:
+        cb(cols, r)
+
+    print("[smoke] " + str(cb.get_state()["bar_count"]) + " bars, " +
+          str(len(cb.get_events())) + " events, pos=" + cb.get_state()["pos"])
+    for e in cb.get_events():
+        print("  " + str(e))

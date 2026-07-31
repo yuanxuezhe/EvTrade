@@ -253,27 +253,42 @@ if __name__ == "__main__":
 
     print()
 
-    # === TongDaXin 1m 策略触发 (同一份行情流上 chain) ===
+    # === PDF 黄金短线策略 事件流 (同一份行情 chain) ===
     sigs = strat.get_signals()
     st = strat.get_state()
-    buys = sum(1 for s in sigs if s["side"] == "BUY")
-    sells = sum(1 for s in sigs if s["side"] == "SELL")
+    entries_buy = sum(1 for s in sigs if s["event"] == "ENTRY" and s["side"] == "BUY")
+    entries_sell = sum(1 for s in sigs if s["event"] == "ENTRY" and s["side"] == "SELL")
+    stops = sum(1 for s in sigs if s["event"] == "STOP")
+    tps = sum(1 for s in sigs if s["event"] == "TP")
+    realized_pnl = sum(s.get("pnl", 0) for s in sigs if s["event"] in ("STOP", "TP"))
     print()
     print("[strategy TF1=" + str(st["tf1"]) +
-          " TF2=" + str(st["tf2"]) +
+          " slow=" + str(st["slow"]) +
+          " ATR=" + str(st["atr_period"]) +
           " bars=" + str(st["bar_count"]) +
-          " signals=" + str(len(sigs)) +
-          " (BUY=" + str(buys) + " SELL=" + str(sells) + ")]")
+          " events=" + str(len(sigs)) +
+          " ENTRY_L=" + str(entries_buy) +
+          " ENTRY_S=" + str(entries_sell) +
+          " STOP=" + str(stops) +
+          " TP=" + str(tps) +
+          " pnl=" + format(realized_pnl, ".4f") + "]")
     if sigs:
-        print("  stime            side   price   trend    up1     dw1")
+        print("  event  stime             side  price     stop       tp        pnl       up1     dw1")
         for s in sigs:
-            print("  " + s["stime"] +
+            stop_s = format(s.get("stop", 0), ".4f")
+            tp_s = format(s.get("tp", 0), ".4f")
+            pnl_s = format(s.get("pnl", 0), ".4f")
+            print("  " + s["event"].ljust(6) +
+                  " " + s["stime"] +
                   "  " + s["side"].ljust(4) +
-                  "  " + format(s["price"], ".4f").rjust(7) +
-                  "  " + s["trend"].ljust(7) +
+                  " " + format(s["price"], ".4f").rjust(7) +
+                  "  " + stop_s.rjust(8) +
+                  "  " + tp_s.rjust(8) +
+                  "  " + pnl_s.rjust(8) +
                   "  " + format(s["up1"], ".4f").rjust(6) +
                   "  " + format(s["dw1"], ".4f").rjust(6))
-        print("=" * 70)
+    
+    print("=" * 70)
     final_df = handler.get_df()
     print("Final collected DataFrame (rows=" + str(len(final_df)) + "):")
     if not final_df.empty:
