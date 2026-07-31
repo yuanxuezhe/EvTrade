@@ -25,7 +25,8 @@ from server.utils.time import format_db_dt
 from server.auth.security import (
     verify_password, hash_password, create_access_token, ACCESS_TOKEN_EXPIRE_MINUTES
 )
-from server.auth.deps import get_current_user
+from server.auth import session  # REQ-AUTH-IDLE-001: 登录注册到 token cache, logout 撤销
+from server.auth.deps import get_current_user, oauth2_scheme
 
 router = APIRouter()
 
@@ -126,6 +127,8 @@ async def login(
     user.update(Users, id=user.id)
 
     token = create_access_token({"sub": str(user.id), "role": user.role})
+    # REQ-AUTH-IDLE-001: token 注册到 session cache (10min idle + restart 失效)
+    session.register_token(token, user_id=user.id, role=user.role)
     user_dict = _row_to_user_dict(user)
     # v_next: 系统级开关 — 关掉后首次登录不再强制改密
     from server.services.sysconfig import get
@@ -199,6 +202,17 @@ async def change_password(
 
 
 @router.post("/logout")
-def logout(current_user=Depends(get_current_user)):
-    """Stateless JWT — client just discards the token. Endpoint kept for audit."""
+def logout(
+    current_user=Depends(get_current_user),
+    token: Optional[str] = Depends(oauth2_scheme),
+):
+    """Logout: 主动撤销 server session cache 中的 token (立即失效)。
+
+    REQ-AUTH-IDLE-001: 即便前端 localStorage 还在, 后端 cache 已无该 token,
+    下次请求 deps.get_current_user 会返 401, 前端 axios 拦截器自动跳 /login。
+
+    兼容: 若 token 为 None (header 缺失), 仍然返 success=True (审计用)
+    """
+    if token:
+        session.revoke(token)
     return {"success": True}

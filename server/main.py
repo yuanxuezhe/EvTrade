@@ -16,6 +16,7 @@ main.py — FastAPI app 入口（phase-2 拆分后）
 """
 import logging
 import os
+import asyncio
 from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -195,6 +196,41 @@ async def on_shutdown_quote_consumer():
             await _quote_cache_flusher_task
         except Exception as e:
             print(f"[SHUTDOWN] quote cache flusher cancel: {e}")
+
+
+# ---- REQ-AUTH-IDLE-001 (2026-07-31): token session cache 后台 sweep ----
+_auth_sweep_task = None  # type: ignore[var-annotated]
+
+
+@app.on_event("startup")
+async def on_startup_auth_sweep():
+    """启动 session cache 后台 sweep 协程 (清理 10min idle 过期的 token)。
+
+    后端重启 → cache 清零 → 所有 token 立即失效 (用户期望行为)。
+    sweep 每 60s 跑一次, 控制内存增长。
+    """
+    global _auth_sweep_task
+    if os.environ.get("PYTEST_CURRENT_TEST"):
+        print("[INIT] pytest mode: skip auth session sweep")
+        return
+    try:
+        from server.auth.session import sweep_loop
+        _auth_sweep_task = asyncio.ensure_future(sweep_loop())
+        print("[INIT] auth session sweep task started")
+    except Exception as e:
+        print(f"[INIT] auth sweep failed to start: {e}")
+
+
+@app.on_event("shutdown")
+async def on_shutdown_auth_sweep():
+    """停止 auth session sweep 协程。"""
+    global _auth_sweep_task
+    if _auth_sweep_task is not None and not _auth_sweep_task.done():
+        _auth_sweep_task.cancel()
+        try:
+            await _auth_sweep_task
+        except Exception as e:
+            print(f"[SHUTDOWN] auth sweep cancel: {e}")
 
 
 # ---- Public routes ------------------------------------------------------
