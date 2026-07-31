@@ -16,12 +16,14 @@ from datetime import datetime
 import aio_pika
 from aio_pika import ExchangeType, Message
 
-from msgpacket import MsgPacket, MSG_TYPE_REQUEST, MSG_TYPE_PUSH
+from msgpacket import MsgPacket, MSG_TYPE_REQUEST
 
 
 RABBITMQ_URL = "amqp://192.168.10.2:5672/"
 EXCHANGE_NAME = "msgpacket.exchange"
-QUEUE_REQ = "EvTrade.Testgs.Push"       # 队列1：接收请求（客户端→API）
+QUEUE_REQ = "EvTrade.Test.Req"       # 队列1：接收请求（客户端→API）
+QUEUE_REPLY = "EvTrade.Test.Reply"   # 队列2：返回应答（API→客户端）
+QUEUE_PUSH = "EvTrade.Test.Push"     # 队列3：主动推送（API→客户端）
 
 
 async def main():
@@ -34,20 +36,22 @@ async def main():
         EXCHANGE_NAME, ExchangeType.TOPIC, durable=True,
     )
     await channel.declare_queue(QUEUE_REQ, durable=True)
+    reply_queue = await channel.declare_queue(QUEUE_REPLY, durable=True)
+    push_queue = await channel.declare_queue(QUEUE_PUSH, durable=True)
+    print(f"[Client] Connected, request -> [{QUEUE_REQ}], reply from [{QUEUE_REPLY}]")
 
- 
+    # 启动回复监听协程
+    reply_task = asyncio.ensure_future(listen_replies(reply_queue))
+    push_task = asyncio.ensure_future(listen_pushs(push_queue))
     try:
         # 发送 5 个请求到队列1
         for i in range(1):
             
             
-            
-            pkt = resp_pkt_ord_push(i)
-            
-            
-            
-            
+            #pkt = resp_pkt_down_hx(i)
+            pkt = resp_pkt_his_hx(i)
             print(f"  {pkt.wire_to_string()}")
+            
             
             _, wire_data = pkt.encode()
             # 发送到队列1
@@ -62,6 +66,8 @@ async def main():
         print("\n[Client] Interrupted")
     finally:
         await asyncio.sleep(10)  # 等待最后一批回复到达
+        reply_task.cancel()
+        push_task.cancel()
         await conn.close()
         print("[Client] Closed")
 
@@ -129,41 +135,22 @@ def resp_pkt_qry_mch(seq: int) -> MsgPacket:
     
     return pkt
     
-def resp_pkt_ord_push(seq: int) -> MsgPacket:
+def resp_pkt_down_hx(seq: int) -> MsgPacket:
     """发送请求到队列1"""
     # 构建请求包
-    pkt = MsgPacket(MSG_TYPE_PUSH, "V1.0")
-    pkt.set_func("ord_cfm")
-    pkt.set_headers(10, "order_id,stock_code,order_status,order_volume,traded_volume,price,traded_price, strategy_name,remark,order_time")
-    pkt.add_row()
-    pkt.set_value("order_id", "4343423")
-    pkt.set_value("stock_code", "000001.SZ")
-    pkt.set_value("order_status", "56")
-    pkt.set_value("order_volume", "100")
-    pkt.set_value("traded_volume", "100")
-    pkt.set_value("price", "11.12")
-    pkt.set_value("traded_price", "12.23")
-    pkt.set_value("strategy_name", "evev") 
-    pkt.set_value("remark", "10000032")
-    pkt.set_value("order_time", "1991")
+    pkt = MsgPacket(MSG_TYPE_REQUEST, "V1.0")
+    pkt.set_func("down_hx")
+    #pkt.set_value("data", f"request-{seq}")
     pkt.finalize()
     
     return pkt
     
-#PUSH:C6036399D84B40A297FCAE51622CA627#V1.0#####TP20260723133946236#trd_cfm##traded_id<ESC>_stock_code<ESC>_traded_volume<ESC>_traded_price<ESC>_strategy_name<ESC>_remark<ESC>\319257804013639<ESC>_000001.SZ<ESC>_100<ESC>_11.03<ESC>_<ESC>_10000028
-def resp_pkt_match_push(seq: int) -> MsgPacket:
+def resp_pkt_his_hx(seq: int) -> MsgPacket:
     """发送请求到队列1"""
     # 构建请求包
-    pkt = MsgPacket(MSG_TYPE_PUSH, "V1.0")
-    pkt.set_func("trd_cfm")
-    pkt.set_headers(6, "traded_id,stock_code,traded_volume,traded_price,strategy_name,remark")
-    pkt.add_row()
-    pkt.set_value("traded_id", "2323232")
-    pkt.set_value("stock_code", "000001.SZ")
-    pkt.set_value("traded_volume", "100")
-    pkt.set_value("traded_price", "12.23")
-    pkt.set_value("strategy_name", "ysysysys")
-    pkt.set_value("remark", f"10000032")
+    pkt = MsgPacket(MSG_TYPE_REQUEST, "V1.0")
+    pkt.set_func("his_hx")
+    #pkt.set_value("data", f"request-{seq}")
     pkt.finalize()
     
     return pkt
