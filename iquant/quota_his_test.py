@@ -23,6 +23,9 @@ from msgpacket import MSG_TYPE_REQUEST, MsgPacket
 import pandas as pd
 import pika
 
+# TongDaXin 1m 策略 (同目录 module, 直接 import)
+from strategy_runner import make_strategy_runner
+
 MQ_HOST = "192.168.10.2"
 MQ_PORT = 5672
 MQ_USER = "guest"
@@ -229,6 +232,14 @@ def make_demo_collector(verbose=True):
     return _on_quote
 
 
+def _chain_callbacks(*cbs):
+    """把多个 on_quote 串成一个 (复用同一份行情流). 各 cb state 独立."""
+    def _on_quote(columns, row):
+        for cb in cbs:
+            cb(columns, row)
+    return _on_quote
+
+
 if __name__ == "__main__":
     print("=" * 70)
     print("his_hq streaming demo — " + STOCK_CODE + " " + START_DATE + "~" + END_DATE +
@@ -236,10 +247,33 @@ if __name__ == "__main__":
     print("=" * 70)
 
     handler = make_demo_collector(verbose=True)
-    total = send_request_and_consume(on_quote=handler, verbose=True)
+    strat = make_strategy_runner()
+    cb = _chain_callbacks(handler, strat)
+    total = send_request_and_consume(on_quote=cb, verbose=True)
 
     print()
-    print("=" * 70)
+
+    # === TongDaXin 1m 策略触发 (同一份行情流上 chain) ===
+    sigs = strat.get_signals()
+    st = strat.get_state()
+    buys = sum(1 for s in sigs if s["side"] == "BUY")
+    sells = sum(1 for s in sigs if s["side"] == "SELL")
+    print()
+    print("[strategy TF1=" + str(st["tf1"]) +
+          " TF2=" + str(st["tf2"]) +
+          " bars=" + str(st["bar_count"]) +
+          " signals=" + str(len(sigs)) +
+          " (BUY=" + str(buys) + " SELL=" + str(sells) + ")]")
+    if sigs:
+        print("  stime            side   price   trend    up1     dw1")
+        for s in sigs:
+            print("  " + s["stime"] +
+                  "  " + s["side"].ljust(4) +
+                  "  " + format(s["price"], ".4f").rjust(7) +
+                  "  " + s["trend"].ljust(7) +
+                  "  " + format(s["up1"], ".4f").rjust(6) +
+                  "  " + format(s["dw1"], ".4f").rjust(6))
+        print("=" * 70)
     final_df = handler.get_df()
     print("Final collected DataFrame (rows=" + str(len(final_df)) + "):")
     if not final_df.empty:
