@@ -1,9 +1,11 @@
 <!--
   HistoryOrders.vue — 历史委托视图（v12 + v13 预设 chip + 强制历史范围）
 
-  数据源：api.getOrders({ startDate, endDate, stockCode }) 局部查询
-  不走 Pinia（历史数据非"实时"语义）
-  不入 IDB（页面切换后下次进来重新拉）
+  数据源（v114 修订）：前端 IDB 全量缓存 (loadAllOrders) + trd_date 区间过滤
+    - 不走后端 RPC（避免重复拉）
+    - 不依赖 Pinia（holdingsStore.orders 不稳, 易空）
+    - 数据由 ws push (ord_cfm/trd_cfm → saveOrder) + 启动期 _saveAfterBootstrap 写入 IDB
+    - 启动后由 holdings_bootstrap._tryIDBFirst 命中回填, 此处复用同一份 IDB
 
   v13 修订:
     - 加 4 个预设 chip (昨日 / 最近三天 / 最近一周 / 最近一个月), 点击即查 (不含今日)
@@ -190,23 +192,23 @@
 import { computed, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Search, Refresh, Download } from '@element-plus/icons-vue'
-import { api } from '../api'
 import { formatMoney, formatAmount, formatNumber, STATUS_LABEL } from '../utils/format'
 import { formatPrice } from '../composables/usePricePrecision'
 import { stockName } from '../utils/stockNames'
 import { COL } from '../utils/tableColumns'
 import OrderStatusBadge from '../components/OrderStatusBadge.vue'
 import { shiftDateStr } from '../utils/date'
+import { loadAllOrders } from '../stores/holdings_idb'
 
 /**
- * 历史委托视图（v12 + v13 trade-page-redesign-v2）
+ * 历史委托视图（v12 + v13 trade-page-redesign-v2 + v114 IDB 直查）
  *
- * 数据契约（spec/orders-trades-history-query.md）：
- * - 数据源：api.getOrders({ startDate, endDate, stockCode }) 局部 HTTP 查询
- * - 不走 Pinia holdings（历史数据非"实时"语义）
- * - 不入 IDB（页面切换后下次进来重新拉）
- * - 前端校验 startDate <= endDate（按钮 disabled + alert）
- * - 排序：服务端 ORDER BY order_time DESC
+ * 数据契约（spec/orders-trades-history-query.md, v114 修订）：
+ * - 数据源：IDB 全量缓存 (loadAllOrders) + 前端 trd_date 区间过滤
+ * - 不走 RPC（避免重复拉，也避免后端分页/筛选接口再维护一份）
+ * - 不依赖 Pinia（Pinia 在启动期未走通 RPC 回填路径时为空, 易让用户误以为"查不到"）
+ * - 数据来源 = ws push (saveOrder, fire-and-forget) + 启动期 _saveAfterBootstrap 一次性写
+ * - 启动时 holdings_bootstrap._tryIDBFirst 已命中回填过一次, 此 view 复用同一份 IDB
  *
  * v13 修订:
  * - onMounted 留空 (无默认查询, 用户主动选 chip 或 picker)
@@ -295,24 +297,25 @@ async function runQuery() {
   const [startDate, endDate] = dateRange.value
   loading.value = true
   try {
-    // v113: 改走 holdingsStore.orders 全量缓存 + 前端 trd_date 区间过滤
-    //   不再独立 RPC 拉 (避免 IDB/RPC 双源漂移, 与 startup cache 一致)
-    const opts = { startDate, endDate }
-    if (stockCode.value) opts.stockCode = stockCode.value
-    // 后端 filter 缺失的场景: 用前端缓存过滤 (start_date <= trd_date <= end_date)
-    const all = holdingsStore.orders || []
+    // v114: 直接读 IDB 全量缓存, 不走 RPC, 不依赖 Pinia
+    //   IDB 已由 ws push (saveOrder) + bootstrap 写回, 此 view 复用同一份
+    const all = (await loadAllOrders()) || []
+    const stockCodeFilter = stockCode.value || ''
     const inRange = all.filter((o) => {
       const td = String(o.trd_date || '')
       if (td < startDate || td > endDate) return false
-      if (opts.stockCode && o.stock_code !== opts.stockCode) return false
+      if (stockCodeFilter && o.stock_code !== stockCodeFilter) return false
       return true
     })
+    // 排序: order_time DESC (历史委托主排序键, 与后端默认顺序一致)
+    inRange.sort((a, b) => String(b.order_time || '').localeCompare(String(a.order_time || '')))
     results.value = inRange
     hasQueried.value = true
     page.value = 1  // 重新分页
   } catch (e) {
-    // 错误已由 axios 拦截器统一弹 ElMessage.error
     results.value = []
+    // eslint-disable-next-line no-console
+    console.error('[HistoryOrders] IDB 查询失败:', e?.message || e)
   } finally {
     loading.value = false
   }

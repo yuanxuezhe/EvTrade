@@ -1,9 +1,11 @@
 <!--
   HistoryTrades.vue — 历史成交通视图（v12 + v13 预设 chip + 强制历史范围）
 
-  数据源：api.getTrades({ startDate, endDate, stockCode }) 局部查询
-  不走 Pinia（历史数据非"实时"语义）
-  不入 IDB（页面切换后下次进来重新拉）
+  数据源（v114 修订）：前端 IDB 全量缓存 (loadAllTrades) + trd_date 区间过滤
+    - 不走后端 RPC（避免重复拉）
+    - 不依赖 Pinia（holdingsStore.trades 不稳, 易空）
+    - 数据由 ws push (trd_cfm → saveTrade) + 启动期 _saveAfterBootstrap 写入 IDB
+    - 启动后由 holdings_bootstrap._tryIDBFirst 命中回填, 此处复用同一份 IDB
 
   v13 修订: 同 HistoryOrders.vue — 加 4 个预设 chip, picker 禁 today+, onMounted 留空
 -->
@@ -161,17 +163,19 @@
 import { computed, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Search, Refresh, Download } from '@element-plus/icons-vue'
-import { api } from '../api'
 import { formatMoney, formatNumber } from '../utils/format'
 import { formatPrice } from '../composables/usePricePrecision'
 import { stockName } from '../utils/stockNames'
 import { COL } from '../utils/tableColumns'
 import { shiftDateStr } from '../utils/date'
+import { loadAllTrades } from '../stores/holdings_idb'
 
 /**
- * 历史成交通视图（v12 + v13 trade-page-redesign-v2）
+ * 历史成交通视图（v12 + v13 trade-page-redesign-v2 + v114 IDB 直查）
  *
- * 数据契约: 同 HistoryOrders (v13 修订: 加 4 chip, picker 禁 today+, onMounted 留空)
+ * 数据契约: 同 HistoryOrders (v114 修订)
+ *   - 数据源：IDB 全量缓存 (loadAllTrades) + 前端 trd_date 区间过滤
+ *   - 不走 RPC / 不依赖 Pinia
  */
 const PRESETS = [
   { label: '昨日',     startOffset: -1,  endOffset: -1,  tooltip: '查询昨天 1 天（不含今日）' },
@@ -242,22 +246,25 @@ async function runQuery() {
   const [startDate, endDate] = dateRange.value
   loading.value = true
   try {
-    // v113: 改走 holdingsStore.trades 全量缓存 + 前端 trd_date 区间过滤
-    //   不再独立 RPC 拉 (与 startup cache 一致, 统一单一可信源)
-    const opts = { startDate, endDate }
-    if (stockCode.value) opts.stockCode = stockCode.value
-    const all = holdingsStore.trades || []
+    // v114: 直接读 IDB 全量缓存, 不走 RPC, 不依赖 Pinia
+    //   IDB 已由 ws push (saveTrade) + bootstrap 写回, 此 view 复用同一份
+    const all = (await loadAllTrades()) || []
+    const stockCodeFilter = stockCode.value || ''
     const inRange = all.filter((t) => {
       const td = String(t.trd_date || '')
       if (td < startDate || td > endDate) return false
-      if (opts.stockCode && t.stock_code !== opts.stockCode) return false
+      if (stockCodeFilter && t.stock_code !== stockCodeFilter) return false
       return true
     })
+    // 排序: trade_time DESC (历史成交主排序键)
+    inRange.sort((a, b) => String(b.trade_time || '').localeCompare(String(a.trade_time || '')))
     results.value = inRange
     hasQueried.value = true
     page.value = 1
   } catch (e) {
     results.value = []
+    // eslint-disable-next-line no-console
+    console.error('[HistoryTrades] IDB 查询失败:', e?.message || e)
   } finally {
     loading.value = false
   }
