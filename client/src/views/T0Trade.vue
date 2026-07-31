@@ -51,8 +51,8 @@
       <span class="t0-config-label">做T配置:</span>
       <!-- 模式一: 按比例 (el-radio-group 二选一, 互斥单选) -->
       <el-radio-group v-model="globalMode" size="small">
-        <el-radio-button label="pct">按比例</el-radio-button>
-        <el-radio-button label="qty">按数量</el-radio-button>
+        <el-radio-button value="pct">按比例</el-radio-button>
+        <el-radio-button value="qty">按数量</el-radio-button>
       </el-radio-group>
       <!-- 输入框按模式条件显隐 + 单位提示 -->
       <!-- change 2026-07-27-v109-mode-toggle: 输入框按模式条件显隐 + 单位提示 (两个分支各自独立 v-if, 不用 v-else 防中间被截断) -->
