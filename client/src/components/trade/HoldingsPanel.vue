@@ -269,7 +269,8 @@ function formatPercent(v) {
   cursor: pointer;
 }
 :deep(.hp-row-dblclick .el-table__row:hover > td.el-table__cell) {
-  background-color: var(--el-color-primary-light-9, #ecf5ff) !important;
+  /* v115: 改走 var(--bg-hover), 暗色模式不再刺眼 (与委托表 hover 同源变量, 风格统一) */
+  background-color: var(--bg-hover) !important;
 }
 .hp-count {
   font-size: 12px;
