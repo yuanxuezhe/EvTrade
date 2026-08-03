@@ -14,6 +14,9 @@ const HistoryTrades = () => import('../views/HistoryTrades.vue')
 const AlgoStrategy = () => import('../views/AlgoStrategy.vue')
 const TStrategy = () => import('../views/TStrategy.vue')
 const StrategyTrade = () => import('../views/StrategyTrade.vue')
+// script-strategy change: 前端编写 Python 脚本 + 回测 + 实盘
+const ScriptDev = () => import('../views/ScriptDev.vue')
+const ScriptTask = () => import('../views/ScriptTask.vue')
 const Users = () => import('../views/Users.vue')
 const Profile = () => import('../views/Profile.vue')
 const SystemInit = () => import('../views/SystemInit.vue')
@@ -58,6 +61,9 @@ const routes = [
   { path: '/t-strategy', name: 'TStrategy', component: TStrategy, meta: { title: '策略做T' } },
   // change strategy_trade task 12: 策略交易视图（trader + admin 可访问）
   { path: '/strategy-trade', name: 'StrategyTrade', component: StrategyTrade, meta: { title: '策略交易', requiresTrader: true } },
+  // script-strategy change: 2 个新页面
+  { path: '/script-dev', name: 'ScriptDev', component: ScriptDev, meta: { title: '策略开发', requiresTrader: true } },
+  { path: '/script-task', name: 'ScriptTask', component: ScriptTask, meta: { title: '策略交易(脚本)', requiresTrader: true } },
   // change strategy_trade task 12: 旧 /algo-strategy 占位页 → 新 /strategy-trade
   //   AlgoStrategy.vue 保留 (其他 view 可能引用), 但路由重定向
   { path: '/algo-strategy', redirect: '/strategy-trade' },

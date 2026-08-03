@@ -1,11 +1,10 @@
 """
-server/tables/strategy_audit.py — 自动生成 (v80.2 tables-codegen skill)
+server/tables/strategy_audit.py — 自动生成 (tables-codegen skill)
 
 表: `strategy_audit`  (13 字段, 主键: ['id'])
 描述: MySQL table `strategy_audit`
 
-⚠️ 不要手动修改本文件 — 任何字段/主键变更请重新跑 scripts/gen_tables.py
-   (skill: evtrade-table-codegen)
+⚠️ 不要手动修改本文件 — 任何字段/主键变更请重新跑 tables-codegen
 """
 from datetime import datetime
 from server.tables.base import TableBase, Row
@@ -15,12 +14,13 @@ from typing import Any, ClassVar, Tuple
 class StrategyAudit(TableBase):
     """MySQL table `strategy_audit`
 
-    自动生成于 v80.2 架构调整, 继承 TableBase 获得 5 个标准方法:
-      - query_one(**pk)            按主键查单行 → Row | None
-      - add_one(data: dict)        INSERT 一行 → Row
-      - update_one(data, **pk)     按主键 UPDATE → Row
-      - delete_one(**pk)           按主键 DELETE → bool
-      - query_all(order, page, page_size)  分页查询 → List[Row]
+    自动生成，继承 TableBase 获得标准方法:
+      - query_one(**pk)              按主键查单行 → Row | None
+      - upsert_one(data, **pk)       INSERT OR UPDATE（统一写入入口）
+      - delete_one(**pk)             按主键 DELETE → bool
+      - query_all(order)             全表查询 → List[Row]
+      - query_by(field, value)       单字段过滤
+      - query_by_fields(filters)     多字段 AND 过滤
 
     主键: ['id']
     """

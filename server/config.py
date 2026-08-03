@@ -100,10 +100,27 @@ class Settings:
     API_PORT: int = _env_int("EVTRADE_API_PORT", 8001)
 
     # ---- Strategy engine (change strategy_trade task 7) ----
-    # 灰度开关：false 时 quote_consumer 不启动，strategy REST API 返 503
+    # 灰度开关: STRATEGY_ENGINE_ENABLED=0 (默认) 时 quote_consumer 不启动,
+    # strategy REST API 返 503; 设 1 才启用
     STRATEGY_ENGINE_ENABLED: bool = _env_int("STRATEGY_ENGINE_ENABLED", 0) == 1
-    # hqserver WS 地址（hq/hqserver.py 默认监听 8765）
+    # hqserver WS 地址(hq/hqserver.py 默认监听 8765)
     HQ_WS_URL: str = _env("HQ_WS_URL", "ws://127.0.0.1:8765")
+
+    # ---- Historical K-line data (server/strategy/runtime/his_hq.py) ----
+    # 拉历史 K 线走独立 RabbitMQ 通道(同 broker, 不同 exchange/queue)
+    # 默认值兼容 iquant demo (quota_his.exchange + EvTrade.Test.ReqHisHq)
+    # 如 broker 端实际队列名是 EvTrade.Testgs.ReqHisHq (少一个点),
+    # 通过 EVTRADE_HIS_HQ_REQ_QUEUE 覆盖即可
+    HIS_HQ_RABBITMQ_URL: str = _env("EVTRADE_HIS_HQ_RABBITMQ_URL", "amqp://192.168.10.2:5672/")
+    HIS_HQ_EXCHANGE_NAME: str = _env("EVTRADE_HIS_HQ_EXCHANGE_NAME", "quota_his.exchange")
+    HIS_HQ_REQ_QUEUE: str = _env("EVTRADE_HIS_HQ_REQ_QUEUE", "EvTrade.Test.ReqHisHq")
+    HIS_HQ_TIMEOUT: float = _env_float("EVTRADE_HIS_HQ_TIMEOUT", 30.0)
+    # broker 凭据 (默认 guest/guest, 生产应改)
+    HIS_HQ_USER: str = _env("EVTRADE_HIS_HQ_USER", "guest")
+    HIS_HQ_PASSWORD: str = _env("EVTRADE_HIS_HQ_PASSWORD", "guest")
+    # broker 不响应时是否启用 demo 数据源 (用于本地体验完整回测流程)
+    # 1=启用, 0=不启用 (broker 没数据直接 failed)
+    HIS_HQ_FALLBACK_DEMO: bool = _env_int("EVTRADE_HIS_HQ_FALLBACK_DEMO", 0) == 1
 
     # ---- Quote cache（2026-07-10 quote-cache） ----
     # 内存 cache 周期性 flush 到 MySQL 的间隔（秒）。默认 60s，最小 5s。

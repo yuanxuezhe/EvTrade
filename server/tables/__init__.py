@@ -5,12 +5,7 @@ server/tables/__init__.py — 统一导出所有表类 (v80.2 自动生成)
 """
 
 from server.tables.base import (
-    TableBase,
-    Row,
-    get_conn,
-    transaction,        # v80.9: 事务 context manager
-    aggregate,          # v80.9: SUM/COUNT/AVG/MAX/MIN 聚合
-    scalar_query,       # v80.9: 单值查询
+    TableBase, Row, get_engine, get_conn, transaction, aggregate, scalar_query, exec_sql,
 )  # noqa: F401
 
 from server.tables.assets import Assets  # noqa: F401
@@ -24,6 +19,9 @@ from server.tables.strategy import Strategy  # noqa: F401
 from server.tables.strategy_audit import StrategyAudit  # noqa: F401
 from server.tables.strategy_grid import StrategyGrid  # noqa: F401
 from server.tables.strategy_regime import StrategyRegime  # noqa: F401
+from server.tables.strategy_script import StrategyScript  # noqa: F401
+from server.tables.strategy_script_audit import StrategyScriptAudit  # noqa: F401
+from server.tables.strategy_task import StrategyTask  # noqa: F401
 from server.tables.sys_config import SysConfig  # noqa: F401
 from server.tables.sys_status import SysStatus  # noqa: F401
 from server.tables.t0_tasks import T0Tasks  # noqa: F401

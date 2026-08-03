@@ -307,6 +307,11 @@ export const userApi = {
 export { strategyApi } from './strategy'
 
 // ============================================================
+// 脚本策略 API (script-strategy change): 前端编写 Python 脚本 + 回测 + 实盘
+// ============================================================
+export { scriptStrategyApi } from './script_strategy'
+
+// ============================================================
 // WebSocket（保留）
 // ============================================================
 export function createWSConnection(channel = 'order_update') {

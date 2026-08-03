@@ -41,5 +41,5 @@ def rollback(engine):
 
 
 if __name__ == "__main__":
-    from server.infra.db import get_engine
-    migrate(get_engine())
+    from server.infra.db import engine
+    migrate(engine)
