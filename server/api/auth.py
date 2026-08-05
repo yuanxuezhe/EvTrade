@@ -201,6 +201,27 @@ async def change_password(
     return {"success": True, "message": "密码修改成功"}
 
 
+@router.post("/heartbeat")
+def heartbeat(current_user=Depends(get_current_user)):
+    """token keepalive: 前端每 N 分钟调用一次, 重置 last_seen_at
+
+    REQ-AUTH-IDLE-001 (2026-08-04 追加):
+    - idle 超 10min token 失效
+    - 前端静止时如不发请求, token 会过期
+    - 解决: 前端每 5 分钟调一次 /heartbeat, 让 token touch
+    - get_current_user 内部已经 is_valid + touch, 这里只需返 OK
+    """
+    from server.auth.session import IDLE_TIMEOUT_SECONDS
+    user_id = getattr(current_user, "id", None)
+    if user_id is None and isinstance(current_user, dict):
+        user_id = current_user.get("id")
+    return {
+        "ok": True,
+        "idle_timeout_seconds": IDLE_TIMEOUT_SECONDS,
+        "user_id": user_id,
+    }
+
+
 @router.post("/logout")
 def logout(
     current_user=Depends(get_current_user),
