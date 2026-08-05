@@ -137,6 +137,30 @@ class _BacktestTradingFacade:
         ctx = self._ctx
         _validate_order(stock_code, side, price, volume)
 
+        # v10+ 风控检查 (risk_checker 放在 ctx 上, 由 BacktestEngine 注入)
+        risk = ctx.get("_risk_checker")
+        if risk is not None:
+            current_pos = ctx["sim_positions"].get(stock_code, 0)
+            current_cash = ctx["sim_cash"]
+            # 持仓市值 (回测模式: 用当前 bar 的 close 或下单价)
+            mark_price = price if price > 0 else 0
+            pos_value = current_pos * mark_price
+            trd_date = ctx.get("current_trd_date", "")
+            ok, reason = risk.check_before_order(
+                side=side, price=price, qty=volume,
+                current_position=current_pos, current_cash=current_cash,
+                current_position_value=pos_value, trd_date=trd_date,
+            )
+            if not ok:
+                # 风控拒绝: 写 signal WARN, 不抛异常 (脚本继续跑)
+                signals = ctx.get("signals")
+                if signals is not None:
+                    signals.record(type_="WARN", msg=f"风控拒单: {reason}")
+                ctx.setdefault("risk_rejected", []).append({"reason": reason, "side": side, "price": price, "volume": volume})
+                log.warning("[risk] 拒单: %s", reason)
+                return ""  # 返空 order_no (脚本可判断)
+            risk.record_trade(trd_date)
+
         # 计算成交 (T+1 简化: 立即成交, 立即持仓变化)
         positions = ctx["sim_positions"]
         cash = ctx["sim_cash"]

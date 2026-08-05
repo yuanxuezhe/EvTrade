@@ -85,6 +85,8 @@ class BacktestEngine:
         verbose: bool = True,
         audit_enabled: bool = True,
         on_progress: Optional[Callable[[int, int], None]] = None,
+        indicator_cache: Optional[Any] = None,  # v10+: 外部传入共享 cache
+        risk_config: Optional[Dict[str, Any]] = None,  # v10+: 风控配置
     ) -> None:
         self.script_code = script_code
         self.params = params
@@ -97,12 +99,18 @@ class BacktestEngine:
         self.audit_enabled = audit_enabled
         self.on_progress = on_progress
 
+        # v10+ 加速: bars 转 pandas DataFrame (一次, 后续指标走向量化)
+        # IndicatorCache 跨 combo 共享 (相同 field+period 复用 Series)
+        from server.strategy.runtime.fast_data import bars_to_df, IndicatorCache
+        self._bars_df = bars_to_df(bars)
+        self._indicator_cache = indicator_cache if indicator_cache is not None else IndicatorCache()
+
         self.ctx: Dict[str, Any] = {
             "mode": "backtest",
             "symbol": stock_code,
             "period": period,
             "params": params,
-            "bars": [],
+            "bars": [],   # 兼容用户脚本 ctx['bars'] (list, 旧路径)
             "lib": None,
             "sim_cash": initial_cash,
             "sim_initial_cash": initial_cash,
@@ -112,9 +120,18 @@ class BacktestEngine:
             "counter": 0,
             "current_trd_date": "",
             "state": {},
+            # v10+ 加速路径标识 (sandbox 检测后走 fast MA/EMA/REF)
+            "_bars_df": self._bars_df,
+            "_indicator_cache": self._indicator_cache,
+            "_current_bar_idx": None,
         }
         self._facade = make_trading_facade(self.ctx)
         self.ctx["lib"] = self._facade
+        # v10+: 注入风控守卫 (放在 ctx['_risk_checker'], doorder 检查)
+        if risk_config is not None:
+            from server.strategy.runtime.risk import RiskChecker
+            self._risk_checker = RiskChecker(risk_config, initial_cash=initial_cash)
+            self.ctx["_risk_checker"] = self._risk_checker
 
     def run(self) -> BacktestResult:
         """执行回测 (sync, 在线程池跑)"""
@@ -177,6 +194,7 @@ class BacktestEngine:
             self.ctx["current_trd_date"] = bar_stime[:8]
             self.ctx["bar"] = bar
             self.ctx["bar_idx"] = i
+            self.ctx["_current_bar_idx"] = i  # v10+: fast MA/EMA/REF 用
 
             signals._current_bar_idx = i
             signals._current_stime = bar_stime
@@ -198,6 +216,20 @@ class BacktestEngine:
             mark_price = bar.get("close", 0) or 0
             equity = self.ctx["sim_cash"] + pos * mark_price
             equity_curve.append({"stime": bar_stime, "equity": equity})
+
+            # v10+: max_drawdown 检查 (每根 bar 跑, 触阈值记 WARN signal)
+            if hasattr(self, "_risk_checker"):
+                pnl = equity - self.ctx["sim_initial_cash"]
+                ok, reason = self._risk_checker.check_max_drawdown(pnl)
+                if not ok:
+                    signals.record(type_="WARN", msg=f"风控强平: {reason}")
+                    _log("risk_liquidate", reason)
+                    # 自动平仓 (清掉持仓, 释放现金)
+                    if pos != 0:
+                        self.ctx["sim_cash"] += pos * mark_price
+                        self.ctx["sim_positions"][self.stock_code] = 0
+                        signals.record(type_="INFO", msg=f"风控强平: 已平仓 {pos}股 @ {mark_price}")
+                    # 不 return, 让本 bar 后续逻辑正常完成
 
             progress_log.append({
                 "bar_idx": i,
@@ -408,6 +440,7 @@ def run_grid_backtest(
     task_id: Optional[int] = None,
     verbose: bool = False,  # grid 模式默认不打 (组合多, log 爆炸)
     on_progress: Optional[Callable[[int, int, BacktestResult, Dict[str, Any]], None]] = None,
+    indicator_cache: Optional[Any] = None,  # v10+: 跨 combo 共享 cache
 ) -> Dict[str, Any]:
     """参数组合批量回测
 
@@ -419,11 +452,16 @@ def run_grid_backtest(
         sort_by: 'pnl_pct' / 'pnl' / 'sharpe'
         task_id: 关联日志 (默认 verbose=False 不每根打, 防止组合爆炸)
         on_progress: 每组完成回调
+        indicator_cache: v10+ 跨 combo 共享 IndicatorCache (相同 MA5/MA10/MA20 复用 Series)
 
     Returns:
         dict: {best_params, best_result, all_results, combinations}
     """
     from server.strategy.runtime.grid import expand_params
+    from server.strategy.runtime.fast_data import IndicatorCache
+
+    if indicator_cache is None:
+        indicator_cache = IndicatorCache()  # grid 默认自建一个, 内部所有 combo 共享
 
     combinations = expand_params(params_schema)
     all_results: List[Dict[str, Any]] = []
@@ -433,12 +471,30 @@ def run_grid_backtest(
 
     for idx, params in enumerate(combinations):
         log.info("grid task=%s combo %d/%d params=%s", task_id, idx + 1, len(combinations), params)
-        engine = BacktestEngine(
-            script_code=script_code, params=params, bars=bars,
-            stock_code=stock_code, initial_cash=initial_cash, period=period,
-            task_id=task_id, verbose=verbose,
-        )
-        result = engine.run()
+        try:
+            engine = BacktestEngine(
+                script_code=script_code, params=params, bars=bars,
+                stock_code=stock_code, initial_cash=initial_cash, period=period,
+                task_id=task_id, verbose=verbose,
+                indicator_cache=indicator_cache,  # v10+: 共享 cache
+            )
+            result = engine.run()
+        except Exception as e:
+            # v91.3: 单个 combo 抛异常不让整个 grid 中断, 标记该 combo failed 继续跑
+            log.exception("grid task=%s combo %d 抛异常 (跳过, 标记 failed): %s", task_id, idx + 1, e)
+            from server.strategy.runtime.backtest import BacktestResult
+            result = BacktestResult(
+                pnl=0.0, pnl_pct=0.0, win_rate=0.0,
+                trades_count=0, final_position=0, final_cash=initial_cash,
+                equity_curve=[], trades=[], error=f"combo_exception: {e}",
+            )
+            # 立即写 progress (让前端看到 combo 推进 + 错误)
+            if on_progress:
+                try:
+                    on_progress(idx + 1, len(combinations), result, params)
+                except Exception:
+                    pass
+            continue
         entry = {"params": params, "result": result.to_dict()}
         all_results.append(entry)
         if best is None or result.to_dict().get(sort_by, -1e18) > best["result"].get(sort_by, -1e18):
