@@ -610,12 +610,15 @@ class TableBase:
         full_data = dict(data)
         for k, v in pk_dict.items():
             full_data.setdefault(k, v)
-        # 跳过 _ 内部字段 + AUTO_INCREMENT (让 DB 生成)
+        # 跳过 _ 内部字段
         out_data = {}
+        # 如果是 UPSERT (pk_dict 已指定), 必须把 PK 列加进去, 否则 INSERT 时 MySQL
+        # 会自增生成新 id, 导致 UPSERT 退化成 INSERT 新行 (而非 UPDATE 已有行)
+        skip_auto_inc = not pk_dict
         for k, v in full_data.items():
             if k.startswith('_'):
                 continue
-            if cls.__auto_increment_pk__ and k == cls.__auto_increment_pk__:
+            if skip_auto_inc and cls.__auto_increment_pk__ and k == cls.__auto_increment_pk__:
                 continue
             out_data[k] = v
         # 自动填 NOT NULL 无 default 列 (与 add_one 同模式)
