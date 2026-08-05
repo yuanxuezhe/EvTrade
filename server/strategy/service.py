@@ -10,13 +10,13 @@ server/strategy/service.py — script + task 业务服务层
 """
 from __future__ import annotations
 
-import asyncio
+import asyncio as _asyncio
 import json
 import logging
 import time
 import threading
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from server.strategy.runtime import (
     run_grid_backtest, start_live_runner, stop_live_runner,
@@ -51,20 +51,36 @@ def _json_loads(v: Any, default=None):
 def list_scripts(
     user_id: int, is_admin: bool = False,
     name: Optional[str] = None, status: Optional[str] = None,
+    only_mine: bool = False,
 ) -> List[Dict[str, Any]]:
-    """列脚本 (admin 看所有, 用户只看自己)
+    """列脚本 (admin 看所有, 用户看自己的 + 公开的)
 
     Args:
         name: 模糊匹配 name (前端搜索框用)
         status: 过滤 (active/archived)
+        only_mine: True 时只列自己的 (前端"我的脚本" tab)
     """
     from server.tables import StrategyScript
     if is_admin:
         rows = StrategyScript.query_all(order="desc")
-    else:
+    elif only_mine:
         rows = StrategyScript.query_by_fields({"user_id": user_id})
-        # query_by_fields 不支持排序, 简单 Python 端排序
-        rows.sort(key=lambda r: getattr(r, "_data", {}).get("id", 0), reverse=True)
+        rows.sort(key=lambda r: getattr(r, "_data", {}).get("id", ""), reverse=True)
+    else:
+        # 用户看自己的 + is_public=1 的公开脚本 (跨用户)
+        mine = StrategyScript.query_by_fields({"user_id": user_id})
+        public = StrategyScript.query_by_fields({"is_public": 1})
+        seen = set()
+        rows = []
+        for r in mine + public:
+            key = (r._data.get("user_id"), r._data.get("id"))
+            if key not in seen:
+                seen.add(key)
+                rows.append(r)
+        rows.sort(key=lambda r: (
+            0 if r._data.get("user_id") == user_id else 1,  # 自己的排前
+            r._data.get("id", ""),
+        ))
     out = []
     for r in rows:
         d = _script_row_to_dict(r)
@@ -76,14 +92,22 @@ def list_scripts(
     return out
 
 
-def get_script(script_id: int, user_id: int, is_admin: bool = False) -> Optional[Dict[str, Any]]:
+def get_script(script_id: str, user_id: int, is_admin: bool = False) -> Optional[Dict[str, Any]]:
+    """按 (user_id, id) 取脚本 (v90+ 复合 PK)
+
+    用户优先查自己的, 否则查公开的
+    """
     from server.tables import StrategyScript
-    row = StrategyScript.query_one(id=script_id)
-    if row is None:
-        return None
-    if not is_admin and getattr(row, "_data", {}).get("user_id") != user_id:
-        return None
-    return _script_row_to_dict(row)
+    row = StrategyScript.query_one(user_id=user_id, id=script_id)
+    if row is not None:
+        return _script_row_to_dict(row)
+    if is_admin:
+        candidates = StrategyScript.query_by_fields({"id": script_id})
+    else:
+        candidates = StrategyScript.query_by_fields({"id": script_id, "is_public": 1})
+    if candidates:
+        return _script_row_to_dict(candidates[0])
+    return None
 
 
 def get_script_by_name(name: str, user_id: int, is_admin: bool = False) -> Optional[Dict[str, Any]]:
@@ -109,76 +133,105 @@ def get_script_by_name(name: str, user_id: int, is_admin: bool = False) -> Optio
 def create_script(
     user_id: int, name: str, code: str, params_schema: List[Dict[str, Any]],
     description: str = "",
+    is_public: bool = False,
 ) -> Dict[str, Any]:
+    """创建脚本 (v90+ 改复合 PK)
+
+    id 默认 = name (用户自命名, 同用户内唯一, PK = (user_id, id))
+    is_public: True → 其他用户可见
+    """
     from server.tables import StrategyScript
-    # 校验同名 (同 user 内 name 必须唯一)
-    existing = StrategyScript.query_by_fields({"user_id": user_id, "name": name})
-    if existing:
-        active = [r for r in existing if getattr(r, "_data", {}).get("status") == "active"]
-        if active:
-            raise ValueError(f"脚本名已存在: {name!r} (id={getattr(active[0], '_data', {}).get('id')})")
-        # 如果只是 archived, 允许复用 (可激活)
+    existing = StrategyScript.query_one(user_id=user_id, id=name)
+    if existing is not None:
+        raise ValueError(f"脚本名已存在: {name!r}")
     now = datetime.now()
     data = {
         "user_id": user_id,
+        "id": name,
         "name": name,
         "code": code,
         "params_schema": _json_dumps(params_schema),
         "description": description,
         "status": "active",
+        "is_public": 1 if is_public else 0,
         "created_at": now,
         "updated_at": now,
     }
     try:
         row = StrategyScript.add_one(data)
     except Exception as e:
-        # DB unique 约束兜底 (防并发)
-        if "Duplicate" in str(e) or "uk_strategy_script_user_name" in str(e):
+        if "Duplicate" in str(e):
             raise ValueError(f"脚本名已存在: {name!r}") from e
         raise
     return _script_row_to_dict(row)
 
 
 def update_script(
-    script_id: int, user_id: int, is_admin: bool, patch: Dict[str, Any],
+    script_id: str, user_id: int, is_admin: bool, patch: Dict[str, Any],
 ) -> Optional[Dict[str, Any]]:
+    """更新脚本 (v90+ 复合 PK = (user_id, id))"""
     from server.tables import StrategyScript
-    row = StrategyScript.query_one(id=script_id)
+    row = StrategyScript.query_one(user_id=user_id, id=script_id)
     if row is None:
-        return None
-    if not is_admin and getattr(row, "_data", {}).get("user_id") != user_id:
-        return None
+        if is_admin:
+            candidates = StrategyScript.query_by_fields({"id": script_id})
+            if not candidates:
+                return None
+            row = candidates[0]
+            actual_user_id = row._data.get("user_id")
+        else:
+            return None
+    else:
+        actual_user_id = user_id
+
     update_data = {}
-    for k in ("name", "code", "description", "status"):
+    for k in ("code", "description", "status", "is_public", "name"):
         if k in patch:
             update_data[k] = patch[k]
     if "params_schema" in patch:
         update_data["params_schema"] = _json_dumps(patch["params_schema"])
     if update_data:
         update_data["updated_at"] = datetime.now()
-        StrategyScript.upsert_one(update_data, id=script_id)
-    return get_script(script_id, user_id, is_admin)
+        StrategyScript.upsert_one(update_data, user_id=actual_user_id, id=script_id)
+    return get_script(script_id, actual_user_id, is_admin)
 
 
-def delete_script(script_id: int, user_id: int, is_admin: bool) -> bool:
-    from server.tables import StrategyScript
-    row = StrategyScript.query_one(id=script_id)
+def delete_script(script_id: str, user_id: int, is_admin: bool) -> bool:
+    """删除脚本 (v90+ 复合 PK)
+
+    级联: 先删 strategy_task 中所有引用此 (user_id, script_id) 的 task, 再删 script。
+    v90+ FK 是严格约束 (FK fk_task_script), 必须先删子表。
+    """
+    from server.tables import StrategyScript, StrategyTask
+    row = StrategyScript.query_one(user_id=user_id, id=script_id)
     if row is None:
         return False
     if not is_admin and getattr(row, "_data", {}).get("user_id") != user_id:
         return False
-    return StrategyScript.delete_one(id=script_id)
+    # 级联删 task (FK 严格约束, 不能直接删 script)
+    related_tasks = StrategyTask.query_by_fields({"user_id": user_id, "script_id": script_id})
+    for task in related_tasks:
+        task_id = task._data.get("id")
+        if is_live_running(task_id):
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(_async_stop_live(task_id))
+            except RuntimeError:
+                pass
+        StrategyTask.delete_one(id=task_id)
+    return StrategyScript.delete_one(user_id=user_id, id=script_id)
 
 
 def _script_row_to_dict(row) -> Dict[str, Any]:
     return {
-        "id": getattr(row, "_data", {}).get("id"),
+        "id": getattr(row, "_data", {}).get("id"),  # v90+ str (用户自命名)
         "user_id": getattr(row, "_data", {}).get("user_id"),
         "name": getattr(row, "_data", {}).get("name", ""),
         "code": getattr(row, "_data", {}).get("code", ""),
         "params_schema": _json_loads(getattr(row, "_data", {}).get("params_schema"), default=[]),
         "description": getattr(row, "_data", {}).get("description", ""),
         "status": getattr(row, "_data", {}).get("status", "active"),
+        "is_public": bool(getattr(row, "_data", {}).get("is_public", 0)),  # v90+
         "created_at": _iso(getattr(row, "_data", {}).get("created_at")),
         "updated_at": _iso(getattr(row, "_data", {}).get("updated_at")),
     }
@@ -266,11 +319,9 @@ def create_task(
     """
     from server.tables import StrategyTask, StrategyScript
 
-    script = StrategyScript.query_one(id=script_id)
+    script = StrategyScript.query_one(user_id=user_id, id=script_id)
     if script is None:
-        raise ValueError(f"script_id {script_id} 不存在")
-    if getattr(script, "_data", {}).get("user_id") != user_id:
-        raise ValueError("无权使用该脚本")
+        raise ValueError(f"script_id {script_id} 不存在 (user_id={user_id})")
 
     now = datetime.now()
     data = {
@@ -334,13 +385,15 @@ def run_task(
         raise RuntimeError(f"任务已在运行 (status={cur_status}), 请先停止")
 
     # 读最新值
-    stock_code = getattr(row, "_data", {}).get("stock_code")
-    params = _json_loads(getattr(row, "_data", {}).get("params"), default={})
-    script_id = getattr(row, "_data", {}).get("script_id")
+    task_data = row._data
+    stock_code = task_data.get("stock_code")
+    params = _json_loads(task_data.get("params"), default={})
+    task_user_id = task_data.get("user_id")
+    script_id = task_data.get("script_id")
 
-    script = StrategyScript.query_one(id=script_id)
+    script = StrategyScript.query_one(user_id=task_user_id, id=script_id)
     if script is None:
-        raise ValueError(f"task 关联的 script {script_id} 不存在")
+        raise ValueError(f"task 关联的 script {script_id} 不存在 (user_id={task_user_id})")
     code = getattr(script, "_data", {}).get("code")
 
     # 覆盖参数 (回测时优先用 run 时传的)
@@ -589,7 +642,10 @@ def get_task_audit(
 
 
 def _set_task_status(task_id: int, status: str, *, error: Optional[str] = None) -> None:
-    """更新 task status / error_msg / finished_at (纯 UPDATE, 不触发 FK 风险)"""
+    """更新 task status / error_msg / finished_at (纯 UPDATE, 不触发 FK 风险)
+
+    v91.4: 同时 ws broadcast (前端 status 实时刷新)
+    """
     from server.tables import StrategyTask
     row = StrategyTask.query_one(id=task_id)
     if row is None:
@@ -601,6 +657,29 @@ def _set_task_status(task_id: int, status: str, *, error: Optional[str] = None) 
     if error is not None:
         row["error_msg"] = error[:500]
     row.update()
+    # v91.4: ws 推送 (兼容 sync 线程 — 用 main loop)
+    try:
+        from server.ws.manager import ws_manager as _ws_manager
+        import asyncio as _asyncio
+        payload = {
+            "task_id": task_id,
+            "status": status,
+            "progress": {"phase": status, "msg": error or f"task {status}"},
+        }
+        main_loop = getattr(_ws_manager, '_main_loop', None)
+        if main_loop is not None and main_loop.is_running():
+            _asyncio.run_coroutine_threadsafe(
+                _ws_manager.broadcast("task_progress_update", payload),
+                main_loop
+            )
+        else:
+            try:
+                loop = _asyncio.get_running_loop()
+                loop.create_task(_ws_manager.broadcast("task_progress_update", payload))
+            except RuntimeError:
+                log.debug("ws broadcast skip: no main loop registered")
+    except Exception as ws_e:
+        log.warning("ws broadcast failed: %s", ws_e)
 
 
 def _run_backtest_thread(
@@ -633,13 +712,34 @@ def _run_backtest_thread(
         log.info("[task=%d] === STAGE 1: fetch history bars === stock=%s %s~%s period=%s fields=%s",
                  task_id, stock_code, start_date, end_date, period, fields or 'default')
         _set_task_progress(task_id, {
-            "phase": "fetch_his_bars", "current": 1, "total": 4,
-            "msg": f"拉历史 bars {stock_code} {start_date}~{end_date} period={period}",
+            "phase": "fetch_his_bars_sending", "current": 1, "total": 4,
+            "msg": f"📡 发 broker 请求: {stock_code} {start_date}~{end_date} period={period} fields={fields or 'open,close,high,low'}",
         })
         t1 = time.time()
+        # 阶段 1a: 拉 broker reply
+        _set_task_progress(task_id, {
+            "phase": "fetch_his_bars_waiting", "current": 1, "total": 4,
+            "msg": "⏳ 等待 broker reply (30s timeout)",
+        })
         bars = fetch_his_bars(stock_code, start_date, end_date, period=period, fields=fields or "open,close,high,low")
+        elapsed = time.time() - t1
         log.info("[task=%d] fetch_his_bars done: %d bars, %.2fs",
-                 task_id, len(bars), time.time() - t1)
+                 task_id, len(bars), elapsed)
+        # 阶段 1b: 收到, 解析
+        if bars:
+            _set_task_progress(task_id, {
+                "phase": "fetch_his_bars_done", "current": 1, "total": 4,
+                "msg": f"✅ 拉取成功: {len(bars)} bars ({elapsed:.1f}s), "
+                       f"首 {bars[0].get('stime', '?')} 末 {bars[-1].get('stime', '?')}",
+                "bar_count": len(bars),
+                "fetch_elapsed": elapsed,
+            })
+        else:
+            _set_task_progress(task_id, {
+                "phase": "fetch_his_bars_empty", "current": 1, "total": 4,
+                "msg": f"❌ broker 未返回数据 ({elapsed:.1f}s)",
+                "fetch_elapsed": elapsed,
+            })
         if not bars:
             log.error("[task=%d] backtest failed: broker his_hq 未返回数据 (URL=%s queue=%s)",
                       task_id,
@@ -655,7 +755,8 @@ def _run_backtest_thread(
             "phase": "expand_params", "current": 2, "total": 4,
             "msg": "展开参数组合",
         })
-        script = StrategyScript.query_one(id=_get_task_script_id(task_id))
+        pk = _get_task_script_pk(task_id)
+        script = StrategyScript.query_one(user_id=pk[0], id=pk[1]) if pk else None
         params_schema = _json_loads(getattr(script, "_data", {}).get("params_schema") if script else "[]", default=[])
 
         try:
@@ -682,13 +783,17 @@ def _run_backtest_thread(
             })
 
         def _on_progress_combo(current, total_combos, result, params):
+            """grid combo 进度 (每 5% 一次, 避免 DB 写入爆炸)"""
             r = result.to_dict() if hasattr(result, "to_dict") else (result or {})
-            _set_task_progress(task_id, {
-                "phase": "grid_combo", "current": 3, "total": 4,
-                "combo_idx": current, "total_combos": total_combos,
-                "pct": round(current / total_combos * 100, 1) if total_combos > 0 else 0,
-                "msg": f"combo {current}/{total_combos} pnl={r.get('pnl', 0):.2f}",
-            })
+            # 每 5% 或首/末次才写 DB
+            if current % max(1, total_combos // 20) == 0 or current == total_combos or current == 1:
+                _set_task_progress(task_id, {
+                    "phase": "grid_combo", "current": 3, "total": 4,
+                    "combo_idx": current, "total_combos": total_combos,
+                    "pct": round(current / total_combos * 100, 1) if total_combos > 0 else 0,
+                    "msg": f"combo {current}/{total_combos} pnl={r.get('pnl', 0):.2f}",
+                    "running_combo_params": params,
+                })
 
         if len(expanded) == 1:
             log.info("[task=%d] single combo: %s", task_id, expanded[0])
@@ -769,6 +874,7 @@ def _set_task_progress(task_id: int, progress: Dict[str, Any]) -> None:
     """写 progress 到 strategy_task.progress (轻量更新)
 
     失败也不抛 (进度是 best-effort)
+    v91.4: 同时 ws broadcast 到 task_progress_update channel
     """
     from server.tables import StrategyTask
     try:
@@ -778,14 +884,102 @@ def _set_task_progress(task_id: int, progress: Dict[str, Any]) -> None:
         progress["updated_at"] = datetime.now().isoformat(timespec="seconds")
         row["progress"] = _json_dumps(progress)
         row.update()
+        # v91.4: ws 推送 (前端实时更新, 不轮询)
+        try:
+            from server.ws.manager import ws_manager as _ws_manager
+            import asyncio
+            payload = {
+                "task_id": task_id,
+                "status": row._data.get("status"),
+                "progress": dict(progress),
+            }
+            main_loop = getattr(_ws_manager, '_main_loop', None)
+            if main_loop is not None and main_loop.is_running():
+                _asyncio.run_coroutine_threadsafe(
+                    _ws_manager.broadcast("task_progress_update", payload),
+                    main_loop
+                )
+            else:
+                try:
+                    loop = _asyncio.get_running_loop()
+                    loop.create_task(_ws_manager.broadcast("task_progress_update", payload))
+                except RuntimeError:
+                    log.debug("ws broadcast skip: no main loop registered")
+        except Exception as ws_e:
+            log.warning("ws broadcast failed: %s", ws_e)
     except Exception as e:
         log.warning("_set_task_progress(%d) 失败 (忽略): %s", task_id, e)
 
 
-def _get_task_script_id(task_id: int) -> Optional[int]:
+def sweep_stale_running_tasks(max_idle_seconds: int = 300) -> int:
+    """清理卡死的 running task (启动时调用)
+
+    适用场景: 后端重启 / broker 死 / 任务线程死了但 status 仍 running
+    判定: status='running' AND progress.updated_at > max_idle_seconds 没动 → 标 failed
+
+    Returns:
+        被清理的任务数
+    """
+    from server.tables import StrategyTask
+    from datetime import timedelta
+    now = datetime.now()
+    threshold = (now - timedelta(seconds=max_idle_seconds)).isoformat(timespec="seconds")
+
+    rows = StrategyTask.query_by_fields({"status": "running"})
+    n_cleaned = 0
+    for r in rows:
+        task_id = r._data.get("id")
+        progress_json = r._data.get("progress")
+        if not progress_json:
+            continue
+        try:
+            import json
+            progress = json.loads(progress_json) if isinstance(progress_json, str) else progress_json
+        except Exception:
+            continue
+        updated_at = progress.get("updated_at", "")
+        if updated_at and updated_at >= threshold:
+            continue  # 还在动, 跳过
+        # 已 stale, 标 failed
+        r["status"] = "failed"
+        r["error_msg"] = f"task 卡在 running, progress {max_idle_seconds}s 没更新 (updated_at={updated_at})"
+        r["finished_at"] = now
+        r["updated_at"] = now
+        # 标记 progress 为 failed
+        try:
+            cur = json.loads(r._data.get("progress", "{}")) if r._data.get("progress") else {}
+        except Exception:
+            cur = {}
+        cur["phase"] = "failed"
+        cur["msg"] = f"⚠️ task 卡死, 自动标记 failed (last update {updated_at})"
+        cur["updated_at"] = now.isoformat(timespec="seconds")
+        r["progress"] = json.dumps(cur)
+        r.update()
+        log.warning("sweep_stale_running_tasks: marked task=%d failed (last progress update=%s)", task_id, updated_at)
+        n_cleaned += 1
+    return n_cleaned
+
+
+def _get_task_script_id(task_id: int) -> Optional[str]:
+    """返 task 的 script_id (str, v90+ 复合 PK)"""
     from server.tables import StrategyTask
     row = StrategyTask.query_one(id=task_id)
     return getattr(row, "_data", {}).get("script_id") if row else None
+
+
+def _get_task_script_pk(task_id: int) -> Optional[Tuple[int, str]]:
+    """返 task 的 (user_id, script_id) 复合 PK (v90+ 复合主键用)
+
+    Returns:
+        None: task 不存在
+        (user_id, script_id): 找到的复合 PK
+    """
+    from server.tables import StrategyTask
+    row = StrategyTask.query_one(id=task_id)
+    if row is None:
+        return None
+    data = row._data
+    return (data.get("user_id"), data.get("script_id"))
 
 
 def _iso(v) -> Optional[str]:

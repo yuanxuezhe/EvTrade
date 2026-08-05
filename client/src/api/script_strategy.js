@@ -13,8 +13,9 @@ import { http } from './index'
 export const scriptStrategyApi = {
   // ─────────────── Script CRUD ───────────────
 
-  async listScripts() {
-    const { data } = await http.get('/script-strategy/scripts')
+  async listScripts(only_mine) {
+    const params = only_mine ? { only_mine } : {}
+    const { data } = await http.get('/script-strategy/scripts', { params })
     return data
   },
 

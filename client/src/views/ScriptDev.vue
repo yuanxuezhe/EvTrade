@@ -25,21 +25,38 @@
       <!-- 左侧: 脚本列表 -->
       <aside class="sd-pane sd-pane-left">
         <h4 class="sd-section-title">脚本列表</h4>
+        <!-- v90+: 公开/我的筛选 -->
+        <div class="sd-filter">
+          <el-radio-group v-model="filterMode" size="small" @change="loadScripts">
+            <el-radio-button label="all" data-el="sd-filter-all">全部</el-radio-button>
+            <el-radio-button label="mine" data-el="sd-filter-mine">我的</el-radio-button>
+            <el-radio-button label="public" data-el="sd-filter-public">公开市场</el-radio-button>
+          </el-radio-group>
+        </div>
         <div v-if="scripts.length === 0" class="sd-empty">暂无脚本</div>
         <ul v-else class="sd-script-list">
           <li
             v-for="s in scripts"
-            :key="s.id"
-            :class="{ active: selectedId === s.id }"
+            :key="`${s.user_id}-${s.id}`"
+            :class="{ active: selectedId === s.id && selectedUserId === s.user_id }"
             @click="onSelect(s)"
             data-el="sd-script-item"
           >
-            <div class="sd-script-name">{{ s.name }}</div>
+            <div class="sd-script-name">
+              {{ s.name }}
+              <el-tag v-if="s.is_public" size="small" type="success" effect="dark" style="margin-left: 4px">
+                🌍 公开
+              </el-tag>
+              <el-tag v-else size="small" type="info" effect="plain" style="margin-left: 4px">
+                🔒 私有
+              </el-tag>
+            </div>
             <div class="sd-script-meta">
               <el-tag size="small" :type="s.status === 'active' ? 'success' : 'info'">
                 {{ s.status }}
               </el-tag>
               <span class="sd-script-params">{{ s.params_schema?.length || 0 }} 个参数</span>
+              <span class="sd-script-owner" v-if="s.user_id !== currentUserId">u/{{ s.user_id }}</span>
             </div>
           </li>
         </ul>
@@ -186,8 +203,11 @@ const saving = ref(false)
 const testing = ref(false)
 const scripts = ref([])
 const selectedId = ref(null)
+const selectedUserId = ref(null)  // v90+: 复合 PK (user_id, id)
 const currentScript = ref(null)
 const draft = ref(null)  // 新建未保存
+const filterMode = ref('all')     // v90+: 'all' / 'mine' / 'public'
+const currentUserId = ref(null)   // 从 user store 拿当前用户 ID
 
 const form = ref(_blankForm())
 const editorRef = ref(null)
@@ -209,7 +229,16 @@ function _blankForm() {
 async function loadScripts() {
   loading.value = true
   try {
-    scripts.value = await scriptStrategyApi.listScripts()
+    // v90+: filterMode 决定 only_mine 参数
+    const only_mine = filterMode.value === 'mine' ? 'true' : undefined
+    scripts.value = await scriptStrategyApi.listScripts(only_mine)
+    // 记录当前用户 ID (用于显示 owner tag)
+    try {
+      const u = JSON.parse(localStorage.getItem('user') || '{}')
+      currentUserId.value = u.id || null
+    } catch (e) {
+      currentUserId.value = null
+    }
   } catch (e) {
     // 错误已由 axios 拦截器弹出
   } finally {
@@ -219,6 +248,7 @@ async function loadScripts() {
 
 async function onSelect(s) {
   selectedId.value = s.id
+  selectedUserId.value = s.user_id  // v90+: 复合 PK
   currentScript.value = s
   draft.value = null
   // 拷贝到 form
@@ -435,6 +465,8 @@ onMounted(async () => {
   background: var(--brand-gradient-soft);
   color: var(--brand-primary);
 }
+.sd-filter { margin-bottom: var(--space-2); }
+.sd-script-owner { font-size: 11px; color: var(--color-text-tertiary); }
 .sd-script-name { font-weight: 500; margin-bottom: 4px; }
 .sd-script-meta {
   display: flex;

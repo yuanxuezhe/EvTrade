@@ -51,6 +51,7 @@ class ScriptCreate(BaseModel):
     code: str
     params_schema: List[ParamSpec] = []
     description: str = ""
+    is_public: bool = False  # v90+ 是否公开 (其他用户可见)
 
 
 class ScriptUpdate(BaseModel):
@@ -59,23 +60,25 @@ class ScriptUpdate(BaseModel):
     params_schema: Optional[List[ParamSpec]] = None
     description: Optional[str] = None
     status: Optional[str] = None
+    is_public: Optional[bool] = None  # v90+ 可改公开状态
 
 
 class ScriptOut(BaseModel):
-    id: int
+    id: str  # v90+ 复合 PK: (user_id, id), id 字符串 (用户自命名)
     user_id: int
     name: str
     code: str
     params_schema: List[Dict[str, Any]] = []
     description: str = ""
     status: str
+    is_public: bool = False
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
 
 
 class TaskCreate(BaseModel):
     """创建任务: 仅存配置, 不立即执行"""
-    script_id: int
+    script_id: str  # v90+ 改 varchar
     stock_code: str
     params: Dict[str, Any] = {}
     # 以下回测专属字段可预存, run 时可被覆盖
@@ -100,7 +103,7 @@ class TaskRun(BaseModel):
 class TaskOut(BaseModel):
     id: int
     user_id: int
-    script_id: int
+    script_id: str  # v90+ 改 varchar
     stock_code: str
     mode: Optional[str] = None
     status: str
@@ -130,11 +133,12 @@ class TaskOut(BaseModel):
 def list_scripts_endpoint(
     name: Optional[str] = Query(None, description="模糊搜索 name"),
     status_filter: Optional[str] = Query(None, alias="status", description="active/archived"),
+    only_mine: bool = Query(False, description="仅列自己的 (默认包含公开脚本)"),
     user: User = Depends(get_current_user),
 ):
     return svc.list_scripts(
         user.id, is_admin=(user.role == "admin"),
-        name=name, status=status_filter,
+        name=name, status=status_filter, only_mine=only_mine,
     )
 
 
@@ -151,7 +155,7 @@ def get_script_by_name_endpoint(name: str, user: User = Depends(get_current_user
 
 
 @router.get("/scripts/{script_id}", response_model=ScriptOut)
-def get_script_endpoint(script_id: int, user: User = Depends(get_current_user)):
+def get_script_endpoint(script_id: str, user: User = Depends(get_current_user)):
     out = svc.get_script(script_id, user.id, is_admin=(user.role == "admin"))
     if out is None:
         raise HTTPException(status_code=404, detail={"code": "SCRIPT_NOT_FOUND"})
@@ -165,6 +169,7 @@ def create_script_endpoint(req: ScriptCreate, user: User = Depends(get_current_u
             user_id=user.id, name=req.name, code=req.code,
             params_schema=[p.dict() for p in req.params_schema],
             description=req.description,
+            is_public=req.is_public,
         )
     except ValueError as e:
         # 验证错误 (重名 / 字段问题) → 400
@@ -176,7 +181,7 @@ def create_script_endpoint(req: ScriptCreate, user: User = Depends(get_current_u
 
 @router.put("/scripts/{script_id}", response_model=ScriptOut)
 def update_script_endpoint(
-    script_id: int, req: ScriptUpdate, user: User = Depends(get_current_user),
+    script_id: str, req: ScriptUpdate, user: User = Depends(get_current_user),
 ):
     patch = req.dict(exclude_unset=True)
     if "params_schema" in patch and patch["params_schema"] is not None:
@@ -188,7 +193,7 @@ def update_script_endpoint(
 
 
 @router.delete("/scripts/{script_id}", status_code=204)
-def delete_script_endpoint(script_id: int, user: User = Depends(get_current_user)):
+def delete_script_endpoint(script_id: str, user: User = Depends(get_current_user)):
     ok = svc.delete_script(script_id, user.id, user.role == "admin")
     if not ok:
         raise HTTPException(status_code=404, detail={"code": "SCRIPT_NOT_FOUND"})
