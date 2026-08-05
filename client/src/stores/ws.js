@@ -29,6 +29,7 @@
  *   wsStore.lastEvent    — ref<payload>
  */
 import { defineStore } from 'pinia'
+import { ref } from 'vue'
 import { createWsManager } from './ws_heartbeat'
 import { dispatchPayload } from './ws_dispatch'
 import { makeLogger } from '../utils/logger'
@@ -52,9 +53,13 @@ export const useWsStore = defineStore('ws', () => {
   }
   const { connect, disconnect, connected, lastEvent, sendToChannel } = createWsManager(dispatchPayload, onConnected)
 
+  // v91.4: task 进度推送 (ScriptTask.vue 订阅)
+  const lastTaskProgress = ref(null)
+
   return {
     connected,
     lastEvent,
+    lastTaskProgress,
     connect,
     disconnect,
     sendToChannel,

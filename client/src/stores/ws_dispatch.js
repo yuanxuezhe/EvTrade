@@ -48,6 +48,8 @@ export function dispatchPayload(payload) {
   else if (t === 'trd_cfm') _onTradeCfm(payload.data)
   else if (t === 'quote') _onQuote(payload.data)
   else if (t === 'strategy_update') _onStrategyUpdate(payload.data)
+  // v91.4: 回测 / live task 进度推送 (ScriptTask.vue 详情实时刷新)
+  else if (t === 'task_progress_update') _onTaskProgress(payload.data)
   // v99: 资金定时同步推送
   else if (t === 'asset_update') _onAssetUpdate(payload.data)
   // 2026-07-09 quote-snapshot-subscribe
@@ -366,6 +368,18 @@ function _onTradeCfm(row) {
  *   - data: { strategy_id, event, regime_id?, flags_active?, current_price?, action?, order_no?, reject_reason?, ts }
  * 这里把每条事件作为单条 audit 推入 store.appendAudit
  */
+function _onTaskProgress(row) {
+  // v91.4: 回测 / live task 进度实时推送
+  // payload: { task_id, status, progress: { phase, msg, bar_idx, ... } }
+  // ScriptTask.vue 监听 wsStore.lastTaskProgress 更新 detail.progress
+  if (!row || row.task_id == null) return
+  try {
+    useWsStore().lastTaskProgress = { ts: Date.now(), ...row }
+  } catch (e) {
+    log.error('_onTaskProgress failed:', e)
+  }
+}
+
 function _onStrategyUpdate(row) {
   if (!row || row.strategy_id == null) {
     log.warn('_onStrategyUpdate 缺 strategy_id, 跳过:', row)
