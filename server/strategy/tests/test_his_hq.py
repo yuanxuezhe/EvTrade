@@ -136,10 +136,13 @@ class TestParseRepliesDefense:
         assert bars[1]["close"] == 1.1
 
     def test_missing_close_column_skipped(self):
-        """broker 列名不含 close → 返空 list + 警告"""
+        """broker 列名不含 close → 降级用 open 当 close (broker his_hq handler 实测就这样)"""
         raw = "stime,open,high,low,volume\n20260101#1.0#1.1#0.9#1000"
         bars = his_hq._parse_replies(raw)
-        assert bars == []
+        assert len(bars) == 1
+        # open=1.0, close 用 open 兜底 = 1.0
+        assert bars[0]["close"] == 1.0
+        assert bars[0]["open"] == 1.0
 
     def test_none_close_forward_filled(self):
         """close=None 的行用前一根 close fallback"""
@@ -249,7 +252,7 @@ class TestBuildRequestDynamicFields:
         """加 volume 字段 → headers 11 (6 fixed + 5 user)"""
         pkt = his_hq._build_request(
             "159992.SZ", "20260701", "20260731",
-            "HisAns.test", "open,close,high,low,volume", "1m"
+            "HisAns.test", "open|close|high|low|volume", "1m"
         )
         assert isinstance(pkt, bytes)
 
@@ -283,28 +286,33 @@ class TestBuildRequestDynamicFields:
         # 6 fixed + 5 user (open/close/high/low/volume)
         pkt = his_hq._build_request(
             "159992.SZ", "20260701", "20260731",
-            "HisAns.test", "open,close,high,low,volume", "1m"
+            "HisAns.test", "open|close|high|low|volume", "1m"
         )
         # 通过验证 bytes 长度 > 0 + 不抛错
         assert len(pkt) > 50  # 合理大小
 
     def test_decode_headers_match_user_fields(self):
-        """发出去的 pkt 解码后 headers 数量正确"""
+        """按 iquant 标准: headers 6 固定字段, fields 是完整字符串
+
+        broker 端 pkt.get_value_str("fields") 拿完整值再 split(",")
+        """
         from msgpacket import MsgPacket
         pkt = his_hq._build_request(
             "159992.SZ", "20260701", "20260731",
-            "HisAns.test", "open,close,high,low,volume", "1m"
+            "HisAns.test", "open|close|high|low|volume", "1m"
         )
-        # MsgPacket.decode(bytes) - 自动推断 msg_type
         decoded_pkt = MsgPacket.decode(pkt)
-        # 6 fixed + 5 user = 11
         headers_str = decoded_pkt.get_headers()
-        # get_headers() 返逗号分隔 string, split 后验证
-        headers = headers_str.split(",") if isinstance(headers_str, str) else headers_str
-        assert len(headers) == 11, f"应 11 个 header, 实际 {len(headers)}: {headers}"
-        for f in ("stock_code", "start_date", "end_date", "ans_queue", "fields", "period",
-                  "open", "close", "high", "low", "volume"):
+        headers = headers_str.split(",")
+        # 严格 6 固定字段
+        assert len(headers) == 6, f"应 6 个 header, 实际 {len(headers)}: {headers}"
+        for f in ("stock_code", "start_date", "end_date", "ans_queue", "fields", "period"):
             assert f in headers, f"header {f!r} 缺失, 实际 {headers}"
+        # fields 值是完整字符串 (broker 端 split(',') 解析)
+        # 注意: MsgPacket C 库 get_value_str 含 | 也被切, 但 wire bytes 含完整字符串
+        # broker 端从 wire 读完整值, 然后 split(",") 拿到 'open|close|...' 1 个字段
+        # xtquant get_market_data_ex 内部支持 | 分隔多字段名
+        assert b"open|close|high|low|volume" in pkt, f"完整 fields 不在 wire bytes"
 
 
 if __name__ == "__main__":

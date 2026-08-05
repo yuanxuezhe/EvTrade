@@ -1,5 +1,5 @@
 """
-server/strategy/runtime/sandbox.py — 用户脚本安全加载
+server/strategy/runtime/sandbox.py — 用户脚本安全加载 (v10+ 含 fast 路径)
 
 📌 安全模型:
 - ast.parse 校验语法 → 静态扫描禁用节点 (Import/ImportFrom 拒含黑名单模块)
@@ -14,6 +14,11 @@ server/strategy/runtime/sandbox.py — 用户脚本安全加载
 - 单脚本 ≤ 50KB (防止内存炸弹)
 - 不允许 import (含 from ... import / __import__ / importlib)
 - 不允许访问 __builtins__ / __globals__ / __code__
+
+📌 v10+ 加速:
+- 如果 ctx['_bars_df'] (pandas DataFrame) 存在 + ctx['_indicator_cache'] 存在
+  → MA/EMA/REF 走 pandas 向量化路径 (整段 bars 一次算, O(n) 一次, 不是 O(n×bars))
+- 否则走 list-of-dict 旧路径 (兼容)
 """
 from __future__ import annotations
 
@@ -28,6 +33,8 @@ import functools
 import logging
 import types
 from typing import Any, Callable, Dict, Optional
+
+import pandas as pd
 
 from server.strategy.lib import (
     MA, EMA, RSI, MACD, BOLL, KDJ, ATR, BARSLAST, REF, CROSS,
@@ -101,11 +108,73 @@ def _ast_check(tree: ast.AST) -> None:
     Visitor().visit(tree)
 
 
+# ─────────────── Fast 路径 (v10+) ───────────────
+
+
+def _make_fast_indicators(df: pd.DataFrame, cache, ctx: Dict[str, Any]) -> Dict[str, Callable]:
+    """构造 fast 路径的 MA/EMA/REF (pandas rolling 一次算整段, 跨 bar 复用 Series)
+
+    用户脚本中 MA(ctx['bars'], 5) 会调到这里的 fast 版本:
+      - ctx['_current_bar_idx'] 已经是当前 bar 索引 (运行时已设)
+      - 我们直接 cache.ma(df, 5) 拿整段 Series, .iloc[idx] 拿当前 bar 的值
+      - 同 (field, period) 第二次调直接命中 cache
+    """
+
+    def fast_MA(bars, period, field="close"):
+        if not isinstance(period, int) or period <= 0:
+            raise ValueError(f"MA: period must be positive int, got {period}")
+        s = cache.ma(df, period, field)
+        idx = ctx.get("_current_bar_idx")
+        if idx is None or idx >= len(s):
+            v = s.iloc[-1] if len(s) > 0 else None
+        else:
+            v = s.iloc[idx]
+        return None if pd.isna(v) else float(v)
+
+    def fast_EMA(bars, period, field="close"):
+        if not isinstance(period, int) or period <= 0:
+            raise ValueError(f"EMA: period must be positive int, got {period}")
+        s = cache.ema(df, period, field)
+        idx = ctx.get("_current_bar_idx")
+        v = s.iloc[idx] if idx is not None and idx < len(s) else (s.iloc[-1] if len(s) > 0 else None)
+        return None if pd.isna(v) else float(v)
+
+    def fast_REF(bars, n, field="close"):
+        if not isinstance(n, int):
+            raise ValueError(f"REF: n must be int, got {n}")
+        s = cache.ref(df, n, field)
+        idx = ctx.get("_current_bar_idx")
+        v = s.iloc[idx] if idx is not None and idx < len(s) else (s.iloc[-1] if len(s) > 0 else None)
+        return None if pd.isna(v) else float(v)
+
+    return {"MA": fast_MA, "EMA": fast_EMA, "REF": fast_REF}
+
+
 # ─────────────── 加载 ───────────────
 
 
 def _build_globals(ctx: Dict[str, Any], params: Dict[str, Any]) -> Dict[str, Any]:
-    """构造沙箱 globals: 白名单 stdlib + lib + ctx + params"""
+    """构造沙箱 globals: 白名单 stdlib + lib + ctx + params
+
+    v10+ 加速路径: 如果 ctx['_bars_df'] (pandas DataFrame) 存在, 用 fast_* 版本替换 MA/EMA/REF
+                  否则走 list-of-dict 旧路径 (兼容用户脚本接口)
+    """
+    from server.strategy.runtime import fast_data as _fd
+
+    has_fast_path = ctx.get("_bars_df") is not None
+    indicator_cache = ctx.get("_indicator_cache") or _fd.get_task_cache()
+
+    if has_fast_path:
+        df = ctx["_bars_df"]
+        fast_indicators = _make_fast_indicators(df, indicator_cache, ctx)
+        ma_func = fast_indicators["MA"]
+        ema_func = fast_indicators["EMA"]
+        ref_func = fast_indicators["REF"]
+    else:
+        ma_func = MA
+        ema_func = EMA
+        ref_func = REF
+
     safe_builtins = {
         # 数学 / 通用
         "abs": abs, "min": min, "max": max, "sum": sum, "round": round,
@@ -128,9 +197,9 @@ def _build_globals(ctx: Dict[str, Any], params: Dict[str, Any]) -> Dict[str, Any
         "collections": collections,
         "itertools": itertools,
         "functools": functools,
-        # lib 指标
-        "MA": MA, "EMA": EMA, "RSI": RSI, "MACD": MACD, "BOLL": BOLL,
-        "KDJ": KDJ, "ATR": ATR, "BARSLAST": BARSLAST, "REF": REF, "CROSS": CROSS,
+        # lib 指标 (v10+: MA/EMA/REF 走 fast 路径如果有 _bars_df)
+        "MA": ma_func, "EMA": ema_func, "RSI": RSI, "MACD": MACD, "BOLL": BOLL,
+        "KDJ": KDJ, "ATR": ATR, "BARSLAST": BARSLAST, "REF": ref_func, "CROSS": CROSS,
         # lib trading facade (调用时 ctx["lib"].doorder 转发, 由 runtime 注入)
         "doorder": lambda *a, **kw: ctx["lib"].doorder(*a, **kw),
         "docancel": lambda *a, **kw: ctx["lib"].docancel(*a, **kw),

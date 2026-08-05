@@ -59,6 +59,8 @@ class WSManager:
             #   - (后续) 对账失败 / 切日失败等扩展位
             #   - 与 push 事件频道并列，但触发源是 init_trading_day 业务接口而非 broker push
             "system_update": set(),
+            # v91.4: 回测 / live task 进度推送 (ScriptTask.vue 详情实时刷新)
+            "task_progress_update": set(),
         }
         # 2026-07-09 quote-snapshot-subscribe:
         #   stock_code -> Set[WebSocket]：倒排索引（订阅了此 code 的 ws 集合）

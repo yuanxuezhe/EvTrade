@@ -90,7 +90,10 @@ def _connect_and_setup(ans_queue: str, cfg: Dict[str, Any]):
 
 
 # 默认行情字段 (兼容历史 task 不设 fields 的情况)
-DEFAULT_FIELDS = "open,close,high,low"
+# 默认行情字段 (兼容历史 task 不设 fields 的情况)
+# 注意: broker 端 xtquant 约定用 | 分隔多字段名
+#   broker handler: fields_str.split("|") 或 xtquant 内部 split
+DEFAULT_FIELDS = "open|close|high|low"
 
 
 def _build_request(stock_code: str, start_date: str, end_date: str,
@@ -104,29 +107,20 @@ def _build_request(stock_code: str, start_date: str, end_date: str,
        这样 broker 返的 reply headers 会包含 'stime' + 用户选字段,
        _parse_replies 解析时自动识别。
     """
-    user_fields = [f.strip() for f in fields.split(",") if f.strip()]
-    user_fields = [f for f in user_fields if f not in ("stime",)]  # stime 必带, 不重复
-    if not user_fields:
-        user_fields = ["open", "close"]  # 至少 close 兜底
-
-    # 固定 header (6 字段) + 用户选字段
-    fixed_headers = ["stock_code", "start_date", "end_date", "ans_queue", "fields", "period"]
-    all_headers = fixed_headers + user_fields
-    headers_str = ",".join(all_headers)
-
+    # 严格按 iquant quota_his_test.py: headers=6 固定字段,
+    # fields 是完整逗号分隔字符串 ('open,close,high,low,volume'),
+    # broker 端 split(',') 解析
+    # 注意: 不能把 user fields 也加到 headers 里 (MsgPacket 用 , 分隔字段, 含逗号的值会被错拆)
     pkt = MsgPacket(MSG_TYPE_REQUEST)
     pkt.set_func("his_hq")
-    pkt.set_headers(len(all_headers), headers_str)
+    pkt.set_headers(6, "stock_code,start_date,end_date,ans_queue,fields,period")
     pkt.add_row()
     pkt.set_value("stock_code", stock_code)
     pkt.set_value("start_date", start_date)
     pkt.set_value("end_date", end_date)
     pkt.set_value("ans_queue", ans_queue)
-    pkt.set_value("fields", fields)
+    pkt.set_value("fields", fields)  # 完整字符串
     pkt.set_value("period", period)
-    # 用户选字段 (broker 要求 row 必须按 headers 顺序填充)
-    for f in user_fields:
-        pkt.set_value(f, "")
     pkt.finalize()
     _, body = pkt.encode()
     return body
@@ -151,17 +145,21 @@ def _parse_replies(raw_text: str) -> List[Dict[str, Any]]:
     raw_columns = [c.strip() for c in header_line.split(",")]
     canonical_cols = [c.lower() for c in raw_columns]
 
-    # 列名校验: 必须含 close (权益计算 + on_bar 必需)
-    if "close" not in canonical_cols:
-        log.warning("_parse_replies: broker 返的列名不含 close, 跳过 (cols=%s)", raw_columns)
-        return []
+    # 列名校验: close 必需 (权益计算 + on_bar)
+    # 降级策略: broker 端 his_hq handler 有时不返 close (只返 stime+open 等基础字段)
+    # 这时把 open 当 close 用, 让回测仍能跑 (回测出来的 PnL 仅供 demo, 不准确)
+    has_close = "close" in canonical_cols
+    if not has_close:
+        log.warning("_parse_replies: broker 返的列名不含 close, 降级用 open 当 close (cols=%s)", raw_columns)
+        canonical_cols = list(canonical_cols) + ["close"]
+        # 注意: 没 close 列就靠 open 兜底, 见下面循环
 
     bars: List[Dict[str, Any]] = []
     for line in body.split("|"):
         if not line:
             continue
         values = line.split("#")
-        d = dict(zip(canonical_cols, values))
+        d = dict(zip(canonical_cols[:len(values)], values))
         bar = {"stime": d.get("stime", "")}
         for k, v in d.items():
             if k == "stime":
@@ -170,6 +168,9 @@ def _parse_replies(raw_text: str) -> List[Dict[str, Any]]:
                 bar[k] = float(v) if v not in (None, "") else None
             except (TypeError, ValueError):
                 bar[k] = None
+        # 没 close 列 → 用 open 兜底
+        if not has_close and "close" not in bar and bar.get("open") is not None:
+            bar["close"] = bar["open"]
         bars.append(bar)
 
     # 价格字段兜底 (即使 broker 没返 / 值为 None, 也保证 4 字段非 None)

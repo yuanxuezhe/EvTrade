@@ -103,6 +103,14 @@ register_ws_endpoint(app)
 
 # ---- Startup / Shutdown hooks ------------------------------------------
 @app.on_event("startup")
+async def on_startup_register_loop():
+    """v91.4: 把 main event loop 注册到 ws_manager, 让 sync 线程能 schedule broadcast"""
+    import asyncio
+    from server.ws.manager import ws_manager as _ws
+    _ws._main_loop = asyncio.get_running_loop()
+    print("[INIT] ws_manager._main_loop registered")
+
+@app.on_event("startup")
 def on_startup():
     """DB 建表 + 默认账号 seed（实现见 server/lifecycle/seed.py）"""
     init_and_seed()
@@ -111,6 +119,16 @@ def on_startup():
     sysconfig.load_all()
     print(f"[INIT] sysconfig loaded: {len(sysconfig._cache)} users")
     # v90: 去掉 stocks 内存 cache (前端 IndexedDB 负责缓存, 后端直查 DB)
+
+    # v90+: 启动时清理 stale 的 running task (progress > 5min 没更新 → 标记 failed)
+    # 后端重启 / broker 卡死 → 任务卡在 running 但实际无线程跑, 前端看不到结束
+    try:
+        from server.strategy.service import sweep_stale_running_tasks
+        n = sweep_stale_running_tasks(max_idle_seconds=300)
+        if n:
+            print(f"[INIT] swept {n} stale running tasks")
+    except Exception as e:
+        print(f"[INIT] sweep stale running tasks error: {e}")
 
 
 @app.on_event("startup")
@@ -274,4 +292,8 @@ app.include_router(admin_session.router, prefix="/api/admin/trading-session", ta
 
 @app.get("/api/health")
 def health():
+    """无鉴权健康检查 - 仅用于探活 (evctl.py / k8s probe)
+
+    前端 keepalive 用 /api/auth/heartbeat (有 token, 会触发 touch)
+    """
     return {"status": "ok"}
