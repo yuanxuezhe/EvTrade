@@ -93,6 +93,36 @@
           <el-descriptions-item label="状态">
             <el-tag size="small" :type="_statusType(detail.status)">{{ _statusLabel(detail.status) }}</el-tag>
           </el-descriptions-item>
+          <!-- v91.1: 实时进度面板 (running 时显示) -->
+          <el-descriptions-item v-if="detail.status === 'running' && detail.progress" label="进度" :span="3">
+            <div class="st-progress-panel">
+              <el-progress
+                :percentage="progressPercent"
+                :status="progressStatus"
+                :stroke-width="14"
+                text-inside
+                :format="() => progressText"
+                data-el="st-progress-bar"
+              />
+              <div class="st-progress-detail">
+                <el-tag size="small" :type="progressPhaseTagType" effect="dark">
+                  {{ progressPhaseLabel }}
+                </el-tag>
+                <span class="st-progress-msg">{{ detail.progress.msg || '' }}</span>
+                <span v-if="detail.progress.bar_count" class="st-progress-meta">
+                  📊 {{ detail.progress.bar_count }} bars
+                </span>
+                <span v-if="detail.progress.fetch_elapsed" class="st-progress-meta">
+                  ⏱️ {{ detail.progress.fetch_elapsed.toFixed(1) }}s
+                </span>
+                <span class="st-progress-time">最后更新: {{ detail.progress.updated_at || '' }}</span>
+              </div>
+            </div>
+          </el-descriptions-item>
+          <!-- v91.1: failed 任务显示 sweep 信息 -->
+          <el-descriptions-item v-if="detail.status === 'failed' && detail.error_msg" label="错误" :span="3">
+            <pre class="st-error">{{ detail.error_msg }}</pre>
+          </el-descriptions-item>
           <el-descriptions-item label="标的">{{ detail.stock_code }}</el-descriptions-item>
           <el-descriptions-item label="PnL">
             <span :class="detail.pnl > 0 ? 'up' : detail.pnl < 0 ? 'down' : ''">
@@ -489,6 +519,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Refresh } from '@element-plus/icons-vue'
 import * as echarts from 'echarts'
 import { scriptStrategyApi } from '../api/script_strategy'
+import { useWsStore } from '../stores/ws'  // v91.4: 实时进度推送
 
 const route = useRoute()
 
@@ -513,6 +544,58 @@ const signalFilter = ref('')           // '' / 'BUY' / 'SELL' / 'INFO'
 const signalData = ref({ signals: [], progress: [], total_signals: 0, truncated: false })
 const progressData = ref([])
 const executionFilter = ref('')         // execution_log 过滤关键字
+
+// v91.1: 实时进度面板 computed
+const progressPercent = computed(() => {
+  const p = detail.value?.progress
+  if (!p) return 0
+  if (p.pct !== undefined && p.pct !== null) return Math.round(p.pct)
+  if (p.total) return Math.round((p.current || 0) / p.total * 100)
+  // grid_combo 用 combo_idx / total_combos
+  if (p.total_combos) return Math.round((p.combo_idx || 0) / p.total_combos * 100)
+  // backtest_bar 用 bar_idx / total_bars
+  if (p.total_bars) return Math.round((p.bar_idx || 0) / p.total_bars * 100)
+  return 0
+})
+const progressText = computed(() => {
+  const p = detail.value?.progress
+  if (!p) return ''
+  if (p.pct !== undefined && p.pct !== null) return `${Math.round(p.pct)}%`
+  if (p.total) return `${p.current || 0}/${p.total}`
+  if (p.total_combos) return `${p.combo_idx || 0}/${p.total_combos}`
+  if (p.total_bars) return `${p.bar_idx || 0}/${p.total_bars}`
+  return ''
+})
+const progressStatus = computed(() => {
+  const p = detail.value?.progress
+  if (!p) return ''
+  if (p.phase === 'done') return 'success'
+  if (p.phase === 'failed') return 'exception'
+  return ''
+})
+// 阶段 → 中文标签 + tag type
+const PHASE_LABELS = {
+  start: { label: '启动', type: 'info' },
+  fetch_his_bars_sending: { label: '📡 发请求', type: 'primary' },
+  fetch_his_bars_waiting: { label: '⏳ 等broker', type: 'warning' },
+  fetch_his_bars_done: { label: '✅ 拉取成功', type: 'success' },
+  fetch_his_bars_empty: { label: '❌ broker无数据', type: 'danger' },
+  expand_params: { label: '🔧 展开参数', type: 'info' },
+  backtest_bar: { label: '🔄 跑回测', type: 'primary' },
+  grid_combo: { label: '🔀 grid搜索', type: 'primary' },
+  write_result: { label: '💾 写结果', type: 'info' },
+  done: { label: '✅ 完成', type: 'success' },
+  failed: { label: '❌ 失败', type: 'danger' },
+}
+const progressPhaseLabel = computed(() => {
+  const phase = detail.value?.progress?.phase
+  return PHASE_LABELS[phase]?.label || phase || '⏳ 准备中'
+})
+const progressPhaseTagType = computed(() => {
+  const phase = detail.value?.progress?.phase
+  return PHASE_LABELS[phase]?.type || 'info'
+})
+
 const progressMinEquity = computed(() => progressData.value.length
   ? Math.min(...progressData.value.map(p => p.equity || 0)) : 0)
 const progressMaxEquity = computed(() => progressData.value.length
@@ -658,20 +741,50 @@ async function loadSignals() {
 
 function renderChart() {
   if (!chartRef.value || !detail.value?.backtest_result?.best?.equity_curve) return
-  const eq = detail.value.backtest_result.best.equity_curve
+  const best = detail.value.backtest_result.best
+  const eq = best.equity_curve
+  // v91.4: 双轴叠加 — 左轴权益曲线, 右轴价格, 买卖点 marker
+  const trades = best.trades || []
+  const tradeBuyData = []  // {stime, value} 上三角
+  const tradeSellData = []  // 下三角
+  for (const t of trades) {
+    const point = { name: t.stime, value: [t.stime, t.price] }
+    if (t.side === 'BUY') tradeBuyData.push(point)
+    else if (t.side === 'SELL') tradeSellData.push(point)
+  }
+  // close 序列 (如有 bars, 从 progress_log 取; 没就用 equity 数据本身)
+  const closeSeries = (best.progress_log || []).map(p => ({ stime: p.stime, value: p.close }))
+
   if (!chart) chart = echarts.init(chartRef.value)
   chart.setOption({
-    grid: { left: 50, right: 20, top: 20, bottom: 30 },
-    xAxis: { type: 'category', data: eq.map(e => e.stime) },
-    yAxis: { type: 'value', scale: true },
-    tooltip: { trigger: 'axis' },
-    series: [{
-      name: '权益',
-      data: eq.map(e => e.equity),
-      type: 'line',
-      smooth: true,
-      areaStyle: { opacity: 0.2 },
-    }],
+    legend: { top: 0, left: 'center', data: ['权益', '收盘价', 'BUY', 'SELL'] },
+    grid: { left: 60, right: 60, top: 40, bottom: 60 },
+    dataZoom: [{ type: 'inside' }, { type: 'slider', height: 20, bottom: 20 }],
+    xAxis: { type: 'category', data: eq.map(e => e.stime), splitLine: { show: false } },
+    yAxis: [
+      { type: 'value', name: '权益', position: 'left', scale: true },
+      { type: 'value', name: '价格', position: 'right', scale: true, splitLine: { show: false } },
+    ],
+    tooltip: {
+      trigger: 'axis',
+      axisPointer: { type: 'cross' },
+      formatter: (params) => {
+        const lines = params.map(p => {
+          let line = p.marker + p.seriesName + ': ' + (p.value[1]?.toFixed?.(2) || p.value[1])
+          if (p.seriesName === 'BUY' || p.seriesName === 'SELL') {
+            line += ' (' + (p.data.side || '') + ')'
+          }
+          return line
+        })
+        return lines.join('<br/>')
+      },
+    },
+    series: [
+      { name: '权益', data: eq.map(e => e.equity), type: 'line', smooth: true, yAxisIndex: 0, areaStyle: { opacity: 0.15 } },
+      ...(closeSeries.length ? [{ name: '收盘价', data: closeSeries, type: 'line', yAxisIndex: 1, showSymbol: false, lineStyle: { type: 'dashed', width: 1, opacity: 0.5 } }] : []),
+      { name: 'BUY', data: tradeBuyData, type: 'scatter', yAxisIndex: 1, symbol: 'triangle', symbolSize: 12, itemStyle: { color: '#67c23a' } },
+      { name: 'SELL', data: tradeSellData, type: 'scatter', yAxisIndex: 1, symbol: 'triangle', symbolRotate: 180, symbolSize: 12, itemStyle: { color: '#f56c6c' } },
+    ],
   })
 }
 
@@ -684,7 +797,7 @@ const bestParamsRows = computed(() => {
 function openCreate() {
   createForm.value = _blankCreate()
   if (route.query.script_id) {
-    createForm.value.script_id = Number(route.query.script_id)
+    createForm.value.script_id = String(route.query.script_id)
     onScriptChange()
   }
   createOpen.value = true
@@ -820,6 +933,8 @@ watch(detailOpen, async (v) => {
 
 // 实盘运行中 → 每 5s 自动刷新信号
 let _refreshTimer = null
+const wsStore = useWsStore()  // v91.4: ws task 进度推送
+
 watch(detail, async (v) => {
   if (_refreshTimer) {
     clearInterval(_refreshTimer)
@@ -829,6 +944,23 @@ watch(detail, async (v) => {
     _refreshTimer = setInterval(() => loadSignals(), 5000)
   }
 })
+
+// v91.4: ws 实时进度推送 (1s 内到达, 代替 5s 轮询)
+watch(() => wsStore.lastTaskProgress, (msg) => {
+  if (!msg) return
+  if (detail.value && msg.task_id === detail.value.id) {
+    detail.value = {
+      ...detail.value,
+      status: msg.status || detail.value.status,
+      progress: msg.progress || detail.value.progress,
+    }
+    // 回测完成 → 拉一次完整结果 (图表 + best_params 等)
+    if (msg.status === 'done' || msg.status === 'failed' || msg.status === 'stopped') {
+      loadDetail(detail.value.id)
+    }
+  }
+})
+
 onBeforeUnmount(() => {
   if (_refreshTimer) clearInterval(_refreshTimer)
 })
@@ -941,6 +1073,34 @@ onBeforeUnmount(() => {
   display: flex;
   gap: var(--space-2);
   margin-bottom: var(--space-2);
+}
+
+/* v91.1: 实时进度面板 */
+.st-progress-panel {
+  width: 100%;
+}
+.st-progress-detail {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+  font-size: 13px;
+  color: var(--color-text-secondary);
+}
+.st-progress-msg {
+  flex: 1;
+  min-width: 200px;
+  color: var(--color-text-primary);
+}
+.st-progress-meta {
+  font-size: 12px;
+  color: var(--color-text-tertiary);
+}
+.st-progress-time {
+  font-size: 12px;
+  color: var(--color-text-tertiary);
+  margin-left: auto;
 }
 
 /* 执行日志 (诊断卡哪了) */
