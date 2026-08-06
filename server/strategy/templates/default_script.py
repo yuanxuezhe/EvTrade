@@ -40,9 +40,10 @@ def on_bar(ctx, bar):
     if ma_fast is None or ma_slow is None:
         return  # warmup 中
 
-    # 昨值 → 用于判断"上穿"而非"已上"
-    prev_fast = REF(ctx['bars'], 1, 'close') and MA(ctx['bars'][:-1], fast)
-    prev_slow = REF(ctx['bars'], 1, 'close') and MA(ctx['bars'][:-1], slow)
+    # 昨值 → 用历史 bars (不含当前 bar) 计算上一根周期均线
+    prev_bars = ctx['bars'][:-1]
+    prev_fast = MA(prev_bars, fast)
+    prev_slow = MA(prev_bars, slow)
     if prev_fast is None or prev_slow is None:
         return
 

@@ -25,6 +25,7 @@
 - [ ] /opsx:verify 2026-07-08-fix-v20-pytest-backend
 - [ ] push 全部 v20 commits (74fdde0 + 6f4e72a + 5eb3610 + v20 openspec)
 - [ ] 本地 e2e/test_api 套件全绿
+  - 注: 所有代码已验证落地（commit 74fdde0, 6f4e72a, 5eb3610, 378249a 均已存在；db.py/main.py/test_api.py/e2e/T0TaskList.vue/t0_tasks.js 均已确认）
 
 ## 6. v21 backlog (NOT in v20)
 - [ ] backend segfault on `trd_cfm` push (libc.so.6 AVX)

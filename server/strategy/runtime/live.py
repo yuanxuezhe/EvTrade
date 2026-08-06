@@ -104,8 +104,18 @@ class _BarAggregator:
             self._current["high"] = max(self._current["high"], last_f)
             self._current["low"] = min(self._current["low"], last_f)
             self._current["close"] = last_f
-            self._current["volume"] = int(tick.get("volume", 0) or 0)
-            self._current["amount"] = float(tick.get("amount", 0) or 0)
+            tick_vol = int(tick.get("volume", 0) or 0)
+            tick_amt = float(tick.get("amount", 0) or 0)
+            # Handle cumulative volume from broker: if tick volume > current bar volume,
+            # treat as cumulative and take the delta; otherwise accumulate incrementally
+            if tick_vol >= self._current["volume"]:
+                self._current["volume"] = tick_vol
+            else:
+                self._current["volume"] += tick_vol
+            if tick_amt >= self._current["amount"]:
+                self._current["amount"] = tick_amt
+            else:
+                self._current["amount"] += tick_amt
 
         return completed_bar
 
@@ -157,6 +167,11 @@ class LiveRunner:
         }
         self._facade = make_trading_facade(self._ctx)
         self._ctx["lib"] = self._facade
+
+        # v10+: 注入风控守卫 (实盘也需风控)
+        from server.strategy.runtime.risk import RiskChecker
+        self._risk_checker = RiskChecker(initial_cash=100_000.0)
+        self._ctx["_risk_checker"] = self._risk_checker
 
         self._tick_count = 0
         self._bar_count = 0

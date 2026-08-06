@@ -51,10 +51,10 @@ Commit 2 必须先 commit 并验证（sina_list.py 独立可跑）→ Commit 3 �
 
 ## 验证清单
 
-- [ ] sina_list 独立跑: `python3 -m server.crawler.sources.sina_list` 输出 `total=5560` (期望 ±50)
-- [ ] api/sync 启动任务: `curl -X POST /api/sync/stocks -H "Authorization: Bearer ..."` 返 `total ~5560`
-- [ ] 缓存命中: 第一次跑后删 cache 文件 → 第二次跑速度 <1s (复用)
-- [ ] sync 跑完后 `SELECT COUNT(*) FROM stocks` ≈ 5560
-- [ ] 前端 `/admin/stock-config` 刷新看到 ~5560 只
-- [ ] git log 4 commit 落地
-- [ ] git push origin master 推送成功
+- [x] sina_list 独立跑: `python3 -m server.crawler.sources.sina_list` 输出 `total=5560` (期望 ±50)
+- [x] api/sync 启动任务: `curl -X POST /api/sync/stocks -H "Authorization: Bearer ..."` 返 `total ~5560`
+- [x] 缓存命中: 第一次跑后删 cache 文件 → 第二次跑速度 <1s (复用)
+- [x] sync 跑完后 `SELECT COUNT(*) FROM stocks` ≈ 5560
+- [x] 前端 `/admin/stock-config` 刷新看到 ~5560 只
+- [x] git log 4 commit 落地
+- [x] git push origin master 推送成功

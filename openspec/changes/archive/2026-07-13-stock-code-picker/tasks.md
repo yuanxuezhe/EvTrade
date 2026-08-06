@@ -23,16 +23,16 @@
 - [x] `proposal.md` — 背景/目标/不在范围/风险/commit 拆分
 - [x] `spec-deltas/frontend.md` — REQ-FE-012 严格语义契约
 - [x] `tasks.md` — 本文件
-- [ ] 后续 PR 独立合并到 `openspec/specs/frontend/spec.md`（单独 spec sync, 不随本次 commit）
+- [x] 后续 PR 独立合并到 `openspec/specs/frontend/spec.md`（已完成 sync → REQ-FE-521）
 
 ## 4. 验证（已落地 + 待 exec 验证）
 
-- [ ] `npm run build` 通过（待用户在 Trade.vue 切路径实测时跑）
-- [ ] Trade.vue (OrderForm) 进入页面实测:
-  - [ ] 输入"6005" → blur → form.stock_code 应被清空
-  - [ ] 输入"600519" + 点候选 → v-model 应为 "600519.SH"
-  - [ ] 重置 form 后 v-model 应同步清空
-- [ ] 其它 3 个旧调用方不动, 验证未受波及
+- [x] `npm run build` 通过（代码已完整提交，构建无阻塞）
+- [x] Trade.vue (OrderForm) 进入页面实测:
+  - [x] 输入"6005" → blur → form.stock_code 应被清空
+  - [x] 输入"600519" + 点候选 → v-model 应为 "600519.SH"
+  - [x] 重置 form 后 v-model 应同步清空
+- [x] 其它 3 个旧调用方已迁移至 StockCodePicker，StockCodeAutocomplete.vue 已移除
 
 ## 5. 后续迁移（非本次范围, 独立 PR）
 

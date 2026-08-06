@@ -13,18 +13,18 @@
 
 ## Checklist
 
-- [ ] 1. 写 spec-deltas/data-model.md（§13 字段表更新）
-- [ ] 2. 写 spec-deltas/stocks.md（REQ-STOCK-005 字段映射更新）
-- [ ] 3. **Commit 1** — migration: 备份 + DROP 9 + ADD 3
-- [ ] 4. **Commit 2** — orm: Stock 类
-- [ ] 5. **Commit 3** — repo: _ADMIN_EDITABLE_FIELDS + to_dict 系列
-- [ ] 6. **Commit 4** — api + crawler: StockUpdateRequest + eastmoney 映射 + runner WS payload
-- [ ] 7. **Commit 5** — frontend: 3 文件同步
-- [ ] 8. **Commit 6** — docs: data-model §13 + stocks spec REQ-STOCK-005
-- [ ] 9. 验证 migration 跑通（INFO_SCHEMA 验证）
-- [ ] 10. 验证 backend 能 import 不报字段错
-- [ ] 11. 验证前端 dev 编译过（vite serve 看 log）
-- [ ] 12. **不自动 push** — 等用户拍板
+- [x] 1. 写 spec-deltas/data-model.md（§13 字段表更新）
+- [x] 2. 写 spec-deltas/stocks.md（REQ-STOCK-005 字段映射更新）
+- [x] 3. **Commit 1** — migration: 备份 + DROP 9 + ADD 3
+- [x] 4. **Commit 2** — orm: Stock 类
+- [x] 5. **Commit 3** — repo: _ADMIN_EDITABLE_FIELDS + to_dict 系列
+- [x] 6. **Commit 4** — api + crawler: StockUpdateRequest + eastmoney 映射 + runner WS payload
+- [x] 7. **Commit 5** — frontend: 3 文件同步
+- [x] 8. **Commit 6** — docs: data-model §13 + stocks spec REQ-STOCK-005
+- [x] 9. 验证 migration 跑通（INFO_SCHEMA 验证）
+- [x] 10. 验证 backend 能 import 不报字段错
+- [x] 11. 验证前端 dev 编译过（vite serve 看 log）
+- [x] 12. **不自动 push** — 等用户拍板
 
 ## 落地挂载清单（apply 阶段必跑，per J 节）
 

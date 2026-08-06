@@ -417,7 +417,7 @@ class BacktestEngine:
                     n += 1
                 except Exception as e:
                     log.warning("_flush_audit 单行失败 (忽略): %s", e)
-            self._last_audit_idx += n
+            self._last_audit_idx += len(new_entries)  # 始终前进, 避免重复写入
             if n > 0:
                 log.debug("[task=%d] _flush_audit: 写入 %d 条 audit", self.task_id, n)
             return n

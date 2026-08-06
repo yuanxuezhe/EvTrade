@@ -7,12 +7,12 @@
 - [x] 1.4 `tasks.md`
 
 ## 2. 代码改动
-- [ ] 2.1 `server/main.py:124-128` 删 `if not settings.STRATEGY_ENGINE_ENABLED: ... return` 守卫，仅保留 pytest 守门 + try/except
-- [ ] 2.2 `server/services/strategy/quote_consumer.py:11` docstring 移除 STRATEGY_ENGINE_ENABLED 守门描述
+- [x] 2.1 `server/main.py:124-128` 删 `if not settings.STRATEGY_ENGINE_ENABLED: ... return` 守卫，仅保留 pytest 守门 + try/except
+- [x] 2.2 `server/services/strategy/quote_consumer.py:11` docstring 移除 STRATEGY_ENGINE_ENABLED 守门描述
 
 ## 3. spec 同步
-- [ ] 3.1 找到 `openspec/specs/configuration/spec.md` 中 REQ-CFG-008 段，改 Scenario 措辞
-- [ ] 3.2 在 `openspec/specs/frontend/spec.md` Requirements 末尾前插入 REQ-FE-520
+- [x] 3.1 找到 `openspec/specs/configuration/spec.md` 中 REQ-CFG-008 段，改 Scenario 措辞
+- [x] 3.2 在 `openspec/specs/frontend/spec.md` Requirements 末尾前插入 REQ-FE-520
 
 ## 4. 验证
 - [ ] 4.1 backend 重启看 `[INIT]` 日志不再有 "STRATEGY_ENGINE_ENABLED=false" 分支

@@ -739,6 +739,20 @@ async function loadSignals() {
   }
 }
 
+async function loadDetail(taskId) {
+  try {
+    const t = await scriptStrategyApi.getTask(taskId)
+    if (t) {
+      detail.value = t
+      await nextTick()
+      renderChart()
+      await loadSignals()
+    }
+  } catch (e) {
+    // ignored
+  }
+}
+
 function renderChart() {
   if (!chartRef.value || !detail.value?.backtest_result?.best?.equity_curve) return
   const best = detail.value.backtest_result.best

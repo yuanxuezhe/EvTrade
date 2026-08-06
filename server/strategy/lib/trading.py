@@ -167,7 +167,8 @@ class _BacktestTradingFacade:
         cost = price * volume
 
         if side == "BUY":
-            if cash < cost:
+            cost_epsilon = cost * 0.001  # 0.1% tolerance for float precision
+            if cash < cost - cost_epsilon:
                 raise OrderError(
                     f"BUY 资金不足: 需 {cost:.2f}, 现金 {cash:.2f}"
                 )
@@ -263,6 +264,23 @@ class _LiveTradingFacade:
         price_type: str = "limit",
     ) -> str:
         _validate_order(stock_code, side, price, volume)
+
+        # v10+: 风控检查
+        risk = self._ctx.get("_risk_checker")
+        if risk is not None:
+            current_pos = self.get_position(stock_code)
+            pos_value = current_pos * price
+            ok, reason = risk.check_before_order(
+                side=side, price=price, qty=volume,
+                current_position=current_pos, current_cash=0,
+                current_position_value=pos_value,
+            )
+            if not ok:
+                signals = self._ctx.get("signals")
+                if signals is not None:
+                    signals.record(type_="WARN", msg=f"风控拒单: {reason}")
+                log.warning("[risk] 实盘拒单: %s", reason)
+                return ""
 
         ctx = self._ctx
         loop = ctx.get("event_loop")

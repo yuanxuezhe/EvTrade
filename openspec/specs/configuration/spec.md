@@ -78,12 +78,12 @@ EvTrade 部署在 Windows（开发/QMT 柜台）+ Linux（前后端服务），�
 
 | Key | 默认 | 说明 |
 |---|---|---|
-| `STRATEGY_ENGINE_ENABLED` | `false` | 是否启用 strategy 引擎（REST 路由 + WS 推送 + QuoteConsumer 启动统一开关） |
+| `STRATEGY_ENGINE_ENABLED` | `false` | 是否启用 strategy 引擎（REST 路由 + WS 推送；QuoteConsumer 不再受此控制） |
 | `HQ_WS_URL` | `ws://127.0.0.1:8765` | hqserver WebSocket 地址（QuoteConsumer 接入点，与 hqserver.HQ_WS_PORT 对应） |
 
-- **STRATEGY_ENGINE_ENABLED 语义**：
-  - `false`（默认）：strategy REST 路由除 `/api/strategy/flags` 外全部返 503；QuoteConsumer 不启动；前端 `/strategy-trade` 路由可访问但所有数据为空
-  - `true`：全功能启用；QuoteConsumer 在 app startup 启动；REST 路由正常工作
+- **STRATEGY_ENGINE_ENABLED 语义**（2026-07-09 重构：QuoteConsumer 与策略引擎解耦）：
+  - `false`（默认）：strategy REST 路由除 `/api/strategy/flags` 外全部返 503；**QuoteConsumer 仍然启动**（行情 7×24，与策略独立）；前端 `/strategy-trade` 路由可访问但所有数据为空
+  - `true`：策略 REST 路由正常工作；QuoteConsumer 启动（与之前行为相同）
 - **HQ_WS_URL**：
   - 与 `HQ_WS_HOST` / `HQ_WS_PORT` 组合（`ws://{HQ_WS_HOST}:{HQ_WS_PORT}`）语义一致；用 URL 形式便于部署时切换网络拓扑
   - QuoteConsumer 默认 `ws://127.0.0.1:8765`（与 hqserver 同机）；跨机部署时需显式覆盖

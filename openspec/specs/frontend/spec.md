@@ -1209,6 +1209,80 @@ The system SHALL render `client/src/components/StockCodeAutocomplete.vue` 为左
 - **THEN** 浏览器 MUST 阻止编辑 (native disabled 属性)
 - **AND** 名称来源唯一 = watch → cache 查找; 不接受外部 prop 覆盖 (避免双源不一致)
 
+### REQ-FE-521: StockCodePicker 严格语义契约（v28, 2026-07-13）
+
+The system SHALL provide `client/src/components/StockCodePicker.vue` as the strict-semantic stock code selector to replace the v-model leak in v27 `StockCodeAutocomplete`.
+
+**核心区别**：v27 在"打字未选中"时就会 emit 半选代码给 v-model；v28 只在"从候选中真正选中"时 emit 非空值，blur 时若输入框值与已选 code 不一致则自动 emit('') 清空。
+
+- 组件位置：`client/src/components/StockCodePicker.vue`
+- 视觉布局：**左 50% 宽度** `el-autocomplete` 输入框 + **右 50% 宽度** `el-tag`（只读不可关闭）显示已选证券名称；未选中时右侧显示"请选择股票"占位
+- 数据源：复用 `useStocksStore.cache`（5529 行全量内存缓存）+ v27 `searchCache` 评分算法（code 前缀(3) > short_name 前缀(2) > name 包含(1)）
+
+**契约 1: v-model 严格性**
+- 只有 `onSelectItem` 真正从候选中选择时, 才 emit `update:modelValue(<real_code>)`
+- 用户中途打字（未点候选）→ 输入框可以打字, 但**不emit update:modelValue**
+
+**契约 2: blur 清空**
+- `onBlur()` 检查: 若 `inputText !== selectedStock.code`, 则 emit `update:modelValue('')` + 清空 `selectedStock`
+
+**契约 3: 父组件 v-model 双向同步**
+- 父组件 reset / defaultStockCode 预填 → 内部 `watch(props.modelValue)` 同步
+- 父组件把 v-model 置空 → 内部 `inputText` + `selectedStock` 同步清
+
+#### Scenario: 输入"600519.SH" → 选中候选 → blur 不动
+
+- **GIVEN** `useStocksStore.cache` 已 loaded, cache 含 `600519.SH`
+- **WHEN** StockCodePicker 输入框输入 `600519`
+- **THEN** 候选"600519.SH 贵州茅台 [GZMT]" 弹出（score=3）
+- **WHEN** 点击候选
+- **THEN** emit `update:modelValue('600519.SH')` + emit `select({stock_code:'600519.SH', stock_name:'贵州茅台', ...})`
+- **WHEN** blur
+- **THEN** inputText===selectedStock.code, 无 emit(''), 控件保留已选
+
+#### Scenario: 输入"6005" → 未选 → blur 自动清空
+
+- **GIVEN** 控件当前未选中任何股票
+- **WHEN** 输入框输入 `6005`（未点候选）
+- **THEN** 候选列表弹出, 但 v-model 未发生变化
+- **WHEN** 用户移开焦点（blur）
+- **THEN** blur 处理逻辑判断: inputText='6005' !== selectedStock=null, **emit `update:modelValue('')`**, 清空 internal state
+- **AND** 父组件 form.stock_code 收到 '', 下游下单按钮 disabled / 下单校验拦截
+
+#### Scenario: 已选"600519.SH"后改输"000001.SZ"
+
+- **GIVEN** 控件已选中 `600519.SH`
+- **WHEN** 用户在输入框清空重新输入 `000001.SZ`（未点候选）
+- **THEN** v-model 仍保持 `600519.SH`, 输入框显示 `000001.SZ`, el-tag 仍显示"贵州茅台"
+- **WHEN** blur
+- **THEN** inputText='000001.SZ' !== selectedStock.code='600519.SH', emit `update:modelValue('')`, 内部全清
+
+#### Scenario: 父组件 reset 同步
+
+- **GIVEN** 控件已选中 `600519.SH`
+- **WHEN** 父组件 form.stock_code 被重置为 ''
+- **THEN** 内部 watch(props.modelValue) 触发, `inputText=''` + `selectedStock=null`, 右侧 el-tag 隐藏, 显示"请选择股票"占位
+
+#### 与 REQ-FE-520 (StockCodeAutocomplete) 关系
+
+- **StockCodeAutocomplete.vue 已移除**：所有 4 个调用方（T0TaskCreateDialog / StrategyConfig / AdminStockConfig / OrderForm）已全部迁移至 StockCodePicker
+- **迁移路径**：按 T0TaskCreateDialog → StrategyConfig → OrderForm 顺序完成
+- **取舍**：StockCodePicker 是 v28 组件, v27 文档契约仍有效; StockCodeAutocomplete 不再使用
+
+### REQ-FE-520: QuoteConsumer 7×24 启用（与策略引擎解耦，2026-07-09 重构）
+
+`backend.QuoteConsumer` 在 FastAPI startup 后**无条件**启动，连 `ws://127.0.0.1:8765` 拉 tick，broadcast 到 `ws_manager['quote_update']`。
+行情与 `STRATEGY_ENGINE_ENABLED` 开关解耦：即使策略引擎关闭，前端 Holdings/Positions/Trade 等页面仍通过 `quote_update` WS channel 实时收到最新价/市值推送。
+
+#### Scenario: 策略引擎关闭但页面打开
+
+- **WHEN** `.env` 中 `STRATEGY_ENGINE_ENABLED=0`
+- **AND** 前端打开 Holdings / Positions / Trade 页面
+- **THEN** QuoteConsumer 仍然在 backend startup 时启动
+- **AND** `quote_update` WS channel 正常推送 tick 数据
+- **AND** 前端页面市值/最新价实时更新
+- **AND** 策略 REST API (`/api/strategy/*`) 仍返回 503（策略引擎保持关闭）
+
 ### REMOVED Requirements
 
 #### Requirement: QuotePanel 双击价格带入（v15 之前行为）
