@@ -1,0 +1,1020 @@
+# EvTrade database schema
+# Edit this file, then: python scripts/sync_schema.py apply
+
+tables:
+  assets:
+    pk: ['id']
+    columns:
+      id:
+        type: Integer
+        nullable: false
+        default: 0
+      cash:
+        type: Float
+        nullable: false
+        default: 0.0
+      available:
+        type: Float
+        nullable: false
+        default: 0.0
+      frozen_cash:
+        type: Float
+        nullable: false
+        default: 0.0
+      market_value:
+        type: Float
+        nullable: false
+        default: 0.0
+      total_asset:
+        type: Float
+        nullable: false
+        default: 0.0
+      last_asset:
+        type: Float
+        nullable: false
+        default: 0.0
+      synced_at:
+        type: DateTime
+        nullable: false
+        default: 
+      synced_from:
+        type: String(16)
+        nullable: false
+        default: 
+  order_no_seq:
+    pk: ['id']
+    columns:
+      id:
+        type: Integer
+        nullable: false
+        default: 0
+      last_value:
+        type: Integer
+        nullable: false
+        default: 0
+      updated_at:
+        type: DateTime
+        nullable: false
+        default: 
+  orders:
+    pk: ['trd_date', 'order_no']
+    columns:
+      trd_date:
+        type: String(8)
+        nullable: false
+        default: 
+      order_no:
+        type: String(8)
+        nullable: false
+        default: 
+      order_id:
+        type: String(64)
+        nullable: true
+      user_def:
+        type: String(255)
+        nullable: false
+        default: 
+      stock_code:
+        type: String(16)
+        nullable: false
+        default: 
+      order_type:
+        type: String(2)
+        nullable: false
+        default: 
+      price_type:
+        type: Integer
+        nullable: false
+        default: 0
+      price:
+        type: Float
+        nullable: false
+        default: 0.0
+      volume:
+        type: Integer
+        nullable: false
+        default: 0
+      traded_volume:
+        type: Integer
+        nullable: false
+        default: 0
+      traded_amount:
+        type: Float
+        nullable: false
+        default: 0.0
+      avg_price:
+        type: Float
+        nullable: false
+        default: 0.0
+      cancelled_volume:
+        type: Integer
+        nullable: false
+        default: 0
+      order_flag:
+        type: Integer
+        nullable: false
+        default: 0
+      status:
+        type: String(2)
+        nullable: false
+        default: 
+      status_msg:
+        type: String(255)
+        nullable: false
+        default: 
+      order_time:
+        type: String(23)
+        nullable: false
+        default: 
+      raw_id:
+        type: String(8)
+        nullable: true
+      task_id:
+        type: Integer
+        nullable: true
+      strategy_type:
+        type: Integer
+        nullable: false
+        default: 0
+      created_at:
+        type: DateTime
+        nullable: false
+        default: 
+      updated_at:
+        type: DateTime
+        nullable: false
+        default: 
+      pushed_at:
+        type: DateTime
+        nullable: true
+    indexes:
+      ix_orders_trd_status: ['trd_date', 'status']
+      ix_orders_stock: ['stock_code']
+      ix_orders_strategy_type: ['strategy_type']
+      ix_orders_user_def: ['user_def']
+      ix_orders_order_id: ['order_id']
+      ix_orders_task_id: ['task_id']
+  positions:
+    pk: ['stock_code']
+    columns:
+      stock_code:
+        type: String(16)
+        nullable: false
+        default: 
+      stock_name:
+        type: String(64)
+        nullable: false
+        default: 
+      last_vol:
+        type: Integer
+        nullable: false
+        default: 0
+      avl_vol:
+        type: Integer
+        nullable: false
+        default: 0
+      vol:
+        type: Integer
+        nullable: false
+        default: 0
+      cost_price:
+        type: Float
+        nullable: false
+        default: 0.0
+      synced_at:
+        type: DateTime
+        nullable: false
+        default: 
+      synced_from:
+        type: String(16)
+        nullable: false
+        default: 
+  quote_snapshots:
+    pk: ['id']
+    columns:
+      id:
+        type: Integer
+        nullable: false
+        default: 0
+        autoincrement: true
+      stock_code:
+        type: String(16)
+        nullable: false
+        default: 
+      last_price:
+        type: Float
+        nullable: false
+        default: 0.0
+      open_price:
+        type: Float
+        nullable: false
+        default: 0.0
+      high_price:
+        type: Float
+        nullable: false
+        default: 0.0
+      low_price:
+        type: Float
+        nullable: false
+        default: 0.0
+      prev_close:
+        type: Float
+        nullable: false
+        default: 0.0
+      volume:
+        type: Integer
+        nullable: false
+        default: 0
+      amount:
+        type: Float
+        nullable: false
+        default: 0.0
+      bid1_price:
+        type: Float
+        nullable: false
+        default: 0.0
+      bid1_vol:
+        type: Integer
+        nullable: false
+        default: 0
+      bid2_price:
+        type: Float
+        nullable: false
+        default: 0.0
+      bid2_vol:
+        type: Integer
+        nullable: false
+        default: 0
+      bid3_price:
+        type: Float
+        nullable: false
+        default: 0.0
+      bid3_vol:
+        type: Integer
+        nullable: false
+        default: 0
+      bid4_price:
+        type: Float
+        nullable: false
+        default: 0.0
+      bid4_vol:
+        type: Integer
+        nullable: false
+        default: 0
+      bid5_price:
+        type: Float
+        nullable: false
+        default: 0.0
+      bid5_vol:
+        type: Integer
+        nullable: false
+        default: 0
+      ask1_price:
+        type: Float
+        nullable: false
+        default: 0.0
+      ask1_vol:
+        type: Integer
+        nullable: false
+        default: 0
+      ask2_price:
+        type: Float
+        nullable: false
+        default: 0.0
+      ask2_vol:
+        type: Integer
+        nullable: false
+        default: 0
+      ask3_price:
+        type: Float
+        nullable: false
+        default: 0.0
+      ask3_vol:
+        type: Integer
+        nullable: false
+        default: 0
+      ask4_price:
+        type: Float
+        nullable: false
+        default: 0.0
+      ask4_vol:
+        type: Integer
+        nullable: false
+        default: 0
+      ask5_price:
+        type: Float
+        nullable: false
+        default: 0.0
+      ask5_vol:
+        type: Integer
+        nullable: false
+        default: 0
+      ts:
+        type: DateTime
+        nullable: false
+        default: 
+    indexes:
+      ix_quote_stock_ts: ['stock_code', 'ts']
+      ix_quote_snapshots_ts: ['ts']
+  reconcile_report:
+    pk: ['trd_date', 'mode', 'created_at']
+    columns:
+      trd_date:
+        type: String(8)
+        nullable: false
+        default: 
+      mode:
+        type: String(16)
+        nullable: false
+        default: 
+      created_at:
+        type: DateTime
+        nullable: false
+        default: 
+      diffs_json:
+        type: LargeText
+        nullable: true
+      broker_asset_json:
+        type: LargeText
+        nullable: true
+      local_asset_json:
+        type: LargeText
+        nullable: true
+      broker_positions_json:
+        type: LargeText
+        nullable: true
+      local_positions_json:
+        type: LargeText
+        nullable: true
+      rpc_status:
+        type: String(16)
+        nullable: false
+        default: 
+      error_message:
+        type: String(512)
+        nullable: false
+        default: 
+      created_by:
+        type: Integer
+        nullable: true
+    indexes:
+      ix_reconcile_report_trd: ['trd_date']
+  stocks:
+    pk: ['stock_code']
+    columns:
+      stock_code:
+        type: String(16)
+        nullable: false
+        default: 
+      stock_name:
+        type: String(64)
+        nullable: false
+        default: 
+      sector:
+        type: String(64)
+        nullable: true
+      is_t0_able:
+        type: TinyInt
+        nullable: false
+        default: 0
+      min_buy_qty:
+        type: Integer
+        nullable: false
+        default: 0
+      trade_unit:
+        type: Integer
+        nullable: false
+        default: 0
+      short_name:
+        type: String(16)
+        nullable: true
+      stktype:
+        type: SmallInteger
+        nullable: false
+        default: 0
+      scale:
+        type: SmallInteger
+        nullable: false
+        default: 0
+      created_at:
+        type: DateTime
+        nullable: false
+        default: 
+      updated_at:
+        type: DateTime
+        nullable: false
+        default: 
+  strategy:
+    pk: ['id']
+    columns:
+      id:
+        type: Integer
+        nullable: false
+        default: 0
+        autoincrement: true
+      user_id:
+        type: Integer
+        nullable: false
+        default: 0
+      stock_code:
+        type: String(16)
+        nullable: false
+        default: 
+      type:
+        type: String(16)
+        nullable: false
+        default: 
+      reference_price:
+        type: Float
+        nullable: false
+        default: 0.0
+      status:
+        type: String(16)
+        nullable: false
+        default: 
+      base_volume:
+        type: Integer
+        nullable: false
+        default: 0
+      note:
+        type: String(255)
+        nullable: false
+        default: 
+      t0_params:
+        type: TEXT 
+        nullable: true
+      created_at:
+        type: DateTime
+        nullable: false
+        default: 
+      updated_at:
+        type: DateTime
+        nullable: false
+        default: 
+    indexes:
+      ix_strategy_type: ['type']
+      ix_strategy_stock: ['user_id', 'stock_code']
+      ix_strategy_user_status: ['user_id', 'status']
+  strategy_audit:
+    pk: ['id']
+    columns:
+      id:
+        type: Integer
+        nullable: false
+        default: 0
+        autoincrement: true
+      strategy_id:
+        type: Integer
+        nullable: false
+        default: 0
+      regime_id:
+        type: Integer
+        nullable: true
+      trd_date:
+        type: String(8)
+        nullable: false
+        default: 
+      trigger_type:
+        type: String(32)
+        nullable: false
+        default: 
+      flags_active:
+        type: TEXT 
+        nullable: false
+        default: 
+      current_price:
+        type: Float
+        nullable: true
+      position_vol:
+        type: Integer
+        nullable: true
+      base_volume:
+        type: Integer
+        nullable: true
+      action_payload:
+        type: TEXT 
+        nullable: true
+      order_no:
+        type: String(8)
+        nullable: true
+      reject_reason:
+        type: String(255)
+        nullable: true
+      created_at:
+        type: DateTime
+        nullable: false
+        default: 
+    indexes:
+      ix_audit_strategy_date: ['strategy_id', 'trd_date', 'created_at']
+  strategy_grid:
+    pk: ['id']
+    columns:
+      id:
+        type: Integer
+        nullable: false
+        default: 0
+        autoincrement: true
+      regime_id:
+        type: Integer
+        nullable: false
+        default: 0
+      direction:
+        type: String(8)
+        nullable: false
+        default: 
+      step_offset:
+        type: Float
+        nullable: false
+        default: 0.0
+      trigger_price:
+        type: Float
+        nullable: false
+        default: 0.0
+      volume:
+        type: Integer
+        nullable: false
+        default: 0
+      max_fires:
+        type: Integer
+        nullable: true
+      fired_count:
+        type: Integer
+        nullable: false
+        default: 0
+      enabled:
+        type: TinyInt
+        nullable: false
+        default: 0
+      priority:
+        type: Integer
+        nullable: false
+        default: 0
+      created_at:
+        type: DateTime
+        nullable: false
+        default: 
+      updated_at:
+        type: DateTime
+        nullable: false
+        default: 
+    indexes:
+      ix_grid_regime_dir: ['regime_id', 'direction']
+      ix_grid_regime: ['regime_id']
+  strategy_regime:
+    pk: ['id']
+    columns:
+      id:
+        type: Integer
+        nullable: false
+        default: 0
+        autoincrement: true
+      strategy_id:
+        type: Integer
+        nullable: false
+        default: 0
+      name:
+        type: String(64)
+        nullable: false
+        default: 
+      priority:
+        type: Integer
+        nullable: false
+        default: 0
+      required_flags:
+        type: TEXT 
+        nullable: false
+        default: 
+      exclude_flags:
+        type: TEXT 
+        nullable: false
+        default: 
+      base_volume:
+        type: Integer
+        nullable: true
+      clear_position:
+        type: TinyInt
+        nullable: false
+        default: 0
+      enabled:
+        type: TinyInt
+        nullable: false
+        default: 0
+      created_at:
+        type: DateTime
+        nullable: false
+        default: 
+      updated_at:
+        type: DateTime
+        nullable: false
+        default: 
+    indexes:
+      ix_regime_strategy_priority: ['strategy_id', 'priority']
+  strategy_script:
+    pk: ['user_id', 'id']
+    columns:
+      id:
+        type: String(64)
+        nullable: false
+        default: 
+      user_id:
+        type: Integer
+        nullable: false
+        default: 0
+      name:
+        type: String(64)
+        nullable: false
+        server_default: ''''
+      code:
+        type: LargeText
+        nullable: true
+      params_schema:
+        type: JSON
+        nullable: true
+      description:
+        type: String(255)
+        nullable: true
+        server_default: ''''
+      status:
+        type: String(16)
+        nullable: true
+        server_default: ''active''
+      is_public:
+        type: TinyInt
+        nullable: true
+        server_default: ''0''
+      created_at:
+        type: DateTime
+        nullable: true
+        server_default: CURRENT_TIMESTAMP
+      updated_at:
+        type: DateTime
+        nullable: true
+        server_default: CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+  strategy_script_audit:
+    pk: ['id']
+    columns:
+      id:
+        type: BIGINT
+        nullable: false
+        default: 0
+        autoincrement: true
+      task_id:
+        type: Integer
+        nullable: true
+      stime:
+        type: String(20)
+        nullable: true
+        server_default: ''''
+      trd_date:
+        type: String(8)
+        nullable: true
+        server_default: ''''
+      phase:
+        type: String(16)
+        nullable: true
+        server_default: ''''
+      trigger_type:
+        type: String(16)
+        nullable: true
+        server_default: ''''
+      stock_code:
+        type: String(16)
+        nullable: true
+        server_default: ''''
+      price:
+        type: Float
+        nullable: true
+      volume:
+        type: Integer
+        nullable: true
+        server_default: ''0''
+      indicators:
+        type: JSON
+        nullable: true
+      state:
+        type: JSON
+        nullable: true
+      msg:
+        type: Text
+        nullable: true
+      order_no:
+        type: String(32)
+        nullable: true
+        server_default: ''''
+      payload:
+        type: JSON
+        nullable: true
+      created_at:
+        type: DateTime
+        nullable: true
+        server_default: CURRENT_TIMESTAMP
+    indexes:
+      idx_task_id: ['task_id']
+  strategy_task:
+    pk: ['id']
+    columns:
+      id:
+        type: Integer
+        nullable: false
+        default: 0
+        autoincrement: true
+      user_id:
+        type: Integer
+        nullable: true
+      script_id:
+        type: Integer
+        nullable: true
+      stock_code:
+        type: String(16)
+        nullable: true
+        server_default: ''''
+      mode:
+        type: String(8)
+        nullable: true
+        server_default: ''''
+      status:
+        type: String(16)
+        nullable: true
+        server_default: ''idle''
+      params:
+        type: JSON
+        nullable: true
+      backtest_result:
+        type: JSON
+        nullable: true
+      best_params:
+        type: JSON
+        nullable: true
+      backtest_start_date:
+        type: String(8)
+        nullable: true
+        server_default: ''''
+      backtest_end_date:
+        type: String(8)
+        nullable: true
+        server_default: ''''
+      period:
+        type: String(8)
+        nullable: true
+        server_default: ''''
+      pnl:
+        type: Float
+        nullable: true
+        server_default: ''0''
+      positions:
+        type: JSON
+        nullable: true
+      trades_count:
+        type: Integer
+        nullable: true
+        server_default: ''0''
+      started_at:
+        type: DateTime
+        nullable: true
+      finished_at:
+        type: DateTime
+        nullable: true
+      error_msg:
+        type: String(500)
+        nullable: true
+        server_default: ''''
+      created_at:
+        type: DateTime
+        nullable: true
+        server_default: CURRENT_TIMESTAMP
+      updated_at:
+        type: DateTime
+        nullable: true
+        server_default: CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+      live_signals:
+        type: JSON
+        nullable: true
+      fields:
+        type: String(64)
+        nullable: true
+        server_default: ''open,close,high,low''
+      progress:
+        type: JSON
+        nullable: true
+  sys_config:
+    pk: ['user', 'cfg_key']
+    columns:
+      user:
+        type: String(64)
+        nullable: false
+        default: 
+      cfg_key:
+        type: String(64)
+        nullable: false
+        default: 
+      cfg_val:
+        type: String(512)
+        nullable: false
+        default: 
+      desc:
+        type: String(255)
+        nullable: false
+        default: 
+      updated_at:
+        type: DateTime
+        nullable: false
+        default: 
+      updated_by:
+        type: String(64)
+        nullable: true
+    indexes:
+      ix_sys_config_user: ['user']
+  sys_status:
+    pk: ['id']
+    columns:
+      id:
+        type: Integer
+        nullable: false
+        default: 0
+      trd_date:
+        type: String(8)
+        nullable: false
+        default: 
+      status:
+        type: String(16)
+        nullable: false
+        default: 
+      is_half_day:
+        type: Integer
+        nullable: false
+        default: 0
+      initialized_at:
+        type: DateTime
+        nullable: true
+      initialized_by:
+        type: Integer
+        nullable: true
+      closed_at:
+        type: DateTime
+        nullable: true
+      closed_by:
+        type: Integer
+        nullable: true
+      remark:
+        type: String(255)
+        nullable: false
+        default: 
+      created_at:
+        type: DateTime
+        nullable: false
+        default: 
+      updated_at:
+        type: DateTime
+        nullable: false
+        default: 
+  t0_tasks:
+    pk: ['id']
+    columns:
+      id:
+        type: Integer
+        nullable: false
+        default: 0
+        autoincrement: true
+      user_id:
+        type: Integer
+        nullable: false
+        default: 0
+      stock_code:
+        type: String(16)
+        nullable: false
+        default: 
+      base_volume:
+        type: Integer
+        nullable: false
+        default: 0
+      target_volume:
+        type: Integer
+        nullable: false
+        default: 0
+      coefficient:
+        type: Float
+        nullable: false
+        default: 0.0
+      status:
+        type: String(16)
+        nullable: false
+        default: 
+      note:
+        type: String(255)
+        nullable: true
+      created_trd_date:
+        type: String(8)
+        nullable: false
+        default: 
+      created_at:
+        type: DateTime
+        nullable: false
+        default: 
+      updated_at:
+        type: DateTime
+        nullable: false
+        default: 
+      closed_at:
+        type: DateTime
+        nullable: true
+    indexes:
+      ix_t0_tasks_status_created: ['status', 'created_at']
+      ix_t0_tasks_stock_code: ['stock_code']
+      ix_t0_tasks_user_status: ['user_id', 'status']
+  trades:
+    pk: ['trd_date', 'order_no', 'trade_id']
+    columns:
+      trd_date:
+        type: String(8)
+        nullable: false
+        default: 
+      order_no:
+        type: String(8)
+        nullable: false
+        default: 
+      trade_id:
+        type: String(64)
+        nullable: false
+        default: 
+      stock_code:
+        type: String(16)
+        nullable: false
+        default: 
+      order_type:
+        type: String(2)
+        nullable: false
+        default: 
+      price:
+        type: Float
+        nullable: false
+        default: 0.0
+      volume:
+        type: Integer
+        nullable: false
+        default: 0
+      amount:
+        type: Float
+        nullable: false
+        default: 0.0
+      trade_time:
+        type: String(23)
+        nullable: false
+        default: 
+      trade_type:
+        type: Integer
+        nullable: false
+        default: 0
+      created_at:
+        type: DateTime
+        nullable: false
+        default: 
+    indexes:
+      ix_trades_order_no: ['order_no']
+      ix_trades_trd_stock: ['trd_date', 'stock_code']
+  users:
+    pk: ['id']
+    columns:
+      id:
+        type: Integer
+        nullable: false
+        default: 0
+        autoincrement: true
+      username:
+        type: String(64)
+        nullable: false
+        default: 
+      password_hash:
+        type: String(255)
+        nullable: false
+        default: 
+      email:
+        type: String(128)
+        nullable: true
+      full_name:
+        type: String(64)
+        nullable: true
+      role:
+        type: String(16)
+        nullable: false
+        default: 
+      is_active:
+        type: TinyInt
+        nullable: false
+        default: 0
+      must_change_password:
+        type: TinyInt
+        nullable: false
+        default: 0
+      created_at:
+        type: DateTime
+        nullable: false
+        default: 
+      updated_at:
+        type: DateTime
+        nullable: false
+        default: 
+      last_login_at:
+        type: DateTime
+        nullable: true
+    indexes:
+      ix_users_id: ['id']
