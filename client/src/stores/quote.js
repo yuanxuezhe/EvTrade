@@ -164,6 +164,7 @@ export const useQuoteStore = defineStore('quote', () => {
    *   2) 调 ws_dispatch.subscribe(codes)（发到后端）
    *   3) 后端返 subscribe_ack（含最新 snapshots）→ 走 ws_dispatch._onSnapshot
    *   4) REST /api/quote/snapshots 立即拉一次最新值（避免 ws 没 tick 时首屏空白）
+   *   5) >200 只时直接发空字符串 '' 订阅全市场 pattern
    *
    * 新订阅的 codes 自动取消订阅（与后端 ws_manager.subscribe 幂等一致）。
    */
@@ -173,20 +174,24 @@ export const useQuoteStore = defineStore('quote', () => {
     if (newCodes.length === 0) return
     // 标记
     newCodes.forEach(c => subscribedSet.value.add(c))
-    // 1) REST 拉最新
-    try {
-      // 2026-07-09 fix: api 是业务方法对象(无 .post), 必须用 http (axios 实例) 走 Bearer interceptor
-      const { data } = await http.post('/quote/snapshots', { stock_codes: newCodes })
-      if (data && data.snapshots) {
-        applySnapshots(data.snapshots)
+    // >200 只时直接订阅全市场 ('' pattern)，避免超限报错
+    const restCodes = newCodes.length > 200 ? [] : newCodes
+    const wsCodes = newCodes.length > 200 ? [''] : newCodes
+    // 1) REST 拉最新（全市场时不拉，靠 ws ack + 后续 tick 补）
+    if (restCodes.length > 0) {
+      try {
+        const { data } = await http.post('/quote/snapshots', { stock_codes: restCodes })
+        if (data && data.snapshots) {
+          applySnapshots(data.snapshots)
+        }
+      } catch (e) {
+        console.warn('[quoteStore] fetchSnapshots failed:', e?.message)
       }
-    } catch (e) {
-      console.warn('[quoteStore] fetchSnapshots failed:', e?.message)
     }
     // 2) WS subscribe
     try {
       const { subscribe: wsSubscribe } = await import('./ws_dispatch')
-      wsSubscribe(newCodes)
+      wsSubscribe(wsCodes)
     } catch (e) {
       console.warn('[quoteStore] ws subscribe failed:', e?.message)
     }
@@ -203,20 +208,25 @@ export const useQuoteStore = defineStore('quote', () => {
   async function replayAll() {
     const codes = Array.from(subscribedSet.value)
     if (codes.length === 0) return 0
+    // >200 只时直接订阅全市场 ('' pattern)，避免超限报错
+    const wsCodes = codes.length > 200 ? [''] : codes
+    const restCodes = codes.length > 200 ? [] : codes
     try {
       const { subscribe: wsSubscribe } = await import('./ws_dispatch')
-      wsSubscribe(codes)
+      wsSubscribe(wsCodes)
     } catch (e) {
       console.warn('[quoteStore] replayAll ws subscribe failed:', e?.message)
     }
-    // 同时 REST 拉一次最新值 (防 ws subscribe_ack 的 snapshot 不完整时)
-    try {
-      const { data } = await http.post('/quote/snapshots', { stock_codes: codes })
-      if (data && data.snapshots) {
-        applySnapshots(data.snapshots)
+    // 同时 REST 拉一次最新值 (全市场时不拉，靠 ws ack + 后续 tick 补)
+    if (restCodes.length > 0) {
+      try {
+        const { data } = await http.post('/quote/snapshots', { stock_codes: restCodes })
+        if (data && data.snapshots) {
+          applySnapshots(data.snapshots)
+        }
+      } catch (e) {
+        console.warn('[quoteStore] replayAll fetchSnapshots failed:', e?.message)
       }
-    } catch (e) {
-      console.warn('[quoteStore] replayAll fetchSnapshots failed:', e?.message)
     }
     return codes.length
   }
