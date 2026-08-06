@@ -40,7 +40,7 @@
  *   - 改 saveOrder(order) / saveTrade(trade) 单行 API
  *   - 跨日清理走 idbGetAllKeys 扫描 + filter
  */
-import { openDB, idbGet, idbPut, idbDelete, idbGetAllKeys } from '../utils/idb'
+import { openDB, idbGet, idbPut, idbDelete, idbGetAllKeys, idbClear } from '../utils/idb'
 import { makeLogger } from '../utils/logger'
 
 const log = makeLogger('IDB')
@@ -290,6 +290,23 @@ export async function clearDate(trdDate) {
     _clearByDate(STORE_ORDERS, trdDate),
     _clearByDate(STORE_TRADES, trdDate),
   ])
+}
+
+/**
+ * 清空全部 IDB 缓存（orders + trades 两个 store）
+ * 刷新数据按钮调用：先清空再全量写回，确保不以旧缓存残留。
+ */
+export async function clearAll() {
+  try {
+    const db = await _ensure()
+    if (!db) return
+    await Promise.all([
+      idbClear(db, STORE_ORDERS),
+      idbClear(db, STORE_TRADES),
+    ])
+  } catch (e) {
+    log.warn('clearAll failed:', e?.message || e)
+  }
 }
 
 /**

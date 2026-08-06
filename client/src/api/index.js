@@ -176,6 +176,8 @@ export const api = {
       if (opts.stockCode) params.stock_code = opts.stockCode
       if (opts.startDate) params.start_date = opts.startDate
       if (opts.endDate) params.end_date = opts.endDate
+      if (opts.all) params.all = true
+      if (opts.limit) params.limit = opts.limit
     }
     const res = await http.get('/trades', { params })
     return res.data

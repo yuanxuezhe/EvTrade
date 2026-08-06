@@ -21,20 +21,22 @@
 import { api } from '../api'
 import { shiftDateStr } from '../utils/date'
 import { watch } from 'vue'
-import { parseAsset } from './holdings_helpers'
+import { parseAsset, normalizeOrder, normalizeTrade } from './holdings_helpers'
 import {
   applyAssetResult, applyPositionsResult, applyOrdersResult, applyTradesResult,
-  applyAssetRefresh, applyPositionsRefresh, applyOrdersRefresh, applyTradesRefresh,
-  _mergeOrders, _mergeTrades,  // v113: IDB/RPC 合并 helper
+  applyAssetRefresh, applyPositionsRefresh,
+  fillTradesDirection,
+  _mergeOrders, _mergeTrades,  // v113: bootstrap IDB-first 合并 helper
 } from './holdings_apply_results'
 import {
   initIDB,
   loadOrdersForDate,
   loadTradesForDate,
-  loadAllOrders,            // v113: 全部跨日 orders cache (startup 一次拉)
-  loadAllTrades,            // v113: 全部跨日 trades cache
+  loadAllOrders,
+  loadAllTrades,
   saveOrder, saveTrade,
   clearDate,
+  clearAll,
 } from './holdings_idb'
 import { useT0Stats } from '../composables/useT0Stats'
 import { useQuoteStore } from './quote'
@@ -289,7 +291,8 @@ export function createBootstrap({
   }
 
   /**
-   * "刷新数据" 按钮调用：重拉 4 个 RPC，并行 + 写日志 + 统计耗时
+   * "刷新数据" 按钮调用：清空 IDB → 全量拉后端 → 直接覆盖（不 merge）
+   * 完全以后端数据库为准，前端页面只做客户端过滤筛选。
    */
   async function refreshAll() {
     if (loading.value) {
@@ -298,31 +301,62 @@ export function createBootstrap({
     }
     loading.value = true
     const t0 = Date.now()
-    log('info', '用户', 'user', '刷新数据: 重新拉取资金 / 持仓 / 委托 / 成交')
+    log('info', '用户', 'user', '刷新数据: 清空缓存 + 全量拉取资金/持仓/委托/成交')
     try {
       refCounts.value = { asset: 'loading', positions: 'loading', orders: 'loading', trades: 'loading' }
 
-      const dateRange = _buildWindow()
+      // 1) 清空 IDB
+      await clearAll()
+
+      // 2) 全量拉取（无日期过滤）
+      const allQuery = { all: true, limit: 10000 }
       const results = await Promise.allSettled([
         api.getAsset().catch((e) => { throw e }),
         api.getHoldings().catch((e) => { throw e }),
-        api.getOrders(dateRange).catch((e) => { throw e }),
-        api.getTrades(dateRange).catch((e) => { throw e })
+        api.getOrders(allQuery).catch((e) => { throw e }),
+        api.getTrades(allQuery).catch((e) => { throw e })
       ])
       const [rAsset, rPos, rOrd, rTrd] = results
 
-      const summary = [
-        applyAssetRefresh(rAsset, refs),
-        applyPositionsRefresh(rPos, refs),
-        applyOrdersRefresh(rOrd, refs),
-        applyTradesRefresh(rTrd, refs),
-      ].filter(Boolean)
+      // 3) 资金
+      const assetSummary = applyAssetRefresh(rAsset, refs)
+
+      // 4) 持仓
+      const posSummary = applyPositionsRefresh(rPos, refs)
+
+      // 5) 委托 — 直接覆盖（不 merge）
+      if (rOrd.status === 'fulfilled') {
+        const rawOrders = Array.isArray(rOrd.value) ? rOrd.value : []
+        orders.value = rawOrders.map(normalizeOrder)
+        refCounts.value.orders = 'ok'
+      } else {
+        refCounts.value.orders = 'fail'
+        log('err', '缓存', 'rpc', '委托刷新失败', String(rOrd.reason?.message || rOrd.reason))
+      }
+      const orderSummary = refCounts.value.orders === 'ok'
+        ? `委托 ${orders.value.length} 条` : null
+
+      // 6) 成交 — 直接覆盖（不 merge）
+      if (rTrd.status === 'fulfilled') {
+        const rawTrades = Array.isArray(rTrd.value) ? rTrd.value : []
+        trades.value = rawTrades.map(normalizeTrade)
+        fillTradesDirection(refs)
+        refCounts.value.trades = 'ok'
+      } else {
+        refCounts.value.trades = 'fail'
+        log('err', '缓存', 'rpc', '成交刷新失败', String(rTrd.reason?.message || rTrd.reason))
+      }
+      const tradeSummary = refCounts.value.trades === 'ok'
+        ? `成交 ${trades.value.length} 条` : null
+
+      // 7) 写回 IDB
+      _saveAfterBootstrap()
+
+      // 8) 同步行情订阅
+      _syncQuoteSubs(positions.value || [])
 
       lastUpdated.value = Date.now()
-      // v32: refresh 完成后也同步一次 quote 订阅 (用户新交易后持仓 codes 可能变化)
-      _syncQuoteSubs(positions.value || [])
-      // v12: refresh 拉到的 orders / trades 也 fire-and-forget 写 IDB
-      _saveAfterBootstrap()
+      const summary = [assetSummary, posSummary, orderSummary, tradeSummary].filter(Boolean)
       const dt = Date.now() - t0
       log('ok', '用户', 'user', `刷新完成 (${dt}ms): ${summary.join(' / ')}`)
     } catch (e) {

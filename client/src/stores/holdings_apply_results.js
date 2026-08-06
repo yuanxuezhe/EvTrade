@@ -115,7 +115,7 @@ export function applyTradesRefresh(r, refs) {
     // v113: 按主键去重合并
     refs.trades.value = _mergeTrades(refs.trades.value || [], normalized)
     // change fix-trades-direction-reversed: bootstrap/refresh 路径兜底, broker trd_cfm 不带 order_type
-    _fillTradesDirection(refs)
+    fillTradesDirection(refs)
     refs.refCounts.value.trades = 'ok'
     return `成交 ${refs.trades.value.length} 条`
   }
@@ -176,7 +176,7 @@ export function applyTradesResult(r, refs, source) {
     // v113: 按主键去重合并 (trades 主键 trd_date+order_no+trade_id)
     refs.trades.value = _mergeTrades(refs.trades.value || [], normalized)
     // change fix-trades-direction-reversed: bootstrap 路径兜底 (orders 已先于 trades 写入, 反查必中)
-    _fillTradesDirection(refs)
+    fillTradesDirection(refs)
     refs.refCounts.value.trades = 'ok'
     refs.log('ok', '缓存', source, `成交加载成功 (${refs.trades.value.length} 条)`)
   } else {
@@ -192,7 +192,7 @@ export function applyTradesResult(r, refs, source) {
  *   修复: bootstrap/refresh 路径用 orders 表反查填充 (orders 已先于 trades 写入, 必中).
  *   ws push 路径在 holdings_push.js:140 单独处理.
  */
-function _fillTradesDirection(refs) {
+export function fillTradesDirection(refs) {
   const orders = refs.orders.value
   if (!orders || orders.length === 0) return
   const byOrderNo = new Map(orders.map((o) => [o.order_no, o]))
