@@ -144,22 +144,38 @@ class LiveRunner:
         params: Dict[str, Any],
         stock_code: str,
         loop: Optional[asyncio.AbstractEventLoop] = None,
+        user_id: Optional[int] = None,
     ) -> None:
         self.task_id = task_id
+        self.user_id = user_id
         self.script_code = script_code
         self.params = params
         self.stock_code = stock_code
         self._loop = loop  # 用于 lib facade 异步 RPC
+        # v91.6: 订阅的标的集合 (主标的 + 用户脚本 doorder 后扩展)
+        # 后端 quote_consumer 按订阅过滤 tick, LiveRunner 只收到这些标的的 tick
+        self._subscribed_codes: Set[str] = {stock_code}
 
         self._stop = asyncio.Event()
         self._ws = None
         self._bar_agg = _BarAggregator()
+        # v91.6: 所有订阅标的的最新 tick 缓存 (key=stock_code)
+        #   用户脚本做 T 时可 ctx["latest_ticks"].get("B.SH") 查持仓标的行情
+        self._latest_ticks: Dict[str, Dict[str, Any]] = {}
+        # ws 连接引用 (供动态 subscribe 用)
+        self._ws = None
+
         self._ctx: Dict[str, Any] = {
             "mode": "live",
             "symbol": stock_code,
             "period": "1m",
             "params": params,
             "bars": [],
+            # v91.6: 最新 tick 缓存 + 动态订阅入口
+            #   ctx["latest_ticks"][stock_code] → 最新 tick dict
+            #   ctx["subscribe_extra"]("B.SH") → 动态订阅 B 的 tick
+            "latest_ticks": self._latest_ticks,
+            "subscribe_extra": self._subscribe_extra,
             "lib": None,
             "signals": SignalRecorder(),
             "state": {},
@@ -304,10 +320,19 @@ class LiveRunner:
 
     async def _connect_and_consume(self, cbs: Dict[str, Optional[Callable]]) -> None:
         import websockets  # websockets 11+ 与 quote_consumer 一致
-        async with websockets.connect(HQ_WS_URL, ping_interval=20, ping_timeout=10) as ws:
+        # v91.6: 改为连后端 /ws/quote_update 走订阅过滤 (而非直连 hqserver 收全部 tick)
+        # 后端 quote_consumer.broadcast_to_stock 按订阅 pattern 过滤, LiveRunner 只收到自己订阅的
+        ws_url, headers = self._build_ws_url()
+        async with websockets.connect(ws_url, additional_headers=headers,
+                                       ping_interval=20, ping_timeout=10) as ws:
             self._ws = ws
-            log.info("[LiveRunner %d] connected to %s for %s",
-                     self.task_id, HQ_WS_URL, self.stock_code)
+            log.info("[LiveRunner %d] connected to %s for %s (subscribed=%s)",
+                     self.task_id, ws_url, self.stock_code, self._subscribed_codes)
+
+            # 启动时订阅主标的 (T+1 策略: 持仓标的 → 后续脚本 doorder 时再扩展)
+            await ws.send(json.dumps({"type": "subscribe", "stock_codes": list(self._subscribed_codes)}))
+            log.info("[LiveRunner %d] subscribed initial: %s", self.task_id, list(self._subscribed_codes))
+
             async for raw in ws:
                 if self._stop.is_set():
                     break
@@ -315,26 +340,81 @@ class LiveRunner:
                     msg = json.loads(raw)
                 except (json.JSONDecodeError, TypeError):
                     continue
-                # msg 格式 (同 quote_consumer._parse_tick):
-                # {"type": "tick", "channel": "quote_update",
-                #  "data": {"fields": [...31 fields...], "stock_code": "..."}}
+                # msg 格式 (后端 quote_update):
+                # {"type": "quote", "channel": "quote_update",
+                #  "data": {"snapshot": {23 字段}, "fields": [...], "stock_code": "..."}}
+                # 也可能是 {"type": "subscribe_ack", ...} 或 {"type": "pong"}
+                if msg.get("type") == "pong" or msg.get("type") == "subscribe_ack":
+                    continue  # 忽略 ack/pong
                 self._dispatch(msg, cbs)
+
+    def _build_ws_url(self) -> tuple:
+        """构造 ws URL + headers (含内部 JWT token)
+
+        LiveRunner 内部生成 user token, 连后端 /ws/quote_update 走订阅.
+        同进程回环 (127.0.0.1) 走 host header 自动 dispatch 到 FastAPI.
+        """
+        from server.config import settings
+        from server.auth.security import create_access_token as create_token
+        # 内部 token: 复用 task.user_id 身份, 走 quote_update 频道 (普通用户可用)
+        if self.user_id is None:
+            raise RuntimeError("[LiveRunner %d] 缺 user_id, 无法生成内部 token" % self.task_id)
+        token = create_token({"sub": str(self.user_id), "id": self.user_id, "role": "user"})
+        # 同进程回环: API_HOST 是 0.0.0.0 → ws 用 127.0.0.1
+        ws_host = "127.0.0.1" if settings.API_HOST in ("0.0.0.0", "::") else settings.API_HOST
+        url = f"ws://{ws_host}:{settings.API_PORT}/ws/quote_update?token={token}"
+        return url, {}
+
+    def _subscribe_extra(self, stock_code: str) -> None:
+        """T+1 策略做 T 时, 动态订阅新标的
+
+        用户脚本 doorder 触发 buy 后, sandbox facade 检测持仓变化 + 调此方法.
+        后端 quote_consumer 收到 subscribe → 后续推此标的 tick 给 LiveRunner.
+        """
+        if stock_code in self._subscribed_codes:
+            return
+        self._subscribed_codes.add(stock_code)
+        if self._ws is not None:
+            try:
+                asyncio.run_coroutine_threadsafe(
+                    self._ws.send(json.dumps({"type": "subscribe", "stock_codes": [stock_code]})),
+                    self._loop,
+                )
+                log.info("[LiveRunner %d] dynamic subscribe: %s", self.task_id, stock_code)
+            except Exception as e:
+                log.warning("[LiveRunner %d] dynamic subscribe %s 失败: %s", self.task_id, stock_code, e)
 
     def _dispatch(self, msg: Dict[str, Any], cbs: Dict[str, Optional[Callable]]) -> None:
         # 解出 tick dict
         data = msg.get("data") or msg
+        # v91.6: 后端 quote_consumer 已按订阅过滤 tick, 这里直接解字段
         fields = data.get("fields")
         stock_code = data.get("stock_code")
+        snapshot = data.get("snapshot")  # 后端 quote_consumer 推的 23 字段快照
         if fields and isinstance(fields, list):
-            # 31 字段顺序 (同 quote_consumer)
             tick = _fields_to_tick_dict(stock_code, fields)
+            if snapshot:
+                tick["snapshot"] = snapshot  # 保留完整快照供脚本用
+        elif snapshot and isinstance(snapshot, dict):
+            tick = {"stock_code": stock_code, **snapshot}
         elif isinstance(data, dict) and "lastPrice" in data:
             tick = data
         else:
             return
 
-        if tick.get("stock_code") != self.stock_code:
-            return  # 过滤其他标的
+        sc = tick.get("stock_code") or stock_code
+        if not sc:
+            return
+
+        # v91.6: 缓存所有 tick 到 _latest_ticks (用户脚本可 ctx["latest_ticks"][sc] 查任意订阅标的)
+        if not hasattr(self, "_latest_ticks"):
+            self._latest_ticks = {}
+        self._latest_ticks[sc] = tick
+
+        # v91.6: 不再过滤 stock_code (后端已过滤), 但非主标的只缓存不触发 on_tick/on_bar
+        # 主标的才走 K 线聚合 + on_tick/on_bar; 其他订阅标的 (持仓标的) 只更新 latest_ticks
+        if sc != self.stock_code:
+            return  # 非主标的: 不调 on_tick/on_bar, 不计 _tick_count
 
         self._tick_count += 1
         self._last_tick_ts = time.time()
@@ -440,6 +520,7 @@ async def start_live_runner(
     script_code: str,
     params: Dict[str, Any],
     stock_code: str,
+    user_id: Optional[int] = None,
 ) -> None:
     """启动一个新的 live runner (后台 task)
 
@@ -449,7 +530,8 @@ async def start_live_runner(
     if task_id in _active_runners:
         raise RuntimeError(f"task_id {task_id} 已在运行")
     loop = asyncio.get_running_loop()
-    runner = LiveRunner(task_id, script_code, params, stock_code, loop=loop)
+    # v91.6: 传 user_id 让 LiveRunner 生成内部 JWT, 连后端 /ws/quote_update 走订阅
+    runner = LiveRunner(task_id, script_code, params, stock_code, loop=loop, user_id=user_id)
     _active_runners[task_id] = runner
     _active_tasks[task_id] = asyncio.create_task(runner.start(), name=f"live-runner-{task_id}")
     log.info("live_runner started: task_id=%d stock=%s", task_id, stock_code)

@@ -444,16 +444,17 @@ def run_task(
             loop = asyncio.get_running_loop()
         except RuntimeError:
             # 同步环境 (测试 / evctl): 改用 ensure_future to main loop (后台)
-            asyncio.ensure_future(_async_start_live(task_id, code, params, stock_code))
+            asyncio.ensure_future(_async_start_live(task_id, task_user_id, code, params, stock_code))
         else:
-            loop.create_task(_async_start_live(task_id, code, params, stock_code))
+            loop.create_task(_async_start_live(task_id, task_user_id, code, params, stock_code))
 
     return get_task(task_id, user_id, is_admin=True)
 
 
-async def _async_start_live(task_id: int, code: str, params: Dict, stock_code: str) -> None:
+async def _async_start_live(task_id: int, task_user_id: int, code: str, params: Dict, stock_code: str) -> None:
     try:
-        await start_live_runner(task_id, code, params, stock_code)
+        # v91.6: 传 user_id 让 LiveRunner 生成内部 JWT 连 /ws/quote_update
+        await start_live_runner(task_id, task_user_id, code, params, stock_code)
         # live 模式下状态保持 'running' (持续运行) 或改 'live'
         _set_task_status(task_id, "running")
     except Exception as e:
