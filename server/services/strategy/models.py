@@ -16,8 +16,9 @@ JSON 字段（required_flags / exclude_flags / flags_active / action_payload）�
 """
 from sqlalchemy import (
     Column, Integer, String, Float, Text, DateTime, Boolean,
-    Index, ForeignKey,
+    Index, ForeignKey, text,
 )
+from sqlalchemy.dialects import mysql
 from sqlalchemy.orm import relationship
 
 from server.db import Base
@@ -231,3 +232,86 @@ class StrategyAudit(Base):
 
     def set_action_payload(self, value) -> None:
         self.action_payload = _json_dumps(value) if value is not None else None
+
+
+# ─────────────── StrategyScript（脚本策略） ───────────────
+
+
+class StrategyScript(Base):
+    """脚本策略：用户编写的 Python 源码 + 参数 schema。
+
+    主键: (user_id, id) 复合主键
+    📌 id: varchar(64)，用户自命名 (通常 = name 或文件名)
+    📌 is_public: 0=私有 1=公开，默认 0
+    """
+    __tablename__ = "strategy_script"
+
+    id = Column(String(64), primary_key=True, nullable=False)
+    user_id = Column(Integer, primary_key=True, nullable=False)
+    name = Column(String(64), nullable=False, default="", server_default=text("''"))
+    code = Column(mysql.LONGTEXT, nullable=True)
+    params_schema = Column(mysql.JSON(), nullable=True)
+    description = Column(String(255), nullable=True, default="", server_default=text("''"))
+    status = Column(String(16), nullable=True, default="active", server_default=text("'active'"))
+    is_public = Column(Boolean, nullable=True, default=False, server_default=text("0"))
+    created_at = Column(DateTime, nullable=True, server_default=text('CURRENT_TIMESTAMP'))
+    updated_at = Column(DateTime, nullable=True, server_default=text('CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP'), onupdate=_utcnow)
+
+
+# ─────────────── StrategyTask（脚本策略任务） ───────────────
+
+
+class StrategyTask(Base):
+    """脚本策略任务：回测 / 实盘运行态 + 结果。"""
+    __tablename__ = "strategy_task"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, nullable=True)
+    script_id = Column(Integer, nullable=True)
+    stock_code = Column(String(16), nullable=True, default="", server_default=text("''"))
+    mode = Column(String(8), nullable=True, default="", server_default=text("''"))
+    status = Column(String(16), nullable=True, default="idle", server_default=text("'idle'"))
+    params = Column(mysql.JSON(), nullable=True)
+    backtest_result = Column(mysql.JSON(), nullable=True)
+    best_params = Column(mysql.JSON(), nullable=True)
+    backtest_start_date = Column(String(8), nullable=True, default="", server_default=text("''"))
+    backtest_end_date = Column(String(8), nullable=True, default="", server_default=text("''"))
+    period = Column(String(8), nullable=True, default="", server_default=text("''"))
+    pnl = Column(Float, nullable=True, default=0.0, server_default=text("'0'"))
+    positions = Column(mysql.JSON(), nullable=True)
+    trades_count = Column(Integer, nullable=True, default=0, server_default=text("0"))
+    started_at = Column(DateTime, nullable=True)
+    finished_at = Column(DateTime, nullable=True)
+    error_msg = Column(String(500), nullable=True, default="", server_default=text("''"))
+    created_at = Column(DateTime, nullable=True, server_default=text('CURRENT_TIMESTAMP'))
+    updated_at = Column(DateTime, nullable=True, server_default=text('CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP'), onupdate=_utcnow)
+    live_signals = Column(mysql.JSON(), nullable=True)
+    fields = Column(String(64), nullable=True, default="open,close,high,low", server_default=text("'open,close,high,low'"))
+    progress = Column(mysql.JSON(), nullable=True)
+
+
+# ─────────────── StrategyScriptAudit（脚本策略审计） ───────────────
+
+
+class StrategyScriptAudit(Base):
+    """脚本策略触发审计日志。"""
+    __tablename__ = "strategy_script_audit"
+    __table_args__ = (
+        Index("idx_task_id", "task_id"),
+    )
+
+    id = Column(mysql.BIGINT, primary_key=True, autoincrement=True)
+    task_id = Column(Integer, nullable=True)
+    stime = Column(String(20), nullable=True, default="", server_default=text("''"))
+    trd_date = Column(String(8), nullable=True, default="", server_default=text("''"))
+    phase = Column(String(16), nullable=True, default="", server_default=text("''"))
+    trigger_type = Column(String(16), nullable=True, default="", server_default=text("''"))
+    stock_code = Column(String(16), nullable=True, default="", server_default=text("''"))
+    price = Column(Float, nullable=True)
+    volume = Column(Integer, nullable=True, default=0, server_default=text("0"))
+    indicators = Column(mysql.JSON(), nullable=True)
+    state = Column(mysql.JSON(), nullable=True)
+    msg = Column(Text, nullable=True)
+    order_no = Column(String(32), nullable=True, default="", server_default=text("''"))
+    payload = Column(mysql.JSON(), nullable=True)
+    created_at = Column(DateTime, nullable=True, server_default=text('CURRENT_TIMESTAMP'))
