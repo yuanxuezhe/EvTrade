@@ -108,19 +108,21 @@ async def do_reconcile(
     ]
 
     now = datetime.now(timezone.utc).replace(tzinfo=None)
+
+    # diffs_json 只记摘要（broker/local 全量已分别写入专用列）
+    # 全量 positions 塞 diffs_json 会导致 TEXT 列超 64KB 上限 (DataError 1406)
+    _diffs_summary = {
+        'rpc_errors': rpc_errors,
+        'broker_positions_count': len(positions_data),
+        'local_positions_count': len(local_positions),
+        'assets_count': 0,
+    }
+
     report = ReconcileReport.add_one({
         'trd_date': new_trd_date,
         'mode': "auto" if cfg["auto_reconcile"] else "manual",
         'created_at': now,
-        'diffs_json': json.dumps({
-            'rpc_errors': rpc_errors,
-            'broker': {
-                'positions': positions_data, 'assets': assets_data,
-            },
-            'local': {
-                'positions': local_positions, 'assets': local_assets,
-            },
-        }, ensure_ascii=False, default=str),
+        'diffs_json': json.dumps(_diffs_summary, ensure_ascii=False, default=str),
         'broker_asset_json': json.dumps(assets_data, ensure_ascii=False, default=str),
         'local_asset_json': json.dumps(local_assets, ensure_ascii=False, default=str),
         'broker_positions_json': json.dumps(positions_data, ensure_ascii=False, default=str),

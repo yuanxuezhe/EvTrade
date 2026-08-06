@@ -30,6 +30,7 @@ from sqlalchemy import (
     Boolean, SmallInteger,
     UniqueConstraint,
 )
+from sqlalchemy.dialects import mysql
 from sqlalchemy.orm import Session
 from typing import Optional
 
@@ -302,11 +303,11 @@ class ReconcileReport(Base):
     trd_date = Column(String(8), primary_key=True, nullable=False)
     mode = Column(String(16), primary_key=True, nullable=False)        # auto / manual
     created_at = Column(DateTime, primary_key=True, nullable=False, default=_utcnow)
-    diffs_json = Column(Text, nullable=False, default="[]")
-    broker_asset_json = Column(Text, nullable=False, default="")
-    local_asset_json = Column(Text, nullable=False, default="")
-    broker_positions_json = Column(Text, nullable=False, default="")
-    local_positions_json = Column(Text, nullable=False, default="")
+    diffs_json = Column(mysql.LONGTEXT, nullable=True, default="[]")
+    broker_asset_json = Column(mysql.LONGTEXT, nullable=True, default="")
+    local_asset_json = Column(mysql.LONGTEXT, nullable=True, default="")
+    broker_positions_json = Column(mysql.LONGTEXT, nullable=True, default="")
+    local_positions_json = Column(mysql.LONGTEXT, nullable=True, default="")
     rpc_status = Column(String(16), nullable=False, default="ok")  # ok / partial / failed
     error_message = Column(String(512), nullable=False, default="")
     created_by = Column(Integer, nullable=True)
