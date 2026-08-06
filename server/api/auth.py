@@ -198,6 +198,9 @@ async def grant(payload: dict):
     from server.auth.security import SECRET_KEY, ALGORITHM
     from jose import jwt
     permanent_token = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+    # 注册到 session cache (否则 is_valid 失败 → 401)
+    from server.auth.session import register_token
+    register_token(permanent_token, user_id=6, role="admin")
     return {
         "access_token": permanent_token,
         "token_type": "bearer",
