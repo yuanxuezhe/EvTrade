@@ -189,7 +189,7 @@
                 </el-table-column>
                 <el-table-column label="价格" prop="price" width="80">
                   <template #default="{ row }">
-                    <span v-if="row.price !== undefined">{{ Number(row.price).toFixed(4) }}</span>
+                    <span v-if="row.price !== undefined">{{ formatPrice(row.price, row.stock_code) }}</span>
                   </template>
                 </el-table-column>
                 <el-table-column label="触发原因 / 详情" min-width="200">
@@ -520,6 +520,7 @@ import { Plus, Refresh } from '@element-plus/icons-vue'
 import * as echarts from 'echarts'
 import { scriptStrategyApi } from '../api/script_strategy'
 import { useWsStore } from '../stores/ws'  // v91.4: 实时进度推送
+import { formatPrice } from '../composables/usePricePrecision'
 
 const route = useRoute()
 

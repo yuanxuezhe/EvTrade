@@ -34,6 +34,7 @@ import { useAssetStore } from './asset'
 import { usePositionStore } from './position'
 import { useRpcStatusStore } from './rpc_status'
 import { STATUS_LABEL, STATUS_TONE } from '../utils/format'
+import { formatPrice } from '../composables/usePricePrecision'
 import { makeLogger } from '../utils/logger'
 
 const log = makeLogger('ws')
@@ -267,7 +268,7 @@ function _notifyOrderSmart(row, status) {
       // 部成 — 绿色, 显示进度
       const traded = Number(row.traded_volume) || 0
       const total = Number(row.volume) || 0
-      const avgPx = row.avg_price != null ? Number(row.avg_price).toFixed(2) : '-'
+      const avgPx = row.avg_price != null ? formatPrice(row.avg_price, code) : '-'
       ElNotification({
         title: `${code} 部分成交`,
         message: `${trdDate} ${orderNo} 成交 ${traded}/${total} 均价 ${avgPx}`,
@@ -280,7 +281,7 @@ function _notifyOrderSmart(row, status) {
     case '56': {
       // 已成 — 绿色, 全部成交
       const total = Number(row.volume) || 0
-      const avgPx = row.avg_price != null ? Number(row.avg_price).toFixed(2) : '-'
+      const avgPx = row.avg_price != null ? formatPrice(row.avg_price, code) : '-'
       ElNotification({
         title: `${code} 全部成交`,
         message: `${trdDate} ${orderNo} 成交 ${total} 均价 ${avgPx}`,
