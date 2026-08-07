@@ -46,7 +46,7 @@ import { makeLogger } from '../utils/logger'
 const log = makeLogger('IDB')
 
 const DB_NAME = 'holdings-cache'
-const DB_VERSION = 4
+const DB_VERSION = 5
 const STORE_ORDERS = 'orders'
 const STORE_TRADES = 'trades'
 const STORE_POSITIONS = 'positions'
@@ -115,9 +115,15 @@ export function initIDB() {
       if (!db.objectStoreNames.contains(STORE_TRADES)) {
         db.createObjectStore(STORE_TRADES)
       }
-      // v4: 新增 positions store (key = stock_code)
+      // v4: 新增 positions store (keyPath = stock_code, 支持 inline key bulkSave)
+      // v5: positions store 重建为 keyPath = 'stock_code' (v4 版本无 keyPath, bulkSave 报错)
+      if (oldV < 5) {
+        if (db.objectStoreNames.contains(STORE_POSITIONS)) {
+          db.deleteObjectStore(STORE_POSITIONS)
+        }
+      }
       if (!db.objectStoreNames.contains(STORE_POSITIONS)) {
-        db.createObjectStore(STORE_POSITIONS)
+        db.createObjectStore(STORE_POSITIONS, { keyPath: 'stock_code' })
       }
     }
   )
@@ -279,7 +285,7 @@ export function savePosition(position) {
   if (!position || !position.stock_code) return
   _ensure().then((db) => {
     if (!db) return
-    return idbPut(db, STORE_POSITIONS, position.stock_code, _clone(position))
+    return idbPut(db, STORE_POSITIONS, _clone(position))
   }).catch((e) => {
     log.warn('savePosition failed:', position.stock_code, e?.message || e)
   })

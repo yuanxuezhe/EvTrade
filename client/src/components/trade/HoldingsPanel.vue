@@ -1,29 +1,9 @@
 <!--
-  HoldingsPanel.vue — 持仓 mini 面板 (v30 Trade.vue 5 区重构: 嵌入右栏 flex:2; v31.1 字段补全 + 列宽调优; v32 名称查 stocks cache; v55 select-stock emit)
+  HoldingsPanel.vue — 持仓 mini 面板 (统一 DataTableView)
 
-  数据源: useHoldingsStore().positions (App.vue 启动时已 bootstrap)
-  行情:   useQuoteStore() (持仓 codes 已自动 subscribe,见 holdings store)
-  实时:   1s tick 强制 column 重读 getter,响应 quote 更新
-
-  v32 修订:
-    - 证券名称列从 row.stock_name (后端字段) 改为 stockName(row.stock_code) (查 stocks store 缓存)
-    - 后端不再返回 name,前端统一查 stocks cache 补名称,查不到显式 '—'
-
-  v53 修订:
-    - 行 dblclick → emit apply-to-order (REQ-FE-HOLDINGS-DBLCLICK), 父组件 (Trade.vue) 监听后写入 quickStock
-
-  v55 修订 (REQ-FE-230):
-    - 行 click (单击) → emit select-stock, 让 T0Trade.vue 添加任务 dialog 能直接用 HoldingsPanel 选中回填 stock_code
-    - **不改** dblclick 语义, apply-to-order 行为保持 (Trade.vue 等父组件不破坏)
-    - 单击与 dblclick 互不触发: 用 hasClickSelected flag + 250ms 节流, 避免 dblclick 第一击被误识别
-
-  精简相对 Holdings.vue:
-    - 无 filter-bar (迷你 el-input 内嵌到 .tp-header)
-    - 无 pagination (mini panel 不分页,只显示前 ~30 行,溢出滚动)
-    - 无 export 按钮 (完整导出走 /holdings 全页)
-    - 保留: 实时行情 + 市值/盈亏/收益率计算 + 红涨绿跌配色
-
-  列 (9 列: 标的 160 fixed left / 期初/持仓/可用 100 / 成本/最新/市值/浮盈 100 / 收益率 100 fixed right)
+  数据源: useHoldingsStore().positions
+  行情:   useQuoteStore()
+  v55: select-stock emit (单击), apply-to-order emit (双击)
 -->
 <template>
   <div class="hp-shell content-card">
@@ -41,96 +21,76 @@
       />
     </div>
 
-    <div class="tp-body">
-      <el-table
-        :data="pagedPositions"
-        :show-overflow-tooltip="true"
-        stripe
-        size="small"
-        class="tp-table hp-row-dblclick"
+    <div class="tp-body" v-if="idbSyncStatus?.positions !== 'syncing'">
+      <DataTableView
+        :columns="holdingsColumns"
+        :data="filteredPositions"
         :cell-class-name="cellClassName"
+        :empty-description="'暂无持仓'"
         @row-click="onRowClick"
         @row-dblclick="onRowDblclick"
-        v-if="idbSyncStatus?.positions !== 'syncing'"
+        class="hp-data-table"
       >
-        <!-- v70: 10 列走 COL 常量 (持仓 mini panel 列宽压缩 100/100, 总宽 ~720 fit 856 viewport) -->
-        <el-table-column prop="stock_code" label="标的" fixed="left" show-overflow-tooltip v-bind="COL.STOCK_TARGET">
-          <template #default="{ row }">
-            <span class="tp-stock-code">{{ row.stock_code }}</span>
-            <span class="text-secondary" style="margin-left: 6px">{{ stockName(row.stock_code) || '—' }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column prop="last_vol" label="期初" v-bind="COL.NUMBER">
-          <template #default="{ row }">
-            <span class="text-mono">{{ formatNumber(row.last_vol) }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column prop="vol" label="持仓" v-bind="COL.NUMBER">
-          <template #default="{ row }">
-            <span class="text-mono">{{ formatNumber(row.vol) }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column prop="avl_vol" label="可用" v-bind="COL.NUMBER">
-          <template #default="{ row }">
-            <span class="text-mono">{{ formatNumber(row.avl_vol) }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column prop="cost_price" label="成本" v-bind="COL.MONEY">
-          <template #default="{ row }">
-            <span class="text-mono">{{ row.cost_price != null ? formatPrice(row.cost_price, row.stock_code) : '—' }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="最新" v-bind="COL.MONEY">
-          <template #default="{ row }">
-            <span
-              v-if="getLastPrice(row.stock_code) != null"
-              class="text-mono"
-              :class="priceClass(row)"
-            >
-              {{ formatMoneyExact(getLastPrice(row.stock_code)) }}
-            </span>
-            <span v-else class="text-muted">—</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="市值" v-bind="COL.MONEY">
-          <template #default="{ row }">
-            <span v-if="getMarketValue(row) != null" class="text-mono">
-              {{ formatMoney(getMarketValue(row)) }}
-            </span>
-            <span v-else class="text-muted">—</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="浮动盈亏" v-bind="COL.MONEY">
-          <template #default="{ row }">
-            <template v-if="getProfit(row) != null">
-              <span class="text-mono" :class="profitClass(getProfit(row))">
-                {{ formatMoney(getProfit(row)) }}
-              </span>
-            </template>
-            <span v-else class="text-muted">—</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="收益率" fixed="right" v-bind="COL.NUMBER">
-          <template #default="{ row }">
-            <template v-if="getReturnRate(row) != null">
-              <span class="text-mono" :class="profitClass(getReturnRate(row))">
-                {{ formatPercent(getReturnRate(row)) }}
-              </span>
-            </template>
-            <span v-else class="text-muted">—</span>
-          </template>
-        </el-table-column>
-
-        <template #empty>
-          <el-empty description="暂无持仓" :image-size="80" />
+        <template #column-stock_code="{ row }">
+          <span class="tp-stock-code">{{ row.stock_code }}</span>
+          <span class="text-secondary" style="margin-left: 6px">{{ stockName(row.stock_code) || '—' }}</span>
         </template>
-      </el-table>
+
+        <template #column-last_vol="{ row }">
+          <span class="text-mono">{{ formatNumber(row.last_vol) }}</span>
+        </template>
+
+        <template #column-vol="{ row }">
+          <span class="text-mono">{{ formatNumber(row.vol) }}</span>
+        </template>
+
+        <template #column-avl_vol="{ row }">
+          <span class="text-mono">{{ formatNumber(row.avl_vol) }}</span>
+        </template>
+
+        <template #column-cost_price="{ row }">
+          <span class="text-mono">{{ row.cost_price != null ? formatPrice(row.cost_price, row.stock_code) : '—' }}</span>
+        </template>
+
+        <template #column-last_price="{ row }">
+          <span v-if="getLastPrice(row.stock_code) != null" class="text-mono" :class="priceClass(row)">
+            {{ formatMoneyExact(getLastPrice(row.stock_code)) }}
+          </span>
+          <span v-else class="text-muted">—</span>
+        </template>
+
+        <template #column-market_value="{ row }">
+          <span v-if="getMarketValue(row) != null" class="text-mono">
+            {{ formatMoney(getMarketValue(row)) }}
+          </span>
+          <span v-else class="text-muted">—</span>
+        </template>
+
+        <template #column-profit="{ row }">
+          <template v-if="getProfit(row) != null">
+            <span class="text-mono" :class="profitClass(getProfit(row))">
+              {{ formatMoney(getProfit(row)) }}
+            </span>
+          </template>
+          <span v-else class="text-muted">—</span>
+        </template>
+
+        <template #column-return_rate="{ row }">
+          <template v-if="getReturnRate(row) != null">
+            <span class="text-mono" :class="profitClass(getReturnRate(row))">
+              {{ formatPercent(getReturnRate(row)) }}
+            </span>
+          </template>
+          <span v-else class="text-muted">—</span>
+        </template>
+      </DataTableView>
     </div>
   </div>
 </template>
 
 <script setup>
 import { computed, ref } from 'vue'
+import DataTableView from '../DataTableView.vue'
 import { formatNumber, formatMoney } from '../../utils/format'
 import { formatPrice } from '../../composables/usePricePrecision'
 import { stockName } from '../../utils/stockNames'
@@ -141,11 +101,7 @@ import { useHoldingsStore } from '../../stores/holdings'
 const holdingsStore = useHoldingsStore()
 const quoteStore = useQuoteStore()
 
-// v53: 持仓行 dblclick → emit apply-to-order (REQ-FE-HOLDINGS-DBLCLICK)
-//   父组件 (Trade.vue) 监听此事件 → 写入 quickStock → OrderForm 自动更新代码
-// v55: 加 select-stock emit (单击), 让 T0Trade.vue 添加任务 dialog 能直接回填 stock_code
-//   - 单击与 dblclick 互不触发: 用 dblclickFlag 标记最近 250ms 内是否触发过 dblclick,
-//     如果是 → 本次 click 视为 dblclick 第一击, 不触发 select-stock
+// v55: click → select-stock, dblclick → apply-to-order
 const emit = defineEmits(['apply-to-order', 'select-stock'])
 let lastDblclickTs = 0
 function onRowDblclick(row) {
@@ -156,19 +112,15 @@ function onRowDblclick(row) {
 }
 function onRowClick(row) {
   if (!row || !row.stock_code) return
-  // 若 300ms 内刚发生过 dblclick, 跳过本次 click (避免 dblclick 残留事件触发 select-stock)
   if (Date.now() - lastDblclickTs < 300) return
   const name = stockName(row.stock_code) || row.stock_name || ''
   emit('select-stock', { stock_code: row.stock_code, stock_name: name })
 }
 
-// v33: 持仓 codes 走 store (App.vue bootstrap 已自动订阅)
-//   push → triggerRef(byCode) → getMarketValue/getProfit/getReturnRate computed 自动重算 → UI 立即更新
-//   删除 1s tick 强制重建: reactivity 现在正确, 不再需要兜底
 const positions = computed(() => holdingsStore.positions || [])
 const idbSyncStatus = computed(() => holdingsStore.idbSyncStatus || {})
 
-// 关键字过滤 (迷你 filter, 只匹配代码 + 名称)
+// 关键字过滤
 const keyword = ref('')
 const filteredPositions = computed(() => {
   const kw = keyword.value.trim().toLowerCase()
@@ -180,9 +132,6 @@ const filteredPositions = computed(() => {
   })
 })
 
-// mini panel 不分页,但 el-table 不分页大数据会卡, 取前 30 行够用
-const pagedPositions = computed(() => filteredPositions.value.slice(0, 30))
-
 // 总市值
 const totalMv = computed(() => {
   let sum = 0
@@ -193,22 +142,16 @@ const totalMv = computed(() => {
   return sum
 })
 
-// ---- 行情查询 ------------------------------------------------------
-
-// v33: quote tick trigger — 让 template 依赖 quoteStore 的 reactive 状态
-//   直接调 quoteStore.getLastPrice() 不被 Vue 追踪 (它是函数调用)
-//   改用 computed 引用 quoteStore.byCode (pinia 解包后是 Map, 浅响应) + triggerRef
-//   用一个 wrapper computed 每次 render 都读 quote store size 让 Vue 追踪
+// 行情 trigger
 const quoteTickTrigger = computed(() => quoteStore.size || 0)
 
-// v37 移动端: 给每个 <td> 加 col-{label} class, main.css .is-mobile 模式下 ::before 展示字段名
+// v37 移动端列标签
 function cellClassName({ row, column }) {
   const label = (column && column.label) || ''
   return 'col-' + label
 }
 
 function getLastPrice(code) {
-  // 引用 trigger 让 Vue 追踪此函数调用在 reactive 上下文
   void quoteTickTrigger.value
   return holdingsStore.getLivePrice(code)
 }
@@ -234,7 +177,6 @@ function profitClass(v) {
 function priceClass(row) {
   const price = getLastPrice(row.stock_code)
   if (price == null) return ''
-  // v33 fix: 直接读 quoteStore.get (内部 byCode.value.get), triggerRef(byCode) 后会重算
   const q = quoteStore.get(row.stock_code) || null
   const prev = q?.prev_close != null ? Number(q.prev_close) : null
   if (prev == null || prev === 0) return ''
@@ -255,10 +197,22 @@ function formatPercent(v) {
   const sign = n > 0 ? '+' : ''
   return `${sign}${(n * 100).toFixed(2)}%`
 }
+
+// 列定义
+const holdingsColumns = [
+  { key: 'stock_code', label: '标的', vBind: COL.STOCK_TARGET },
+  { key: 'last_vol', label: '期初', vBind: COL.NUMBER },
+  { key: 'vol', label: '持仓', vBind: COL.NUMBER },
+  { key: 'avl_vol', label: '可用', vBind: COL.NUMBER },
+  { key: 'cost_price', label: '成本', vBind: COL.MONEY },
+  { key: 'last_price', label: '最新', vBind: COL.MONEY },
+  { key: 'market_value', label: '市值', vBind: COL.MONEY, sortable: false },
+  { key: 'profit', label: '浮动盈亏', vBind: COL.MONEY, sortable: false },
+  { key: 'return_rate', label: '收益率', fixed: 'right', vBind: COL.NUMBER, sortable: false },
+]
 </script>
 
 <style scoped>
-/* 复用 TodayOrdersPanel 的 .tp-* 类 (Trade.vue 内 trade-panels-col 已覆盖) */
 .hp-shell {
   display: flex;
   flex-direction: column;
@@ -266,14 +220,34 @@ function formatPercent(v) {
   min-height: 0;
   overflow: hidden;
 }
-/* v53: 行 dblclick 视觉提示 (REQ-FE-HOLDINGS-DBLCLICK) */
-:deep(.hp-row-dblclick .el-table__row) {
+
+.tp-header {
+  display: flex;
+  align-items: center;
+  padding: var(--space-3, 8px) var(--space-4, 12px);
+  border-bottom: 1px solid var(--border-light, #ebeef5);
+  flex-shrink: 0;
+}
+
+.tp-title {
+  font-size: 14px;
+  font-weight: 600;
+  margin: 0;
+}
+
+.tp-body {
+  flex: 1 1 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+:deep(.el-table__row) {
   cursor: pointer;
 }
-:deep(.hp-row-dblclick .el-table__row:hover > td.el-table__cell) {
-  /* v115: 改走 var(--bg-hover), 暗色模式不再刺眼 (与委托表 hover 同源变量, 风格统一) */
+:deep(.el-table__row:hover > td.el-table__cell) {
   background-color: var(--bg-hover) !important;
 }
+
 .hp-count {
   font-size: 12px;
   color: var(--el-text-color-secondary, #909399);
@@ -291,5 +265,14 @@ function formatPercent(v) {
 :deep(.hp-filter .el-input__inner) {
   height: 24px;
   font-size: 12px;
+}
+
+.tp-stock-code {
+  font-family: var(--font-mono);
+  font-weight: 600;
+}
+
+.text-muted {
+  color: var(--el-text-color-placeholder, #c0c4cc);
 }
 </style>

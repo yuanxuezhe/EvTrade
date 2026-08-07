@@ -18,7 +18,7 @@ import { watch } from 'vue'
 import { parseAsset } from './holdings_helpers'
 import {
   applyAssetResult, applyPositionsResult, applyOrdersResult, applyTradesResult,
-  applyAssetRefresh, applyPositionsRefresh,
+  applyAssetRefresh, applyPositionsRefresh, applyOrdersRefresh, applyTradesRefresh,
   fillTradesDirection,
   _mergeOrders, _mergeTrades,
 } from './holdings_apply_results'
