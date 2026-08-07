@@ -1,20 +1,16 @@
 <!--
-  CachePositions.vue — 持仓表 (admin 调试 + 调平)
+  CachePositions.vue — 缓存持仓查看 (IDB 读取, 调试用 + 调平)
 
-  数据源：useHoldingsStore().positions (v8 单一源架构)
-
-  v12 新增：每行可点"调平"按钮 → 弹 dialog → api.adjustPosition
-    - 调平仅改 vol / avl_vol（cost_price / last_vol 不动）
-    - 服务端把 synced_from 改 "manual"；下次 do_reconcile 会覆盖
-    - 成功后用响应里的新 PositionOut 替换本行 Pinia 数据
+  数据源: IDB (loadAllPositions)
+  DataTableView 内部分页, 保留调平 dialog
 -->
 <template>
   <div class="cache-positions-view fade-in-up">
     <!-- 概览 -->
     <section class="stats-row">
       <div class="stat-pill">
-        <div class="pill-label">行数</div>
-        <div class="pill-value text-mono">{{ positions.length }}</div>
+        <div class="pill-label">持仓数</div>
+        <div class="pill-value text-mono">{{ results.length }}</div>
       </div>
       <div class="stat-pill">
         <div class="pill-label">Key Field</div>
@@ -22,7 +18,7 @@
       </div>
       <div class="stat-pill">
         <div class="pill-label">Data Source</div>
-        <div class="pill-value text-mono">Pinia</div>
+        <div class="pill-value text-mono">IDB</div>
       </div>
     </section>
 
@@ -30,8 +26,8 @@
     <div class="content-card filter-bar">
       <div class="filter-left">
         <el-input
-          v-model="filterText"
-          placeholder="搜索任意字段"
+          v-model="stockCode"
+          placeholder="股票代码 (可选)"
           clearable
           :prefix-icon="Search"
           style="width: 240px"
@@ -40,64 +36,45 @@
     </div>
 
     <!-- 表格 -->
-    <div class="content-card">
-      <el-table
-        :data="filteredRows"
-        stripe
-        border
-        height="calc(100vh - 360px)"
-        empty-text="数据为空 (Pinia 内存)"
+    <div class="content-card table-wrap" v-loading="loading">
+      <DataTableView
+        :columns="positionColumns"
+        :data="filteredResults"
+        :default-sort="{ prop: 'vol', order: 'descending' }"
+        :empty-description="'无持仓数据'"
+        @row-dblclick="(row) => { if (row.stock_code) stockCode.value = row.stock_code }"
       >
-        <!-- v73: 10 列接入 COL 常量 -->
-        <el-table-column prop="stock_code" label="标的" show-overflow-tooltip v-bind="COL.STOCK_TARGET">
-          <template #default="{ row }">
-            <span class="text-mono tp-stock-code">{{ row.stock_code }}</span>
-            <span class="text-secondary" style="margin-left: 6px">{{ stockName(row.stock_code) || '—' }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column prop="last_vol" label="期初" v-bind="COL.NUMBER">
-          <template #default="{ row }">
-            <span class="text-mono">{{ formatNumber(row.last_vol) }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column prop="avl_vol" label="可用" v-bind="COL.NUMBER">
-          <template #default="{ row }">
-            <span class="text-mono">{{ formatNumber(row.avl_vol) }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column prop="vol" label="总持仓" v-bind="COL.NUMBER">
-          <template #default="{ row }">
-            <span class="text-mono">{{ formatNumber(row.vol) }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column prop="cost_price" label="成本价" v-bind="COL.MONEY">
-          <template #default="{ row }">
-            <span class="text-mono">{{ formatPrice(row.cost_price, row.stock_code) }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column prop="market_value" label="市值" v-bind="COL.MONEY">
-          <template #default="{ row }">
-            <span class="text-mono">{{ formatMoney(row.market_value) }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column prop="synced_from" label="来源" width="100">
-          <template #default="{ row }">
-            <el-tag v-if="row.synced_from === 'manual'" type="warning" size="small">manual</el-tag>
-            <el-tag v-else-if="row.synced_from" size="small">{{ row.synced_from }}</el-tag>
-            <span v-else class="text-secondary">-</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="操作" width="100" fixed="right">
-          <template #default="{ row }">
-            <el-button size="small" type="primary" plain @click="openAdjust(row)">调平</el-button>
-          </template>
-        </el-table-column>
-        <el-table-column prop="synced_at" label="同步时间" show-overflow-tooltip v-bind="COL.TIME">
-          <template #default="{ row }">
-            <span class="text-mono text-secondary">{{ row.synced_at || '-' }}</span>
-          </template>
-        </el-table-column>
-      </el-table>
+        <template #column-stock_code="{ row }">
+          <span class="text-mono tp-stock-code">{{ row.stock_code }}</span>
+          <span class="text-secondary" style="margin-left: 6px">{{ stockName(row.stock_code) || '—' }}</span>
+        </template>
+        <template #column-last_vol="{ row }">
+          <span class="text-mono">{{ formatNumber(row.last_vol) }}</span>
+        </template>
+        <template #column-avl_vol="{ row }">
+          <span class="text-mono">{{ formatNumber(row.avl_vol) }}</span>
+        </template>
+        <template #column-vol="{ row }">
+          <span class="text-mono">{{ formatNumber(row.vol) }}</span>
+        </template>
+        <template #column-cost_price="{ row }">
+          <span class="text-mono">{{ formatPrice(row.cost_price, row.stock_code) }}</span>
+        </template>
+        <template #column-market_value="{ row }">
+          <span class="text-mono">{{ formatMoney(row.market_value) }}</span>
+        </template>
+        <template #column-synced_from="{ row }">
+          <el-tag v-if="row.synced_from === 'manual'" type="warning" size="small">manual</el-tag>
+          <el-tag v-else-if="row.synced_from" size="small">{{ row.synced_from }}</el-tag>
+          <span v-else class="text-secondary">-</span>
+        </template>
+        <template #column-synced_at="{ row }">
+          <span class="text-mono text-secondary">{{ row.synced_at || '-' }}</span>
+        </template>
+        <template #column-action="{ row }">
+          <el-button size="small" type="primary" plain @click="openAdjust(row)">调平</el-button>
+        </template>
+      </DataTableView>
     </div>
 
     <!-- 调平 dialog -->
@@ -120,8 +97,7 @@
         <el-form-item label="delta_vol (可选)">
           <el-input-number
             v-model="adjustForm.delta_vol"
-            :controls="false"
-            :precision="0"
+            :controls="false" :precision="0"
             placeholder="整数, 负数=减"
             style="width: 100%"
           />
@@ -129,8 +105,7 @@
         <el-form-item label="delta_avl_vol (可选)">
           <el-input-number
             v-model="adjustForm.delta_avl_vol"
-            :controls="false"
-            :precision="0"
+            :controls="false" :precision="0"
             placeholder="整数, 负数=减"
             style="width: 100%"
           />
@@ -138,27 +113,19 @@
         <el-form-item label="原因 (仅入log)">
           <el-input
             v-model="adjustForm.reason"
-            type="textarea"
-            :rows="2"
-            :maxlength="255"
+            type="textarea" :rows="2" :maxlength="255"
             show-word-limit
             placeholder="例如: 期权行权 / 银证转账补录"
           />
         </el-form-item>
-        <el-alert
-          v-if="!isAtLeastOneDelta"
-          title="delta_vol / delta_avl_vol 至少传一个"
-          type="warning" :closable="false" show-icon
-          style="margin-top: 4px"
-        />
+        <el-alert v-if="!isAtLeastOneDelta"
+                  title="delta_vol / delta_avl_vol 至少传一个"
+                  type="warning" :closable="false" show-icon
+                  style="margin-top: 4px" />
       </el-form>
       <template #footer>
         <el-button @click="dialogVisible = false">取消</el-button>
-        <el-button
-          type="primary" :loading="saving"
-          :disabled="!isAtLeastOneDelta"
-          @click="onSubmit"
-        >
+        <el-button type="primary" :loading="saving" :disabled="!isAtLeastOneDelta" @click="onSubmit">
           提交
         </el-button>
       </template>
@@ -167,64 +134,51 @@
 </template>
 
 <script setup>
-import { computed, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Search } from '@element-plus/icons-vue'
-import { useHoldingsStore } from '../stores/holdings'
+import DataTableView from '../components/DataTableView.vue'
 import { api } from '../api'
 import { formatMoney, formatNumber } from '../utils/format'
 import { formatPrice } from '../composables/usePricePrecision'
 import { stockName } from '../utils/stockNames'
 import { COL } from '../utils/tableColumns'
+import { loadAllPositions } from '../stores/holdings_idb'
 
-const holdingsStore = useHoldingsStore()
-const positions = computed(() => holdingsStore.positions)
+const results = ref([])
+const loading = ref(false)
+const stockCode = ref('')
 
-const filterText = ref('')
-const filteredRows = computed(() => {
-  if (!filterText.value) return positions.value
-  const k = filterText.value.toLowerCase()
-  return positions.value.filter((r) =>
-    Object.values(r).some((v) => String(v).toLowerCase().includes(k))
-  )
+const filteredResults = computed(() => {
+  if (!stockCode.value) return results.value
+  const k = stockCode.value.toLowerCase()
+  return results.value.filter((r) => String(r.stock_code).toLowerCase().includes(k))
 })
 
-// 调平 dialog 状态
+onMounted(async () => {
+  loading.value = true
+  try {
+    results.value = (await loadAllPositions()) || []
+  } catch (e) { console.error('[CachePositions] IDB 加载失败:', e?.message || e); results.value = [] }
+  finally { loading.value = false }
+})
+
+/* ---------- 调平 dialog 状态 ---------- */
 const dialogVisible = ref(false)
 const saving = ref(false)
-const currentRow = ref({})  // 备份当前行的 vol / avl_vol（dialog 只读展示）
-const adjustForm = reactive({
-  stock_code: '',
-  delta_vol: null,
-  delta_avl_vol: null,
-  reason: ''
-})
+const currentRow = ref({})
+const adjustForm = reactive({ stock_code: '', delta_vol: null, delta_avl_vol: null, reason: '' })
 
-// 至少传一个 delta
-const isAtLeastOneDelta = computed(() => {
-  return adjustForm.delta_vol !== null || adjustForm.delta_avl_vol !== null
-})
-
-function _emptyAdjustForm() {
-  return {
-    stock_code: '',
-    delta_vol: null,
-    delta_avl_vol: null,
-    reason: ''
-  }
-}
+const isAtLeastOneDelta = computed(() => adjustForm.delta_vol !== null || adjustForm.delta_avl_vol !== null)
 
 function openAdjust(row) {
   currentRow.value = { vol: row.vol, avl_vol: row.avl_vol }
-  Object.assign(adjustForm, _emptyAdjustForm(), { stock_code: row.stock_code })
+  Object.assign(adjustForm, { stock_code: row.stock_code, delta_vol: null, delta_avl_vol: null, reason: '' })
   dialogVisible.value = true
 }
 
 async function onSubmit() {
-  if (!isAtLeastOneDelta.value) {
-    ElMessage.warning('delta_vol / delta_avl_vol 至少传一个')
-    return
-  }
+  if (!isAtLeastOneDelta.value) { ElMessage.warning('delta_vol / delta_avl_vol 至少传一个'); return }
   saving.value = true
   try {
     const payload = {
@@ -233,64 +187,40 @@ async function onSubmit() {
       reason: adjustForm.reason || undefined
     }
     const resp = await api.adjustPosition(adjustForm.stock_code, payload)
-    // 服务端返 {code: 0, msg, position: PositionOut}
     const newPos = resp?.position
     if (newPos) {
-      // 用响应里的新行替换本行 Pinia 引用
-      const idx = positions.value.findIndex((r) => r.stock_code === adjustForm.stock_code)
-      if (idx >= 0) {
-        positions.value.splice(idx, 1, newPos)
-      }
-      ElMessage.success(
-        `调平成功: vol ${currentRow.value.vol} → ${newPos.vol}, ` +
-        `avl_vol ${currentRow.value.avl_vol} → ${newPos.avl_vol}`
-      )
-    } else {
-      ElMessage.success('调平成功')
-    }
+      const idx = results.value.findIndex((r) => r.stock_code === adjustForm.stock_code)
+      if (idx >= 0) results.value.splice(idx, 1, newPos)
+      ElMessage.success(`调平成功: vol ${currentRow.value.vol} → ${newPos.vol}, avl_vol ${currentRow.value.avl_vol} → ${newPos.avl_vol}`)
+    } else { ElMessage.success('调平成功') }
     dialogVisible.value = false
-  } catch (e) {
-    // 错误已由 axios 拦截器统一弹 ElMessage.error
-  } finally {
-    saving.value = false
-  }
+  } catch (e) { /* axios 拦截器已弹 error */ }
+  finally { saving.value = false }
 }
+
+const positionColumns = [
+  { key: 'stock_code', label: '标的', vBind: COL.STOCK_TARGET },
+  { key: 'last_vol', label: '期初', vBind: COL.NUMBER },
+  { key: 'avl_vol', label: '可用', vBind: COL.NUMBER },
+  { key: 'vol', label: '总持仓', vBind: COL.NUMBER },
+  { key: 'cost_price', label: '成本价', vBind: COL.MONEY },
+  { key: 'market_value', label: '市值', vBind: COL.MONEY },
+  { key: 'synced_from', label: '来源', width: 100, sortable: false },
+  { key: 'synced_at', label: '同步时间', vBind: COL.TIME },
+  { key: 'action', label: '操作', width: 100, fixed: 'right', sortable: false },
+]
 </script>
 
 <style scoped>
-.cache-positions-view {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-5);
-}
-.stats-row {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: var(--space-3);
-}
-.stat-pill {
-  background: var(--bg-elevated);
-  border: 1px solid var(--border-base);
-  border-radius: var(--radius-md);
-  padding: var(--space-3) var(--space-4);
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
+.cache-positions-view { display: flex; flex-direction: column; gap: var(--space-5); height: calc(100vh - var(--header-h, 60px) - 30px); min-height: 300px; }
+.stats-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--space-3); }
+.stat-pill { background: var(--bg-elevated); border: 1px solid var(--border-base); border-radius: var(--radius-md); padding: var(--space-3) var(--space-4); display: flex; flex-direction: column; gap: 4px; }
 .pill-label { font-size: 12px; color: var(--text-secondary); }
 .pill-value { font-size: 18px; font-weight: 700; }
-
-.filter-bar {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: var(--space-3) var(--space-4);
-  flex-wrap: wrap;
-  gap: var(--space-3);
-}
-
-.text-mono {
-  font-family: var(--font-mono, 'JetBrains Mono', 'Consolas', monospace);
-}
+.filter-bar { display: flex; justify-content: space-between; align-items: center; padding: var(--space-3) var(--space-4); flex-wrap: wrap; gap: var(--space-3); }
+.filter-left { display: flex; gap: var(--space-2); align-items: center; }
+.text-mono { font-family: var(--font-mono, 'JetBrains Mono', 'Consolas', monospace); }
 .text-secondary { color: var(--text-secondary); }
+.tp-stock-code { font-family: var(--font-mono); font-weight: 600; }
+.table-wrap { flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; }
 </style>

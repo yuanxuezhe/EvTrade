@@ -1,47 +1,239 @@
 <!--
-  CacheOrders.vue — 委托表 (全 CRUD)
-  数据源: useHoldingsStore().orders (v8 单一源)
+  CacheOrders.vue — 缓存委托查看 (IDB 读取, 调试用)
+
+  数据源: IDB (loadAllOrders), onMounted 自动加载全部
+  查询条件为可选过滤器, DataTableView 内部分页
 -->
 <template>
-  <CacheTableView
-    :rows-ref="ordersRef"
-    key-field="order_no"
-    :fields="fields"
-    title="委托缓存 (orders)"
-  />
+  <div class="cache-orders-view fade-in-up">
+    <!-- 查询条件 -->
+    <div class="content-card filter-bar">
+      <div class="filter-left">
+        <div class="filter-chips">
+          <button
+            v-for="(preset, idx) in PRESETS"
+            :key="preset.label"
+            type="button"
+            class="filter-chip"
+            :class="{ active: activePreset === idx }"
+            :title="preset.tooltip"
+            @click="setPreset(preset)"
+          >
+            {{ preset.label }}
+          </button>
+        </div>
+        <el-date-picker
+          v-model="dateRange"
+          type="daterange"
+          range-separator="→"
+          start-placeholder="开始日期"
+          end-placeholder="结束日期"
+          value-format="YYYYMMDD"
+          format="YYYY-MM-DD"
+          :clearable="true"
+          :editable="false"
+          :disabled-date="isAfterToday"
+          style="width: 280px"
+        />
+        <el-input
+          v-model="stockCode"
+          placeholder="股票代码 (可选)"
+          clearable
+          style="width: 200px"
+        />
+        <el-button :icon="Refresh" @click="resetQuery">重置</el-button>
+      </div>
+    </div>
+
+    <el-alert v-if="dateRange && !isDateRangeValid"
+              title="开始日期不能晚于结束日期"
+              type="warning" :closable="false" show-icon />
+
+    <!-- 概览 -->
+    <section class="stats-row">
+      <div class="stat-pill">
+        <div class="pill-label">总笔数</div>
+        <div class="pill-value text-mono">{{ allOrders.length }}</div>
+      </div>
+      <div class="stat-pill">
+        <div class="pill-label">过滤后</div>
+        <div class="pill-value text-mono">{{ results.length }}</div>
+      </div>
+      <div class="stat-pill">
+        <div class="pill-label">查询区间</div>
+        <div class="pill-value text-mono">{{ queryLabel }}</div>
+      </div>
+    </section>
+
+    <!-- 表格 -->
+    <div class="content-card table-wrap" v-loading="loading">
+      <DataTableView
+        :columns="orderColumns"
+        :data="results"
+        :default-sort="{ prop: 'order_time', order: 'descending' }"
+        :empty-description="'无委托记录'"
+        @row-dblclick="(row) => { if (row.stock_code) stockCode.value = row.stock_code }"
+      >
+        <template #column-trd_date="{ row }">
+          <span class="text-mono text-secondary">{{ row.trd_date }}</span>
+        </template>
+        <template #column-order_no="{ row }">
+          <span class="text-mono text-secondary">{{ row.order_no }}</span>
+        </template>
+        <template #column-stock_code="{ row }">
+          <span class="text-mono tp-stock-code">{{ row.stock_code }}</span>
+          <span class="text-secondary" style="margin-left: 6px">{{ stockName(row.stock_code) || '—' }}</span>
+        </template>
+        <template #column-direction="{ row }">
+          <span class="dir-chip" :class="row.order_type === '23' ? 'buy' : 'sell'">
+            {{ row.order_type === '23' ? '买入' : '卖出' }}
+          </span>
+        </template>
+        <template #column-volume="{ row }">
+          <span class="text-mono">{{ formatNumber(row.volume) }}</span>
+        </template>
+        <template #column-price="{ row }">
+          <span class="text-mono">{{ formatPrice(row.price, row.stock_code) }}</span>
+        </template>
+        <template #column-traded_volume="{ row }">
+          <span class="text-mono">{{ formatNumber(row.traded_volume) }}</span>
+        </template>
+        <template #column-traded_amount="{ row }">
+          <span class="text-mono">{{ formatMoney(row.traded_amount) }}</span>
+        </template>
+        <template #column-avg_price="{ row }">
+          <span class="text-mono">{{ row.traded_volume > 0 ? formatPrice(row.avg_price, row.stock_code) : '—' }}</span>
+        </template>
+        <template #column-cancelled_volume="{ row }">
+          <span class="text-mono">{{ formatNumber(row.cancelled_volume || 0) }}</span>
+        </template>
+        <template #column-status="{ row }">
+          <OrderStatusBadge :status="row.status" :remark="row.remark" :status_msg="row.status_msg" />
+        </template>
+        <template #column-order_id="{ row }">
+          <span class="text-mono text-secondary">{{ row.order_id }}</span>
+        </template>
+        <template #column-user_def="{ row }">
+          <span class="text-mono text-secondary">{{ row.user_def || '—' }}</span>
+        </template>
+        <template #column-order_time="{ row }">
+          <span class="text-mono text-secondary">{{ row.order_time }}</span>
+        </template>
+      </DataTableView>
+    </div>
+  </div>
 </template>
 
 <script setup>
-import { computed } from 'vue'
-import CacheTableView from '../components/CacheTableView.vue'
-import { useHoldingsStore } from '../stores/holdings'
+import { computed, onMounted, ref } from 'vue'
+import { Refresh } from '@element-plus/icons-vue'
+import DataTableView from '../components/DataTableView.vue'
+import { formatMoney, formatNumber } from '../utils/format'
+import { formatPrice } from '../composables/usePricePrecision'
+import { stockName } from '../utils/stockNames'
+import { COL } from '../utils/tableColumns'
+import OrderStatusBadge from '../components/OrderStatusBadge.vue'
+import { shiftDateStr } from '../utils/date'
+import { loadAllOrders } from '../stores/holdings_idb'
 
-const holdingsStore = useHoldingsStore()
-const ordersRef = computed({
-  get: () => holdingsStore.orders,
-  set: (v) => { holdingsStore.orders = v },
+const PRESETS = [
+  { label: '昨日',     startOffset: -1,  endOffset: -1,  tooltip: '查询昨天 1 天（不含今日）' },
+  { label: '最近三天', startOffset: -3,  endOffset: -1,  tooltip: '查询 today-3 ~ today-1, 不含今日' },
+  { label: '最近一周', startOffset: -7,  endOffset: -1,  tooltip: '查询 today-7 ~ today-1, 不含今日' },
+  { label: '最近一个月', startOffset: -30, endOffset: -1, tooltip: '查询 today-30 ~ today-1, 不含今日' }
+]
+
+function todayYYYYMMDD() {
+  const dt = new Date()
+  return `${dt.getFullYear()}${String(dt.getMonth() + 1).padStart(2, '0')}${String(dt.getDate()).padStart(2, '0')}`
+}
+function isAfterToday(d) { return `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}` >= todayYYYYMMDD() }
+function presetRange(p) { const t = todayYYYYMMDD(); return [shiftDateStr(t, p.startOffset), shiftDateStr(t, p.endOffset)] }
+
+const dateRange = ref(null)
+const stockCode = ref('')
+const allOrders = ref([])
+const loading = ref(false)
+
+const isDateRangeValid = computed(() => {
+  if (!dateRange.value || dateRange.value.length !== 2) return false
+  const [s, e] = dateRange.value; return s && e && s <= e
+})
+const queryLabel = computed(() => {
+  if (!dateRange.value || dateRange.value.length !== 2) return '全部'
+  const [s, e] = dateRange.value; return s === e ? s : `${s} ~ ${e}`
+})
+const activePreset = computed(() => {
+  if (!isDateRangeValid.value) return -1
+  const [curS, curE] = dateRange.value
+  return PRESETS.findIndex((p) => { const [s, e] = presetRange(p); return curS === s && curE === e })
 })
 
-const fields = [
-  { key: 'order_no', label: '委托编号', width: 140, required: true },
-  { key: 'task_id', label: 'T0任务ID', width: 100, type: 'number' },
-  // v66 (REQ-TRADE-026): strategy_type 列, 0=普通单 1=快速做T
-  { key: 'strategy_type', label: '策略类型', type: 'number', width: 110 },
-  { key: 'trd_date', label: '交易日', width: 140 },
-  { key: 'stock_code', label: '股票代码', width: 140 },
-  { key: 'order_type', label: '买卖', width: 130, type: 'select', options: ['23', '24'] },
-  { key: 'price_type', label: '价格类型', type: 'number', width: 140 },
-  { key: 'price', label: '价格', type: 'number', width: 120 },
-  { key: 'volume', label: '量', type: 'number', width: 110 },
-  { key: 'traded_volume', label: '已成量', type: 'number', width: 140 },
-  { key: 'traded_amount', label: '已成额', type: 'number', width: 140 },
-  { key: 'avg_price', label: '成交均价', type: 'number', width: 140 },
-  { key: 'cancelled_volume', label: '撤单量', type: 'number', width: 140 },
-  { key: 'order_flag', label: '标记', type: 'number', width: 110 },
-  { key: 'status', label: '状态码', width: 130 },
-  { key: 'status_msg', label: '状态描述', width: 160 },
-  { key: 'order_id', label: '合同序号', width: 160 },
-  { key: 'user_def', label: '自定义', width: 140 },
-  { key: 'order_time', label: '委托时间', width: 200 },
+/** 过滤后的结果 */
+const results = computed(() => {
+  let filtered = allOrders.value
+  if (dateRange.value && dateRange.value.length === 2 && isDateRangeValid.value) {
+    const [startDate, endDate] = dateRange.value
+    filtered = filtered.filter((o) => {
+      const td = String(o.trd_date || '')
+      return td >= startDate && td <= endDate
+    })
+  }
+  if (stockCode.value) {
+    filtered = filtered.filter((o) => o.stock_code === stockCode.value)
+  }
+  return filtered
+})
+
+onMounted(async () => {
+  loading.value = true
+  try {
+    allOrders.value = (await loadAllOrders()) || []
+  } catch (e) { console.error('[CacheOrders] IDB 加载失败:', e?.message || e) }
+  finally { loading.value = false }
+})
+
+function setPreset(p) { dateRange.value = presetRange(p) }
+function resetQuery() { dateRange.value = null; stockCode.value = '' }
+
+const orderColumns = [
+  { key: 'trd_date', label: '交易日', vBind: COL.STOCK_CODE },
+  { key: 'order_no', label: '委托编号', vBind: COL.STOCK_CODE },
+  { key: 'stock_code', label: '标的', vBind: COL.STOCK_TARGET },
+  { key: 'direction', label: '方向', vBind: COL.DIRECTION, sortable: false },
+  { key: 'price_type', label: '价格类型', vBind: COL.NUMBER },
+  { key: 'price', label: '委托价', vBind: COL.MONEY },
+  { key: 'volume', label: '委托量', vBind: COL.NUMBER },
+  { key: 'traded_volume', label: '已成量', vBind: COL.NUMBER },
+  { key: 'traded_amount', label: '已成额', vBind: COL.MONEY, sortable: false },
+  { key: 'avg_price', label: '成交均价', vBind: COL.MONEY },
+  { key: 'cancelled_volume', label: '撤单量', vBind: COL.NUMBER },
+  { key: 'status', label: '状态', vBind: COL.STATUS },
+  { key: 'status_msg', label: '状态描述', width: 150, sortable: false },
+  { key: 'order_id', label: '合同序号', vBind: COL.STOCK_CODE },
+  { key: 'user_def', label: '自定义', vBind: COL.STOCK_CODE },
+  { key: 'order_time', label: '委托时间', vBind: COL.TIME },
 ]
 </script>
+
+<style scoped>
+.cache-orders-view { display: flex; flex-direction: column; gap: var(--space-4); height: calc(100vh - var(--header-h, 60px) - 30px); min-height: 300px; }
+.filter-bar { display: flex; justify-content: space-between; align-items: center; padding: var(--space-3) var(--space-4); flex-wrap: wrap; gap: var(--space-3); }
+.filter-left { display: flex; gap: var(--space-2); flex-wrap: wrap; align-items: center; }
+.filter-chips { display: flex; gap: var(--space-2); flex-wrap: wrap; align-items: center; }
+.filter-chip { display: inline-flex; align-items: center; justify-content: center; padding: 6px 14px; border-radius: var(--radius-full); border: 1px solid var(--border-base); background: var(--bg-elevated); color: var(--text-regular); font-size: 13px; font-weight: 500; cursor: pointer; transition: all var(--transition-fast); white-space: nowrap; }
+.filter-chip:hover { border-color: var(--brand-primary); color: var(--brand-primary); }
+.filter-chip.active { background: var(--brand-primary); color: white; border-color: var(--brand-primary); }
+.stats-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--space-3); }
+.stat-pill { background: var(--bg-elevated); border: 1px solid var(--border-base); border-radius: var(--radius-md); padding: var(--space-3) var(--space-4); display: flex; justify-content: space-between; align-items: center; }
+.pill-label { font-size: 12px; color: var(--text-secondary); }
+.pill-value { font-size: 16px; font-weight: 700; }
+.text-mono { font-family: var(--font-mono, 'JetBrains Mono', 'Consolas', monospace); }
+.text-secondary { color: var(--text-secondary); }
+.dir-chip { display: inline-flex; align-items: center; justify-content: center; padding: 2px 10px; border-radius: var(--radius-xs); font-size: 12px; font-weight: 600; }
+.dir-chip.buy { background: var(--color-up-bg); color: var(--color-up); }
+.dir-chip.sell { background: var(--color-down-bg); color: var(--color-down); }
+.tp-stock-code { font-family: var(--font-mono); font-weight: 600; }
+.table-wrap { flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; }
+@media (max-width: 1100px) { .stats-row { grid-template-columns: 1fr; } }
+</style>

@@ -1,20 +1,14 @@
 <!--
-  HistoryTrades.vue — 历史成交通视图（v12 + v13 预设 chip + 强制历史范围）
+  HistoryTrades.vue — 历史成交通视图 (统一 DataTableView)
 
-  数据源（v114 修订）：前端 IDB 全量缓存 (loadAllTrades) + trd_date 区间过滤
-    - 不走后端 RPC（避免重复拉）
-    - 不依赖 Pinia（holdingsStore.trades 不稳, 易空）
-    - 数据由 ws push (trd_cfm → saveTrade) + 启动期 _saveAfterBootstrap 写入 IDB
-    - 启动后由 holdings_bootstrap._tryIDBFirst 命中回填, 此处复用同一份 IDB
-
-  v13 修订: 同 HistoryOrders.vue — 加 4 个预设 chip, picker 禁 today+, onMounted 留空
+  数据源（v114）：前端 IDB 全量缓存 + trd_date 区间过滤
+  v13：预设 chip + picker 禁 today+ + onMounted 留空
 -->
 <template>
   <div class="history-trades-view fade-in-up">
     <!-- 查询条件 -->
     <div class="content-card filter-bar">
       <div class="filter-left">
-        <!-- 预设日期 chip (历史区间, 不含今日) -->
         <div class="filter-chips">
           <button
             v-for="(preset, idx) in PRESETS"
@@ -83,78 +77,46 @@
 
     <!-- 表格 -->
     <div class="content-card" v-loading="loading">
-      <el-table
-        :data="pagedResults"
-        style="width: 100%"
+      <DataTableView
+        v-if="hasQueried"
+        :columns="tradeColumns"
+        :data="results"
         :default-sort="{ prop: 'trade_time', order: 'descending' }"
+        :empty-description="'该区间内无成交记录'"
       >
-        <!-- v72: 10 列走 COL 常量 -->
-        <el-table-column prop="trd_date" label="交易日" sortable v-bind="COL.STOCK_CODE">
-          <template #default="{ row }">
-            <span class="text-mono text-secondary">{{ row.trd_date }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column prop="stock_code" label="标的" show-overflow-tooltip v-bind="COL.STOCK_TARGET">
-          <template #default="{ row }">
-            <span class="text-mono tp-stock-code">{{ row.stock_code }}</span>
-            <span class="text-secondary" style="margin-left: 6px">{{ stockName(row.stock_code) || '—' }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column prop="order_type" label="方向" v-bind="COL.DIRECTION">
-          <template #default="{ row }">
-            <span class="dir-chip" :class="row.order_type === '23' ? 'buy' : 'sell'">
-              {{ row.order_type === '23' ? '买入' : '卖出' }}
-            </span>
-          </template>
-        </el-table-column>
-        <el-table-column label="类型" width="100">
-          <template #default="{ row }">
-            <el-tag v-if="Number(row.trade_type) === 1" type="warning" size="small">撤单</el-tag>
-            <span v-else class="text-secondary">成交</span>
-          </template>
-        </el-table-column>
-        <el-table-column prop="volume" label="成交数量" sortable v-bind="COL.NUMBER">
-          <template #default="{ row }">
-            <span class="text-mono">{{ formatNumber(row.volume) }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column prop="price" label="成交价格" sortable v-bind="COL.MONEY">
-          <template #default="{ row }">
-            <span class="text-mono">{{ formatPrice(row.price, row.stock_code) }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="成交金额" v-bind="COL.MONEY">
-          <template #default="{ row }">
-            <span class="text-mono">¥{{ formatMoney(localAmount(row)) }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column prop="trade_id" label="成交编号" show-overflow-tooltip v-bind="COL.STOCK_CODE">
-          <template #default="{ row }">
-            <span class="text-mono text-secondary">{{ row.trade_id }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column prop="trade_time" label="成交时间" sortable v-bind="COL.TIME">
-          <template #default="{ row }">
-            <span class="text-mono text-secondary">{{ row.trade_time }}</span>
-          </template>
-        </el-table-column>
-        <template #empty>
-          <el-empty
-            :description="hasQueried ? '该区间内无成交记录' : '请选择起止日期查询'"
-            :image-size="100"
-          />
+        <template #column-trd_date="{ row }">
+          <span class="text-mono text-secondary">{{ row.trd_date }}</span>
         </template>
-      </el-table>
-
-      <div class="pagination" v-if="hasQueried">
-        <el-pagination
-          v-model:current-page="page"
-          v-model:page-size="pageSize"
-          :total="results.length"
-          :page-sizes="[10, 20, 50, 100, 500]"
-          layout="total, sizes, prev, pager, next, jumper"
-        />
-      </div>
+        <template #column-stock_code="{ row }">
+          <span class="text-mono tp-stock-code">{{ row.stock_code }}</span>
+          <span class="text-secondary" style="margin-left: 6px">{{ stockName(row.stock_code) || '—' }}</span>
+        </template>
+        <template #column-direction="{ row }">
+          <span class="dir-chip" :class="row.order_type === '23' ? 'buy' : 'sell'">
+            {{ row.order_type === '23' ? '买入' : '卖出' }}
+          </span>
+        </template>
+        <template #column-type="{ row }">
+          <el-tag v-if="Number(row.trade_type) === 1" type="warning" size="small">撤单</el-tag>
+          <span v-else class="text-secondary">成交</span>
+        </template>
+        <template #column-volume="{ row }">
+          <span class="text-mono">{{ formatNumber(row.volume) }}</span>
+        </template>
+        <template #column-price="{ row }">
+          <span class="text-mono">{{ formatPrice(row.price, row.stock_code) }}</span>
+        </template>
+        <template #column-amount="{ row }">
+          <span class="text-mono">¥{{ formatMoney(localAmount(row)) }}</span>
+        </template>
+        <template #column-trade_id="{ row }">
+          <span class="text-mono text-secondary">{{ row.trade_id }}</span>
+        </template>
+        <template #column-trade_time="{ row }">
+          <span class="text-mono text-secondary">{{ row.trade_time }}</span>
+        </template>
+      </DataTableView>
+      <el-empty v-else description="请选择起止日期查询" :image-size="100" />
     </div>
   </div>
 </template>
@@ -163,6 +125,7 @@
 import { computed, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Search, Refresh, Download } from '@element-plus/icons-vue'
+import DataTableView from '../components/DataTableView.vue'
 import { formatMoney, formatNumber } from '../utils/format'
 import { formatPrice } from '../composables/usePricePrecision'
 import { stockName } from '../utils/stockNames'
@@ -170,13 +133,6 @@ import { COL } from '../utils/tableColumns'
 import { shiftDateStr } from '../utils/date'
 import { loadAllTrades } from '../stores/holdings_idb'
 
-/**
- * 历史成交通视图（v12 + v13 trade-page-redesign-v2 + v114 IDB 直查）
- *
- * 数据契约: 同 HistoryOrders (v114 修订)
- *   - 数据源：IDB 全量缓存 (loadAllTrades) + 前端 trd_date 区间过滤
- *   - 不走 RPC / 不依赖 Pinia
- */
 const PRESETS = [
   { label: '昨日',     startOffset: -1,  endOffset: -1,  tooltip: '查询昨天 1 天（不含今日）' },
   { label: '最近三天', startOffset: -3,  endOffset: -1,  tooltip: '查询 today-3 ~ today-1, 不含今日' },
@@ -210,9 +166,6 @@ const results = ref([])
 const loading = ref(false)
 const hasQueried = ref(false)
 
-const page = ref(1)
-const pageSize = ref(20)
-
 const isDateRangeValid = computed(() => {
   if (!dateRange.value || dateRange.value.length !== 2) return false
   const [s, e] = dateRange.value
@@ -226,12 +179,6 @@ const queryLabel = computed(() => {
   return `${s} ~ ${e}`
 })
 
-const pagedResults = computed(() => {
-  const start = (page.value - 1) * pageSize.value
-  return results.value.slice(start, start + pageSize.value)
-})
-
-// chip ↔ picker 双向联动高亮
 const activePreset = computed(() => {
   if (!isDateRangeValid.value) return -1
   const [curS, curE] = dateRange.value
@@ -246,8 +193,6 @@ async function runQuery() {
   const [startDate, endDate] = dateRange.value
   loading.value = true
   try {
-    // v114: 直接读 IDB 全量缓存, 不走 RPC, 不依赖 Pinia
-    //   IDB 已由 ws push (saveTrade) + bootstrap 写回, 此 view 复用同一份
     const all = (await loadAllTrades()) || []
     const stockCodeFilter = stockCode.value || ''
     const inRange = all.filter((t) => {
@@ -256,14 +201,10 @@ async function runQuery() {
       if (stockCodeFilter && t.stock_code !== stockCodeFilter) return false
       return true
     })
-    // 排序: trade_time DESC (历史成交主排序键)
-    inRange.sort((a, b) => String(b.trade_time || '').localeCompare(String(a.trade_time || '')))
     results.value = inRange
     hasQueried.value = true
-    page.value = 1
   } catch (e) {
     results.value = []
-    // eslint-disable-next-line no-console
     console.error('[HistoryTrades] IDB 查询失败:', e?.message || e)
   } finally {
     loading.value = false
@@ -283,7 +224,6 @@ function resetQuery() {
 }
 
 function localAmount(t) {
-  // 本地算 price × volume（与后端 trd_cfm amount 公式一致）
   return (Number(t.volume) || 0) * (Number(t.price) || 0)
 }
 
@@ -291,15 +231,10 @@ function exportCSV() {
   const header = ['交易日', '成交时间', '股票代码', '方向', '类型',
                   '成交数量', '成交价格', '成交金额', '成交编号']
   const rows = results.value.map((t) => [
-    t.trd_date,
-    t.trade_time,
-    t.stock_code,
+    t.trd_date, t.trade_time, t.stock_code,
     t.order_type === '23' ? '买入' : (t.order_type === '24' ? '卖出' : t.order_type),
     Number(t.trade_type) === 1 ? '撤单' : '成交',
-    t.volume,
-    t.price,
-    localAmount(t).toFixed(2),
-    t.trade_id
+    t.volume, t.price, localAmount(t).toFixed(2), t.trade_id
   ])
   const csv = [header, ...rows].map((r) => r.map((v) => `"${v}"`).join(',')).join('\n')
   const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8' })
@@ -312,7 +247,17 @@ function exportCSV() {
   ElMessage.success('已导出')
 }
 
-// v13: onMounted 留空 (无默认查询, 用户主动选 chip 或 picker)
+const tradeColumns = [
+  { key: 'trd_date', label: '交易日', vBind: COL.STOCK_CODE },
+  { key: 'stock_code', label: '标的', vBind: COL.STOCK_TARGET },
+  { key: 'direction', label: '方向', vBind: COL.DIRECTION, sortable: false },
+  { key: 'type', label: '类型', width: 100, sortable: false },
+  { key: 'volume', label: '成交数量', vBind: COL.NUMBER },
+  { key: 'price', label: '成交价格', vBind: COL.MONEY },
+  { key: 'amount', label: '成交金额', vBind: COL.MONEY, sortable: false },
+  { key: 'trade_id', label: '成交编号', vBind: COL.STOCK_CODE },
+  { key: 'trade_time', label: '成交时间', vBind: COL.TIME },
+]
 </script>
 
 <style scoped>
@@ -338,7 +283,6 @@ function exportCSV() {
 }
 .filter-right { display: flex; gap: var(--space-2); }
 
-/* v13: 预设日期 chip (历史区间, 不含今日) */
 .filter-chips {
   display: flex;
   gap: var(--space-2);
@@ -399,11 +343,9 @@ function exportCSV() {
 .dir-chip.buy { background: var(--color-up-bg); color: var(--color-up); }
 .dir-chip.sell { background: var(--color-down-bg); color: var(--color-down); }
 
-.pagination {
-  padding: var(--space-3) var(--space-4);
-  display: flex;
-  justify-content: flex-end;
-  border-top: 1px solid var(--border-light);
+.tp-stock-code {
+  font-family: var(--font-mono);
+  font-weight: 600;
 }
 
 @media (max-width: 1100px) {
