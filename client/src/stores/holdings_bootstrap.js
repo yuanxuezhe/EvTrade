@@ -21,12 +21,13 @@
 import { api } from '../api'
 import { shiftDateStr } from '../utils/date'
 import { watch } from 'vue'
-import { parseAsset, normalizeOrder, normalizeTrade } from './holdings_helpers'
+import { parseAsset } from './holdings_helpers'
 import {
   applyAssetResult, applyPositionsResult, applyOrdersResult, applyTradesResult,
   applyAssetRefresh, applyPositionsRefresh,
   fillTradesDirection,
-  _mergeOrders, _mergeTrades,  // v113: bootstrap IDB-first 合并 helper
+  _mergeOrders, _mergeTrades,
+  processInChunks, assignToRefInChunks,
 } from './holdings_apply_results'
 import {
   initIDB,
@@ -199,13 +200,13 @@ export function createBootstrap({
       const [rAsset, rPos, rOrd, rTrd] = results
 
       applyAssetResult(rAsset, refs, 'bootstrap')
-      applyPositionsResult(rPos, refs, 'bootstrap')
+      await applyPositionsResult(rPos, refs, 'bootstrap')
       // v33 fix: IDB hit 时跳过 applyOrdersResult/applyTradesResult
       //   旧 bug: 占位 { code:0, list:[] } 进入 apply 后会 orders.value=[], 把 IDB 已写数据清空
       //   改为: 仅在 RPC 拉取时 (dateRange != null) 才 apply
       if (dateRange) {
-        applyOrdersResult(rOrd, refs, 'bootstrap')
-        applyTradesResult(rTrd, refs, 'bootstrap')
+        await applyOrdersResult(rOrd, refs, 'bootstrap')
+        await applyTradesResult(rTrd, refs, 'bootstrap')
       } else {
         log('info', '缓存', 'bootstrap', 'IDB hit, 跳过 applyOrdersResult/applyTradesResult (保护 IDB 写数据)')
       }
@@ -256,14 +257,16 @@ export function createBootstrap({
         return false
       }
 
-      // v113: 命中: 立刻写 Pinia (orders/trades ref 是 readonly interface, 写入触发响应)
+      // v113: 命中: 异步写 Pinia (分片 yield 避免阻塞渲染)
       //   _mergeOrders/_mergeTrades 按主键去重 — IDB 与 RPC 返回合并也安全
       if (Array.isArray(cachedOrders)) {
-        orders.value = _mergeOrders(orders.value || [], cachedOrders)
+        const merged = _mergeOrders(orders.value || [], cachedOrders)
+        await assignToRefInChunks(merged, orders)
         refCounts.value.orders = 'ok'
       }
       if (Array.isArray(cachedTrades)) {
-        trades.value = _mergeTrades(trades.value || [], cachedTrades)
+        const merged = _mergeTrades(trades.value || [], cachedTrades)
+        await assignToRefInChunks(merged, trades)
         refCounts.value.trades = 'ok'
       }
       log('info', '缓存', 'idb',
@@ -321,33 +324,14 @@ export function createBootstrap({
       // 3) 资金
       const assetSummary = applyAssetRefresh(rAsset, refs)
 
-      // 4) 持仓
-      const posSummary = applyPositionsRefresh(rPos, refs)
+      // 4) 持仓（分片异步写入）
+      const posSummary = await applyPositionsRefresh(rPos, refs)
 
-      // 5) 委托 — 直接覆盖（不 merge）
-      if (rOrd.status === 'fulfilled') {
-        const rawOrders = Array.isArray(rOrd.value) ? rOrd.value : []
-        orders.value = rawOrders.map(normalizeOrder)
-        refCounts.value.orders = 'ok'
-      } else {
-        refCounts.value.orders = 'fail'
-        log('err', '缓存', 'rpc', '委托刷新失败', String(rOrd.reason?.message || rOrd.reason))
-      }
-      const orderSummary = refCounts.value.orders === 'ok'
-        ? `委托 ${orders.value.length} 条` : null
+      // 5) 委托 — 分片异步处理
+      const orderSummary = await applyOrdersRefresh(rOrd, refs)
 
-      // 6) 成交 — 直接覆盖（不 merge）
-      if (rTrd.status === 'fulfilled') {
-        const rawTrades = Array.isArray(rTrd.value) ? rTrd.value : []
-        trades.value = rawTrades.map(normalizeTrade)
-        fillTradesDirection(refs)
-        refCounts.value.trades = 'ok'
-      } else {
-        refCounts.value.trades = 'fail'
-        log('err', '缓存', 'rpc', '成交刷新失败', String(rTrd.reason?.message || rTrd.reason))
-      }
-      const tradeSummary = refCounts.value.trades === 'ok'
-        ? `成交 ${trades.value.length} 条` : null
+      // 6) 成交 — 分片异步处理
+      const tradeSummary = await applyTradesRefresh(rTrd, refs)
 
       // 7) 写回 IDB
       _saveAfterBootstrap()
@@ -371,7 +355,8 @@ export function createBootstrap({
     refCounts.value.positions = 'loading'
     try {
       const list = await api.getHoldings()
-      positions.value = Array.isArray(list) ? list : []
+      const raw = Array.isArray(list) ? list : []
+      await assignToRefInChunks(raw, positions)
       // v32: 单刷持仓也同步 quote 订阅
       _syncQuoteSubs(positions.value || [])
       refCounts.value.positions = 'ok'

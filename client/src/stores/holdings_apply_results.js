@@ -25,6 +25,59 @@
 import { parseAsset, normalizeOrder, normalizeTrade } from './holdings_helpers'
 import { saveTrade } from './holdings_idb'
 
+// ---- 分片处理：大数组异步操作，避免阻塞浏览器渲染 ----
+
+/**
+ * 分片处理大数组，每 chunk 后 yield 给浏览器渲染
+ * @param {Array} source
+ * @param {Function} transform - item => newItem
+ * @returns {Promise<Array>}
+ */
+const CHUNK_SIZE = 500
+export function processInChunks(source, transform) {
+  if (source.length === 0) return Promise.resolve([])
+  return new Promise((resolve) => {
+    const result = new Array(source.length)
+    let idx = 0
+    function chunk() {
+      const end = Math.min(idx + CHUNK_SIZE, source.length)
+      for (; idx < end; idx++) {
+        result[idx] = transform(source[idx])
+      }
+      if (idx < source.length) {
+        setTimeout(chunk, 0)
+      } else {
+        resolve(result)
+      }
+    }
+    setTimeout(chunk, 0)
+  })
+}
+
+/**
+ * 分片写入大数组到 ref（无 transform，直接赋值）
+ */
+export function assignToRefInChunks(source, targetRef) {
+  if (source.length === 0) {
+    targetRef.value = []
+    return Promise.resolve([])
+  }
+  return new Promise((resolve) => {
+    let idx = 0
+    function chunk() {
+      const end = Math.min(idx + CHUNK_SIZE, source.length)
+      idx = end
+      if (idx < source.length) {
+        setTimeout(chunk, 0)
+      } else {
+        targetRef.value = source
+        resolve(source)
+      }
+    }
+    setTimeout(chunk, 0)
+  })
+}
+
 // ---- v113: 按主键去重 merge helper (保持 array 视图层接口不变) ----
 
 /**
@@ -34,14 +87,13 @@ import { saveTrade } from './holdings_idb'
  */
 function _mergeOrders(existing, incoming) {
     const keyOf = (o) => `${o.trd_date || ''}|${o.order_no || ''}`
-    const m = new Map(existing.map((o) => [keyOf(o), { ...o }]))
+    const m = new Map(existing.map((o) => [keyOf(o), o]))
     for (const inc of incoming) {
         const k = keyOf(inc)
         if (m.has(k)) {
-            // 已存在 → 字段覆盖 (incoming 通常字段更全)
             m.set(k, { ...m.get(k), ...inc })
         } else {
-            m.set(k, { ...inc })
+            m.set(k, inc)
         }
     }
     return Array.from(m.values())
@@ -52,13 +104,13 @@ function _mergeOrders(existing, incoming) {
  */
 function _mergeTrades(existing, incoming) {
     const keyOf = (t) => `${t.trd_date || ''}|${t.order_no || ''}|${t.trade_id || ''}`
-    const m = new Map(existing.map((t) => [keyOf(t), { ...t }]))
+    const m = new Map(existing.map((t) => [keyOf(t), t]))
     for (const inc of incoming) {
         const k = keyOf(inc)
         if (m.has(k)) {
             m.set(k, { ...m.get(k), ...inc })
         } else {
-            m.set(k, { ...inc })
+            m.set(k, inc)
         }
     }
     return Array.from(m.values())
@@ -81,9 +133,10 @@ export function applyAssetRefresh(r, refs) {
   return null
 }
 
-export function applyPositionsRefresh(r, refs) {
+export async function applyPositionsRefresh(r, refs) {
   if (r.status === 'fulfilled') {
-    refs.positions.value = Array.isArray(r.value) ? r.value : []
+    const raw = Array.isArray(r.value) ? r.value : []
+    await assignToRefInChunks(raw, refs.positions)
     refs.refCounts.value.positions = 'ok'
     return `持仓 ${refs.positions.value.length} 只`
   }
@@ -92,13 +145,11 @@ export function applyPositionsRefresh(r, refs) {
   return null
 }
 
-export function applyOrdersRefresh(r, refs) {
+export async function applyOrdersRefresh(r, refs) {
   if (r.status === 'fulfilled') {
-    // change system-delegation-price-fill-calc: 保留 row 累计字段, 重算 avg_price + status
     const rawOrders = Array.isArray(r.value) ? r.value : []
-    const normalized = rawOrders.map(normalizeOrder)
-    // v113: 按主键去重合并, 不替换全量 (保留未在响应中的行 — refresh 是增量)
-    refs.orders.value = _mergeOrders(refs.orders.value || [], normalized)
+    const normalized = await processInChunks(rawOrders, normalizeOrder)
+    refs.orders.value = normalized
     refs.refCounts.value.orders = 'ok'
     return `委托 ${refs.orders.value.length} 条`
   }
@@ -107,13 +158,11 @@ export function applyOrdersRefresh(r, refs) {
   return null
 }
 
-export function applyTradesRefresh(r, refs) {
+export async function applyTradesRefresh(r, refs) {
   if (r.status === 'fulfilled') {
-    // change system-delegation-price-fill-calc: amount 本地算 (price × volume)
     const rawTrades = Array.isArray(r.value) ? r.value : []
-    const normalized = rawTrades.map(normalizeTrade)
-    // v113: 按主键去重合并
-    refs.trades.value = _mergeTrades(refs.trades.value || [], normalized)
+    const normalized = await processInChunks(rawTrades, normalizeTrade)
+    refs.trades.value = normalized
     // change fix-trades-direction-reversed: bootstrap/refresh 路径兜底, broker trd_cfm 不带 order_type
     fillTradesDirection(refs)
     refs.refCounts.value.trades = 'ok'
@@ -138,11 +187,11 @@ export function applyAssetResult(r, refs, source) {
   }
 }
 
-export function applyPositionsResult(r, refs, source) {
+export async function applyPositionsResult(r, refs, source) {
   if (r.status === 'fulfilled') {
-    // 后端返 {code:0, list:[...]}，解 .list
-    refs.positions.value = Array.isArray(r.value) ? r.value
+    const raw = Array.isArray(r.value) ? r.value
       : (Array.isArray(r.value?.list) ? r.value.list : [])
+    await assignToRefInChunks(raw, refs.positions)
     refs.refCounts.value.positions = 'ok'
     refs.log('ok', '缓存', source, `持仓加载成功 (${refs.positions.value.length} 只)`)
   } else {
@@ -151,13 +200,11 @@ export function applyPositionsResult(r, refs, source) {
   }
 }
 
-export function applyOrdersResult(r, refs, source) {
+export async function applyOrdersResult(r, refs, source) {
   if (r.status === 'fulfilled') {
     const rawOrders = Array.isArray(r.value) ? r.value
       : (Array.isArray(r.value?.list) ? r.value.list : [])
-    // change system-delegation-price-fill-calc: 保留 row 累计字段, 重算 avg_price + status
-    const normalized = rawOrders.map(normalizeOrder)
-    // v113: 按主键去重合并 (orders 主键 trd_date+order_no), 不替换全量
+    const normalized = await processInChunks(rawOrders, normalizeOrder)
     refs.orders.value = _mergeOrders(refs.orders.value || [], normalized)
     refs.refCounts.value.orders = 'ok'
     refs.log('ok', '缓存', source, `委托加载成功 (${refs.orders.value.length} 条)`)
@@ -167,15 +214,12 @@ export function applyOrdersResult(r, refs, source) {
   }
 }
 
-export function applyTradesResult(r, refs, source) {
+export async function applyTradesResult(r, refs, source) {
   if (r.status === 'fulfilled') {
-    // change system-delegation-price-fill-calc: amount 本地算 (price × volume)
     const rawTrades = Array.isArray(r.value) ? r.value
       : (Array.isArray(r.value?.list) ? r.value.list : [])
-    const normalized = rawTrades.map(normalizeTrade)
-    // v113: 按主键去重合并 (trades 主键 trd_date+order_no+trade_id)
+    const normalized = await processInChunks(rawTrades, normalizeTrade)
     refs.trades.value = _mergeTrades(refs.trades.value || [], normalized)
-    // change fix-trades-direction-reversed: bootstrap 路径兜底 (orders 已先于 trades 写入, 反查必中)
     fillTradesDirection(refs)
     refs.refCounts.value.trades = 'ok'
     refs.log('ok', '缓存', source, `成交加载成功 (${refs.trades.value.length} 条)`)
