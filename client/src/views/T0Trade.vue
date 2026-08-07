@@ -139,127 +139,67 @@
         <div class="area-hint">
           <el-icon><List /></el-icon><span>做T任务（共 {{ taskRows.length }} 条）</span>
         </div>
-        <!-- 主表 8 列 (v55 task 视角) -->
-        <el-table
+        <DataTableView
+          :columns="taskColumns"
           :data="taskRows"
           :row-class-name="ptRowClass"
-          @sort-change="onSortChange"
-          class="task-table"
-          empty-text="暂无 T0 任务，点击「添加任务」按钮创建"
-          size="default"
+          :size="'default'"
+          :empty-description="'暂无 T0 任务，点击「添加任务」按钮创建'"
           @row-click="onTaskRowClick"
+          @row-dblclick="(row) => { if (row.stock_code) stockCode.value = row.stock_code }"
         >
-      <!-- 1. 状态 (100) -->
-      <el-table-column prop="status" label="状态" width="100">
-        <template #default="{ row }">
-          <el-tag :type="statusTagType(row.status)" size="small">{{ statusLabel(row.status) }}</el-tag>
-        </template>
-      </el-table-column>
-
-      <!-- 2. 任务编号 (90) -->
-      <el-table-column prop="id" label="任务编号" width="90">
-        <template #default="{ row }">
-          <span class="text-mono">#{{ row.id }}</span>
-        </template>
-      </el-table-column>
-
-      <!-- 3. 标的 (90: 代码 90, 名称挤到 hover tooltip - v93 列宽减半) -->
-      <el-table-column label="标的" show-overflow-tooltip v-bind="COL.STOCK_TARGET">
-        <template #default="{ row }">
-          <span class="text-mono tp-stock-code">{{ row.stock_code }}</span>
-          <span class="text-secondary" style="margin-left: 6px">{{ stockName(row.stock_code) || '—' }}</span>
-        </template>
-      </el-table-column>
-
-      <!-- 4. 期初持仓 (90, sortable) — 数据源 holdingsStore.positions.last_vol -->
-      <el-table-column prop="initial_position" label="期初持仓" align="right" width="90" sortable="custom">
-        <template #default="{ row }">
-          <span class="text-mono">{{ formatNumber(holdingsStore.positions?.find(p=>p.stock_code===row.stock_code)?.last_vol ?? 0) }}</span>
-        </template>
-      </el-table-column>
-
-      <!-- 5. 当前持仓 (80, sortable) — 数据源 holdingsStore.positions.vol -->
-      <el-table-column prop="current_position" label="当前持仓" align="right" width="80" sortable="custom">
-        <template #default="{ row }">
-          <span class="text-mono">{{ formatNumber(holdingsStore.positions?.find(p=>p.stock_code===row.stock_code)?.vol ?? 0) }}</span>
-        </template>
-      </el-table-column>
-
-      <!-- 6. 最新价(涨跌幅) (140, sortable) — 数据源 quoteStore.getLastPrice + getChangePct -->
-      <el-table-column prop="last_price" label="最新价(涨跌幅)" align="right" width="140" sortable="custom">
-        <template #default="{ row }">
-          <span class="text-mono">{{ formatPrice(quoteStore.getLastPrice(row.stock_code), row.stock_code) }}</span>
-          <span :class="(quoteStore.getChangePct(row.stock_code) ?? 0) >= 0 ? 'up' : 'down'" class="col-change"
-            style="margin-left: 4px; font-size: 12px">
-            <template v-if="quoteStore.getChangePct(row.stock_code) != null">
-              {{ (quoteStore.getChangePct(row.stock_code) ?? 0) >= 0 ? '+' : '' }}{{ (quoteStore.getChangePct(row.stock_code)).toFixed(2) }}%
-            </template>
-            <template v-else>—</template>
-          </span>
-        </template>
-      </el-table-column>
-
-      <!-- change 2026-07-27-v109-pnl-reactive: template 走 t0PnlCell(row) 函数, 但函数体读 t0PnlMap computed -->
-      <!--   - 直接调 t0PnlMap[`${...}`] 会有模板字符串解析问题, 用函数封装 -->
-      <!--   - 关键: 函数内访问 t0PnlMap.value → Vue 自动追踪 computed 依赖 (byCode triggerRef → 重渲) -->
-      <!-- 6. 做T总盈亏 (110, sortable) — task 创建以来累计 realized + 实时 unrealized (v115) -->
-      <el-table-column prop="t0_pnl" label="做T总盈亏" align="right" width="110" sortable="custom">
-        <template #default="{ row }">
-          <span class="text-mono" :class="(t0PnlCell(row)?.total_pnl ?? 0) >= 0 ? 'up' : 'down'">
-            {{ (t0PnlCell(row)?.total_pnl ?? 0) >= 0 ? '+' : '' }}{{ formatMoney(t0PnlCell(row)?.total_pnl ?? 0) }}
-          </span>
-        </template>
-      </el-table-column>
-
-      <!-- v115: 当日做T盈亏 (110, sortable) — 仅当日做T操作平衡后的盈亏 (无收益率) -->
-      <el-table-column prop="t0_today_pnl" label="当日做T盈亏" align="right" width="110" sortable="custom">
-        <template #default="{ row }">
-          <span class="text-mono" :class="(t0PnlCell(row)?.today_pnl ?? 0) >= 0 ? 'up' : 'down'">
-            {{ (t0PnlCell(row)?.today_pnl ?? 0) >= 0 ? '+' : '' }}{{ formatMoney(t0PnlCell(row)?.today_pnl ?? 0) }}
-          </span>
-        </template>
-      </el-table-column>
-
-      <!-- 9. 操作 (280 fixed right) — 买 / 卖 / 配平 / 归档 -->
-      <!-- v57 commit.2: 改 4 按钮 (买/卖/配平/归档), 详细说明见下方 -->
-      <el-table-column label="操作" align="center" width="280" fixed="right">
-        <template #default="{ row }">
-          <div class="op-col">
-            <!-- change 2026-07-21-t0-buy-red-sell-green: 买=红 danger / 卖=绿 success -->
-            <el-button
-              type="danger"
-              size="small"
-              :disabled="!canOpRow(row)"
-              @click.stop="onBuyTask(row)"
-            >买</el-button>
-            <el-button
-              type="success"
-              size="small"
-              :disabled="!canOpRow(row)"
-              @click.stop="onSellTask(row)"
-            >卖</el-button>
-            <el-button
-              v-if="row.status === 'active'"
-              type="warning"
-              link
-              size="small"
-              :disabled="computeRowBalanceDiff(row.id) === 0"
-              @click.stop="onBalanceTask(row.id)"
-            >{{ balanceBtnLabel(row.id) }}</el-button>
-            <el-button
-              v-if="row.status !== 'archived'"
-              type="info"
-              link
-              size="small"
-              @click.stop="onArchiveTask(row.id)"
-            >归档</el-button>
-          </div>
-        </template>
-      </el-table-column>
-    </el-table>
+          <template #column-status="{ row }">
+            <el-tag :type="statusTagType(row.status)" size="small">{{ statusLabel(row.status) }}</el-tag>
+          </template>
+          <template #column-id="{ row }">
+            <span class="text-mono">#{{ row.id }}</span>
+          </template>
+          <template #column-stock_code="{ row }">
+            <span class="text-mono tp-stock-code">{{ row.stock_code }}</span>
+            <span class="text-secondary" style="margin-left: 6px">{{ stockName(row.stock_code) || '—' }}</span>
+          </template>
+          <template #column-initial_position="{ row }">
+            <span class="text-mono">{{ formatNumber(holdingsStore.positions?.find(p=>p.stock_code===row.stock_code)?.last_vol ?? 0) }}</span>
+          </template>
+          <template #column-current_position="{ row }">
+            <span class="text-mono">{{ formatNumber(holdingsStore.positions?.find(p=>p.stock_code===row.stock_code)?.vol ?? 0) }}</span>
+          </template>
+          <template #column-last_price="{ row }">
+            <span class="text-mono">{{ formatPrice(quoteStore.getLastPrice(row.stock_code), row.stock_code) }}</span>
+            <span :class="(quoteStore.getChangePct(row.stock_code) ?? 0) >= 0 ? 'up' : 'down'" class="col-change"
+              style="margin-left: 4px; font-size: 12px">
+              <template v-if="quoteStore.getChangePct(row.stock_code) != null">
+                {{ (quoteStore.getChangePct(row.stock_code) ?? 0) >= 0 ? '+' : '' }}{{ (quoteStore.getChangePct(row.stock_code)).toFixed(2) }}%
+              </template>
+              <template v-else>—</template>
+            </span>
+          </template>
+          <template #column-t0_pnl="{ row }">
+            <span class="text-mono" :class="(t0PnlCell(row)?.total_pnl ?? 0) >= 0 ? 'up' : 'down'">
+              {{ (t0PnlCell(row)?.total_pnl ?? 0) >= 0 ? '+' : '' }}{{ formatMoney(t0PnlCell(row)?.total_pnl ?? 0) }}
+            </span>
+          </template>
+          <template #column-t0_today_pnl="{ row }">
+            <span class="text-mono" :class="(t0PnlCell(row)?.today_pnl ?? 0) >= 0 ? 'up' : 'down'">
+              {{ (t0PnlCell(row)?.today_pnl ?? 0) >= 0 ? '+' : '' }}{{ formatMoney(t0PnlCell(row)?.today_pnl ?? 0) }}
+            </span>
+          </template>
+          <template #column-action="{ row }">
+            <div class="op-col">
+              <el-button type="danger" size="small" :disabled="!canOpRow(row)" @click.stop="onBuyTask(row)">买</el-button>
+              <el-button type="success" size="small" :disabled="!canOpRow(row)" @click.stop="onSellTask(row)">卖</el-button>
+              <el-button v-if="row.status === 'active'" type="warning" link size="small"
+                :disabled="computeRowBalanceDiff(row.id) === 0" @click.stop="onBalanceTask(row.id)">
+                {{ balanceBtnLabel(row.id) }}
+              </el-button>
+              <el-button v-if="row.status !== 'archived'" type="info" link size="small"
+                @click.stop="onArchiveTask(row.id)">归档</el-button>
+            </div>
+          </template>
+        </DataTableView>
       </section>
 
-      <!-- 下半: 当前选中 task 的实时委托表 (跨日历史) -->
+      <!-- 下半: 当前选中 task 的实时委托表 -->
       <section class="t0-lower">
         <div class="area-hint">
           <el-icon><Document /></el-icon>
@@ -277,99 +217,66 @@
             <template v-else>请先在上方主表选择 1 个 task，下方展示其委托与实时配平数量</template>
           </span>
         </div>
-        <el-table
+        <DataTableView
+          :columns="taskOrderColumns"
           :data="filteredTaskOrders"
-          class="order-table"
-          empty-text="该 task 暂无委托"
-          size="default"
+          :size="'default'"
+          :default-sort="{ prop: 'order_time', order: 'descending' }"
+          :empty-description="'该 task 暂无委托'"
+          @row-dblclick="(row) => { if (row.stock_code) stockCode.value = row.stock_code }"
         >
-          <!-- v74: 15 列对齐今日委托 (交易日/类型/标的/操作 4 列新增, 状态改 OrderStatusBadge, 下单时间去 slice 全显) -->
-        <el-table-column prop="trd_date" label="交易日" v-bind="COL.STOCK_CODE">
-          <template #default="{ row }">
+          <template #column-trd_date="{ row }">
             <span class="text-mono text-secondary">{{ row.trd_date }}</span>
           </template>
-        </el-table-column>
-        <el-table-column prop="order_no" label="委托编号" show-overflow-tooltip v-bind="COL.STOCK_CODE">
-          <template #default="{ row }">
+          <template #column-order_no="{ row }">
             <span class="text-mono">{{ row.order_no }}</span>
           </template>
-        </el-table-column>
-        <el-table-column label="类型" width="100">
-          <template #default="{ row }">
+          <template #column-type="{ row }">
             <el-tag v-if="Number(row.order_flag) === 1" type="warning" size="small">撤单</el-tag>
             <span v-else class="text-secondary">委托</span>
           </template>
-        </el-table-column>
-        <el-table-column label="标的" show-overflow-tooltip v-bind="COL.STOCK_TARGET">
-          <template #default="{ row }">
+          <template #column-stock_code="{ row }">
             <span class="text-mono tp-stock-code">{{ row.stock_code }}</span>
             <span class="text-secondary" style="margin-left: 6px">{{ stockName(row.stock_code) || '—' }}</span>
           </template>
-        </el-table-column>
-        <el-table-column prop="order_type" label="方向" v-bind="COL.DIRECTION">
-          <template #default="{ row }">
+          <template #column-order_type="{ row }">
             <el-tag :type="row.order_type === '23' ? 'danger' : 'success'" size="small">
               {{ row.order_type === '23' ? '买' : '卖' }}
             </el-tag>
           </template>
-        </el-table-column>
-        <el-table-column prop="volume" label="委托量" v-bind="COL.NUMBER">
-          <template #default="{ row }">
+          <template #column-volume="{ row }">
             <span class="text-mono">{{ formatNumber(row.volume) }}</span>
           </template>
-        </el-table-column>
-        <el-table-column prop="price" label="委托价" v-bind="COL.MONEY">
-          <template #default="{ row }">
+          <template #column-price="{ row }">
             <span class="text-mono">{{ formatPrice(row.price, row.stock_code) }}</span>
           </template>
-        </el-table-column>
-        <el-table-column prop="traded_volume" label="成交量" v-bind="COL.NUMBER">
-          <template #default="{ row }">
+          <template #column-traded_volume="{ row }">
             <span class="text-mono">{{ formatNumber(row.traded_volume || 0) }}</span>
           </template>
-        </el-table-column>
-        <el-table-column prop="avg_price" label="成交均价" v-bind="COL.MONEY">
-          <template #default="{ row }">
+          <template #column-avg_price="{ row }">
             <span class="text-mono">{{ row.traded_volume > 0 ? formatPrice(row.avg_price, row.stock_code) : '—' }}</span>
           </template>
-        </el-table-column>
-        <el-table-column prop="traded_amount" label="成交金额" v-bind="COL.MONEY">
-          <template #default="{ row }">
+          <template #column-traded_amount="{ row }">
             <span class="text-mono">{{ row.traded_volume > 0 ? formatMoney(row.traded_amount) : '—' }}</span>
           </template>
-        </el-table-column>
-        <el-table-column prop="cancelled_volume" label="撤单量" v-bind="COL.NUMBER">
-          <template #default="{ row }">
+          <template #column-cancelled_volume="{ row }">
             <span class="text-mono">{{ formatNumber(row.cancelled_volume || 0) }}</span>
           </template>
-        </el-table-column>
-        <el-table-column label="状态" v-bind="COL.STATUS">
-          <template #default="{ row }">
+          <template #column-status="{ row }">
             <OrderStatusBadge :status="row.status" :status_msg="row.status_msg" :remark="row.user_def" />
           </template>
-        </el-table-column>
-        <el-table-column label="操作" width="100" fixed="right" align="center">
-          <template #default="{ row }">
-            <el-button
-              v-if="canCancel(row)"
-              type="danger"
-              size="small"
+          <template #column-action="{ row }">
+            <el-button v-if="canCancel(row)" type="danger" size="small"
               :loading="orderStore.cancelling && cancellingOrderNo === row.order_no"
-              @click="handleCancel(row)"
-            >撤单</el-button>
+              @click="handleCancel(row)">撤单</el-button>
           </template>
-        </el-table-column>
-        <el-table-column prop="user_def" label="备注" min-width="120">
-          <template #default="{ row }">
+          <template #column-user_def="{ row }">
             <span class="text-secondary">{{ row.user_def || '—' }}</span>
           </template>
-        </el-table-column>
-        <el-table-column prop="order_time" label="下单时间" v-bind="COL.TIME">
-          <template #default="{ row }">
+          <template #column-order_time="{ row }">
             <span class="text-mono">{{ row.order_time || '—' }}</span>
           </template>
-        </el-table-column>
-        </el-table>
+        </DataTableView>
       </section>
     </div>
 
@@ -426,6 +333,7 @@ import { useQuoteStore } from '../stores/quote'
 import { useStocksStore } from '../stores/stocks'
 import { useT0TasksStore } from '../stores/t0_tasks'
 import { useOrderStore } from '../stores/order'
+import DataTableView from '../components/DataTableView.vue'
 import T0TaskDetail from '../components/trade/T0TaskDetail.vue'
 import T0TaskCreateDialog from '../components/trade/T0TaskCreateDialog.vue'
 import HoldingsPanel from '../components/trade/HoldingsPanel.vue'
@@ -439,6 +347,37 @@ import { makeLogger } from '../utils/logger'
 import OrderStatusBadge from '../components/OrderStatusBadge.vue'
 
 const log = makeLogger('T0Trade')
+
+// DataTableView 列定义
+const taskColumns = [
+  { key: 'status', label: '状态', width: 100, sortable: false },
+  { key: 'id', label: '任务编号', width: 90 },
+  { key: 'stock_code', label: '标的', vBind: COL.STOCK_TARGET },
+  { key: 'initial_position', label: '期初持仓', align: 'right', width: 90, sortable: false },
+  { key: 'current_position', label: '当前持仓', align: 'right', width: 80, sortable: false },
+  { key: 'last_price', label: '最新价(涨跌幅)', align: 'right', width: 140, sortable: false },
+  { key: 't0_pnl', label: '做T总盈亏', align: 'right', width: 110, sortable: false },
+  { key: 't0_today_pnl', label: '当日做T盈亏', align: 'right', width: 110, sortable: false },
+  { key: 'action', label: '操作', align: 'center', width: 280, fixed: 'right', sortable: false },
+]
+
+const taskOrderColumns = [
+  { key: 'trd_date', label: '交易日', vBind: COL.STOCK_CODE },
+  { key: 'order_no', label: '委托编号', vBind: COL.STOCK_CODE },
+  { key: 'type', label: '类型', width: 100, sortable: false },
+  { key: 'stock_code', label: '标的', vBind: COL.STOCK_TARGET },
+  { key: 'order_type', label: '方向', vBind: COL.DIRECTION },
+  { key: 'volume', label: '委托量', vBind: COL.NUMBER },
+  { key: 'price', label: '委托价', vBind: COL.MONEY },
+  { key: 'traded_volume', label: '成交量', vBind: COL.NUMBER },
+  { key: 'avg_price', label: '成交均价', vBind: COL.MONEY },
+  { key: 'traded_amount', label: '成交金额', vBind: COL.MONEY, sortable: false },
+  { key: 'cancelled_volume', label: '撤单量', vBind: COL.NUMBER },
+  { key: 'status', label: '状态', vBind: COL.STATUS },
+  { key: 'action', label: '操作', width: 100, fixed: 'right', align: 'center', sortable: false },
+  { key: 'user_def', label: '备注', minWidth: 120, sortable: false },
+  { key: 'order_time', label: '下单时间', vBind: COL.TIME },
+]
 
 const holdingsStore = useHoldingsStore()
 const quoteStore = useQuoteStore()
@@ -1057,7 +996,6 @@ function onAddTaskDialogOpen() {
 }
 function onHoldingSelected({ stock_code, stock_name }) {
   externalStockCode.value = stock_code
-  ElMessage.info(`已选中 ${stock_code} ${stock_name || ''}，请在右侧填写任务参数`)
 }
 async function onCreateTaskSubmit(form) {
   createDialogLoading.value = true
