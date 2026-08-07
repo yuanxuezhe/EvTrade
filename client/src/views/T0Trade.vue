@@ -53,6 +53,7 @@
       <el-radio-group v-model="globalMode" size="small">
         <el-radio-button value="pct">按比例</el-radio-button>
         <el-radio-button value="qty">按数量</el-radio-button>
+        <el-radio-button value="amount">按金额</el-radio-button>
       </el-radio-group>
       <!-- 输入框按模式条件显隐 + 单位提示 -->
       <!-- change 2026-07-27-v109-mode-toggle: 输入框按模式条件显隐 + 单位提示 (两个分支各自独立 v-if, 不用 v-else 防中间被截断) -->
@@ -70,7 +71,7 @@
         />
         <span class="t0-unit-hint">%</span>
       </template>
-      <template v-else>
+      <template v-else-if="globalMode === 'qty'">
         <el-input-number
           v-model="globalQtyInput"
           :min="1"
@@ -82,6 +83,19 @@
         />
         <span class="t0-unit-hint">股</span>
       </template>
+      <template v-if="globalMode === 'amount'">
+        <el-input-number
+          v-model="globalAmountInput"
+          :min="0.01"
+          :step="100"
+          :precision="2"
+          size="small"
+          controls-position="right"
+          style="width: 130px"
+          placeholder="金额"
+        />
+        <span class="t0-unit-hint">元</span>
+      </template>
       <!-- 价格类型 + 持仓基数 (保留不动) -->
       <el-select v-model="globalPriceType" size="small" style="width: 100px">
         <el-option v-for="o in priceTypeOptions" :key="o.value" :value="o.value" :label="o.label" />
@@ -90,12 +104,12 @@
         v-model="globalQtyBase"
         size="small"
         style="width: 110px"
-        :disabled="globalMode === 'qty'"
-        :title="globalMode === 'qty' ? '按数量模式不依赖持仓基数' : '持仓基数 (仅按比例有效)'"
+        :disabled="globalMode !== 'pct'"
+        :title="globalMode !== 'pct' ? '仅按比例模式有效' : '持仓基数 (仅按比例有效)'"
       >
         <el-option v-for="o in qtyBaseOptions" :key="o.value" :value="o.value" :label="o.label" />
       </el-select>
-      <span class="t0-config-hint">（按比例 = 买: 可用金额÷最新价×pct% / 卖: 持仓基数×pct% · 按数量 = 直接输入股数买卖）</span>
+      <span class="t0-config-hint">（按比例 = 买: 可用金额÷最新价×pct% / 卖: 持仓基数×pct% · 按数量 = 直接输入股数 · 按金额 = 金额÷最新价取整到交易单位）</span>
       <span class="t0-spacer"></span>
       <el-tooltip content="选择/取消当前做T归属的 task；新建请用添加任务入口" placement="top">
         <el-select
@@ -446,9 +460,10 @@ const viewingTaskId = ref(null)
 //   globalMode: 'pct' | 'qty' 二选一互斥单选
 //   globalPctInput: 直接是百分数 (用户视角 25 表示 25%, 支持小数), 计算时除以 100
 //   globalQtyInput: 直接是股数 (整数)
-const globalMode = ref('pct')              // 模式 'pct' (按比例) | 'qty' (按数量)
+const globalMode = ref('pct')              // 模式 'pct' (按比例) | 'qty' (按数量) | 'amount' (按金额)
 const globalPctInput = ref(25)             // 百分数 (用户视角 25 = 25%, 支持小数 0.001-100)
 const globalQtyInput = ref(100)            // 股数 (整数 ≥ 1)
+const globalAmountInput = ref(10000)       // 金额 (元)
 const globalPriceType = ref('market')      // change 2026-07-27-v109-default-market: 价格 'latest' (最新价 11) | 'market' (市价 44), 默认改为市价
 const globalQtyBase = ref('last_vol')      // 数量基数 'vol'/'avl_vol'/'last_vol' (pct 模式下的基数)
 
@@ -613,6 +628,15 @@ function computeOrderVolume(stockCode, direction = '买') {
     const unit_adjusted = Math.floor(raw / trade_unit) * trade_unit
     const volume = Math.max(unit_adjusted, min_buy_qty)
     return { volume, raw, trade_unit, min_buy_qty, base: raw, pct: 1, mode: 'qty' }
+  }
+  // amount 模式: 金额 / 最新价 → 股数 → 按 trade_unit 取整
+  if (globalMode.value === 'amount') {
+    const amount = Number(globalAmountInput.value) || 0
+    const price = quoteStore.getLastPrice(stockCode) || 0
+    const raw = price > 0 ? amount / price : 0
+    const unit_adjusted = Math.floor(raw / trade_unit) * trade_unit
+    const volume = Math.max(unit_adjusted, min_buy_qty)
+    return { volume, raw, trade_unit, min_buy_qty, base: amount, pct: 1, mode: 'amount' }
   }
   // pct 模式: 按方向取 base
   //   - 买: base = available_cash / last_price (能买的股数上限)
@@ -939,10 +963,11 @@ function _prepareOrderPayload(row, direction) {
     direction, stockCode, price, volume: volInfo.volume,
     orderType,                                       // v58 commit.5 fix: 后端 Pydantic 必填, 之前漏掉 → 422
     taskId: row.id,
-    mode: globalMode.value,                          // change 2026-07-27-v109-mode-toggle: 'pct' | 'qty'
+    mode: globalMode.value,                          // 'pct' | 'qty' | 'amount'
     qtyBase: globalQtyBase.value,                    // 仅 pct 模式有意义
-    pct: globalPctInput.value,                       // change 2026-07-27-v109-mode-toggle: 直接是百分数 (用户视角 25 = 25%)
-    qty: globalQtyInput.value,                       // change 2026-07-27-v109-mode-toggle: 仅 qty 模式有意义
+    pct: globalPctInput.value,                       // pct 模式: 百分数
+    qty: globalQtyInput.value,                       // qty 模式: 股数
+    amount: globalAmountInput.value,                 // amount 模式: 金额
     priceType: globalPriceType.value,
     // v57 commit.4: 取整提示信息 (供 dialog 显示)
     base: volInfo.base,
