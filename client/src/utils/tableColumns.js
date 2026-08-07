@@ -4,7 +4,7 @@
  * 设计目标:
  *   - 把"列类型 + 宽度 + 对齐 + 文本类"的样板抽出来, 表格模板只写业务 prop/label
  *   - "字典各自自个定义": 每种业务字典自带自己的常量, 互不耦合
- *   - 渐进式迁移: 新表直接用, 老表 (T0Trade.vue / HistoryOrders.vue) 下轮再说
+ *   - 渐进式迁移: 新表直接用, 老表 (T0Trade.vue) 下轮再说
  *
  * 6 类常量:
  *   1. STOCK_CODE   — 证券代码 (单列, mono + tp-stock-code)
@@ -43,7 +43,7 @@ export const STOCK_CODE = {
  *    固定 width=160 + show-overflow-tooltip (防名称过长撑爆列)
  */
 export const STOCK_TARGET = {
-  width: 160,
+  width: 208,
   align: 'left',
   headerAlign: 'left',
 }
@@ -55,7 +55,7 @@ export const STOCK_TARGET = {
  *    模板: <span class="text-mono text-secondary">{{ row.xxx }}</span>
  */
 export const TIME = {
-  width: 150,
+  width: 195,
   align: 'left',
   headerAlign: 'left',
 }
@@ -77,9 +77,54 @@ export const NUMBER = {
  *    模板: <span class="text-mono">{{ formatMoney(row.xxx) }}</span>
  */
 export const MONEY = {
+  width: 150,
+  align: 'right',
+  headerAlign: 'right',
+}
+
+/**
+ * PRICE — 价格列 (同 MONEY, 别名)
+ */
+export const PRICE = {
   width: 100,
   align: 'right',
   headerAlign: 'right',
+}
+
+/**
+ * TRD_DATE — 交易日 (8位年月日 YYYYMMDD)
+ */
+export const TRD_DATE = {
+  width: 100,
+  align: 'left',
+  headerAlign: 'left',
+}
+
+/**
+ * SHORT_SNO — 序号类 (委托编号/合同序号等)
+ */
+export const SHORT_SNO = {
+  width: 100,
+  align: 'left',
+  headerAlign: 'left',
+}
+
+/**
+ * LONG_SNO — 序号类 (成交编号等)
+ */
+export const LONG_SNO = {
+  width: 200,
+  align: 'left',
+  headerAlign: 'left',
+}
+
+/**
+ * STRING — 字符串列
+ */
+export const STRING = {
+  width: 250,
+  align: 'left',
+  headerAlign: 'left',
 }
 
 /**
@@ -140,8 +185,13 @@ export const COL = {
   TIME,
   NUMBER,
   MONEY,
+  PRICE,
   DIRECTION,
   STATUS,
   PRICE_TYPE,
+  TRD_DATE,
+  SHORT_SNO,
+  LONG_SNO,
+  STRING,
   makeDict,
 }

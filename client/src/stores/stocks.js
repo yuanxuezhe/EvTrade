@@ -48,7 +48,7 @@ export const useStocksStore = defineStore('stocks', () => {
   const pageRows = ref([])
   const total = ref(0)
   const page = ref(1)
-  const pageSize = ref(20)
+  const pageSize = ref(50)
   const loading = ref(false)
 
   // 当前编辑中的 stock_code

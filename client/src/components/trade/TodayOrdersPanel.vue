@@ -62,6 +62,9 @@
           <template #column-cancelled_volume="{ row }">
             <span class="text-mono">{{ formatNumber(row.cancelled_volume || 0) }}</span>
           </template>
+          <template #column-order_id="{ row }">
+            <span class="text-mono text-secondary">{{ row.order_id || '—' }}</span>
+          </template>
           <template #column-status="{ row }">
             <OrderStatusBadge :status="row.status" :remark="row.remark" :status_msg="row.status_msg" />
           </template>
@@ -119,6 +122,9 @@
           </template>
           <template #column-amount="{ row }">
             <span class="text-mono">{{ formatMoney(localAmount(row)) }}</span>
+          </template>
+          <template #column-trade_id="{ row }">
+            <span class="text-mono text-secondary">{{ row.trade_id }}</span>
           </template>
           <template #column-trade_time="{ row }">
             <span class="text-mono text-secondary">{{ row.trade_time }}</span>
@@ -212,31 +218,33 @@ function localAmount(t) {
 
 // 列定义
 const orderColumns = [
-  { key: 'trd_date', label: '交易日', vBind: COL.STOCK_CODE },
-  { key: 'order_no', label: '委托编号', vBind: COL.STOCK_CODE },
+  { key: 'trd_date', label: '交易日', vBind: COL.TRD_DATE },
+  { key: 'order_no', label: '委托编号', vBind: COL.SHORT_SNO },
   { key: 'type', label: '类型', width: 100, sortable: false },
   { key: 'stock_code', label: '标的', vBind: COL.STOCK_TARGET },
   { key: 'direction', label: '方向', vBind: COL.DIRECTION, sortable: false },
   { key: 'volume', label: '委托量', vBind: COL.NUMBER },
-  { key: 'price', label: '委托价', vBind: COL.MONEY },
+  { key: 'price', label: '委托价', vBind: COL.PRICE },
   { key: 'traded_volume', label: '成交量', vBind: COL.NUMBER },
-  { key: 'avg_price', label: '成交均价', vBind: COL.MONEY },
+  { key: 'avg_price', label: '成交均价', vBind: COL.PRICE },
   { key: 'traded_amount', label: '成交金额', vBind: COL.MONEY, sortable: false },
   { key: 'cancelled_volume', label: '撤单量', vBind: COL.NUMBER },
+  { key: 'order_id', label: '合同序号', vBind: COL.SHORT_SNO },
   { key: 'status', label: '状态', vBind: COL.STATUS },
   { key: 'action', label: '操作', width: 100, fixed: 'right', align: 'center', sortable: false },
   { key: 'order_time', label: '下单时间', vBind: COL.TIME },
 ]
 
 const tradeColumns = [
-  { key: 'trd_date', label: '交易日', vBind: COL.STOCK_CODE },
-  { key: 'order_no', label: '委托编号', vBind: COL.STOCK_CODE },
+  { key: 'trd_date', label: '交易日', vBind: COL.TRD_DATE },
+  { key: 'order_no', label: '委托编号', vBind: COL.SHORT_SNO },
   { key: 'type', label: '类型', width: 100, sortable: false },
   { key: 'stock_code', label: '标的', vBind: COL.STOCK_TARGET },
   { key: 'direction', label: '方向', vBind: COL.DIRECTION, sortable: false },
   { key: 'volume', label: '成交量', vBind: COL.NUMBER },
-  { key: 'price', label: '成交价', vBind: COL.MONEY },
+  { key: 'price', label: '成交价', vBind: COL.PRICE },
   { key: 'amount', label: '金额', vBind: COL.MONEY, sortable: false },
+  { key: 'trade_id', label: '成交编号', vBind: COL.LONG_SNO },
   { key: 'trade_time', label: '时间', vBind: COL.TIME },
 ]
 </script>

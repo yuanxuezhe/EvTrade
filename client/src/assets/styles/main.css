@@ -349,6 +349,10 @@ h1, h2, h3, h4, h5, h6 {
 .el-table--striped .el-table__body tr.el-table__row--striped td {
   background: var(--bg-soft) !important;
 }
+/* v98: 斑马纹非条纹行也统一使用 --bg-elevated，消除默认白色 */
+.el-table--striped .el-table__body tr:not(.el-table__row--striped) td {
+  background: var(--bg-elevated) !important;
+}
 .el-table__body-wrapper {
   /* v32: body wrapper 也需要 overflow-x, 避免内部列宽溢出后没有横向滚动 */
   overflow-x: auto !important;

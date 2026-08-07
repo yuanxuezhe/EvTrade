@@ -1,5 +1,5 @@
 <template>
-  <div class="users-view fade-in-up" v-loading="loading">
+  <div class="users-view fade-in-up" :style="rootStyle">
     <!-- 顶部概览 -->
     <section class="stats-row">
       <div class="stat-pill">
@@ -49,127 +49,64 @@
     </div>
 
     <!-- 表格 -->
-    <div class="content-card">
-      <el-table
-        :data="pagedUsers"
-        v-loading="loading"
-        style="width: 100%"
+    <div class="content-card table-wrap" v-loading="loading">
+      <DataTableView
+        :columns="userColumns"
+        :data="filteredUsers"
         :default-sort="{ prop: 'id', order: 'ascending' }"
-        row-key="id"
+        :default-page-size="20"
+        :page-sizes="[10, 20, 50]"
+        empty-description="暂无用户"
       >
-        <el-table-column prop="id" label="ID" width="100" sortable>
-          <template #default="{ row }">
-            <span class="text-mono text-secondary">#{{ row.id }}</span>
-          </template>
-        </el-table-column>
-
-        <el-table-column prop="username" label="用户名" min-width="100">
-          <template #default="{ row }">
-            <div class="user-cell">
-              <div class="avatar" :class="`role-${row.role}`">
-                {{ (row.full_name || row.username).charAt(0).toUpperCase() }}
-              </div>
-              <div class="user-meta">
-                <div class="user-name">{{ row.username }}</div>
-                <div v-if="row.full_name" class="user-fullname">{{ row.full_name }}</div>
-              </div>
+        <template #column-username="{ row }">
+          <div class="user-cell">
+            <div class="avatar" :class="`role-${row.role}`">
+              {{ (row.full_name || row.username).charAt(0).toUpperCase() }}
             </div>
-          </template>
-        </el-table-column>
-
-        <el-table-column prop="email" label="邮箱" min-width="100">
-          <template #default="{ row }">
-            <span v-if="row.email" class="text-secondary">{{ row.email }}</span>
-            <span v-else class="text-placeholder">--</span>
-          </template>
-        </el-table-column>
-
-        <el-table-column prop="role" label="角色" width="100">
-          <template #default="{ row }">
-            <span class="role-chip" :class="`role-${row.role}`">
-              {{ ROLE_LABEL[row.role] || row.role }}
-            </span>
-          </template>
-        </el-table-column>
-
-        <el-table-column prop="is_active" label="状态" width="100">
-          <template #default="{ row }">
-            <el-tag
-              :type="row.is_active ? 'success' : 'danger'"
-              size="small"
-              effect="light"
-            >
-              {{ row.is_active ? '已启用' : '已禁用' }}
-            </el-tag>
-          </template>
-        </el-table-column>
-
-        <el-table-column prop="last_login_at" label="最近登录" width="100">
-          <template #default="{ row }">
-            <span class="text-mono text-secondary">
-              {{ formatDateTime(row.last_login_at) }}
-            </span>
-          </template>
-        </el-table-column>
-
-        <el-table-column prop="created_at" label="创建时间" width="100">
-          <template #default="{ row }">
-            <span class="text-mono text-secondary">
-              {{ formatDateTime(row.created_at) }}
-            </span>
-          </template>
-        </el-table-column>
-
-        <el-table-column label="操作" width="100" fixed="right">
-          <template #default="{ row }">
-            <div class="row-actions">
-              <el-button size="small" link type="primary" @click="actions.openEdit(row)">
-                编辑
-              </el-button>
-              <el-button
-                size="small"
-                link
-                type="warning"
-                @click="actions.openResetPwd(row)"
-              >
-                重置密码
-              </el-button>
-              <el-button
-                size="small"
-                link
-                :type="row.is_active ? 'info' : 'success'"
-                :disabled="row.id === (authStore.user && authStore.user.id)"
-                @click="onToggleActive(row)"
-              >
-                {{ row.is_active ? '禁用' : '启用' }}
-              </el-button>
-              <el-button
-                size="small"
-                link
-                type="danger"
-                :disabled="row.id === (authStore.user && authStore.user.id)"
-                @click="onConfirmDelete(row)"
-              >
-                删除
-              </el-button>
+            <div class="user-meta">
+              <div class="user-name">{{ row.username }}</div>
+              <div v-if="row.full_name" class="user-fullname">{{ row.full_name }}</div>
             </div>
-          </template>
-        </el-table-column>
-
-        <template #empty>
-          <el-empty description="暂无用户" :image-size="100" />
+          </div>
         </template>
-      </el-table>
-
-      <div class="pagination">
-        <el-pagination
-          v-model:current-page="page"
-          v-model:page-size="pageSize"
-          :total="filteredUsers.length"
-          :page-sizes="[10, 20, 50]"
-          layout="total, sizes, prev, pager, next, jumper"
-        />
-      </div>
+        <template #column-email="{ row }">
+          <span v-if="row.email" class="text-secondary">{{ row.email }}</span>
+          <span v-else class="text-placeholder">--</span>
+        </template>
+        <template #column-role="{ row }">
+          <span class="role-chip" :class="`role-${row.role}`">
+            {{ ROLE_LABEL[row.role] || row.role }}
+          </span>
+        </template>
+        <template #column-is_active="{ row }">
+          <el-tag :type="row.is_active ? 'success' : 'danger'" size="small" effect="light">
+            {{ row.is_active ? '已启用' : '已禁用' }}
+          </el-tag>
+        </template>
+        <template #column-last_login_at="{ row }">
+          <span class="text-mono text-secondary">{{ formatDateTime(row.last_login_at) }}</span>
+        </template>
+        <template #column-created_at="{ row }">
+          <span class="text-mono text-secondary">{{ formatDateTime(row.created_at) }}</span>
+        </template>
+        <template #column-action="{ row }">
+          <div class="row-actions">
+            <el-button size="small" link type="primary" @click="actions.openEdit(row)">编辑</el-button>
+            <el-button size="small" link type="warning" @click="actions.openResetPwd(row)">重置密码</el-button>
+            <el-button
+              size="small" link
+              :type="row.is_active ? 'info' : 'success'"
+              :disabled="row.id === (authStore.user && authStore.user.id)"
+              @click="onToggleActive(row)"
+            >{{ row.is_active ? '禁用' : '启用' }}</el-button>
+            <el-button
+              size="small" link type="danger"
+              :disabled="row.id === (authStore.user && authStore.user.id)"
+              @click="onConfirmDelete(row)"
+            >删除</el-button>
+          </div>
+        </template>
+      </DataTableView>
     </div>
 
     <!-- 弹窗：phase-2 拆分到子组件 -->
@@ -201,18 +138,21 @@ import { Search, Refresh, Plus } from '@element-plus/icons-vue'
 import { userApi } from '../api'
 import { useAuthStore } from '../stores/auth'
 import { formatDateTime } from '../utils/format'
+import { COL } from '../utils/tableColumns'
+import DataTableView from '../components/DataTableView.vue'
+import { useUiStore } from '../stores/ui'
 import { useUserActions } from '../composables/useUserActions'
 import UserEditDialog from '../components/users/UserEditDialog.vue'
 import UserResetPwdDialog from '../components/users/UserResetPwdDialog.vue'
 
 const authStore = useAuthStore()
+const uiStore = useUiStore()
+const rootStyle = computed(() => ({ '--oplog-extra': uiStore.oplogExpanded ? '260px' : '0px' }))
 
 const ROLE_LABEL = { admin: '管理员', trader: '交易员', viewer: '只读用户' }
 
 const users = ref([])
 const loading = ref(false)
-const page = ref(1)
-const pageSize = ref(20)
 
 const filters = reactive({ keyword: '', role: '' })
 
@@ -223,6 +163,17 @@ const countByRole = computed(() => {
 })
 
 const disabledCount = computed(() => users.value.filter((u) => !u.is_active).length)
+
+const userColumns = [
+  { key: 'id', label: 'ID', width: 90 },
+  { key: 'username', label: '用户名', vBind: COL.STRING },
+  { key: 'email', label: '邮箱', vBind: COL.STRING },
+  { key: 'role', label: '角色', width: 100 },
+  { key: 'is_active', label: '状态', width: 100 },
+  { key: 'last_login_at', label: '最近登录', vBind: COL.TIME },
+  { key: 'created_at', label: '创建时间', vBind: COL.TIME },
+  { key: 'action', label: '操作', width: 250, fixed: 'right', sortable: false },
+]
 
 const filteredUsers = computed(() => {
   const kw = filters.keyword.trim().toLowerCase()
@@ -239,11 +190,6 @@ const filteredUsers = computed(() => {
   })
 })
 
-const pagedUsers = computed(() => {
-  const start = (page.value - 1) * pageSize.value
-  return filteredUsers.value.slice(start, start + pageSize.value)
-})
-
 async function refresh() {
   loading.value = true
   try {
@@ -251,7 +197,6 @@ async function refresh() {
       keyword: filters.keyword || undefined,
       role: filters.role || undefined
     })
-    page.value = 1
   } catch (e) {
     ElMessage.error((e.response && e.response.data && e.response.data.detail) || '加载失败')
   } finally {
@@ -301,7 +246,10 @@ onMounted(refresh)
 .users-view {
   display: flex;
   flex-direction: column;
-  gap: var(--space-5);
+  gap: var(--space-4);
+  height: calc(100% - var(--oplog-extra, 0px));
+  min-height: 0;
+  overflow: hidden;
 }
 
 .stats-row {
@@ -425,11 +373,11 @@ onMounted(refresh)
   flex-wrap: wrap;
 }
 
-.pagination {
-  padding: var(--space-3) var(--space-4);
+.table-wrap {
+  flex: 1 1 0;
+  min-height: 0;
   display: flex;
-  justify-content: flex-end;
-  border-top: 1px solid var(--border-light);
+  flex-direction: column;
 }
 
 @media (max-width: 1100px) {

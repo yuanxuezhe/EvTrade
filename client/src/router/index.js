@@ -7,10 +7,7 @@ const Dashboard = () => import('../views/Dashboard.vue')
 const Trade = () => import('../views/Trade.vue')
 const Asset = () => import('../views/Asset.vue')
 // v32: 删 /holdings 独立查询页 (持仓由 Trade.vue 右上 HoldingsPanel 承担)
-// v13 trade-page-redesign-v2: 删除 TodayOrders/TodayTrades view（由 Trade.vue 内嵌 mini-panel 承担）
-//   HistoryOrders/Trades 走 HTTP 局部 state（不入 IDB）
-const HistoryOrders = () => import('../views/HistoryOrders.vue')
-const HistoryTrades = () => import('../views/HistoryTrades.vue')
+// v13: HistoryOrders/HistoryTrades view 已删除
 const AlgoStrategy = () => import('../views/AlgoStrategy.vue')
 const TStrategy = () => import('../views/TStrategy.vue')
 const StrategyTrade = () => import('../views/StrategyTrade.vue')
@@ -43,16 +40,6 @@ const routes = [
   { path: '/positions', redirect: '/t0-trade' },
   { path: '/trade', name: 'Trade', component: Trade, meta: { title: '交易下单', requiresTrader: true } },
   { path: '/asset', name: 'Asset', component: Asset, meta: { title: '账户资金' } },
-  // v13 trade-page-redesign-v2: /today/* 路由删除, 改 redirect
-  //   HistoryOrders/Trades 走 HTTP 局部 state（不入 IDB）
-  { path: '/history/orders', name: 'HistoryOrders', component: HistoryOrders, meta: { title: '历史委托' } },
-  { path: '/history/trades', name: 'HistoryTrades', component: HistoryTrades, meta: { title: '历史成交' } },
-  // v13: 旧 /orders /trades 路由 redirect 到 history (新入口)
-  { path: '/orders', redirect: '/history/orders' },
-  { path: '/trades', redirect: '/history/trades' },
-  // v13: 老 /today/* 书签兼容 redirect (跳到 history view)
-  { path: '/today/orders', redirect: '/history/orders' },
-  { path: '/today/trades', redirect: '/history/trades' },
   // v32: 删 /holdings 独立查询页路由 (持仓由 Trade.vue 右上 HoldingsPanel 承担)
   //   保留 redirect 兼容旧书签
   { path: '/holdings', redirect: '/trade' },
@@ -78,10 +65,10 @@ const routes = [
   { path: '/system-config', name: 'SystemConfig', component: SystemConfig, meta: { title: '系统配置' } },  // v78: 允许普通用户查看 (写权限 UI 层控制)
   { path: '/t0-trade', name: 'T0Trade', component: T0Trade, meta: { title: '快速做T' } },
   // admin-only: IDB 4 张业务表的 CRUD 查看器
-  { path: '/admin/cache/asset', name: 'CacheAsset', component: CacheAsset, meta: { title: '缓存: 资金', requiresAdmin: true } },
-  { path: '/admin/cache/positions', name: 'CachePositions', component: CachePositions, meta: { title: '缓存: 持仓', requiresAdmin: true } },
-  { path: '/admin/cache/orders', name: 'CacheOrders', component: CacheOrders, meta: { title: '缓存: 委托', requiresAdmin: true } },
-  { path: '/admin/cache/trades', name: 'CacheTrades', component: CacheTrades, meta: { title: '缓存: 成交', requiresAdmin: true } },
+  { path: '/admin/cache/asset', name: 'CacheAsset', component: CacheAsset, meta: { title: '交易查询: 资金', requiresAdmin: true } },
+  { path: '/admin/cache/positions', name: 'CachePositions', component: CachePositions, meta: { title: '交易查询: 持仓', requiresAdmin: true } },
+  { path: '/admin/cache/orders', name: 'CacheOrders', component: CacheOrders, meta: { title: '交易查询: 委托', requiresAdmin: true } },
+  { path: '/admin/cache/trades', name: 'CacheTrades', component: CacheTrades, meta: { title: '交易查询: 成交', requiresAdmin: true } },
   // v21 stock-info-crawler: 股票同步管理 (admin-only, 启动/停止/进度/错误流)
   // v93: 证券同步独立页面已移除, 启动/停止/进度由 stock-config 页面承担
   // { path: '/admin/sync', name: 'AdminSync', component: AdminSync, meta: { title: '证券同步', requiresAdmin: true } },

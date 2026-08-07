@@ -5,23 +5,7 @@
   DataTableView 内部分页, 保留调平 dialog
 -->
 <template>
-  <div class="cache-positions-view fade-in-up">
-    <!-- 概览 -->
-    <section class="stats-row">
-      <div class="stat-pill">
-        <div class="pill-label">持仓数</div>
-        <div class="pill-value text-mono">{{ results.length }}</div>
-      </div>
-      <div class="stat-pill">
-        <div class="pill-label">Key Field</div>
-        <div class="pill-value text-mono">stock_code</div>
-      </div>
-      <div class="stat-pill">
-        <div class="pill-label">Data Source</div>
-        <div class="pill-value text-mono">IDB</div>
-      </div>
-    </section>
-
+  <div class="cache-positions-view fade-in-up" :style="rootStyle">
     <!-- 工具栏 -->
     <div class="content-card filter-bar">
       <div class="filter-left">
@@ -41,6 +25,7 @@
         :columns="positionColumns"
         :data="filteredResults"
         :default-sort="{ prop: 'vol', order: 'descending' }"
+        :default-page-size="50"
         :empty-description="'无持仓数据'"
         @row-dblclick="(row) => { if (row.stock_code) stockCode.value = row.stock_code }"
       >
@@ -144,6 +129,10 @@ import { formatPrice } from '../composables/usePricePrecision'
 import { stockName } from '../utils/stockNames'
 import { COL } from '../utils/tableColumns'
 import { loadAllPositions } from '../stores/holdings_idb'
+import { useUiStore } from '../stores/ui'
+
+const uiStore = useUiStore()
+const rootStyle = computed(() => ({ '--oplog-extra': uiStore.oplogExpanded ? '260px' : '0px' }))
 
 const results = ref([])
 const loading = ref(false)
@@ -201,9 +190,9 @@ async function onSubmit() {
 const positionColumns = [
   { key: 'stock_code', label: '标的', vBind: COL.STOCK_TARGET },
   { key: 'last_vol', label: '期初', vBind: COL.NUMBER },
-  { key: 'avl_vol', label: '可用', vBind: COL.NUMBER },
   { key: 'vol', label: '总持仓', vBind: COL.NUMBER },
-  { key: 'cost_price', label: '成本价', vBind: COL.MONEY },
+  { key: 'avl_vol', label: '可用', vBind: COL.NUMBER },
+  { key: 'cost_price', label: '成本价', vBind: COL.PRICE },
   { key: 'market_value', label: '市值', vBind: COL.MONEY },
   { key: 'synced_from', label: '来源', width: 100, sortable: false },
   { key: 'synced_at', label: '同步时间', vBind: COL.TIME },
@@ -212,11 +201,7 @@ const positionColumns = [
 </script>
 
 <style scoped>
-.cache-positions-view { display: flex; flex-direction: column; gap: var(--space-5); height: calc(100vh - var(--header-h, 60px) - 30px); min-height: 300px; }
-.stats-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--space-3); }
-.stat-pill { background: var(--bg-elevated); border: 1px solid var(--border-base); border-radius: var(--radius-md); padding: var(--space-3) var(--space-4); display: flex; flex-direction: column; gap: 4px; }
-.pill-label { font-size: 12px; color: var(--text-secondary); }
-.pill-value { font-size: 18px; font-weight: 700; }
+.cache-positions-view { display: flex; flex-direction: column; gap: var(--space-4); height: calc(100% - var(--oplog-extra, 0px)); min-height: 0; overflow: hidden; }
 .filter-bar { display: flex; justify-content: space-between; align-items: center; padding: var(--space-3) var(--space-4); flex-wrap: wrap; gap: var(--space-3); }
 .filter-left { display: flex; gap: var(--space-2); align-items: center; }
 .text-mono { font-family: var(--font-mono, 'JetBrains Mono', 'Consolas', monospace); }

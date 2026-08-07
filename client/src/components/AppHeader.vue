@@ -130,8 +130,6 @@ const pageMeta = {
   '/': { title: '仪表盘', sub: '账户概览与今日行情' },
   '/positions': { title: '持仓管理', sub: '查看与管理您的持仓' },
   '/trade': { title: '交易下单', sub: '快速下单与今日委托' },
-  '/orders': { title: '委托查询', sub: '历史委托记录' },
-  '/trades': { title: '成交查询', sub: '历史成交明细' },
   '/asset': { title: '账户资金', sub: '资金详情与资产分布' },
   '/users': { title: '用户管理', sub: '管理系统账号与权限' },
   // v32: 删 /holdings 独立查询页 meta (页面删除后无意义, 保留空注释防误改)

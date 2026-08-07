@@ -63,7 +63,7 @@ import { computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { useUiStore } from '../stores/ui'
 import {
-  Odometer, Wallet, Money, DataAnalysis, List, Tickets,
+  Odometer, Wallet, Money, DataAnalysis, Tickets,
   Fold, Expand, TrendCharts, UserFilled, Files,
   Coin, Cpu, MagicStick, Setting, Operation, Box, Document, Refresh, DataBoard,
   EditPen, DataLine,
@@ -81,12 +81,6 @@ const menuItems = computed(() => {
   const base = [
     { path: '/', label: '仪表盘', icon: Odometer },
     { path: '/trade', label: '交易下单', icon: TrendCharts },
-    // v13: 委托 / 成交入口改名为"历史委托" / "历史成交" (今日数据由 Trade.vue 内嵌 mini-panel 承担)
-    { path: '/orders', label: '历史委托', icon: List },
-    // v32: 删 /holdings 独立查询页菜单项 (持仓由 Trade.vue 右上 HoldingsPanel 承担)
-    { path: '/trades', label: '历史成交', icon: Tickets },
-    // 账户资金 / 个人资料 入口移到头部用户菜单, 不再放侧栏
-    // 策略交易分组
     { divider: true, label: '策略交易' },
     // Sidebar 入口: 真正指向 /t0-trade (T0Trade.vue)
 // 路由 /to-management 改 redirect 到 /t0-trade (兼容旧书签)
@@ -105,11 +99,11 @@ const menuItems = computed(() => {
     // v21 stock-info-crawler: 基础信息分类 → 证券信息设置（占位）
     base.push({ divider: true, label: '基础信息' })
     base.push({ path: '/admin/stock-config', label: '证券信息', icon: DataBoard })
-    base.push({ divider: true, label: '缓存查看' })
-    base.push({ path: '/admin/cache/asset', label: '资金', icon: Wallet })
-    base.push({ path: '/admin/cache/positions', label: '持仓', icon: Box })
-    base.push({ path: '/admin/cache/orders', label: '委托', icon: Tickets })
-    base.push({ path: '/admin/cache/trades', label: '成交', icon: Document })
+    base.push({ divider: true, label: '交易查询' })
+    base.push({ path: '/admin/cache/asset', label: '资金查询', icon: Wallet })
+    base.push({ path: '/admin/cache/positions', label: '持仓查询', icon: Box })
+    base.push({ path: '/admin/cache/orders', label: '委托查询', icon: Tickets })
+    base.push({ path: '/admin/cache/trades', label: '成交查询', icon: Document })
   }
   return base
 })

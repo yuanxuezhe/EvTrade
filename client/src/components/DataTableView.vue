@@ -37,7 +37,7 @@
       <el-table
         :data="pagedData"
         :show-overflow-tooltip="true"
-        :stripe="true"
+        :stripe="stripe"
         :size="size"
         :border="border"
         :row-class-name="rowClassName"
@@ -78,7 +78,7 @@
     </div>
 
     <!-- 分页: 数据量 > pageSize 时显示 -->
-    <div v-if="data.length > pageSize" class="dtv-pagination">
+    <div v-if="!noPagination && data.length > pageSize" class="dtv-pagination">
       <el-pagination
         v-model:current-page="page"
         v-model:page-size="pageSize"
@@ -101,14 +101,16 @@ const props = defineProps({
   data: { type: Array, required: true },
   rowKey: { type: String, default: 'id' },
   defaultSort: { type: Object, default: () => ({}) },
-  defaultPageSize: { type: Number, default: 20 },
-  pageSizes: { type: Array, default: () => [10, 20, 50, 100] },
+  defaultPageSize: { type: Number, default: 50 },
+  pageSizes: { type: Array, default: () => [50, 100, 200, 500] },
   height: { type: String, default: '100%' },
   emptyDescription: { type: String, default: '暂无数据' },
   size: { type: String, default: 'small' },
   border: { type: Boolean, default: false },
   rowClassName: { type: Function, default: null },
   cellClassName: { type: Function, default: null },
+  noPagination: { type: Boolean, default: false },
+  stripe: { type: Boolean, default: true },
 })
 
 const emit = defineEmits(['sort-change', 'page-change', 'row-click', 'row-dblclick'])
@@ -145,6 +147,7 @@ const sortedData = computed(() => {
 
 // 分页
 const pagedData = computed(() => {
+  if (props.noPagination) return sortedData.value
   const start = (page.value - 1) * pageSize.value
   return sortedData.value.slice(start, start + pageSize.value)
 })

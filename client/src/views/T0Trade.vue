@@ -43,7 +43,7 @@
              priceType:'market' (priceTypeCode=44), taskId})
 -->
 <template>
-  <div class="t0-trade fade-in-up">
+  <div class="t0-trade fade-in-up" :style="rootStyle">
     <!-- v93: 整页只剩一条工具栏行 — 做T配置 + (任务筛选 / 添加任务 / 刷新) 全部靠右集中 -->
     <!--   顺序(从右到左): 刷新 → 添加任务 → 任务筛选 → 提示文案 → 3 个 select -->
     <!-- change 2026-07-27-v109-mode-toggle: 工具栏 — 百分数 vs 股数 单选互斥输入框 -->
@@ -262,6 +262,9 @@
           <template #column-cancelled_volume="{ row }">
             <span class="text-mono">{{ formatNumber(row.cancelled_volume || 0) }}</span>
           </template>
+          <template #column-order_id="{ row }">
+            <span class="text-mono text-secondary">{{ row.order_id || '—' }}</span>
+          </template>
           <template #column-status="{ row }">
             <OrderStatusBadge :status="row.status" :status_msg="row.status_msg" :remark="row.user_def" />
           </template>
@@ -343,10 +346,13 @@ import { formatPrice } from '../composables/usePricePrecision'
 import { STATUS_LABEL, STATUS_TYPE } from '../utils/format'
 import { stockName } from '../utils/stockNames'
 import { COL } from '../utils/tableColumns'
+import { useUiStore } from '../stores/ui'
 import { makeLogger } from '../utils/logger'
 import OrderStatusBadge from '../components/OrderStatusBadge.vue'
 
 const log = makeLogger('T0Trade')
+const uiStore = useUiStore()
+const rootStyle = computed(() => ({ '--oplog-extra': uiStore.oplogExpanded ? '260px' : '0px' }))
 
 // DataTableView 列定义
 const taskColumns = [
@@ -368,11 +374,12 @@ const taskOrderColumns = [
   { key: 'stock_code', label: '标的', vBind: COL.STOCK_TARGET },
   { key: 'order_type', label: '方向', vBind: COL.DIRECTION },
   { key: 'volume', label: '委托量', vBind: COL.NUMBER },
-  { key: 'price', label: '委托价', vBind: COL.MONEY },
+  { key: 'price', label: '委托价', vBind: COL.PRICE },
   { key: 'traded_volume', label: '成交量', vBind: COL.NUMBER },
-  { key: 'avg_price', label: '成交均价', vBind: COL.MONEY },
+  { key: 'avg_price', label: '成交均价', vBind: COL.PRICE },
   { key: 'traded_amount', label: '成交金额', vBind: COL.MONEY, sortable: false },
   { key: 'cancelled_volume', label: '撤单量', vBind: COL.NUMBER },
+  { key: 'order_id', label: '合同序号', vBind: COL.SHORT_SNO },
   { key: 'status', label: '状态', vBind: COL.STATUS },
   { key: 'action', label: '操作', width: 100, fixed: 'right', align: 'center', sortable: false },
   { key: 'user_def', label: '备注', minWidth: 120, sortable: false },
@@ -501,7 +508,7 @@ const selectedTaskDiff = computed(() => _taskNetDiff(selectedTaskId.value))
 // 委托状态格式化 (v63: 与下单页 / 历史委托统一用 STATUS_LABEL 字典)
 // 删除旧私有 orderStatusLabel (L510) + orderStatusTagType (L520), 它们映射错:
 // 旧 '51' = '已成交' 应是 '已报待撤', '56' = '已撤(部)' 应是 '已成' 等.
-// 现统一从 format.js STATUS_LABEL / STATUS_TYPE 取, 与 Trade.vue / HistoryOrders.vue 一致.
+// 现统一从 format.js STATUS_LABEL / STATUS_TYPE 取, 与 Trade.vue 一致.
 const orderStatusLabel = (s) => STATUS_LABEL[s] || String(s || '—')
 const orderStatusTagType = (s) => STATUS_TYPE[s] || 'default'
 
@@ -1037,6 +1044,9 @@ onMounted(async () => {
   display: flex;
   flex-direction: column;
   gap: 0;
+  height: calc(100% - var(--oplog-extra, 0px));
+  min-height: 0;
+  overflow: hidden;
 }
 /* v93: .t0-header / .t0-title / .qs-row 已删除 — 工具栏合并到 .t0-config-bar */
 .task-table {
