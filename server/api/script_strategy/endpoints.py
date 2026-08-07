@@ -234,6 +234,8 @@ def create_task_endpoint(req: TaskCreate, user: User = Depends(get_current_user)
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail={"code": "CREATE_FAILED", "msg": str(e)})
+    except Exception as e:
+        raise HTTPException(status_code=500, detail={"code": "INTERNAL", "msg": str(e)})
     return out
 
 

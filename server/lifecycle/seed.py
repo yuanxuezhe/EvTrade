@@ -11,6 +11,71 @@ from server.db import init_db, SessionLocal
 from server.models.user import User
 from server.auth.security import hash_password
 from server.config import validate_config
+import importlib
+import os
+import time
+
+
+def _run_pending_migrations():
+    """Auto-run pending standalone migrations from server/migrations/ (idempotent).
+
+    Tracks applied migrations in `_applied_migrations` table (created if missing).
+    """
+    from sqlalchemy import text
+    from server.infra.db import engine
+
+    migrations_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'migrations')
+    if not os.path.isdir(migrations_dir):
+        return
+
+    # Create tracking table
+    with engine.begin() as conn:
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS _applied_migrations (
+                name VARCHAR(255) PRIMARY KEY,
+                applied_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+        """))
+
+    # Load and run pending migrations
+    migration_files = sorted(f for f in os.listdir(migrations_dir)
+                             if f.endswith('.py') and not f.startswith('__')
+                             and f != 'sqlite-to-mysql-migrate.py')
+
+    with engine.begin() as conn:
+        applied = {row[0] for row in conn.execute(
+            text("SELECT name FROM _applied_migrations")
+        ).fetchall()}
+
+    for fname in migration_files:
+        if fname in applied:
+            continue
+        name = fname[:-3]  # strip .py
+        try:
+            mod = importlib.import_module(f"server.migrations.{name}")
+            fn = getattr(mod, 'migrate', None) or getattr(mod, 'upgrade', None)
+            if fn:
+                print(f"[migrate] applying {name}...")
+                t0 = time.monotonic()
+                # Support both migrate(engine) and upgrade() signatures
+                import inspect
+                sig = inspect.signature(fn)
+                if len(sig.parameters) >= 1:
+                    fn(engine)
+                else:
+                    fn()
+                print(f"[migrate] {name} done ({(time.monotonic()-t0)*1000:.0f}ms)")
+            else:
+                print(f"[migrate] skip {name} (no migrate/upgrade function)")
+        except Exception as e:
+            print(f"[migrate] {name} FAILED: {e}")
+            # Don't record as applied on failure
+            continue
+
+        # Record as applied
+        with engine.begin() as conn:
+            conn.execute(text("INSERT IGNORE INTO _applied_migrations (name) VALUES (:name)"),
+                         {"name": name})
 
 
 def init_and_seed():
@@ -20,6 +85,12 @@ def init_and_seed():
     """
     validate_config()
     init_db()
+    # Run pending standalone migrations
+    try:
+        _run_pending_migrations()
+    except Exception:
+        import traceback; traceback.print_exc()
+        print("[INIT] migration error (continuing anyway)")
     db = SessionLocal()
     try:
         count = db.query(User).count()

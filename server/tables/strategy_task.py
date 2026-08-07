@@ -59,7 +59,7 @@ class StrategyTask(TableBase):
     __field_types__: ClassVar[dict] = {
         'id': 'int',
         'user_id': 'int',
-        'script_id': 'int',
+        'script_id': 'varchar(128)',
         'stock_code': 'varchar(16)',
         'mode': 'varchar(8)',
         'status': 'varchar(16)',
@@ -85,7 +85,7 @@ class StrategyTask(TableBase):
     # 字段 type hints (IDE 智能提示用, 运行时不影响行为)
     id: int
     user_id: int
-    script_id: int
+    script_id: str
     stock_code: str
     mode: str
     status: str
