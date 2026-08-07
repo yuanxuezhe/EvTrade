@@ -50,6 +50,7 @@ _sync_task: Optional[asyncio.Task] = None
 # 配置常量
 SYNC_INTERVAL_SEC = 5      # 收到应答后等待 5 秒再下次查询
 TIMEOUT_SEC = 15            # 单次 RPC 超时 15 秒
+_CONSECUTIVE_FAILURE_THRESHOLD = 3  # 连续 3 次失败才切换状态
 
 
 def check_ok() -> bool:
@@ -130,63 +131,71 @@ async def _broadcast_rpc_status() -> None:
         log.debug("rpc_health broadcast failed: %s", e)
 
 
-async def _probe_once() -> int:
-    """单轮探测：积压 → 超时 → 应答解析。返回最终状态码。"""
+async def _broadcast_asset() -> None:
+    """推送最新资产数据到前端（仅在探测成功时调用）。"""
+    try:
+        row = Assets.query_one(id=1)
+        if row is not None:
+            await ws_manager.broadcast(
+                "system_update",
+                {
+                    "type": "asset_update",
+                    "data": {
+                        "cash": float(row.cash or 0),
+                        "available": float(row.available if hasattr(row, 'available') and row.available is not None else (row.cash or 0)),
+                        "frozen_cash": float(row.frozen_cash or 0),
+                        "market_value": float(row.market_value or 0),
+                        "total_asset": float(row.total_asset or 0),
+                        "synced_at": row.synced_at.isoformat() if row.synced_at else None,
+                    },
+                },
+                trace_id="asset_sync",
+            )
+    except Exception:
+        pass
+
+
+async def _probe_once() -> tuple:
+    """单轮探测：积压 → 超时 → 应答解析。返回 (success: bool, detail: str)。
+
+    不再直接调用 _set_status()，状态变更由 _sync_loop 根据连续失败次数统一决策。
+    """
     global _last_ok_at, _last_queue_depth
 
-    # 1) 在途请求积压 → 状态 1, 不再发 qry_ast（避免雪崩）
+    # 1) 在途请求积压 → 失败，不发 qry_ast（避免雪崩）
     depth = await _get_request_queue_depth()
     _last_queue_depth = depth
     pending_count = await _get_pending_count()
     if pending_count > 0 or depth >= MAX_PENDING:
         reason = f"RPC pending 积压 ({pending_count} in-flight)" if pending_count > 0 else f"RPC 队列积压 ({depth}>={MAX_PENDING})"
-        _set_status(
-            RPC_STATUS_COMM_ERROR,
-            err_msg=reason,
-            status_msg=_STATUS_TEXT[RPC_STATUS_COMM_ERROR],
-        )
         log.warning("rpc_health skip qry_asset: %s", reason)
-        return _rpc_status
+        return (False, reason)
 
-    # 2) 调 RPC，超时为状态 1
+    # 2) 调 RPC，超时为失败
     start = time.monotonic()
     try:
         data = await asyncio.wait_for(qry_asset(), timeout=TIMEOUT_SEC)
     except asyncio.TimeoutError:
-        _set_status(
-            RPC_STATUS_COMM_ERROR,
-            err_msg=f"RPC 超时 ({TIMEOUT_SEC}s)",
-            status_msg=_STATUS_TEXT[RPC_STATUS_COMM_ERROR],
-        )
         log.warning("rpc_health sync TIMEOUT after %ss", TIMEOUT_SEC)
-        return _rpc_status
+        return (False, f"RPC 超时 ({TIMEOUT_SEC}s)")
     except Exception as e:
-        _set_status(
-            RPC_STATUS_COMM_ERROR,
-            err_msg=str(e),
-            status_msg=_STATUS_TEXT[RPC_STATUS_COMM_ERROR],
-        )
         log.warning("rpc_health sync error: %s", e)
-        return _rpc_status
+        return (False, str(e))
 
     elapsed = time.monotonic() - start
     list_data = data.get("list", []) if isinstance(data, dict) else []
     code = int(data.get("code", -1)) if isinstance(data, dict) else -1
     row_count = len(list_data)
 
-    # 3) 状态 0: 正常应答 + 有数据
+    # 3) 正常应答 + 有数据 → 成功
     if code == 0 and row_count > 0:
         a = list_data[0]
         now = datetime.now(timezone.utc).replace(tzinfo=None)
         try:
-            # v110: 改用 upsert_one 替代 update_one(id=1) — 之前 id=1 行不存在时
-            # update_one 静默失败 (0 rows affected), 资金一直没落 DB. 现在
-            # INSERT ... ON DUPLICATE KEY UPDATE 保证字段真写入.
-            # 同时增加 available 列 (与 cash 等价, 用户口径"可用资金").
             Assets.upsert_one({
                 "id": 1,
                 "cash": float(a.get("cash", 0) or 0),
-                "available": float(a.get("cash", 0) or 0),    # v110: 与 cash 等价
+                "available": float(a.get("cash", 0) or 0),
                 "frozen_cash": float(a.get("frozen_cash", 0) or 0),
                 "market_value": float(a.get("market_value", 0) or 0),
                 "total_asset": float(a.get("total_asset", 0) or 0),
@@ -197,61 +206,62 @@ async def _probe_once() -> int:
             log.warning("rpc_health assets upsert failed: %s", e)
 
         _last_ok_at = time.time()
-        _set_status(RPC_STATUS_OK)
         log.info(
             "rpc_health sync ok: cash=%.2f total=%.2f (%.1fs)",
             a.get("cash", 0), a.get("total_asset", 0), elapsed,
         )
-        return _rpc_status
+        return (True, "")
 
-    # 4) 状态 2: 应答但数据异常 (code!=0 或 row_count=0)
+    # 4) 应答但数据异常 → 失败
     if code != 0:
         err_msg = (data.get("msg") if isinstance(data, dict) else None) or f"code={code}"
     else:
         err_msg = "code=0 but row_count=0"
-    _set_status(
-        RPC_STATUS_DATA_ERROR,
-        err_msg=err_msg,
-        status_msg=_STATUS_TEXT[RPC_STATUS_DATA_ERROR],
-    )
     log.warning("rpc_health sync data error: %s", err_msg)
-    return _rpc_status
+    return (False, err_msg)
 
 
 async def _sync_loop():
-    """无限循环: 每轮 _probe_once → 推送状态 → 等 5 秒。"""
-    last_pushed_status = -1
+    """无限循环: 每轮 _probe_once → 连续失败 3 次才切换异常 → 一次成功立即恢复。
+
+    探测永不中止（只要进程在跑），状态变更有缓冲：
+    - 连续失败 >= 3 次 → 切换为 COMM_ERROR + broadcast
+    - 任意一次成功 → 立即恢复 OK + broadcast，计数器清零
+    """
+    consecutive_failures = 0
     while True:
         try:
-            current = await _probe_once()
-            # 状态变化时主动推一次
-            if current != last_pushed_status:
-                await _broadcast_rpc_status()
-                last_pushed_status = current
-            # 状态 0 时同时把最新资金推给前端（资产展示）
-            if current == RPC_STATUS_OK:
-                # _probe_once 已写 DB；这里复用现有 asset_update 推送
-                try:
-                    from server.tables import Assets as _Assets
-                    row = _Assets.query_one(id=1)
-                    if row is not None:
-                        await ws_manager.broadcast(
-                            "system_update",
-                            {
-                                "type": "asset_update",
-                                "data": {
-                                    "cash": float(row.cash or 0),
-                                    "available": float(row.available if hasattr(row, 'available') and row.available is not None else (row.cash or 0)),  # v110: 可用资金
-                                    "frozen_cash": float(row.frozen_cash or 0),
-                                    "market_value": float(row.market_value or 0),
-                                    "total_asset": float(row.total_asset or 0),
-                                    "synced_at": row.synced_at.isoformat() if row.synced_at else None,
-                                },
-                            },
-                            trace_id="asset_sync",
+            success, detail = await _probe_once()
+
+            if success:
+                # 一次成功就立即恢复 OK
+                if _rpc_status != RPC_STATUS_OK:
+                    _set_status(RPC_STATUS_OK)
+                    await _broadcast_rpc_status()
+                consecutive_failures = 0
+                # 正常时推 asset_update
+                await _broadcast_asset()
+            else:
+                consecutive_failures += 1
+                log.warning(
+                    "rpc_health probe failed (%d/%d): %s",
+                    consecutive_failures, _CONSECUTIVE_FAILURE_THRESHOLD, detail,
+                )
+
+                # 达到阈值才标记异常（只弹一次 broadcast）
+                if consecutive_failures >= _CONSECUTIVE_FAILURE_THRESHOLD:
+                    if _rpc_status == RPC_STATUS_OK:
+                        _set_status(
+                            RPC_STATUS_COMM_ERROR,
+                            err_msg=detail,
+                            status_msg=_STATUS_TEXT[RPC_STATUS_COMM_ERROR],
                         )
-                except Exception:
-                    pass
+                        await _broadcast_rpc_status()
+                    # 刚达到阈值时，多等一轮，给 broker 恢复时间
+                    if consecutive_failures == _CONSECUTIVE_FAILURE_THRESHOLD:
+                        await asyncio.sleep(SYNC_INTERVAL_SEC)
+        except Exception as e:
+            log.warning("rpc_health loop error: %s", e)
         finally:
             await asyncio.sleep(SYNC_INTERVAL_SEC)
 

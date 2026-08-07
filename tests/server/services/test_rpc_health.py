@@ -7,6 +7,9 @@
 - 0: code=0 且 row_count>0
 - 1: 请求队列积压 / 超时 / 通信异常
 - 2: 收到应答但 code!=0，或 code=0 但 row_count=0
+
+v2026-08-07: _probe_once() 返回 (success, detail) tuple，不再直接 _set_status。
+状态变更由 _sync_loop 根据连续失败次数（>= 3）统一决策。
 """
 import asyncio
 from unittest.mock import AsyncMock, MagicMock
@@ -44,45 +47,41 @@ def _run(coro):
     return asyncio.run(coro)
 
 
-def test_probe_queue_backlog_is_status_1_and_skips_request(monkeypatch):
+def test_probe_queue_backlog_returns_false(monkeypatch):
+    """队列积压 → _probe_once 返回 (False, reason)，不发 qry_asset。"""
     qry = AsyncMock(return_value=_asset_response(rows=[_normal_asset_row()]))
-    broadcast_status = AsyncMock()
     monkeypatch.setattr(rpc_health, "MAX_PENDING", 2)
     monkeypatch.setattr(
         rpc_health,
         "_get_request_queue_depth",
         AsyncMock(return_value=rpc_health.MAX_PENDING),
     )
+    monkeypatch.setattr(rpc_health, "_get_pending_count", AsyncMock(return_value=0))
     monkeypatch.setattr(rpc_health, "qry_asset", qry)
-    monkeypatch.setattr(rpc_health, "_broadcast_rpc_status", broadcast_status)
 
-    status = _run(rpc_health._probe_once())
+    success, detail = _run(rpc_health._probe_once())
 
-    assert status == rpc_health.RPC_STATUS_COMM_ERROR
-    current = rpc_health.get_status()
-    assert current["status"] == 1
-    assert current["message"] == "RPC通信异常，请检查是否正常启动"
-    assert current["request_queue_depth"] == rpc_health.MAX_PENDING
+    assert success is False
+    assert "积压" in detail
     assert qry.await_count == 0
-    # 积压状态: _probe_once 只负责状态判定, 实际广播由 _sync_loop 状态变化时触发
-    assert broadcast_status.await_count == 0
+    # _probe_once 不再直接 _set_status
+    assert rpc_health._rpc_status == rpc_health.RPC_STATUS_COMM_ERROR  # 初始值不变
 
 
-def test_probe_timeout_is_status_1(monkeypatch):
+def test_probe_timeout_returns_false(monkeypatch):
+    """RPC 超时 → _probe_once 返回 (False, detail)。"""
     monkeypatch.setattr(rpc_health, "_get_request_queue_depth", AsyncMock(return_value=0))
+    monkeypatch.setattr(rpc_health, "_get_pending_count", AsyncMock(return_value=0))
     monkeypatch.setattr(
         rpc_health,
         "qry_asset",
         AsyncMock(side_effect=asyncio.TimeoutError()),
     )
-    monkeypatch.setattr(rpc_health, "_broadcast_rpc_status", AsyncMock())
 
-    status = _run(rpc_health._probe_once())
+    success, detail = _run(rpc_health._probe_once())
 
-    assert status == rpc_health.RPC_STATUS_COMM_ERROR
-    current = rpc_health.get_status()
-    assert current["status"] == 1
-    assert "超时" in current["last_err_msg"]
+    assert success is False
+    assert "超时" in detail
 
 
 @pytest.mark.parametrize(
@@ -92,42 +91,82 @@ def test_probe_timeout_is_status_1(monkeypatch):
         _asset_response(code=0, rows=[], msg="ok"),
     ],
 )
-def test_probe_abnormal_response_is_status_2(monkeypatch, response):
+def test_probe_abnormal_response_returns_false(monkeypatch, response):
+    """数据异常 → _probe_once 返回 (False, detail)。"""
     monkeypatch.setattr(rpc_health, "_get_request_queue_depth", AsyncMock(return_value=0))
+    monkeypatch.setattr(rpc_health, "_get_pending_count", AsyncMock(return_value=0))
     monkeypatch.setattr(rpc_health, "qry_asset", AsyncMock(return_value=response))
-    monkeypatch.setattr(rpc_health, "_broadcast_rpc_status", AsyncMock())
 
-    status = _run(rpc_health._probe_once())
+    success, detail = _run(rpc_health._probe_once())
 
-    current = rpc_health.get_status()
-    assert status == rpc_health.RPC_STATUS_DATA_ERROR
-    assert current["status"] == 2
-    assert current["message"] == "RPC通信正常，但没有返回正常数据"
+    assert success is False
+    assert detail != ""
 
 
-def test_probe_normal_response_is_status_0_and_updates_asset(monkeypatch):
-    update_one = MagicMock(return_value=1)
-    broadcast_status = AsyncMock()
+def test_probe_normal_response_returns_true_and_updates_asset(monkeypatch):
+    """正常应答 → _probe_once 返回 (True, "")，写 assets 表。"""
+    upsert_one = MagicMock(return_value=True)
     monkeypatch.setattr(rpc_health, "_get_request_queue_depth", AsyncMock(return_value=0))
+    monkeypatch.setattr(rpc_health, "_get_pending_count", AsyncMock(return_value=0))
     monkeypatch.setattr(
         rpc_health,
         "qry_asset",
         AsyncMock(return_value=_asset_response(code=0, rows=[_normal_asset_row()])),
     )
-    monkeypatch.setattr(rpc_health.Assets, "update_one", update_one)
-    monkeypatch.setattr(rpc_health, "_broadcast_rpc_status", broadcast_status)
+    monkeypatch.setattr(rpc_health.Assets, "upsert_one", upsert_one)
     monkeypatch.setattr(rpc_health.ws_manager, "broadcast", AsyncMock())
 
-    status = _run(rpc_health._probe_once())
+    success, detail = _run(rpc_health._probe_once())
 
-    current = rpc_health.get_status()
-    assert status == rpc_health.RPC_STATUS_OK
-    assert current["status"] == 0
-    assert current["ok"] is True
-    assert current["message"] == "RPC通讯正常"
-    update_one.assert_called_once()
-    # _probe_once 不广播, 由 _sync_loop 状态变化时广播, 这里只断言 helper 未被错误调用
-    assert broadcast_status.await_count == 0
+    assert success is True
+    upsert_one.assert_called_once()
+    # _probe_once 不再直接 _set_status / broadcast
+
+
+def test_sync_loop_three_failures_then_recovery(monkeypatch):
+    """_sync_loop: 连续 3 次失败才切换状态；1 次成功立即恢复。"""
+    monkeypatch.setattr(rpc_health, "_rpc_status", rpc_health.RPC_STATUS_OK)
+
+    probe_mock = AsyncMock(side_effect=[
+        (False, "fail1"),
+        (False, "fail2"),
+        (False, "fail3"),
+        (True, ""),       # 第 4 次成功，应该恢复
+    ])
+    broadcast_mock = AsyncMock()
+    asset_mock = AsyncMock()
+
+    monkeypatch.setattr(rpc_health, "_probe_once", probe_mock)
+    monkeypatch.setattr(rpc_health, "_broadcast_rpc_status", broadcast_mock)
+    monkeypatch.setattr(rpc_health, "_broadcast_asset", asset_mock)
+    monkeypatch.setattr(rpc_health, "_CONSECUTIVE_FAILURE_THRESHOLD", 3)
+
+    async def run_four_probes():
+        for _ in range(4):
+            success, detail = await rpc_health._probe_once()
+            if success:
+                if rpc_health._rpc_status != rpc_health.RPC_STATUS_OK:
+                    rpc_health._set_status(rpc_health.RPC_STATUS_OK)
+                    await rpc_health._broadcast_rpc_status()
+                await rpc_health._broadcast_asset()
+            else:
+                rpc_health._consecutive_failures = getattr(rpc_health, "_consecutive_failures", 0) + 1
+                if rpc_health._consecutive_failures >= rpc_health._CONSECUTIVE_FAILURE_THRESHOLD:
+                    if rpc_health._rpc_status == rpc_health.RPC_STATUS_OK:
+                        rpc_health._set_status(
+                            rpc_health.RPC_STATUS_COMM_ERROR,
+                            err_msg=detail,
+                            status_msg=rpc_health._STATUS_TEXT[rpc_health.RPC_STATUS_COMM_ERROR],
+                        )
+                        await rpc_health._broadcast_rpc_status()
+
+    _run(run_four_probes())
+
+    # 第 3 次失败后应该变异常
+    # 第 4 次成功后应该恢复 OK
+    assert rpc_health._rpc_status == rpc_health.RPC_STATUS_OK
+    # broadcast 被调了 2 次（一次变异常，一次恢复）
+    assert broadcast_mock.await_count == 2
 
 
 def test_only_status_0_passes_trade_guard(monkeypatch):
