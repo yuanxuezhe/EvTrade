@@ -36,6 +36,7 @@
       v75: 成交 tab 9→8 列: 代码+名称合并成标的(v68 风格); 量→成交量; 价→成交价; 接入 COL 常量
     -->
     <div v-if="activeTab === 'orders'" class="tp-body">
+      <template v-if="idbSyncStatus?.orders !== 'syncing'">
       <el-table
         ref="ordersTableRef"
         :data="pagedOrders"
@@ -133,6 +134,7 @@
           <el-empty description="暂无当日委托" :image-size="80" />
         </template>
       </el-table>
+      </template>
     </div>
 
     <!-- 分页: 行数 > pageSize 时显示 (避免行数少时的视觉噪声) -->
@@ -151,6 +153,7 @@
 
     <!-- change 2026-07-21-trades-tab-column-reorder: 列序对齐委托 tab — 交易日/委托编号.../时间(最后) -->
     <div v-if="activeTab === 'trades'" class="tp-body">
+      <template v-if="idbSyncStatus?.trades !== 'syncing'">
       <el-table
         ref="tradesTableRef"
         :data="pagedTrades"
@@ -214,6 +217,7 @@
           <el-empty description="暂无当日成交" :image-size="80" />
         </template>
       </el-table>
+      </template>
     </div>
 
     <!-- v30.1: 成交 tab 分页 (条件: trade tab + 行数 > pageSize) -->
@@ -260,6 +264,7 @@ import { useOrderStore } from '../../stores/order'
 
 const holdingsStore = useHoldingsStore()
 const orderStore = useOrderStore()
+const idbSyncStatus = computed(() => holdingsStore.idbSyncStatus || {})
 
 // v30.1: panel-local tab state, 默认 'orders' (委托查询)
 const activeTab = ref('orders')

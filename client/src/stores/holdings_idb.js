@@ -40,15 +40,16 @@
  *   - 改 saveOrder(order) / saveTrade(trade) 单行 API
  *   - 跨日清理走 idbGetAllKeys 扫描 + filter
  */
-import { openDB, idbGet, idbPut, idbDelete, idbGetAllKeys, idbClear } from '../utils/idb'
+import { openDB, idbGet, idbPut, idbDelete, idbGetAllKeys, idbClear, idbGetAll } from '../utils/idb'
 import { makeLogger } from '../utils/logger'
 
 const log = makeLogger('IDB')
 
 const DB_NAME = 'holdings-cache'
-const DB_VERSION = 3
+const DB_VERSION = 4
 const STORE_ORDERS = 'orders'
 const STORE_TRADES = 'trades'
+const STORE_POSITIONS = 'positions'
 
 // module-level 单例 db handle（process 内复用）
 let _db = null
@@ -57,14 +58,14 @@ let _initPromise = null
 /**
  * 拼装 orders 复合 key（镜像 server/models/orm.py:Order PK）
  */
-function _orderKey(order) {
+export function _orderKey(order) {
   return `${order.trd_date}:${order.order_no}`
 }
 
 /**
  * 拼装 trades 复合 key（镜像 server/models/orm.py:Trade PK）
  */
-function _tradeKey(trade) {
+export function _tradeKey(trade) {
   return `${trade.trd_date}:${trade.order_no}:${trade.trade_id}`
 }
 
@@ -96,7 +97,7 @@ export function initIDB() {
   _initPromise = openDB(
     DB_NAME,
     DB_VERSION,
-    [STORE_ORDERS, STORE_TRADES],
+    [STORE_ORDERS, STORE_TRADES, STORE_POSITIONS],
     (db, oldV) => {
       // v12 → v13 升级: 删旧 store (复合 key 维度不兼容, IDB 是 cache 丢可接受)
       if (oldV < 2) {
@@ -113,6 +114,10 @@ export function initIDB() {
       }
       if (!db.objectStoreNames.contains(STORE_TRADES)) {
         db.createObjectStore(STORE_TRADES)
+      }
+      // v4: 新增 positions store (key = stock_code)
+      if (!db.objectStoreNames.contains(STORE_POSITIONS)) {
+        db.createObjectStore(STORE_POSITIONS)
       }
     }
   )
@@ -178,10 +183,8 @@ async function _loadByDate(storeName, trdDate) {
 async function _loadAll(storeName) {
   try {
     const db = await initIDB()
-    const allKeys = await idbGetAllKeys(db, storeName)
-    if (!allKeys || allKeys.length === 0) return null
-    const rows = await Promise.all(allKeys.map((k) => idbGet(db, storeName, k)))
-    return rows.filter(Boolean)
+    const rows = await idbGetAll(db, storeName)
+    return rows && rows.length > 0 ? rows.filter(Boolean) : null
   } catch (e) {
     log.warn(`_loadAll(${storeName}) failed:`, e?.message || e)
     return null
@@ -269,6 +272,28 @@ export function saveTrade(trade) {
 }
 
 /**
+ * 保存单笔持仓到 IDB（fire-and-forget；失败 warn 不抛）
+ * key = stock_code
+ */
+export function savePosition(position) {
+  if (!position || !position.stock_code) return
+  _ensure().then((db) => {
+    if (!db) return
+    return idbPut(db, STORE_POSITIONS, position.stock_code, _clone(position))
+  }).catch((e) => {
+    log.warn('savePosition failed:', position.stock_code, e?.message || e)
+  })
+}
+
+/**
+ * 加载 IDB 中全部 positions
+ * @returns {Promise<Array|null>}
+ */
+export function loadAllPositions() {
+  return _loadAll(STORE_POSITIONS)
+}
+
+/**
  * 加载指定日期的全部成交
  *
  * @param {string} trdDate
@@ -290,10 +315,11 @@ export async function clearDate(trdDate) {
     _clearByDate(STORE_ORDERS, trdDate),
     _clearByDate(STORE_TRADES, trdDate),
   ])
+  // positions store 用 stock_code 做 key，不按日期清理（positions 不跨日）
 }
 
 /**
- * 清空全部 IDB 缓存（orders + trades 两个 store）
+ * 清空全部 IDB 缓存（orders + trades + positions）
  * 刷新数据按钮调用：先清空再全量写回，确保不以旧缓存残留。
  */
 export async function clearAll() {
@@ -303,9 +329,44 @@ export async function clearAll() {
     await Promise.all([
       idbClear(db, STORE_ORDERS),
       idbClear(db, STORE_TRADES),
+      idbClear(db, STORE_POSITIONS),
     ])
   } catch (e) {
     log.warn('clearAll failed:', e?.message || e)
+  }
+}
+
+/**
+ * 批量写入某 store 的全部数据（先 clear 再 bulk put）。
+ * 比逐行 idbPut 快 10x（单次 transaction）。
+ * @param {string} storeName - 'orders' | 'trades' | 'positions'
+ * @param {Array} items - 要写入的数组
+ * @param {Function} [keyOf] - 可选: item => key。不传时 store 需用 inline keyPath
+ */
+export async function bulkSave(storeName, items, keyOf) {
+  if (!items || items.length === 0) return
+  try {
+    const db = await _ensure()
+    if (!db) return
+    const tx = db.transaction(storeName, 'readwrite')
+    const store = tx.objectStore(storeName)
+    // 先清空
+    store.clear()
+    // 批量写入
+    for (const item of items) {
+      const cloned = _clone(item)
+      if (keyOf) {
+        store.put(cloned, keyOf(item))
+      } else {
+        store.put(cloned)
+      }
+    }
+    await new Promise((resolve, reject) => {
+      tx.oncomplete = () => resolve()
+      tx.onerror = () => reject(tx.error || new Error('[IDB] bulkSave failed'))
+    })
+  } catch (e) {
+    log.warn(`bulkSave(${storeName}) failed:`, e?.message || e)
   }
 }
 

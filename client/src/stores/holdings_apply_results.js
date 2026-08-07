@@ -2,8 +2,8 @@
  * holdings_apply_results.js — 持仓 store 单资源结果应用 helper
  *
  * 把 Promise.allSettled 的结果（{status, value|reason}）应用到 holdings store 的 ref：
- *   - 成功：写 ref + 更新 refCounts + 写日志（bootstrap）或返回 summary（refresh）
- *   - 失败：标记 refCounts='fail' + 写错误日志
+ *   - 成功: 写 IDB (bulkSave) → 写 ref + 更新 refCounts + idbSyncStatus + 写日志
+ *   - 失败：标记 refCounts='fail' + idbSyncStatus='error' + 写错误日志
  *
  * 两套 helper：
  *   - _applyXxxResult(r, source)        — bootstrap 用，写"加载成功"日志
@@ -15,75 +15,25 @@
  *   applyOrdersResult / applyTradesResult 不再"整 dict 覆盖" — 改成按主键去重合并
  *     - orders 主键: trd_date + order_no
  *     - trades 主键: trd_date + order_no + trade_id
- *   解决 startup 拉 all=true 后, refresh/refreshAll 部分覆盖丢失全量行
- *   (旧行为 — 拉一次覆盖一次, 全量行被擦掉)
  *
  * change system-delegation-price-fill-calc:
  *   applyOrdersRefresh/applyOrdersResult   — 调 normalizeOrder 重算 avg_price + status
  *   applyTradesRefresh/applyTradesResult   — map 调 normalizeTrade 重算 amount
  */
 import { parseAsset, normalizeOrder, normalizeTrade } from './holdings_helpers'
-import { saveTrade } from './holdings_idb'
-
-// ---- 分片处理：大数组异步操作，避免阻塞浏览器渲染 ----
+import { saveTrade, bulkSave, _orderKey, _tradeKey } from './holdings_idb'
 
 /**
- * 分片处理大数组，每 chunk 后 yield 给浏览器渲染
- * @param {Array} source
- * @param {Function} transform - item => newItem
- * @returns {Promise<Array>}
+ * 异步 yield 一帧，让浏览器渲染 loading 状态后再赋值
  */
-const CHUNK_SIZE = 500
-export function processInChunks(source, transform) {
-  if (source.length === 0) return Promise.resolve([])
-  return new Promise((resolve) => {
-    const result = new Array(source.length)
-    let idx = 0
-    function chunk() {
-      const end = Math.min(idx + CHUNK_SIZE, source.length)
-      for (; idx < end; idx++) {
-        result[idx] = transform(source[idx])
-      }
-      if (idx < source.length) {
-        setTimeout(chunk, 0)
-      } else {
-        resolve(result)
-      }
-    }
-    setTimeout(chunk, 0)
-  })
+function _yield() {
+  return new Promise((r) => setTimeout(r, 0))
 }
 
-/**
- * 分片写入大数组到 ref（无 transform，直接赋值）
- */
-export function assignToRefInChunks(source, targetRef) {
-  if (source.length === 0) {
-    targetRef.value = []
-    return Promise.resolve([])
-  }
-  return new Promise((resolve) => {
-    let idx = 0
-    function chunk() {
-      const end = Math.min(idx + CHUNK_SIZE, source.length)
-      idx = end
-      if (idx < source.length) {
-        setTimeout(chunk, 0)
-      } else {
-        targetRef.value = source
-        resolve(source)
-      }
-    }
-    setTimeout(chunk, 0)
-  })
-}
-
-// ---- v113: 按主键去重 merge helper (保持 array 视图层接口不变) ----
+// ---- 按主键去重 merge helper (v113) ----
 
 /**
- * v113: 按 (trd_date, order_no) 主键去重合并
- * incoming 视为最新覆盖对应行; 不在 existing 的直接 push.
- * 返回新 array (不 mutate 入参)
+ * 按 (trd_date, order_no) 主键去重合并
  */
 function _mergeOrders(existing, incoming) {
     const keyOf = (o) => `${o.trd_date || ''}|${o.order_no || ''}`
@@ -100,7 +50,7 @@ function _mergeOrders(existing, incoming) {
 }
 
 /**
- * v113: 按 (trd_date, order_no, trade_id) 主键去重合并
+ * 按 (trd_date, order_no, trade_id) 主键去重合并
  */
 function _mergeTrades(existing, incoming) {
     const keyOf = (t) => `${t.trd_date || ''}|${t.order_no || ''}|${t.trade_id || ''}`
@@ -116,19 +66,20 @@ function _mergeTrades(existing, incoming) {
     return Array.from(m.values())
 }
 
-// v113 暴露给 bootstrap (跨 IDB/RPC 合并用)
 export { _mergeOrders, _mergeTrades }
 
 // ---- refreshAll 用：返回 summary 字符串 --------------------------------
 
-export function applyAssetRefresh(r, refs) {
+export async function applyAssetRefresh(r, refs) {
   if (r.status === 'fulfilled') {
     const a = parseAsset(r.value)
     if (a) refs.cachedAsset.value = a
     refs.refCounts.value.asset = 'ok'
+    refs.idbSyncStatus.value.asset = 'ready'
     return `资金 ¥${(a?.total_asset || 0).toLocaleString()}`
   }
   refs.refCounts.value.asset = 'fail'
+  refs.idbSyncStatus.value.asset = 'error'
   refs.log('err', '缓存', 'rpc', '资金刷新失败', String(r.reason?.message || r.reason))
   return null
 }
@@ -136,11 +87,16 @@ export function applyAssetRefresh(r, refs) {
 export async function applyPositionsRefresh(r, refs) {
   if (r.status === 'fulfilled') {
     const raw = Array.isArray(r.value) ? r.value : []
-    await assignToRefInChunks(raw, refs.positions)
+    // 先写 IDB
+    await bulkSave('positions', raw)
+    await _yield()
+    refs.positions.value = raw
     refs.refCounts.value.positions = 'ok'
+    refs.idbSyncStatus.value.positions = 'ready'
     return `持仓 ${refs.positions.value.length} 只`
   }
   refs.refCounts.value.positions = 'fail'
+  refs.idbSyncStatus.value.positions = 'error'
   refs.log('err', '缓存', 'rpc', '持仓刷新失败', String(r.reason?.message || r.reason))
   return null
 }
@@ -148,12 +104,17 @@ export async function applyPositionsRefresh(r, refs) {
 export async function applyOrdersRefresh(r, refs) {
   if (r.status === 'fulfilled') {
     const rawOrders = Array.isArray(r.value) ? r.value : []
-    const normalized = await processInChunks(rawOrders, normalizeOrder)
+    const normalized = rawOrders.map(normalizeOrder)
+    // 先写 IDB
+    await bulkSave('orders', normalized, _orderKey)
+    await _yield()
     refs.orders.value = normalized
     refs.refCounts.value.orders = 'ok'
+    refs.idbSyncStatus.value.orders = 'ready'
     return `委托 ${refs.orders.value.length} 条`
   }
   refs.refCounts.value.orders = 'fail'
+  refs.idbSyncStatus.value.orders = 'error'
   refs.log('err', '缓存', 'rpc', '委托刷新失败', String(r.reason?.message || r.reason))
   return null
 }
@@ -161,28 +122,35 @@ export async function applyOrdersRefresh(r, refs) {
 export async function applyTradesRefresh(r, refs) {
   if (r.status === 'fulfilled') {
     const rawTrades = Array.isArray(r.value) ? r.value : []
-    const normalized = await processInChunks(rawTrades, normalizeTrade)
+    const normalized = rawTrades.map(normalizeTrade)
+    // 先写 IDB
+    await bulkSave('trades', normalized, _tradeKey)
+    await _yield()
     refs.trades.value = normalized
-    // change fix-trades-direction-reversed: bootstrap/refresh 路径兜底, broker trd_cfm 不带 order_type
+    // 兜底填充 order_type
     fillTradesDirection(refs)
     refs.refCounts.value.trades = 'ok'
+    refs.idbSyncStatus.value.trades = 'ready'
     return `成交 ${refs.trades.value.length} 条`
   }
   refs.refCounts.value.trades = 'fail'
+  refs.idbSyncStatus.value.trades = 'error'
   refs.log('err', '缓存', 'rpc', '成交刷新失败', String(r.reason?.message || r.reason))
   return null
 }
 
 // ---- bootstrap 用：写"加载成功"日志 ----------------------------------
 
-export function applyAssetResult(r, refs, source) {
+export async function applyAssetResult(r, refs, source) {
   if (r.status === 'fulfilled') {
     const a = parseAsset(r.value)
     if (a) refs.cachedAsset.value = a
     refs.refCounts.value.asset = 'ok'
+    refs.idbSyncStatus.value.asset = 'ready'
     refs.log('ok', '缓存', source, `资金加载成功 (¥${(a?.total_asset || 0).toLocaleString()})`)
   } else {
     refs.refCounts.value.asset = 'fail'
+    refs.idbSyncStatus.value.asset = 'error'
     refs.log('err', '缓存', 'rpc', '资金加载失败', String(r.reason?.message || r.reason))
   }
 }
@@ -191,11 +159,16 @@ export async function applyPositionsResult(r, refs, source) {
   if (r.status === 'fulfilled') {
     const raw = Array.isArray(r.value) ? r.value
       : (Array.isArray(r.value?.list) ? r.value.list : [])
-    await assignToRefInChunks(raw, refs.positions)
+    // 先写 IDB
+    await bulkSave('positions', raw)
+    await _yield()
+    refs.positions.value = raw
     refs.refCounts.value.positions = 'ok'
+    refs.idbSyncStatus.value.positions = 'ready'
     refs.log('ok', '缓存', source, `持仓加载成功 (${refs.positions.value.length} 只)`)
   } else {
     refs.refCounts.value.positions = 'fail'
+    refs.idbSyncStatus.value.positions = 'error'
     refs.log('err', '缓存', 'rpc', '持仓加载失败', String(r.reason?.message || r.reason))
   }
 }
@@ -204,12 +177,18 @@ export async function applyOrdersResult(r, refs, source) {
   if (r.status === 'fulfilled') {
     const rawOrders = Array.isArray(r.value) ? r.value
       : (Array.isArray(r.value?.list) ? r.value.list : [])
-    const normalized = await processInChunks(rawOrders, normalizeOrder)
-    refs.orders.value = _mergeOrders(refs.orders.value || [], normalized)
+    const normalized = rawOrders.map(normalizeOrder)
+    const merged = _mergeOrders(refs.orders.value || [], normalized)
+    // 先写 IDB
+    await bulkSave('orders', merged, _orderKey)
+    await _yield()
+    refs.orders.value = merged
     refs.refCounts.value.orders = 'ok'
+    refs.idbSyncStatus.value.orders = 'ready'
     refs.log('ok', '缓存', source, `委托加载成功 (${refs.orders.value.length} 条)`)
   } else {
     refs.refCounts.value.orders = 'fail'
+    refs.idbSyncStatus.value.orders = 'error'
     refs.log('err', '缓存', 'rpc', '委托加载失败', String(r.reason?.message || r.reason))
   }
 }
@@ -218,13 +197,19 @@ export async function applyTradesResult(r, refs, source) {
   if (r.status === 'fulfilled') {
     const rawTrades = Array.isArray(r.value) ? r.value
       : (Array.isArray(r.value?.list) ? r.value.list : [])
-    const normalized = await processInChunks(rawTrades, normalizeTrade)
-    refs.trades.value = _mergeTrades(refs.trades.value || [], normalized)
+    const normalized = rawTrades.map(normalizeTrade)
+    const merged = _mergeTrades(refs.trades.value || [], normalized)
+    // 先写 IDB
+    await bulkSave('trades', merged, _tradeKey)
+    await _yield()
+    refs.trades.value = merged
     fillTradesDirection(refs)
     refs.refCounts.value.trades = 'ok'
+    refs.idbSyncStatus.value.trades = 'ready'
     refs.log('ok', '缓存', source, `成交加载成功 (${refs.trades.value.length} 条)`)
   } else {
     refs.refCounts.value.trades = 'fail'
+    refs.idbSyncStatus.value.trades = 'error'
     refs.log('err', '缓存', 'rpc', '成交加载失败', String(r.reason?.message || r.reason))
   }
 }
@@ -234,7 +219,6 @@ export async function applyTradesResult(r, refs, source) {
  *   broker trd_cfm 推送不带 order_type, 后端 trd.py:87 透传空串到 Trade.order_type='',
  *   前端 row.order_type==='23' 判定空串走 else 分支 → 显示 '卖'.
  *   修复: bootstrap/refresh 路径用 orders 表反查填充 (orders 已先于 trades 写入, 必中).
- *   ws push 路径在 holdings_push.js:140 单独处理.
  */
 export function fillTradesDirection(refs) {
   const orders = refs.orders.value
@@ -246,7 +230,6 @@ export function fillTradesDirection(refs) {
     const o = byOrderNo.get(t.order_no)
     if (o && o.order_type) {
       t.order_type = o.order_type
-      // change fix-trades-direction-reversed-persist: 兜底后回写 IDB (旧 trade.order_type='' 持久化空值)
       saveTrade(t)
       filled++
     }

@@ -46,6 +46,13 @@ export const useHoldingsStore = defineStore('holdings', () => {
     asset: 'idle', positions: 'idle', orders: 'idle', trades: 'idle'
   })
 
+  // ---- idbSyncStatus: IDB 同步状态指示器 --------------------------------
+  //   'idle' → 'syncing' → 'ready' | 'error'
+  //   表格组件 v-if="idbSyncStatus.xxx !== 'syncing'" 控制显示
+  const idbSyncStatus = ref({
+    asset: 'idle', positions: 'idle', orders: 'idle', trades: 'idle'
+  })
+
   // ---- 操作流水 -------------------------------------------------------
   const loadHistory = ref([])
   const { log, clearHistory } = createLogger(loadHistory)
@@ -81,7 +88,7 @@ export const useHoldingsStore = defineStore('holdings', () => {
     positions, orders, trades, cachedAsset,
     activeTrdDate, activeDayStatus,
     refCounts, loading, bootstrapped, lastUpdated,
-    log,
+    idbSyncStatus, log,
   })
 
   // 启动 ws 的回调（避免 holdings_bootstrap.js 反向依赖 ws store）
@@ -130,7 +137,7 @@ export const useHoldingsStore = defineStore('holdings', () => {
   return {
     // state（21 view 直接读, 必须全部暴露）
     positions, orders, trades, cachedAsset,
-    loading, bootstrapped, lastUpdated, refCounts,
+    loading, bootstrapped, lastUpdated, refCounts, idbSyncStatus,
     loadHistory,
     // v8: 激活交易日权威源（推送守门用）
     activeTrdDate, activeDayStatus,

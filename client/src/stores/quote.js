@@ -174,9 +174,9 @@ export const useQuoteStore = defineStore('quote', () => {
     if (newCodes.length === 0) return
     // 标记
     newCodes.forEach(c => subscribedSet.value.add(c))
-    // >200 只时直接订阅全市场 ('' pattern)，避免超限报错
-    const restCodes = newCodes.length > 200 ? [] : newCodes
-    const wsCodes = newCodes.length > 200 ? [''] : newCodes
+    // >100 只时直接订阅全市场 ('' pattern)，避免超限报错
+    const restCodes = newCodes.length > 100 ? [] : newCodes
+    const wsCodes = newCodes.length > 100 ? [''] : newCodes
     // 1) REST 拉最新（全市场时不拉，靠 ws ack + 后续 tick 补）
     if (restCodes.length > 0) {
       try {
@@ -208,9 +208,9 @@ export const useQuoteStore = defineStore('quote', () => {
   async function replayAll() {
     const codes = Array.from(subscribedSet.value)
     if (codes.length === 0) return 0
-    // >200 只时直接订阅全市场 ('' pattern)，避免超限报错
-    const wsCodes = codes.length > 200 ? [''] : codes
-    const restCodes = codes.length > 200 ? [] : codes
+    // >100 只时直接订阅全市场 ('' pattern)，避免超限报错
+    const wsCodes = codes.length > 100 ? [''] : codes
+    const restCodes = codes.length > 100 ? [] : codes
     try {
       const { subscribe: wsSubscribe } = await import('./ws_dispatch')
       wsSubscribe(wsCodes)

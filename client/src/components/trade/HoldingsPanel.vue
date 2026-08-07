@@ -51,6 +51,7 @@
         :cell-class-name="cellClassName"
         @row-click="onRowClick"
         @row-dblclick="onRowDblclick"
+        v-if="idbSyncStatus?.positions !== 'syncing'"
       >
         <!-- v70: 10 列走 COL 常量 (持仓 mini panel 列宽压缩 100/100, 总宽 ~720 fit 856 viewport) -->
         <el-table-column prop="stock_code" label="标的" fixed="left" show-overflow-tooltip v-bind="COL.STOCK_TARGET">
@@ -165,6 +166,7 @@ function onRowClick(row) {
 //   push → triggerRef(byCode) → getMarketValue/getProfit/getReturnRate computed 自动重算 → UI 立即更新
 //   删除 1s tick 强制重建: reactivity 现在正确, 不再需要兜底
 const positions = computed(() => holdingsStore.positions || [])
+const idbSyncStatus = computed(() => holdingsStore.idbSyncStatus || {})
 
 // 关键字过滤 (迷你 filter, 只匹配代码 + 名称)
 const keyword = ref('')
