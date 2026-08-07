@@ -249,7 +249,7 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
-.system-init { padding: 16px; }
+.system-init { padding: 16px; flex: 1 1 0; min-height: 0; overflow: auto; }
 .action-card, .config-card, .reports-card {
   margin-bottom: 16px;
 }

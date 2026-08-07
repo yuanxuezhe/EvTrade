@@ -230,7 +230,7 @@ onMounted(loadAll)
 </script>
 
 <style scoped>
-.system-config { padding: 16px; }
+.system-config { padding: 16px; flex: 1 1 0; min-height: 0; overflow: auto; }
 .config-card { margin-bottom: 16px; }
 .card-header { display: flex; justify-content: space-between; align-items: center; }
 .card-title { font-weight: 600; }

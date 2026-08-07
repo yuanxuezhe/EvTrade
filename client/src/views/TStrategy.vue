@@ -17,6 +17,8 @@ import { MagicStick } from '@element-plus/icons-vue'
   align-items: center;
   justify-content: center;
   min-height: 60vh;
+  flex: 1 1 0;
+  min-height: 0;
 }
 
 .placeholder-card {

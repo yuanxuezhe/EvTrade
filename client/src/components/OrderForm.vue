@@ -26,6 +26,7 @@
         <el-form-item label="股票代码" class="row-tight">
           <!-- v28: StockCodePicker 强化'输入合法性'契约, blur 时未选自动清空 -->
           <StockCodePicker
+            ref="stockCodePickerRef"
             v-model="form.stock_code"
             placeholder="输入代码 / 名称 / 首字母"
             tag-type="primary"
@@ -124,6 +125,7 @@ const props = defineProps({
 const emit = defineEmits(['apply-quote-price', 'update:stock-code', 'stock-selected'])
 
 const submitting = ref(false)
+const stockCodePickerRef = ref(null)
 
 const form = reactive({
   stock_code: props.defaultStockCode || '',
@@ -274,10 +276,14 @@ function onExternalApply(price) {
   form.price = Number(price)
 }
 
-// v53: 外部双击持仓带入 stock_code (REQ-FE-HOLDINGS-DBLCLICK)
-//   与 onExternalApply 对偶, 同时暴露出来让父组件可调用
+// v53: 外部双击持仓/委托带入 stock_code (REQ-FE-HOLDINGS-DBLCLICK)
+//   走 StockCodePicker.applyStockCode() 绕过 cache+blur 竞态
 function onExternalApplyStockCode(code) {
   const c = String(code || '').trim().toUpperCase()
+  if (!c) return
+  if (stockCodePickerRef.value?.applyStockCode) {
+    stockCodePickerRef.value.applyStockCode(c)
+  }
   form.stock_code = c
   emit('update:stock-code', c)
 }

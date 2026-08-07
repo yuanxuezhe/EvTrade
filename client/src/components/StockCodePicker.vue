@@ -104,6 +104,7 @@ const store = useStocksStore()
 // 内部状态 (单一可信源)
 const inputText = ref(props.modelValue || '')        // 输入框值 (含用户打字未选中间态)
 const selectedStock = ref(null)                      // 已选 stock 对象 (唯一可信源, 决定 v-model)
+let lastApplyTs = 0                                  // v53: 外部程序化填入时间戳, 防 blur 竞态
 // 默认占位符 (可由 props.placeholder 覆盖)
 const namePlaceholder = '请选择股票'
 
@@ -197,6 +198,8 @@ watch(inputText, (newVal) => {
  */
 function onBlur() {
     emit('blur')
+    // v53: 如果刚被外部程序化填入, 500ms 内忽略 blur 清空 (避免 dblclick → blur 竞态)
+    if (Date.now() - lastApplyTs < 500) return
     const typed = inputText.value || ''
     if (!selectedStock.value) {
         // 当前就未选, 若输入框非空 (打字未选) 就清掉 (以防 v-model 还残留)
@@ -213,6 +216,33 @@ function onBlur() {
         emit('update:modelValue', '')
     }
 }
+
+/**
+ * 外部程序化填入股票代码 (绕过 cache lookup + blur 竞态)
+ * 供 OrderForm.onExternalApplyStockCode 调用
+ */
+function applyStockCode(code) {
+    const c = String(code || '').trim().toUpperCase()
+    lastApplyTs = Date.now()
+    if (!c) {
+        inputText.value = ''
+        selectedStock.value = null
+        return
+    }
+    const matched = store.cacheMap.get(c)
+    if (matched) {
+        selectedStock.value = matched
+        inputText.value = matched.stock_code
+        emit('update:modelValue', matched.stock_code)
+        emit('select', matched)
+    } else {
+        // cache 里没有也填入 inputText, 让用户可手动编辑
+        inputText.value = c
+        selectedStock.value = null
+        emit('update:modelValue', c)
+    }
+}
+defineExpose({ applyStockCode })
 
 /**
  * 同步父组件 v-model → 内部状态

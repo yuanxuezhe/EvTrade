@@ -42,7 +42,7 @@
 
       <!-- 右下 (2,2) = TodayOrdersPanel (内含委托/成交 tab) -->
       <div class="trade-cell trade-cell-orders">
-        <TodayOrdersPanel />
+        <TodayOrdersPanel @apply-to-order="onApplyHolding" />
       </div>
     </div>
   </div>

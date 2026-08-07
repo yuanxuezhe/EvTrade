@@ -191,6 +191,9 @@ onMounted(async () => {
   display: flex;
   flex-direction: column;
   gap: var(--space-5);
+  flex: 1 1 0;
+  min-height: 0;
+  overflow: auto;
   max-width: 880px;
   margin: 0 auto;
   width: 100%;

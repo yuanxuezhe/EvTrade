@@ -446,7 +446,7 @@ onMounted(async () => {
 </script>
 
 <style scoped>
-.admin-stock-config { padding: 16px; }
+.admin-stock-config { padding: 16px; flex: 1 1 0; min-height: 0; overflow: auto; }
 .filter-row {
   display: flex;
   gap: 12px;
