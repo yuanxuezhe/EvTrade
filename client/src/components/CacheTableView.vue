@@ -49,13 +49,14 @@
     </div>
 
     <!-- 表格 -->
-    <div class="content-card">
+    <div class="content-card table-with-pagination">
       <el-table
-        :data="filteredRows"
+        :data="pagedRows"
         stripe
         border
         height="calc(100vh - 360px)"
         empty-text="数据为空 (Pinia 内存)"
+        @sort-change="onSortChange"
       >
         <el-table-column
           v-for="f in fields"
@@ -65,6 +66,7 @@
           :min-width="f.width"
           :formatter="f.formatter"
           :header-cell-style="{ whiteSpace: 'nowrap' }"
+          :sortable="f.type !== 'object' && f.type !== 'array' ? 'custom' : false"
           show-overflow-tooltip
         />
         <el-table-column label="操作" width="160" fixed="right">
@@ -74,6 +76,17 @@
           </template>
         </el-table-column>
       </el-table>
+      <div v-if="filteredRows.length > pageSize" class="dtv-pagination">
+        <el-pagination
+          v-model:current-page="page"
+          v-model:page-size="pageSize"
+          :total="filteredRows.length"
+          :page-sizes="[10, 20, 50, 100]"
+          layout="total, sizes, prev, pager, next"
+          size="small"
+          background
+        />
+      </div>
     </div>
 
     <!-- 改 / 增 dialog -->
@@ -160,6 +173,35 @@ const filteredRows = computed(() => {
   return rows.value.filter((r) =>
     Object.values(r).some((v) => String(v).toLowerCase().includes(k))
   )
+})
+
+// 排序
+const sortProp = ref('')
+const sortOrder = ref('')
+const sortedRows = computed(() => {
+  if (!sortProp.value || !sortOrder.value) return filteredRows.value
+  const prop = sortProp.value
+  const dir = sortOrder.value === 'ascending' ? 1 : -1
+  return [...filteredRows.value].sort((a, b) => {
+    const va = a[prop] ?? ''
+    const vb = b[prop] ?? ''
+    if (typeof va === 'number' && typeof vb === 'number') return (va - vb) * dir
+    return String(va).localeCompare(String(vb)) * dir
+  })
+})
+
+function onSortChange({ prop: p, order }) {
+  sortProp.value = p || ''
+  sortOrder.value = order || ''
+  page.value = 1
+}
+
+// 分页
+const page = ref(1)
+const pageSize = ref(20)
+const pagedRows = computed(() => {
+  const start = (page.value - 1) * pageSize.value
+  return sortedRows.value.slice(start, start + pageSize.value)
 })
 
 function displayLabel(f) {
@@ -300,5 +342,16 @@ function onClear() {
 }
 .text-mono {
   font-family: var(--font-mono, 'JetBrains Mono', 'Consolas', monospace);
+}
+.table-with-pagination {
+  display: flex;
+  flex-direction: column;
+}
+.dtv-pagination {
+  display: flex;
+  justify-content: flex-end;
+  padding: var(--space-3, 8px) var(--space-4, 12px);
+  border-top: 1px solid var(--border-light, #ebeef5);
+  flex-shrink: 0;
 }
 </style>
