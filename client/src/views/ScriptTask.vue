@@ -170,10 +170,10 @@
             <el-tab-pane label="信号流" name="signals">
               <div class="st-signals-filter">
                 <el-radio-group v-model="signalFilter" size="small" @change="loadSignals" data-el="st-signal-filter">
-                  <el-radio-button label="">全部</el-radio-button>
-                  <el-radio-button label="BUY">买入</el-radio-button>
-                  <el-radio-button label="SELL">卖出</el-radio-button>
-                  <el-radio-button label="INFO">信号</el-radio-button>
+                  <el-radio-button value="">全部</el-radio-button>
+                  <el-radio-button value="BUY">买入</el-radio-button>
+                  <el-radio-button value="SELL">卖出</el-radio-button>
+                  <el-radio-button value="INFO">信号</el-radio-button>
                 </el-radio-group>
                 <span class="st-signals-count">
                   共 {{ signalData.total_signals || 0 }} 条
@@ -348,10 +348,10 @@
           <h4>实盘信号流 (LiveRunner 每 5s flush)</h4>
           <div class="st-signals-filter">
             <el-radio-group v-model="signalFilter" size="small" @change="loadSignals" data-el="st-live-signal-filter">
-              <el-radio-button label="">全部</el-radio-button>
-              <el-radio-button label="BUY">买入</el-radio-button>
-              <el-radio-button label="SELL">卖出</el-radio-button>
-              <el-radio-button label="INFO">信号</el-radio-button>
+              <el-radio-button value="">全部</el-radio-button>
+              <el-radio-button value="BUY">买入</el-radio-button>
+              <el-radio-button value="SELL">卖出</el-radio-button>
+              <el-radio-button value="INFO">信号</el-radio-button>
             </el-radio-group>
             <span class="st-signals-count">共 {{ signalData.total_signals || 0 }} 条</span>
           </div>
@@ -468,8 +468,8 @@
 
         <el-form-item label="运行模式">
           <el-radio-group v-model="runForm.mode" data-el="st-run-mode">
-            <el-radio-button label="backtest">回测</el-radio-button>
-            <el-radio-button label="live">实盘</el-radio-button>
+            <el-radio-button value="backtest">回测</el-radio-button>
+            <el-radio-button value="live">实盘</el-radio-button>
           </el-radio-group>
         </el-form-item>
 

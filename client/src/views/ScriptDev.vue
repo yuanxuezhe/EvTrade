@@ -28,9 +28,9 @@
         <!-- v90+: 公开/我的筛选 -->
         <div class="sd-filter">
           <el-radio-group v-model="filterMode" size="small" @change="loadScripts">
-            <el-radio-button label="all" data-el="sd-filter-all">全部</el-radio-button>
-            <el-radio-button label="mine" data-el="sd-filter-mine">我的</el-radio-button>
-            <el-radio-button label="public" data-el="sd-filter-public">公开市场</el-radio-button>
+            <el-radio-button value="all" data-el="sd-filter-all">全部</el-radio-button>
+            <el-radio-button value="mine" data-el="sd-filter-mine">我的</el-radio-button>
+            <el-radio-button value="public" data-el="sd-filter-public">公开市场</el-radio-button>
           </el-radio-group>
         </div>
         <div v-if="scripts.length === 0" class="sd-empty">暂无脚本</div>
