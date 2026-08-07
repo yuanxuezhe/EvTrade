@@ -54,16 +54,24 @@ const QUOTE_WS_HOST = (() => {
 
 function _wsUrl(channel) {
   const proto = window.location.protocol === 'https:' ? 'wss' : 'ws'
-  // 所有 channel 一律走后端 /ws/{channel}?token=JWT
-  //   - 后端 endpoint 已注册到 /ws/{channel}，heartbeat sender 对 quote_update 特判跳过服务端 ping
-  //   - quote_update 的实时数据靠 quote_consumer 的 ws_manager.broadcast 提供
+  // Token 为空/过期 → 返回 null, connect/onclose 检测到后直接跳转登录
   const token = localStorage.getItem('evtrade-token') || ''
-  const sep = token ? '?' : ''  // 第一个 query 参数用 ?，不是 &
+  if (!token) return null
+  const sep = '?'
   // quote_update: 如果 VITE_QUOTE_WS_URL 是自定义的（局域网直连 hqserver），则不加 token
   if (channel === 'quote_update' && typeof import.meta !== 'undefined' && import.meta.env?.VITE_QUOTE_WS_URL) {
     return `${proto}://${QUOTE_WS_HOST}/`
   }
   return `${proto}://${window.location.host}/ws/${channel}${sep}token=${encodeURIComponent(token)}`
+}
+
+// Token 过期检测：仅执行一次，停止所有重连并跳转登录
+let _loginRedirected = false
+function _onTokenExpired() {
+  if (_loginRedirected) return
+  _loginRedirected = true
+  log.info('token expired/empty, redirecting to login')
+  window.location.href = '/login'
 }
 
 /**
@@ -83,10 +91,15 @@ export function createWsManager(onMessage, onConnected) {
   const _pongMissed = {}      // v10 增: 累计未回 pong 次数, per-channel
 
   function _openChannel(channel) {
+    const url = _wsUrl(channel)
+    if (!url) {
+      _onTokenExpired()
+      return
+    }
     if (_sockets[channel] && _sockets[channel].readyState === WebSocket.OPEN) {
       return
     }
-    const ws = new WebSocket(_wsUrl(channel))
+    const ws = new WebSocket(url)
     _sockets[channel] = ws
 
     ws.onopen = () => {
@@ -170,6 +183,11 @@ export function createWsManager(onMessage, onConnected) {
 
   function _scheduleReconnect(channel) {
     if (_reconnectTimer[channel]) return
+    // Token 已过期，停止重连
+    if (!_wsUrl(channel)) {
+      _onTokenExpired()
+      return
+    }
     const c = _retryCount[channel] || 1
     const delay = Math.min(RECONNECT_BASE_DELAY * 2 ** (c - 1), RECONNECT_MAX_DELAY)
     _reconnectTimer[channel] = setTimeout(() => {
