@@ -1,7 +1,17 @@
 # view-smoke-automation Specification
 
 ## Purpose
-TBD - created by archiving change add-view-level-vitest-stack. Update Purpose after archive.
+
+`client/tests/smoke/` 下的端到端业务状态机测试（change `add-manual-adjust-and-history-pages` 6.3/6.4 节 + change `add-view-level-vitest-stack`）。
+
+- 覆盖：login → holdings.bootstrap → IDB miss → HTTP fallback → admin adjustPosition / adjustAsset → admin reconcile（调平被冲掉）
+- 与 `view-testing-stack` 协作：本 spec 跑端到端链路，view-testing-stack 提供"挂载 + 断言"原语
+- 通过 `vi.mock('src/stores/ws_heartbeat')` 避免 bootstrap 后 _startWs 真连 ws 服务（Node undici WebSocket 抛 ERR_INVALID_ARG_TYPE）
+
+> **与 view-testing-stack 的边界**：
+> - **本 spec（view-smoke-automation）**：跨 view + 多 store + mock IDB 的端到端链路测试；模拟"用户完整操作流程"
+> - **兄弟 spec（view-testing-stack）**：单 view / 单 component 级别测试；挂载 → 操作 props/slots → 断言渲染结果 + store state
+
 ## Requirements
 ### Requirement: stub-based 烟雾自动化
 

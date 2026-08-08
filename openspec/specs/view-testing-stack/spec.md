@@ -1,7 +1,17 @@
 # view-testing-stack Specification
 
 ## Purpose
-TBD - created by archiving change add-view-level-vitest-stack. Update Purpose after archive.
+
+`client/tests/` 下的 view-level Vitest 测试基础设施（change `add-view-level-vitest-stack`，v9 实施）。
+
+- 提供 jsdom 环境（DOMRect / ResizeObserver 真实实现）+ Element Plus 17+ 组件 stub + vue-router mock + Pinia 隔离
+- `global.mountView(component)` helper 一行挂载 view
+- 与 `view-smoke-automation` 协作：本 spec 提供"挂载 + 断言"原语，烟雾自动化 spec 覆盖全链路业务状态机
+
+> **与 view-smoke-automation 的边界**：
+> - **本 spec（view-testing-stack）**：单 view / 单 component 级别测试；挂载 → 操作 props/slots → 断言渲染结果 + store state
+> - **兄弟 spec（view-smoke-automation）**：跨 view + 多 store + mock IDB 的端到端链路测试；模拟"用户完整操作流程"
+
 ## Requirements
 ### Requirement: view 级别 vitest 测试基础设施
 
