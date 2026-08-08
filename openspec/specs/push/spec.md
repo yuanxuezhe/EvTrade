@@ -336,16 +336,45 @@ broker xtquant 协议不发送 `pos_cfm` 与 `ast_cfm` 推送事件（xtquant �
 - **AND** `client/src/stores/holdings_push.js` 中不存在 `applyPositionPush` / `applyAssetPush` 函数
 - **AND** `client/src/stores/holdings.js` 不 re-export 这些函数
 
-### REQ-PUSH-033: WS 频道列表（consolidate-position-data-flow 变更后清单）
+### REQ-PUSH-033: WS 频道清单（v118 当前权威）
 
-变更后 WebSocket MUST 仅推送 `order_update`（来自 ord_cfm）与 `trade_update`（来自 trd_cfm）两个频道。`position_update` / `asset_update` 频道 MUST NOT 注册到 `server/ws/manager.py`，**不再存在**。
+> **变更历史**：
+> - v118 之前（change consolidate-position-data-flow）：删除 pos_cfm / ast_cfm + `position_update` / `asset_update` 频道断流
+> - **v118**（change broker-callback-pos-push）：重新启用 `position_update` 频道，但走**新事件 `pos_push`**（broker position_callback），不再走旧 pos_cfm
+> - 同时新增 `strategy_update`（v66）/ `system_update`（v117）/ `task_progress_update`（v91.4）
 
-#### Scenario: 前端依赖 position_update / asset_update 需迁移
+**当前权威推送映射表**（引用 `server/services/push/routes.py::_PUSH_CHANNEL`）：
 
-- **WHEN** 前端代码或外部集成曾订阅 `position_update` 或 `asset_update` 频道
-- **THEN** 该订阅将永远收不到消息（服务端断流）
-- **AND** **BREAKING**: 调用方必须迁移为轮询 `/api/holdings`（持仓）与 `/api/asset`（资金）
-- **AND** 持仓数量变化 → 通过 Order.status（broker 已报/已成交）推 `order_update` 反查持仓是否变化
+| broker / 业务事件 | WS channel | 触发源 |
+|---|---|---|
+| `ord_cfm` | `order_update` | broker ord_cfm push |
+| `trd_cfm` | `trade_update` | broker trd_cfm push |
+| `pos_push` | `position_update` | broker position_callback（v118+，持仓唯一数据源）|
+
+**非 push 但同样走 ws_manager.active_connections**：
+
+| channel | 触发源 |
+|---|---|
+| `strategy_update` | `server/services/strategy/engine.py::_broadcast()` 推 `regime_changed` / `grid_triggered` / `regime_cooldown` |
+| `system_update` | 日初对账（`sys_status.py:130`）+ RPC 健康监测（`rpc_health.py:129`）推 `system_status_change` / `rpc_status` / `asset_update`（v117 合并 init_completed）|
+| `task_progress_update` | `server/services/script_strategy/` 任务进度（v91.4）|
+| `quote_update` | **不走后端**，前端直连 hqserver `:8765`（归属 `ws-protocol/spec.md`）|
+
+> **T0 策略频道** `t0_strategy_update`：常量定义在 `server/services/strategy/t0/engine.py:42`，**未注册到 ws_manager.active_connections**（v92 起独立频道；如需启用需补 routes.py + ws/manager.py 注册）
+
+#### Scenario: routes.py 与 ws-manager 注册表一致
+
+- **WHEN** 启动服务加载 `server/services/push/routes.py::_PUSH_CHANNEL`
+- **THEN** `ws_manager.active_connections` 必须包含所有 key（`order_update` / `trade_update` / `position_update`）+ 所有非 push 业务频道（`strategy_update` / `system_update` / `task_progress_update`）
+- **AND** `quote_update` 仅在 `ws_manager.active_connections` 出现但不在 `_PUSH_CHANNEL`（走 hqserver 不走后端路由）
+
+#### Scenario: 旧 pos_cfm / ast_cfm 路由不再存在
+
+- **WHEN** grep `routes.py::_PUSH_CHANNEL`
+- **THEN** 不应出现 `"pos_cfm"` / `"ast_cfm"` key
+- **AND** `dispatchPayload` switch 中不存在 `pos_cfm` / `ast_cfm` case
+- **AND** `client/src/stores/holdings_push.js` 中不存在 `applyPositionPush(从 ast_cfm)` 调用
+- **AND** `applyPositionPush(从 pos_push)` **保留**——v118+ 走 broker pos_push
 
 ## Scenarios
 
@@ -495,7 +524,9 @@ broker 每次推送 `pos_push` 时，`handle_pos_push` MUST 在写库前对 4 �
 
 ## 业务事件频道（2026-07-15-system-init-broadcast）
 
-### REQ-PUSH-006: system_update 频道
+> **注**：REQ-PUSH-006 在原 spec 复用编号（GAP-014：编号未唯一化）。本节实际是 `REQ-PUSH-041`（system_update）+ `REQ-PUSH-042`（strategy_update）+ `REQ-PUSH-040`（已在上面章节）。完整唯一化编号留给 GAP-014 处理（不要在本 change 内动）。
+
+### REQ-PUSH-041: system_update 频道
 
 - 后端 `server/ws/manager.py` `active_connections` 注册 `system_update: Set[WebSocket]`
 - 用途：服务端主动推送"系统级业务事件"（日初完成等），与行情/委托/成交增量推送并列
