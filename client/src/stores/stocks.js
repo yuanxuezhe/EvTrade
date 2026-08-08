@@ -201,9 +201,12 @@ export const useStocksStore = defineStore('stocks', () => {
       const name = (s.stock_name || '').toLowerCase()
       const short = (s.short_name || '').toLowerCase()
       let score = 0
-      if (code.startsWith(q)) score = 3          // 代码前缀优先
-      else if (short.startsWith(q)) score = 2    // 拼音次之
-      else if (name.includes(q)) score = 1       // 名称包含兜底
+      // v98+: 三列都改 substring (用户: 输入证券代码/名称/简称任一子串即命中)
+      if (code.startsWith(q)) score = Math.max(score, 3)        // 代码前缀优先
+      else if (code.includes(q)) score = Math.max(score, 2)     // 代码包含次之
+      if (short.startsWith(q)) score = Math.max(score, 2)       // 简称前缀次之
+      else if (short.includes(q)) score = Math.max(score, 1)    // 简称包含
+      if (name.includes(q)) score = Math.max(score, 1)          // 名称包含兜底
       if (score > 0) matches.push({ s, score })
     }
     matches.sort((a, b) => b.score - a.score)

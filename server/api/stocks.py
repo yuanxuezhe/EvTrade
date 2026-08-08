@@ -67,11 +67,12 @@ async def list_stocks(
         rows = [row for row in rows if bool(row.is_t0_able) == is_t0_able]
     if keyword:
         kw = keyword.strip().lower()
-        # 优先 stock_code 前缀,其次 stock_name 含
-        # MySQL 用 LIKE 模糊匹配 + 函数 LOWER 不必要(主键 stock_code 是数字+字母)
+        # v98+: keyword 匹配 stock_code (包含) / stock_name (包含) / short_name (包含)
         rows = [
             row for row in rows
-            if kw in row.stock_code.lower() or kw in (row.stock_name or "").lower()
+            if kw in row.stock_code.lower()
+            or kw in (row.stock_name or "").lower()
+            or kw in (row.short_name or "").lower()
         ]
 
     # total = COUNT(*),与 limit/page 无关

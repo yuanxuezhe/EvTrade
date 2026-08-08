@@ -284,6 +284,7 @@ async function commitEdit(row) {
 const stockColumns = [
   { key: 'stock_code', label: '代码', vBind: COL.STOCK_CODE },
   { key: 'stock_name', label: '名称', width: 120, sortable: false },
+  { key: 'short_name', label: '简称', width: 90, sortable: false },
   { key: 'sector', label: '板块', width: 120, sortable: false },
   { key: 't0', label: '回转', width: 100, align: 'center', headerAlign: 'center', sortable: false },
   { key: 'min_buy_qty', label: '最小买入', vBind: COL.NUMBER },
