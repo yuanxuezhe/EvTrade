@@ -1,12 +1,15 @@
-# data-model — 本地 SQLite 表结构知识库
+# data-model — MySQL 表结构知识库（v80.2 起 v14 sqlite→mysql）
 
 ## Purpose
 
-11 张表（业务 4 + 配置 4 + 历史 1 + 行情 1 + 序列 1）的**单一事实源**（single source of truth）。
-任何表结构变更（加列、改类型、调 PK、改约束）必须先改本 spec，再同步到 `server/models/orm.py` 和 `server/db.py`。
-ORM 注释必须与本 spec 保持一致（diff 检查项之一）。
+19 张表（业务 6 + 策略 7 + 脚本策略 2 + 系统/用户 3 + 对账/序列 2）的**单一事实源**（single source of truth）。
+任何表结构变更（加列、改类型、调 PK、改约束）必须先改本 spec，再同步到 `server/schema.yml`，然后跑 `python scripts/sync_schema.py apply` 推 DB + 重新生成 `server/tables/<表名>.py`。
 
-设计原则（v5 schema-refactor）：
+ORM 注释（`server/tables/<表名>.py` 自动生成）必须与本 spec 保持一致（diff 检查项之一）。
+
+> **历史注**：v14 之前项目用 SQLite，自 v20 起强制 MySQL-only。本 spec 早期版本描述 SQLite 时代，标题虽沿用旧名，但所有 schema 都已迁移到 MySQL。
+
+设计原则（v5 schema-refactor，v80.2 调整）：
 
 - **snake_case**：表名、列名一律小写下划线
 - **trd_date**：8 位数字字符串 `YYYYMMDD`，含 trd_date 的表必须入主键（按交易日维度定位）
@@ -21,19 +24,53 @@ ORM 注释必须与本 spec 保持一致（diff 检查项之一）。
 
 ## Tables Overview
 
+按业务域分组（共 19 张业务表 + 1 张 `order_no_seq` 序列表）：
+
+### 📊 业务核心（v4 数据本地优先：本地 DB 是展示源）
+
 | # | 表 | 分类 | 主键 | 单行？ | 业务入口 |
 |---|---|---|---|---|---|
-| 1 | `orders` | 业务 | `(trd_date, order_no)` | 否 | `server/api/orders.py` |
+| 1 | `orders` | 业务 | `(trd_date, order_no)` | 否 | `server/api/orders/` |
 | 2 | `trades` | 业务 | `(trd_date, order_no, trade_id)` | 否 | `server/api/trades.py` |
 | 3 | `positions` | 业务 | `stock_code` | 否（多股） | `server/api/positions.py` |
 | 4 | `assets` | 业务 | `id=1` 约束 | ✅ 单行 | `server/api/asset.py` |
-| 5 | `sys_status` | 配置 | `trd_date` | 否（多日） | `server/services/trading_day.py` |
-| 6 | `trading_session` | 配置 | `id=1` 约束 | ✅ 单行 | `server/services/guards.py` |
-| 7 | `fee_config` | 配置 | `id=1` 约束 | ✅ 单行 | `server/services/t0.py` |
-| 8 | `reconcile_config` | 配置 | `id=1` 约束 | ✅ 单行 | `server/services/reconcile.py` |
-| 9 | `reconcile_report` | 历史 | `(trd_date, mode, created_at)` | 否 | `server/services/reconcile.py` |
-| 10 | `quote_snapshots` | 行情 | `id` 自增 | 否 | `server/api/quote.py`（若有） |
-| 11 | `order_no_seq` | 序列 | `id=1` 约束 | ✅ 单行 | `server/services/order_no.py` |
+| 5 | `t0_tasks` | 业务 | `id` | 否 | `server/api/t0_tasks.py` |
+| 6 | `quote_snapshots` | 行情 | `id` 自增 | 否 | `server/api/quote.py` |
+
+### 🎯 策略体系（v66 strategy_trade change + v90 script-strategy change）
+
+| # | 表 | 分类 | 主键 | 单行？ | 业务入口 |
+|---|---|---|---|---|---|
+| 7 | `strategy` | 策略 | `id` 自增 | 否 | `server/api/strategy/endpoints.py` |
+| 8 | `strategy_task` | 策略 | `id` 自增 | 否 | `server/api/script_strategy/endpoints.py` |
+| 9 | `strategy_grid` | 策略 | `id` 自增 | 否 | `server/services/strategy/` |
+| 10 | `strategy_regime` | 策略 | `id` 自增 | 否 | `server/services/strategy/` |
+| 11 | `strategy_audit` | 策略 | `id` 自增 | 否 | `server/services/strategy/` |
+| 12 | `strategy_script` | 脚本 | `(user_id, id)` 复合 | 否 | `server/api/script_strategy/endpoints.py` |
+| 13 | `strategy_script_audit` | 脚本 | `id` 自增 | 否 | `server/api/script_strategy/endpoints.py` |
+
+### 🔐 系统/用户
+
+| # | 表 | 分类 | 主键 | 单行？ | 业务入口 |
+|---|---|---|---|---|---|
+| 14 | `users` | 系统 | `id` 自增 | 否 | `server/api/users.py` |
+| 15 | `sys_status` | 系统 | `trd_date` | 否（多日） | `server/services/trading_day.py` |
+| 16 | `sys_config` | 系统 | `(user, cfg_key)` 复合 | 否 | `server/api/sysconfig.py` |
+| 17 | `stocks` | 系统 | `stock_code` | 否（多股） | `server/api/stocks.py` |
+
+### 📋 日初对账 / 序列表
+
+| # | 表 | 分类 | 主键 | 单行？ | 业务入口 |
+|---|---|---|---|---|---|
+| 18 | `reconcile_report` | 历史 | `(trd_date, mode, created_at)` | 否 | `server/services/reconcile.py` |
+| 19 | `order_no_seq` | 序列 | `id` 约束 | ✅ 单行 | `server/services/order_no.py` |
+
+> **变更说明**：
+> - v14 起从 SQLite 迁到 MySQL（v20 强制 MySQL-only）；本 spec 早期版本描述 SQLite 时代
+> - v66 strategy_trade change：新增 `strategy` / `strategy_task` / `strategy_grid` / `strategy_regime` / `strategy_audit` 5 张策略表
+> - v90 script-strategy change（2026-08-01）：新增 `strategy_script` / `strategy_script_audit` 2 张脚本策略表 + 扩展 `strategy_task` 字段
+> - v18 t0_tasks change：新增 `t0_tasks` 表（v18）+ `orders.task_id` 列
+> - v23 slim-stocks-table：精简 `stocks` 字段
 
 ## Table Details
 
