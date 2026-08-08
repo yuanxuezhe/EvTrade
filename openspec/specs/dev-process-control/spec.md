@@ -4,6 +4,8 @@
 
 为本地开发提供统一的、单入口的 Python 脚本 `scripts/evctl.py`，以一致的方式在三平台（Linux / Windows / git-bash）启停三个开发服务（backend FastAPI/uvicorn 8000、frontend Vite 50998、hqserver WebSocket quotes 8765）。消除散落在 `start.sh` / `restart.sh` / `stop.sh` 中的脆弱 shell 逻辑、端口 fallback 与孤儿进程问题。
 
+## Requirements
+
 ### Requirement: 文档目录双体系约定
 
 The system SHALL maintain two non-overlapping documentation roots:

@@ -1,3 +1,17 @@
+# t0-quota-frame — T0Trade 顶部 quota frame + 行内配额（v18 t0-task-management 衍生物）
+
+## Purpose
+
+`client/src/views/T0Trade.vue`（快速做T 主页面）的顶部 quota frame + 行内配额列，提供用户做 T 时实时可见的"现金 / 持仓 / 当日盈亏 / 冻结资金 / 持仓市值"5 项关键指标，避免频繁切换到 Asset / Position 页面核对。
+
+- **顶部 quota frame**：5 个 metric pill 横排，header 下方主表上方
+- **行内配额列**：主表每行追加"配额"列（来自 `useT0Quota` composable）
+- composable：`client/src/composables/useT0Quota.js`，跨 view 复用（未来扩 AlgoStrategy 等策略页时无需复制配置）
+
+> **与 risk-management 的关系**：本 spec 是 UI 展示层指标，risk-management 是后端 RiskChecker 拒单规则。两 spec 都引用 `client/src/constants/riskProfile.js` 但不重叠——本 spec 只读展示，不参与风控决策。
+
+## Requirements
+
 ## ADDED Requirements
 
 ### Requirement: T0Trade 顶部 quota frame
