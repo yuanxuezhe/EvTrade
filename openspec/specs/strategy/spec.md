@@ -263,10 +263,133 @@
 - **WHEN** GET /api/t0/stats?t0_only=true
 - **THEN** MUST 包含 user_def in {"T0", "7"} 的委托
 
+---
+
+## Script-Strategy 模块（v90 change, 2026-08-01）
+
+> **背景**：REQ-STRAT-001~013 覆盖**网格策略引擎**（change strategy_trade）。v90 起新增独立的**脚本策略模块**（change script-strategy），允许用户在前端写 Python 脚本 + 回测 + 实盘。本节补登。
+
+### REQ-STRAT-014: 脚本策略数据模型（2 张表 + strategy_task 扩展）
+
+- **`strategy_script`**（v90, 2026-08-04 起复合 PK `(user_id, id)`）
+  - `id: varchar(64)` — 用户自命名（通常 = name），不再是自增 INT
+  - `user_id: int` — 所属用户
+  - `name: varchar(64)` — 脚本名（用户级唯一）
+  - `code: longtext` — Python 源码（回调 `on_init` / `on_bar` / `on_tick` / `on_finish`，可用 `ctx.lib.MA / doorder`）
+  - `params_schema: json` — 参数定义（key/type/default/min/max/step/values）
+  - `description: varchar(255)`
+  - `status: varchar(16)` — draft / active / archived
+  - `is_public: tinyint` — 0=私有 / 1=公开（共享脚本市场）
+  - `created_at / updated_at`
+- **`strategy_script_audit`**（v90, 15 字段, bigint 自增 PK）
+  - 关键字段：`task_id` / `stime`(YYYYMMDDHHMMSS) / `trd_date` / `phase`(bar/tick/on_init/on_finish) / `trigger_type`(BUY/SELL/SIGNAL/STOP/TP/INFO) / `stock_code` / `price` / `volume` / `indicators`(json) / `state`(json) / `msg` / `order_no` / `payload`(json) / `created_at`
+- **`strategy_task` 扩展**（v90 多次 migration）
+  - 新增字段：`script_id` (varchar 128) / `params` (json) / `backtest_result` (json) / `best_params` (json) / `backtest_start_date` / `backtest_end_date` / `period` / `pnl` (float) / `positions` (json) / `trades_count` / `started_at` / `finished_at` / `error_msg` (varchar 500) / `live_signals` (json, 限 500 条) / `fields` (历史行情字段白名单) / `progress` (json, 实时进度)
+  - `mode` 字段：创建时不填，运行时（`/tasks/{id}/run`）再写
+
+#### Scenario: 用户共享脚本（is_public=1）
+
+- **GIVEN** user A 创建脚本 id='my_ma_cross', is_public=1
+- **WHEN** user B 调用 GET /api/script-strategy/scripts
+- **THEN** MUST 看到 user A 的脚本（user_id = me OR is_public = 1）
+- **AND** 编辑/删除仅 user A 可见（user_id == me）
+
+#### Scenario: 复合 PK ups
+
+- **GIVEN** (user_id=1, id='cross_5_20') 已存在
+- **WHEN** 同 user 创建 id='cross_5_20'
+- **THEN** MUST 拒绝（unique violation）
+
+### REQ-STRAT-015: script-strategy REST API（14 端点）
+
+所有端点位于 `server/api/script_strategy/endpoints.py`，路由前缀 `/api/script-strategy`，依赖 `get_current_user`（部分需要 trader + admin）。
+
+**scripts 子资源**（7 端点）：
+- `GET    /scripts` — 列表（含分页 `page`/`page_size`，只返回 `user_id=me OR is_public=1`）
+- `GET    /scripts/by-name/{name}` — 按 name 查
+- `GET    /scripts/{script_id}` — 详情
+- `POST   /scripts` — 创建（user_id 自动 = current_user.id）
+- `PUT    /scripts/{script_id}` — 更新（仅 user_id=me）
+- `DELETE /scripts/{script_id}` — 删除（仅 user_id=me）
+
+**tasks 子资源**（7 端点）：
+- `GET    /tasks` — 列表
+- `GET    /tasks/{task_id}` — 详情（含 progress / live_signals）
+- `POST   /tasks` — 创建（status='created', mode 留空）
+- `POST   /tasks/{task_id}/run` — 启动（写 mode='backtest' 或 'live'，异步）
+- `POST   /tasks/{task_id}/stop` — 停止（live 模式生效）
+- `DELETE /tasks/{task_id}` — 删除
+- `GET    /tasks/{task_id}/logs` — 运行日志（回测完整 / 实盘最近 N 条）
+- `GET    /tasks/{task_id}/signals` — 信号流
+
+**templates**（1 端点）：
+- `GET    /templates/default` — 默认脚本模板（前端编辑器初始化用）
+
+#### Scenario: 创建脚本 task 并启动回测
+
+- **WHEN** POST /tasks {script_id, params, backtest_start_date, backtest_end_date}
+- **THEN** 创建 row (status='created')
+- **AND** 立即返回 task_id（异步不等待回测完成）
+- **WHEN** 客户端 POST /tasks/{id}/run
+- **THEN** 写 mode='backtest', status='running', started_at=now
+- **AND** 回测引擎跑（`server/strategy/runtime/`）
+- **AND** progress 字段实时更新（通过 `task_progress_update` ws 推送）
+- **WHEN** 回测完成
+- **THEN** 写 backtest_result / best_params / pnl / trades_count / finished_at / status='completed'
+
+### REQ-STRAT-016: 回测 / 实盘引擎运行时
+
+- 路径：`server/strategy/runtime/`（含 `his_hq.py` 历史行情读取 + `backtest.py` 回测主循环 + `live.py` 实盘 runner）
+- **回测引擎**（BacktestEngine）：
+  - 输入：`(script_id, params, start_date, end_date, fields=['open,close,high,low'])`
+  - 主循环：逐 bar 调用户 `on_bar(ctx, bar)` → 写 `strategy_script_audit` → 更新 `progress`
+  - 输出：写入 `strategy_task.backtest_result` / `best_params` / `pnl` / `trades_count`
+- **实盘 runner**（LiveRunner, v8ff+）：
+  - 订阅行情（`quote_consumer.py`），逐 tick 调 `on_tick(ctx, tick)`
+  - 限 `live_signals` JSON 数组最多 500 条，**每 5 秒 flush** 一次到 DB
+  - 走 ws 后端订阅（v8ff `_subscribe_extra` + `latest_ticks`）
+  - T+1 策略做 T：用户脚本可基于历史持仓发当日单（独立 v118+ 处理）
+- 风险档位集成（`RiskChecker`，v__）：
+  - 单笔最大 / 当日笔数 / 单股仓位上限 / 最大回撤 — 触发即拒单
+
+#### Scenario: 回测进度推送
+
+- **GIVEN** 回测中, 当前 bar_idx=500, total_bars=10000
+- **WHEN** 主循环每 N bar 写一次 progress
+- **THEN** `strategy_task.progress` 更新为 `{phase: 'bar', current: 500, total: 10000, bar_idx: 500, total_bars: 10000, elapsed_ms: ...}`
+- **AND** ws 推 `task_progress_update` channel（前端 ScriptTask.vue 详情实时刷新）
+
+#### Scenario: 实盘 live_signals 限 500
+
+- **WHEN** live_signals 累计达 500 条
+- **THEN** 第 501 条起**覆盖**最早（环形缓冲）
+- **AND** 每 5s flush 到 DB（不是逐条写 — 避免高频 IO）
+
+### REQ-STRAT-017: 前端 2 个 view + 14 端点客户端
+
+- **`client/src/views/ScriptDev.vue`** — 策略开发页
+  - 左 CodeMirror/Monaco 代码编辑器（70% 宽）+ 右参数 schema 列表（30%）
+  - 顶部：脚本名、描述、状态徽章、保存按钮、测试回测按钮
+  - 底部：保存后显示"去回测"按钮 → 跳 `ScriptTask.vue?script_id=...`
+- **`client/src/views/ScriptTask.vue`** — 策略运行页（路由 label "策略运行"，v97 重命名）
+  - 任务列表 + 详情（progress / live_signals / logs / signals）
+  - 订阅 ws `task_progress_update` channel 实时刷新 progress
+- 客户端封装：`client/src/api/script_strategy.js`（与 `client/src/api/strategy.js` 分离）
+
+#### Scenario: ScriptDev → ScriptTask 跳转
+
+- **WHEN** 用户在 ScriptDev.vue 保存脚本（POST /scripts）
+- **THEN** 返回 script_id
+- **WHEN** 用户点"去回测"
+- **THEN** `router.push({path: '/script-task', query: {script_id}})`
+- **AND** ScriptTask.vue onMounted 自动用 script_id 预填创建 task 表单
+
 ## Cross References
 
 - 行情来源：`quotes/spec.md` REQ-QUOTE-001（hqserver 推送）
 - 委托下发：`trading/spec.md` REQ-TRADE-002（place 流程 + user_def 关联）
+- 脚本策略脚本：脚本字段（`code`/`params_schema`/`is_public`）定义在 `data-model/spec.md` §12 strategy_script
+- 脚本策略审计：定义在 `data-model/spec.md` §13 strategy_script_audit
 - WS 推送：`push/spec.md` REQ-PUSH-007（push_handlers 字段映射）
 - 前端入口：`frontend/spec.md` REQ-FE-310（strategy-trade 路由 + 角色守卫）
 - 配置：`configuration/spec.md` REQ-CFG-008（2 个新 env）
