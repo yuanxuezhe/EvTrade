@@ -4,7 +4,7 @@
 
 T0 交易需要对单股仓位、现金预留、配平系数等关键风险参数做统一管理。phase-2 把散落在 `T0Trade.vue` 内的 inline `RISK_CONFIGS` 常量抽到独立模块 `client/src/constants/riskProfile.js`，建立单一事实源，便于:
 
-- 多个 view / composable 复用（未来扩 AlgoStrategy / TStrategy 时无需复制配置）
+- 多个 view / composable 复用（未来扩 AlgoStrategy 等策略页时无需复制配置）
 - 单元测试覆盖（4 档配置数值校验）
 - 后端策略服务对齐（如需）
 

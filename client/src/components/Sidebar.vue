@@ -65,7 +65,7 @@ import { useUiStore } from '../stores/ui'
 import {
   Odometer, Wallet, Money, DataAnalysis, Tickets,
   Fold, Expand, TrendCharts, UserFilled, Files,
-  Coin, Cpu, MagicStick, Setting, Operation, Box, Document, Refresh, DataBoard,
+  Coin, Cpu, Setting, Operation, Box, Document, Refresh, DataBoard,
   EditPen, DataLine,
 } from '@element-plus/icons-vue'
 import { useAuthStore } from '../stores/auth'
@@ -85,11 +85,10 @@ const menuItems = computed(() => {
     // Sidebar 入口: 真正指向 /t0-trade (T0Trade.vue)
 // 路由 /to-management 改 redirect 到 /t0-trade (兼容旧书签)
     { path: '/t0-trade', label: '快速做T', icon: Coin },
-    { path: '/t-strategy', label: '策略做T', icon: MagicStick },
     { path: '/strategy-trade', label: '策略交易', icon: Cpu },
     // script-strategy change: 2 个新入口 (前端写脚本 + 跑任务)
     { path: '/script-dev', label: '策略开发', icon: EditPen },
-    { path: '/script-task', label: '脚本交易', icon: DataLine }
+    { path: '/script-task', label: '策略运行', icon: DataLine }
   ]
   if (authStore.isAdmin) {
     base.push({ divider: true, label: '系统管理' })

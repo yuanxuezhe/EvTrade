@@ -130,7 +130,7 @@ The shared component is [client/src/components/CacheTableView.vue](../../client/
 | `/today/trades` | → redirect `/history/trades` | login | **v13 新增**：老书签兼容 redirect |
 | `/positions` | → redirect `/t0-trade` | login | 旧 `/to-management` 路径合并 |
 | `/t0-trade` | T0Trade.vue（快速做T） | login | |
-| `/t-strategy` | TStrategy.vue（策略做T） | login | |
+| `/t-strategy` | → redirect `/t0-trade` | login | **TStrategy.vue 已下线**（占位页移除）；旧书签保留跳转 |
 | `/algo-strategy` | AlgoStrategy.vue | login | |
 | `/holdings` | Holdings.vue | login | |
 | `/asset` | Asset.vue | login | |
@@ -868,7 +868,7 @@ The system SHALL 让 `client/src/components/OrderForm.vue` 中
 
 ### Known Issues (from analysis)
 
-- 🟡 `TStrategy.vue` / `AlgoStrategy.vue` 各 43 行，**未实现内容**
+- 🟡 `AlgoStrategy.vue` 43 行，**未实现内容**（`TStrategy.vue` 已下线，路由保留 redirect）
 - 🟡 `auth.js` store 应该在 401 时自动清 token + 跳 login，目前**依赖** axios 拦截器调用 `setUnauthorizedHandler`
 - 🟥 ~~Trade.vue 撤单按钮传 `order_id`~~ → **本轮已修**（change `2026-06-16-trade-page-show-order-no-and-cancel`，改传 order_no + trd_date）
 - 🟥 ~~Trade.vue / Orders.vue 用 broker 原始 status 码分组~~ → **本轮已修**（change `2026-06-16-frontend-infer-order-status`，改本地推断码 + 镜像推断）

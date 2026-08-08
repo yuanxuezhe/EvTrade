@@ -134,7 +134,6 @@ const pageMeta = {
   '/users': { title: '用户管理', sub: '管理系统账号与权限' },
   // v32: 删 /holdings 独立查询页 meta (页面删除后无意义, 保留空注释防误改)
   '/t0-trade': { title: '快速做T', sub: '日内做T开平仓与敞口管理' },
-  '/t-strategy': { title: '策略做T', sub: '自动化做T策略 (占位)' },
   '/algo-strategy': { title: '策略交易', sub: '算法交易策略 (占位)' },
   '/system-init': { title: '系统初始化', sub: '交易日 / 行情 / 柜台初始化' },
   '/system-config': { title: '系统配置', sub: '对账 / 推送 / 风险参数配置' },
