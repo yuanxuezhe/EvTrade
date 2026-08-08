@@ -171,7 +171,8 @@ const results = computed(() => {
     })
   }
   if (stockCode.value) {
-    filtered = filtered.filter((o) => o.stock_code === stockCode.value)
+    const k = stockCode.value.trim().toLowerCase()
+    filtered = filtered.filter((o) => String(o.stock_code || '').toLowerCase().includes(k))
   }
   return filtered
 })
