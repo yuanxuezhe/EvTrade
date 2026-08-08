@@ -102,6 +102,38 @@ EvTrade 是多用户交易平台，必须区分：
 - 未来若改有状态（refresh token + 黑名单）需重构本端点
 - 实现位置：`server/api/auth.py::logout`（line 116）
 
+### REQ-AUTH-011: POST /grant — 技能包永久 token（env 控制）
+
+**v92 立**（2026-08-04）：技能包授信入口，固定 token "hermesagent" → 永久 JWT（exp 2099）。
+
+- 端点：`POST /api/auth/grant`，body `{token: "hermesagent"}`
+- 启用条件：**必须** `EVTRADE_ALLOW_GRANT_TOKEN=1` 环境变量；否则 403 "grant endpoint disabled"
+- 校验：
+  1. `payload.token` 必须等于字符串 `"hermesagent"` → 否则 401 "invalid grant token"
+- 成功行为：
+  - 生成 JWT `{sub: "6", id: 6, role: "admin", username: "admin", exp: now + 30 年}`
+  - 调用 `server.auth.session.register_token(permanent_token, user_id=6, role="admin")` 注册到 session cache
+  - **必须注册** — 否则下次请求 `is_valid` 失败 → 401
+- 响应：`TokenResponse{access_token, token_type, expires_in, user{id, username, role}}`
+- 安全约束：
+  - 默认 `EVTRADE_ALLOW_GRANT_TOKEN=0`（环境变量门控，避免生产环境暴露）
+  - token 字符串 "hermesagent" 硬编码（技能包白名单，不开放 admin 后台入口）
+  - 不需要任何现有 JWT（grant 端点本身是绕过登录的）
+- 实现位置：`server/api/auth.py::grant`（line 179）
+
+### REQ-AUTH-012: POST /heartbeat — Token 保活（idle 防过期）
+
+**REQ-AUTH-IDLE-001**（2026-08-04 立）：idle 超 10min token 失效（session cache LRU + TTL）。
+
+- 端点：`POST /api/auth/heartbeat`，依赖 `get_current_user`
+- 行为：返回 `{ok: true, idle_timeout_seconds, user_id}`（无副作用）
+- 调用链：
+  - `get_current_user` 内部已 `is_valid` + `touch`（更新 session cache 的 last_seen_at）
+  - 端点本身只需返 OK + 当前 idle timeout 阈值（前端可据此调度）
+- 前端调用模式：登录成功后每 **5 分钟**调一次（小于 10 min 超时阈值）
+- 不需要返回用户对象（前端 store 已有；省响应体大小）
+- 实现位置：`server/api/auth.py::heartbeat`（line 237）
+
 ## Scenarios
 
 ### S-AUTH-001: 新用户首次登录
