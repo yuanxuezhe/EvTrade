@@ -1,6 +1,12 @@
 ## Purpose
 
-委托 / 成交 当日数据通过 Pinia + 浏览器 IDB write-through 持久化，无需重新拉取即可在 F5 / 重新打开 tab 后立即恢复（< 200ms）。positions / asset 不持久化（实时性 + 安全考虑）。
+委托 / 成交 **当日数据**通过 Pinia + 浏览器 IDB write-through 持久化，无需重新拉取即可在 F5 / 重新打开 tab 后立即恢复（< 200ms）。positions / asset 不持久化（实时性 + 安全考虑）。
+
+> **与 `orders-trades-history-query` 的边界**：
+> - **本 spec（intraday-orders-trades-cache）**：仅当**当日（`activeDay`）** 数据；通过 Pinia 内存 + IDB 持久化；面板组件（TodayOrdersPanel / TodayTradesPanel）内嵌 Trade.vue
+> - **兄弟 spec（orders-trades-history-query）**：按 `start_date` / `end_date` 区间查询；**不走** Pinia / IDB；每次独立 HTTP GET `/api/orders/history` 或 `/api/trades/history`
+>
+> 两者**不重叠**：当日数据走 intraday panel（实时），跨日查询走 history view（按需拉取）。同一笔委托在 activeDay 走 intraday 路径；切日后（activeDay 变更）通过 bootstrap 重灌，**不再**走 intraday panel。
 
 ## Requirements
 

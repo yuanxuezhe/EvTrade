@@ -2,6 +2,12 @@
 
 历史委托 / 成交按 `start_date` / `end_date` / `stock_code` 区间查询，**不走** Pinia / IDB —— 历史数据非"业务实时"语义，每次查询独立拉取。
 
+> **与 `intraday-orders-trades-cache` 的边界**：
+> - **本 spec（orders-trades-history-query）**：按 `start_date` / `end_date` / `stock_code` 区间查；**不走** Pinia 内存缓存（历史数据无"实时"概念）；每次独立 HTTP GET `/api/orders/history` / `/api/trades/history`
+> - **兄弟 spec（intraday-orders-trades-cache）**：仅**当日（`activeDay`）** 数据；Pinia 内存 + IDB write-through 持久化；面板组件（TodayOrdersPanel / TodayTradesPanel）内嵌 Trade.vue
+>
+> 两者**不重叠**：当日数据走 intraday panel（实时），跨日查询走 history view（按需拉取）。同一笔委托在 activeDay 走 intraday 路径；切日后通过 bootstrap 重灌 activeDay 新数据，历史区间通过本 spec 的 history view 查询。
+
 ## Requirements
 
 ### Requirement: 历史委托视图（v12 + v13 预设 chip + 强制历史范围）
