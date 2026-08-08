@@ -261,6 +261,26 @@ EvTrade 当前缺股票基础信息(行业/市值/PE/PB/公司简介)。本 capa
 - `StockCreateRequest` / `StockUpdateRequest` Pydantic schema（`extra=forbid`）**移除 `short_name` 字段**：admin 无法显式传入 — 显式传将被 422 拒绝（`extra fields not permitted`）
 - `to_short_name` 是**单一可信来源**（single source of truth），所有路径（create/update/backfill）必须通过它，禁止散落实现
 
+#### REQ-STOCK-008（v98+ 新增）: keyword 搜索含 short_name + 三列 substring
+
+**目的**: 列表查询时，keyword 同时匹配 stock_code / stock_name / short_name 三列，**substring** 语义（不是前缀），大小写不敏感。
+
+**后端**（`server/api/stocks.py::list_stocks`）：
+- 接收 query 参数 `keyword`，trim + toLowerCase 后做 substring 匹配：
+  - `kw in stock_code.lower()` —— 代码包含
+  - `kw in (stock_name or "").lower()` —— 名称包含
+  - `kw in (short_name or "").lower()` —— 简称包含（含 `STPA` / `*STPA` 拼音首字母命中）
+
+**前端**（`client/src/stores/stocks.js::searchCache`）：
+- 走 IDB 缓存，前端本地 substring 匹配 + 优先级打分：
+  - 代码前缀 = 3 分（优先）/ 代码包含 = 2 分
+  - 简称前缀 = 2 分 / 简称包含 = 1 分
+  - 名称包含 = 1 分（兜底）
+- 返回按 score 倒序前 N 条
+
+**Admin 表格**（`AdminStockConfig.vue::stockColumns`）：
+- v98+ 增加 `short_name` 列（label "简称"，width 90，紧跟 stock_name 后）
+
 #### Scenario
 
 - **GIVEN** admin POST `/api/stocks` 提交 `stock_name="平安银行"`
