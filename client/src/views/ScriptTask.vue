@@ -21,69 +21,71 @@
       </div>
     </header>
 
-    <div v-loading="loading" class="st-body">
-      <el-table :data="filteredTasks" stripe size="small" class="st-table" data-el="st-table">
-        <el-table-column label="ID" prop="id" width="60" />
-        <el-table-column label="脚本" min-width="180">
-          <template #default="{ row }">
-            <span class="st-script-name">{{ scriptNameById(row.script_id) }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="标的" prop="stock_code" width="100" />
-        <el-table-column label="模式" width="90">
-          <template #default="{ row }">
-            <el-tag v-if="row.mode" size="small" :type="row.mode === 'live' ? 'danger' : 'info'">
-              {{ row.mode === 'live' ? '实盘' : '回测' }}
-            </el-tag>
-            <span v-else class="st-muted">—</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="状态" width="90">
-          <template #default="{ row }">
-            <el-tag size="small" :type="_statusType(row.status)">{{ _statusLabel(row.status) }}</el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column label="PnL" width="100" align="right">
-          <template #default="{ row }">
-            <span :class="row.pnl > 0 ? 'up' : row.pnl < 0 ? 'down' : ''">
-              {{ (row.pnl || 0).toFixed(2) }}
-            </span>
-          </template>
-        </el-table-column>
-        <el-table-column label="成交" prop="trades_count" width="60" align="right" />
-        <el-table-column label="开始" min-width="140">
-          <template #default="{ row }">
-            {{ (row.started_at || '').replace('T', ' ').slice(0, 19) }}
-          </template>
-        </el-table-column>
-        <el-table-column label="结束" min-width="140">
-          <template #default="{ row }">
-            {{ (row.finished_at || '').replace('T', ' ').slice(0, 19) }}
-          </template>
-        </el-table-column>
-        <el-table-column label="操作" width="200" fixed="right">
-          <template #default="{ row }">
-            <el-button
-              v-if="row.status !== 'running'"
-              size="small" link type="primary"
-              @click="openRun(row)" data-el="st-run"
-            >运行</el-button>
-            <el-button
-              v-if="row.status === 'running'"
-              size="small" link type="danger"
-              @click="onStop(row)" data-el="st-stop"
-            >停止</el-button>
-            <el-button size="small" link @click="openDetail(row)" data-el="st-detail">详情</el-button>
-            <el-button size="small" link type="danger" @click="onDelete(row)" data-el="st-delete">删除</el-button>
-          </template>
-        </el-table-column>
-      </el-table>
-    </div>
+    <div class="st-split">
+      <div v-loading="loading" class="st-body">
+        <el-table :data="filteredTasks" stripe size="small" class="st-table" data-el="st-table"
+                  highlight-current-row @row-click="openDetail">
+          <el-table-column label="ID" prop="id" width="60" />
+          <el-table-column label="脚本" min-width="180">
+            <template #default="{ row }">
+              <span class="st-script-name">{{ scriptNameById(row.script_id) }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="标的" prop="stock_code" width="100" />
+          <el-table-column label="模式" width="90">
+            <template #default="{ row }">
+              <el-tag v-if="row.mode" size="small" :type="row.mode === 'live' ? 'danger' : 'info'">
+                {{ row.mode === 'live' ? '实盘' : '回测' }}
+              </el-tag>
+              <span v-else class="st-muted">—</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="状态" width="90">
+            <template #default="{ row }">
+              <el-tag size="small" :type="_statusType(row.status)">{{ _statusLabel(row.status) }}</el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="PnL" width="100" align="right">
+            <template #default="{ row }">
+              <span :class="row.pnl > 0 ? 'up' : row.pnl < 0 ? 'down' : ''">
+                {{ (row.pnl || 0).toFixed(2) }}
+              </span>
+            </template>
+          </el-table-column>
+          <el-table-column label="成交" prop="trades_count" width="60" align="right" />
+          <el-table-column label="开始" min-width="140">
+            <template #default="{ row }">
+              {{ (row.started_at || '').replace('T', ' ').slice(0, 19) }}
+            </template>
+          </el-table-column>
+          <el-table-column label="结束" min-width="140">
+            <template #default="{ row }">
+              {{ (row.finished_at || '').replace('T', ' ').slice(0, 19) }}
+            </template>
+          </el-table-column>
+          <el-table-column label="操作" width="200" fixed="right">
+            <template #default="{ row }">
+              <el-button
+                v-if="row.status !== 'running'"
+                size="small" link type="primary"
+                @click="openRun(row)" data-el="st-run"
+              >运行</el-button>
+              <el-button
+                v-if="row.status === 'running'"
+                size="small" link type="danger"
+                @click="onStop(row)" data-el="st-stop"
+              >停止</el-button>
+              <el-button size="small" link type="danger" @click="onDelete(row)" data-el="st-delete">删除</el-button>
+            </template>
+          </el-table-column>
+        </el-table>
+      </div>
 
-    <!-- 任务详情抽屉 -->
-    <el-drawer v-if="detail" v-model="detailOpen" :title="`任务 #${detail.id} 详情`" size="60%">
-      <div class="st-detail">
-        <el-descriptions :column="3" border size="small" class="st-summary">
+      <!-- 右侧: 展开的详情 -->
+      <div v-if="detail" class="st-side" data-el="st-side-detail">
+        <div class="st-detail">
+          <div class="st-side-title">任务 #{{ detail.id }} · {{ scriptNameById(detail.script_id) }} · {{ detail.stock_code }}</div>
+          <el-descriptions :column="3" border size="small" class="st-summary">
           <el-descriptions-item label="模式">
             <el-tag v-if="detail.mode" size="small" :type="detail.mode === 'live' ? 'danger' : 'info'">
               {{ detail.mode === 'live' ? '实盘' : '回测' }}
@@ -366,7 +368,7 @@
             <el-table-column label="时间" prop="stime" width="140" />
             <el-table-column label="类型" width="80">
               <template #default="{ row }">
-                <el-tag size="small" :type="_signalType(row.type)">{{ row.type }}</el-tag>
+                <el-tag size="small" :type="_signalType(row.signal_type || row.type)">{{ row.signal_type || row.type }}</el-tag>
               </template>
             </el-table-column>
             <el-table-column label="价格" prop="price" width="80">
@@ -391,8 +393,13 @@
         <template v-else>
           <el-empty description="任务尚未运行, 点击右上 '运行' 按钮触发" />
         </template>
+        </div>
       </div>
-    </el-drawer>
+
+      <div v-else class="st-side st-side-empty">
+        <el-empty description="点击左侧任务查看详情" :image-size="80" />
+      </div>
+    </div>
 
     <!-- 新建任务抽屉 (不指定 mode) -->
     <el-drawer v-model="createOpen" title="新建任务" size="500px">
@@ -534,7 +541,6 @@ const route = useRoute()
 const loading = ref(false)
 const tasks = ref([])
 const scripts = ref([])
-const detailOpen = ref(false)
 const detail = ref(null)
 const createOpen = ref(false)
 const creating = ref(false)
@@ -688,6 +694,13 @@ async function loadAll() {
   } finally {
     loading.value = false
   }
+  // 左右分栏: 默认选中第一个任务 (刷新/删除后仍保留原选中, 否则回退第一个)
+  if (tasks.value.length) {
+    const keep = tasks.value.find(x => x.id === detail.value?.id) || tasks.value[0]
+    openDetail(keep)
+  } else {
+    detail.value = null
+  }
 }
 
 const filteredTasks = computed(() => tasks.value)
@@ -738,7 +751,8 @@ function _errMsg(e, fallback = '未知错误') {
 
 // ─────────────── 详情 ───────────────
 async function openDetail(row) {
-  detailOpen.value = true
+  if (!row) return
+  _disposeChart()  // 切换任务时释放旧图表 (chartRef 节点可能已卸载, 防止 setOption 到销毁实例)
   detail.value = row
   await nextTick()
   renderChart()
@@ -774,6 +788,13 @@ async function loadDetail(taskId) {
     }
   } catch (e) {
     // ignored
+  }
+}
+
+function _disposeChart() {
+  if (chart) {
+    chart.dispose()
+    chart = null
   }
 }
 
@@ -961,16 +982,6 @@ onMounted(async () => {
   if (route.query.script_id) openCreate()
 })
 
-// 详情抽屉关闭时 dispose chart + 停轮询
-watch(detailOpen, async (v) => {
-  if (!v) {
-    if (chart) {
-      chart.dispose()
-      chart = null
-    }
-    _stopProgressPoll()
-  }
-})
 
 // v123: 运行中任务每 3s 轮询 getTask 刷新 progress/status + /signals (回测+实盘)
 //       实时信号由 WS task_progress_update 推送 (signal_consumer 转发 MQ) 即时插入
@@ -1047,6 +1058,7 @@ watch(() => wsStore.lastTaskProgress, (msg) => {
 
 onBeforeUnmount(() => {
   _stopProgressPoll()
+  _disposeChart()
 })
 </script>
 
@@ -1066,13 +1078,44 @@ onBeforeUnmount(() => {
 }
 .st-title { margin: 0; font-size: 18px; font-weight: 600; }
 
+/* 左右分栏: 左=任务表格, 右=详情 */
+.st-split {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  gap: var(--space-3);
+  align-items: stretch;
+  overflow: hidden;
+}
 .st-body {
   background: var(--bg-elevated);
   border-radius: var(--radius-md);
   padding: var(--space-3);
-  flex: 1;
-  min-height: 0;
+  flex: 1 1 45%;
+  min-width: 0;
   overflow: auto;
+}
+.st-side {
+  flex: 1 1 55%;
+  min-width: 460px;
+  background: var(--bg-elevated);
+  border-radius: var(--radius-md);
+  padding: var(--space-3);
+  overflow: auto;
+}
+.st-side-empty {
+  flex: 1 1 55%;
+  min-width: 460px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.st-side-title {
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: var(--space-3);
+  padding-bottom: var(--space-2);
+  border-bottom: 1px solid var(--border-light);
 }
 
 .up { color: var(--color-up, #f56c6c); font-weight: 600; }
