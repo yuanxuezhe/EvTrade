@@ -24,8 +24,10 @@ import logging
 
 from server.auth.deps import get_current_user
 from server.models.user import User
+# v120+ strategy-exec-service: 策略运行迁到独立服务
+# Script CRUD (scripts/tasks POST/PUT/DELETE/GET) 仍用 service (直接读写 strategy_script/task 表)
 from server.strategy import service as svc
-from server.strategy.templates.default_script import DEFAULT_SCRIPT
+# DEFAULT_SCRIPT 模板迁到 strategy_exec/templates/default_bt_strategy.py
 
 log = logging.getLogger(__name__)
 
@@ -240,35 +242,127 @@ def create_task_endpoint(req: TaskCreate, user: User = Depends(get_current_user)
 
 
 @router.post("/tasks/{task_id}/run", response_model=TaskOut)
-def run_task_endpoint(task_id: int, req: TaskRun, user: User = Depends(get_current_user)):
+async def run_task_endpoint(task_id: int, req: TaskRun, user: User = Depends(get_current_user)):
     """触发任务执行 (回测 or 实盘)
 
-    立刻返回 (后台线程异步执行), 详情面板 5s 刷新看进度
+    v120+ (change strategy-exec-service): 转发到独立 strategy_exec 服务 (8001)
+    不再本地启动 Backtrader — 引擎迁移到 strategy_exec/
+
+    立刻返回 202 (后台异步执行), 详情面板 5s 刷新看进度
     """
     log.info(
         "[run_task] user=%s task_id=%d mode=%s backtest=%s~%s period=%s fields=%s",
         user.username, task_id, req.mode,
         req.backtest_start_date, req.backtest_end_date, req.period, req.fields,
     )
-    out = svc.run_task(
-        task_id=task_id, user_id=user.id, is_admin=(user.role == "admin"),
-        mode=req.mode,
-        backtest_start_date=req.backtest_start_date,
-        backtest_end_date=req.backtest_end_date,
-        period=req.period,
-        fields=req.fields,
-    )
-    if out is None:
+
+    # ──── 1. 权限校验 + 读 task ────
+    from server.tables import StrategyTask
+    row = StrategyTask.query_one(id=task_id)
+    if row is None:
         raise HTTPException(status_code=404, detail={"code": "TASK_NOT_FOUND"})
-    log.info("[run_task] task_id=%d 启动成功 (后台执行)", task_id)
-    return out
+    if user.role != "admin" and row.user_id != user.id:
+        raise HTTPException(status_code=403, detail={"code": "FORBIDDEN"})
+    if row.status in ("running", "live"):
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "ALREADY_RUNNING", "msg": f"任务已在 {row.status}"},
+        )
+
+    # ──── 2. 预写 status='queued' + mode + execution_service='strategy_exec' ────
+    from datetime import datetime
+    from server.config import settings
+    task_data = row._data
+    task_data["status"] = "queued"
+    task_data["mode"] = req.mode
+    task_data["execution_service"] = "strategy_exec"
+    task_data["started_at"] = datetime.now()
+    task_data["finished_at"] = None
+    task_data["error_msg"] = None
+    row.update()
+
+    # ──── 3. 转发到 strategy_exec ────
+    import httpx
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.post(
+                f"{settings.STRATEGY_EXEC_API_URL}/internal/run-task",
+                headers={"X-Internal-Token": settings.STRATEGY_EXEC_API_TOKEN},
+                json={
+                    "task_id": task_id,
+                    "user_id": row.user_id,
+                    "script_id": row.script_id,
+                    "stock_code": row.stock_code,
+                    "mode": req.mode,
+                    "params": task_data.get("params") or {},
+                    "backtest_start_date": req.backtest_start_date,
+                    "backtest_end_date": req.backtest_end_date,
+                    "period": req.period,
+                    "fields": req.fields,
+                },
+            )
+    except httpx.RequestError as e:
+        log.exception("[run_task] forward to strategy_exec failed")
+        # 回滚 status
+        task_data["status"] = "created"
+        row.update()
+        raise HTTPException(
+            status_code=503,
+            detail={"code": "STRATEGY_EXEC_UNAVAILABLE", "msg": str(e)},
+        )
+
+    if response.status_code >= 400:
+        log.error("[run_task] strategy_exec returned %d: %s",
+                  response.status_code, response.text)
+        # 回滚 status
+        task_data["status"] = "created"
+        row.update()
+        raise HTTPException(
+            status_code=response.status_code,
+            detail={"code": "STRATEGY_EXEC_ERROR", "msg": response.text},
+        )
+
+    log.info("[run_task] task_id=%d forwarded to strategy_exec OK", task_id)
+    # 返 task 详情 (status='queued', 等 strategy_exec 异步改 running)
+    from server.strategy import service as svc
+    return svc.get_task(task_id, row.user_id, is_admin=True)
+
 
 @router.post("/tasks/{task_id}/stop")
-def stop_task_endpoint(task_id: int, user: User = Depends(get_current_user)):
-    ok = svc.stop_task(task_id, user.id, user.role == "admin")
-    if not ok:
+async def stop_task_endpoint(task_id: int, user: User = Depends(get_current_user)):
+    """停止任务 (v120+: 转发到 strategy_exec)"""
+    from server.tables import StrategyTask
+    from server.config import settings
+    import httpx
+
+    row = StrategyTask.query_one(id=task_id)
+    if row is None:
         raise HTTPException(status_code=404, detail={"code": "TASK_NOT_FOUND"})
-    return {"ok": True, "task_id": task_id}
+    if user.role != "admin" and row.user_id != user.id:
+        raise HTTPException(status_code=403, detail={"code": "FORBIDDEN"})
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.post(
+                f"{settings.STRATEGY_EXEC_API_URL}/internal/stop-task",
+                headers={"X-Internal-Token": settings.STRATEGY_EXEC_API_TOKEN},
+                json={"task_id": task_id},
+            )
+        if response.status_code == 404:
+            raise HTTPException(status_code=404, detail={"code": "TASK_NOT_FOUND"})
+        if response.status_code >= 400:
+            log.warning("[stop_task] strategy_exec returned %d: %s",
+                        response.status_code, response.text)
+        return {"ok": True, "task_id": task_id}
+    except httpx.RequestError as e:
+        log.exception("[stop_task] forward failed")
+        # 兜底: 直接标 stopped (即使 strategy_exec 不可达, task 状态也能在本地改)
+        from datetime import datetime
+        task_data = row._data
+        task_data["status"] = "stopped"
+        task_data["finished_at"] = datetime.now()
+        row.update()
+        return {"ok": True, "task_id": task_id, "fallback": True}
 
 
 @router.delete("/tasks/{task_id}", status_code=204)
@@ -332,9 +426,38 @@ def get_task_audit_endpoint(
 
 @router.get("/templates/default")
 def get_default_script_template():
-    """给前端 ScriptDev.vue 编辑器作为初始内容"""
+    """给前端 ScriptDev.vue 编辑器作为初始内容
+
+    v120+ strategy-exec-service: 模板迁到 strategy_exec/templates/default_bt_strategy.py
+    读 strategy_exec 的默认 demo (避免重复实现, 单一事实源)
+    """
+    import os
+    # strategy_exec/templates/default_bt_strategy.py 在 EvTrade 项目根下
+    _TEMPLATE_PATH = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))),
+        "strategy_exec", "strategy_exec", "templates", "default_bt_strategy.py",
+    )
+    try:
+        with open(_TEMPLATE_PATH, "r", encoding="utf-8") as f:
+            src = f.read()
+        # 提取 DEFAULT_BT_STRATEGY_CODE 字符串内容
+        import ast
+        tree = ast.parse(src)
+        code_str = None
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Assign):
+                for target in node.targets:
+                    if isinstance(target, ast.Name) and target.id == "DEFAULT_BT_STRATEGY_CODE":
+                        code_str = ast.literal_eval(node.value)
+                        break
+        if code_str is None:
+            code_str = "# DEFAULT_BT_STRATEGY_CODE not found"
+    except Exception as e:
+        log.warning("[template] 读 strategy_exec 模板失败: %s", e)
+        code_str = f"# 模板加载失败: {e}\n# 请检查 strategy_exec/templates/default_bt_strategy.py"
+
     return {
-        "code": DEFAULT_SCRIPT,
+        "code": code_str,
         "params_schema": [
             {"key": "fast", "type": "int", "min": 3, "max": 10, "step": 1, "default": 5},
             {"key": "slow", "type": "int", "min": 15, "max": 30, "step": 5, "default": 20},

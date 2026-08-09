@@ -120,15 +120,16 @@ def on_startup():
     print(f"[INIT] sysconfig loaded: {len(sysconfig._cache)} users")
     # v90: 去掉 stocks 内存 cache (前端 IndexedDB 负责缓存, 后端直查 DB)
 
-    # v90+: 启动时清理 stale 的 running task (progress > 5min 没更新 → 标记 failed)
-    # 后端重启 / broker 卡死 → 任务卡在 running 但实际无线程跑, 前端看不到结束
+    # v120+ strategy-exec-service: stale task 清理由 strategy_exec 服务自行处理
+    #  (启动时清理 progress > 5min 没更新的 task → 标 failed, EvTrade 仅做兜底)
+    # 注: 原 sweep_stale_running_tasks 在 server/strategy/service.py, 已删
+    # 新位置 strategy_exec/strategy_exec/data_access/strategy_task.py (Phase 2+ 实施)
+    # 此处不重复扫, 仅占位日志
     try:
-        from server.strategy.service import sweep_stale_running_tasks
-        n = sweep_stale_running_tasks(max_idle_seconds=300)
-        if n:
-            print(f"[INIT] swept {n} stale running tasks")
+        # 占位: 若以后 EvTrade 想加兜底, 在此实现
+        pass
     except Exception as e:
-        print(f"[INIT] sweep stale running tasks error: {e}")
+        print(f"[INIT] stale task sweep error (non-fatal): {e}")
 
 
 @app.on_event("startup")
@@ -215,6 +216,27 @@ async def on_shutdown_quote_consumer():
             await _quote_cache_flusher_task
         except Exception as e:
             print(f"[SHUTDOWN] quote cache flusher cancel: {e}")
+
+
+# ---- v120+ strategy_exec_service (change 2026-08-09-strategy-exec-service) ----
+# signal_consumer: 订阅 strategy.exchange → 收 signal → POST /api/orders/place
+
+@app.on_event("startup")
+async def on_startup_signal_consumer():
+    try:
+        from server.services.strategy.signal_consumer import start_signal_consumer
+        await start_signal_consumer()
+    except Exception as e:
+        print(f"[STARTUP] signal_consumer start failed (non-fatal): {e}")
+
+
+@app.on_event("shutdown")
+async def on_shutdown_signal_consumer():
+    try:
+        from server.services.strategy.signal_consumer import stop_signal_consumer
+        await stop_signal_consumer()
+    except Exception as e:
+        print(f"[SHUTDOWN] signal_consumer stop error: {e}")
 
 
 # ---- REQ-AUTH-IDLE-001 (2026-07-31): token session cache 后台 sweep ----

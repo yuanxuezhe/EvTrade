@@ -88,6 +88,16 @@ class Settings:
     QUEUE_REPLY: str = _env("EVTRADE_QUEUE_REPLY", "EvTrade.Test.Reply")
     QUEUE_PUSH: str  = _env("EVTRADE_QUEUE_PUSH",  "EvTrade.Test.Push")
 
+    # ---- strategy-exec-service (v120+, change 2026-08-09-strategy-exec-service) ----
+    # signal 推送 exchange + queue (strategy_exec 推 signal → EvTrade 订阅)
+    STRATEGY_EXCHANGE_NAME: str = _env("EVTRADE_STRATEGY_EXCHANGE_NAME", "strategy.exchange")
+    STRATEGY_SIGNAL_QUEUE: str = _env("EVTRADE_STRATEGY_SIGNAL_QUEUE", "EvTrade.StrategySignal")
+    # strategy_exec 服务 URL + token (forwarding endpoint 用)
+    STRATEGY_EXEC_API_URL: str = _env("STRATEGY_EXEC_API_URL", "http://127.0.0.1:8001")
+    STRATEGY_EXEC_API_TOKEN: str = _env("STRATEGY_EXEC_API_TOKEN", "")
+    # service token (signal_consumer 调自家 /api/orders/place 用)
+    EVTRADE_SERVICE_TOKEN: str = _env("EVTRADE_SERVICE_TOKEN", "")
+
     # ---- RPC 行为 ----
     RPC_TIMEOUT: float = _env_float("EVTRADE_RPC_TIMEOUT", 30.0)  # 单次 call 超时
 
@@ -106,11 +116,13 @@ class Settings:
     # hqserver WS 地址(hq/hqserver.py 默认监听 8765)
     HQ_WS_URL: str = _env("HQ_WS_URL", "ws://127.0.0.1:8765")
 
-    # ---- Historical K-line data (server/strategy/runtime/his_hq.py) ----
+    # ---- Historical K-line data (v120+: strategy_exec/market_data/hq_history.py) ----
     # 拉历史 K 线走独立 RabbitMQ 通道(同 broker, 不同 exchange/queue)
     # 默认值兼容 iquant demo (quota_his.exchange + EvTrade.Test.ReqHisHq)
     # 如 broker 端实际队列名是 EvTrade.Testgs.ReqHisHq (少一个点),
     # 通过 EVTRADE_HIS_HQ_REQ_QUEUE 覆盖即可
+    # v120+ strategy-exec-service: 此配置 EvTrade 已不直接用 (脚本策略迁移到 strategy_exec),
+    # 但其他能力 (admin 拉历史 K 线验证等) 仍可用. 保留兼容
     HIS_HQ_RABBITMQ_URL: str = _env("EVTRADE_HIS_HQ_RABBITMQ_URL", "amqp://192.168.10.2:5672/")
     HIS_HQ_EXCHANGE_NAME: str = _env("EVTRADE_HIS_HQ_EXCHANGE_NAME", "quota_his.exchange")
     HIS_HQ_REQ_QUEUE: str = _env("EVTRADE_HIS_HQ_REQ_QUEUE", "EvTrade.Test.ReqHisHq")
