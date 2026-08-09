@@ -35,6 +35,7 @@ async def list_stocks(
     sector: Optional[str] = None,
     keyword: Optional[str] = None,         # v25 新增: 模糊匹配 stock_code 前缀或 stock_name 含
     is_t0_able: Optional[bool] = None,     # v25 新增: 回转标志过滤
+    stktype: Optional[int] = None,          # v120 新增: 证券类型过滤 (0=股票 / 1=ETF, None=全部)
     page: int = 1,                          # v25 新增: 页码(默认 1)
     page_size: int = 100,                   # v25 新增: 每页大小(默认 100,范围 1..500)
     limit: Optional[int] = None,            # v23 兼容: 老客户端可继续用 limit(无 page/total 返回)
@@ -43,9 +44,10 @@ async def list_stocks(
     """列出 stocks 表内容(v25 真分页)
 
     查询参数:
-      - sector: 板块精确匹配(可选)
+      - sector: 板块子串匹配(可选, v121: 不区分大小写 substring)
       - keyword: stock_code 前缀 OR stock_name 包含匹配(可选,大小写不敏感)
       - is_t0_able: 回转标志过滤(可选)
+      - stktype: 证券类型过滤 (0=股票 / 1=ETF, None=全部, v120 新增)
       - page: 页码,默认 1,≥ 1
       - page_size: 每页大小,默认 100,1..500
       - limit: 兼容老客户端(优先用 page_size)
@@ -61,10 +63,14 @@ async def list_stocks(
     rows = Stocks.query_all()
 
     # 服务端筛选
+    # v121: sector 从精确匹配改为子串匹配 (用户: "消费" 匹配 "消费-白酒" / "消费品-零售")
     if sector:
-        rows = [row for row in rows if row.sector == sector]
+        sec_q = sector.strip().lower()
+        rows = [row for row in rows if (row.sector or '') and sec_q in row.sector.lower()]
     if is_t0_able is not None:
         rows = [row for row in rows if bool(row.is_t0_able) == is_t0_able]
+    if stktype is not None:  # v120 新增: 证券类型过滤
+        rows = [row for row in rows if row.stktype == stktype]
     if keyword:
         kw = keyword.strip().lower()
         # v98+: keyword 匹配 stock_code (包含) / stock_name (包含) / short_name (包含)

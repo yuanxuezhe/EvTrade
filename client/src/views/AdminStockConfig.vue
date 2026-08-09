@@ -12,20 +12,15 @@
           @keyup.enter="onRefresh"
           @clear="onRefresh"
         />
-        <el-select
+        <!-- v121: 板块从字典下拉改成字符串子串匹配 (避开"字典太多"问题) -->
+        <el-input
           v-model="filters.sector"
-          placeholder="板块"
+          placeholder="板块子串匹配（例: 消费、银行）"
           clearable
-          style="width: 200px"
-          @change="onRefresh"
-        >
-          <el-option
-            v-for="s in sectorOptions"
-            :key="s"
-            :label="s"
-            :value="s"
-          />
-        </el-select>
+          style="width: 240px"
+          @keyup.enter="onRefresh"
+          @clear="onRefresh"
+        />
         <el-select
           v-model="filters.is_t0_able"
           placeholder="回转标志"
@@ -35,6 +30,19 @@
         >
           <el-option label="支持 T+0" :value="true" />
           <el-option label="不支持 T+0" :value="false" />
+        </el-select>
+        <!-- v120: 证券类型筛选 (0=股票 / 1=ETF)
+             关键修复: :value 用 'stock'/'etf' 字符串 (避开 number 0 falsy 陷阱),
+             onRefresh 内部用 STKTYPE_MAP 转回 0/1 传给后端 -->
+        <el-select
+          v-model="filters.stktype"
+          placeholder="类型"
+          clearable
+          style="width: 140px"
+          @change="onRefresh"
+        >
+          <el-option label="股票" value="stock" />
+          <el-option label="ETF" value="etf" />
         </el-select>
       </div>
       <div class="filter-right">
@@ -205,17 +213,13 @@ const rootStyle = computed(() => ({ '--oplog-extra': uiStore.oplogExpanded ? '26
 
 const store = useStocksStore()
 
-// 筛选
-const filters = reactive({ keyword: '', sector: '', is_t0_able: null })
+// 筛选 (v120 新增 stktype: ''=全部 / 'stock'=股票 / 'etf'=ETF)
+//   用 string 而非 number 0/1, 避免 Element Plus 2.x 把 :value="0" 当 falsy 跳过导致筛选无效
+//   onRefresh 里 STKTYPE_VALUE_MAP 转回 0/1 传给后端
+const filters = reactive({ keyword: '', sector: '', is_t0_able: null, stktype: '' })
+const STKTYPE_VALUE_MAP = { stock: 0, etf: 1 }
 
-// 板块下拉 — v113: 从全量 cache 拿所有 sector
-const sectorOptions = computed(() => {
-  const set = new Set()
-  for (const s of store.cache || []) {
-    if (s.sector) set.add(s.sector)
-  }
-  return [...set].sort()
-})
+// v121: sector 从字典下拉改为字符串子串匹配, sectorOptions computed 已删除
 
 // ==================== 行内编辑状态 ====================
 const rows = ref([])
@@ -364,11 +368,20 @@ async function onCreateSave() {
 }
 
 async function onRefresh() {
-  if (filters.keyword) {
-    const matches = store.searchCache(filters.keyword.trim(), 10000)
+  // v120 fix: 任一非 keyword 筛选条件有值, 全部走后端分页 (后端可正确处理 AND)
+  //   - 之前 searchCache 分支会被 keyword 一家独吞, 出现"切 stktype 但表格还是 keyword 搜索结果"
+  //   - 现在统一走后端, keyword 也透传给后端 (server 也支持 stock_code/name/short_name substring)
+  const kw = (filters.keyword || '').trim()
+  // stktype 是 string, '' 表示全部, 'stock'/'etf' 需要映射回 0/1
+  const stktypeNum = STKTYPE_VALUE_MAP[filters.stktype]   // undefined 当 '' 或未知值
+  const hasOtherFilter = !!filters.sector || filters.is_t0_able != null || stktypeNum !== undefined
+  if (kw && !hasOtherFilter) {
+    const matches = store.searchCache(kw, 10000)
+    const sec_q = (filters.sector || '').trim().toLowerCase()  // v121: substring
     const filtered = matches.filter((s) => {
-      if (filters.sector && s.sector !== filters.sector) return false
+      if (sec_q && !(s.sector || '').toLowerCase().includes(sec_q)) return false
       if (filters.is_t0_able != null && Boolean(s.is_t0_able) !== Boolean(filters.is_t0_able)) return false
+      if (stktypeNum !== undefined && Number(s.stktype) !== stktypeNum) return false
       return true
     })
     store.pageRows = filtered
@@ -377,7 +390,9 @@ async function onRefresh() {
   }
   await store.fetchPage({
     sector: filters.sector || undefined,
-    is_t0_able: filters.is_t0_able === null ? undefined : filters.is_t0_able
+    is_t0_able: filters.is_t0_able == null ? undefined : filters.is_t0_able,
+    stktype: stktypeNum,  // 已是 number 或 undefined, axios 会自动跳过 undefined
+    keyword: kw || undefined
   })
 }
 
