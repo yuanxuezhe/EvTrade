@@ -4,14 +4,17 @@ version = "0.1.0"
 requires-python = ">=3.10"
 dependencies = [
     "aio-pika>=7.0.0,<8.0.0",
+    "backtrader>=1.9.78.123",
     "bcrypt>=4.0.0,<5.0.0",
     "cryptography>=42.0.0",
     "fastapi>=0.83.0,<1.0.0",
     "msgpacket",
+    "numpy>=2.2.6",
     "pandas>=2.3.3",
     "passlib>=1.7.0,<2.0.0",
     "pika>=1.4.2",
-    "pydantic>=1.9.0,<2.0.0",
+    "pydantic>=2.5",
+    "pydantic-settings>=2.1",
     "pymysql>=1.1.0,<2.0.0",
     "pypinyin>=0.50.0,<1.0.0",
     "python-dotenv>=1.2.2",

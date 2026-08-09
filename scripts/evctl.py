@@ -4,18 +4,21 @@
 EvTrade 一键启停 — 开发期进程生命周期管理 (跨平台单一 Python 入口)
 
 Usage:
-    uv run python scripts/evctl.py start                  # 起三个
-    uv run python scripts/evctl.py stop                   # 停三个
+    uv run python scripts/evctl.py start                  # 起全部
+    uv run python scripts/evctl.py stop                   # 停全部
     uv run python scripts/evctl.py restart                # 停 + 起
     uv run python scripts/evctl.py status                 # 看状态
     uv run python scripts/evctl.py start backend          # 只起后端
-    uv run python scripts/evctl.py stop frontend hqserver # 停指定
+    uv run python scripts/evctl.py stop frontend hqserver strategy_exec  # 停指定
+    uv run python scripts/evctl.py start hqserver strategy_exec  # 只起指定
+    uv run python scripts/evctl.py logs [backend|frontend|hqserver|strategy_exec]  # 看日志
 
 约束:
     - 通过 `uv run` 启动时, sys.executable 自动指向 .venv 的 Python,
       子进程 (uvicorn / hqserver.py) 继承同一解释器, 无需手动激活 venv.
-    - 端口 8000 / 50998 / 8765 硬编码, 不读 env
+    - 端口 8000 / 50998 / 8765 / 8001 硬编码, 不读 env
     - 仅用标准库 (无 psutil / colorama)
+    - strategy_exec 通过 .env.example 加载环境变量再启动
 """
 
 import os
@@ -42,6 +45,7 @@ except ImportError:  # pragma: no cover
 BACKEND_PORT = 8000
 FRONTEND_PORT = 50998
 HQSERVER_PORT = 8765
+STRATEGY_EXEC_PORT = 8001
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(SCRIPT_DIR)
@@ -57,11 +61,12 @@ _WIN_DETACHED_FLAGS = 0x00000008 | 0x00000200
 
 
 class Service(object):
-    def __init__(self, name, port, cwd, cmd, preflight=None):
+    def __init__(self, name, port, cwd, cmd, preflight=None, env=None):
         self.name = name
         self.port = port
         self.cwd = cwd
-        self.cmd = cmd
+        self.cmd = cmd          # list | dict{cmd, env}
+        self.env = env or None  # dict: 自定义环境变量 (strategy_exec 用)
         self.log_file = os.path.join(LOG_DIR, name + '.log')
         self.pid_file = os.path.join(PID_DIR, name + '.pid')
         self.preflight = preflight or []  # list of module names to import-check
@@ -96,6 +101,34 @@ def _vite_cmd():
     ]
 
 
+def _strategy_exec_cmd():
+    """构造 strategy_exec 的启动命令 (从 .env 加载环境变量)."""
+    env_file = os.path.join(PROJECT_ROOT, 'strategy_exec', '.env')
+    env = {}
+    if os.path.exists(env_file):
+        with open(env_file, 'r', encoding='utf-8') as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith('#') and '=' in line:
+                    k, v = line.split('=', 1)
+                    env[k.strip()] = v.strip()
+    # 合并当前进程环境变量（保留 PYTHONPATH 等）
+    import copy
+    full_env = copy.copy(os.environ)
+    full_env.update(env)
+
+    return {
+        'cmd': [
+            sys.executable, '-m', 'uvicorn',
+            'strategy_exec.main:app',
+            '--host', '0.0.0.0',
+            '--port', str(STRATEGY_EXEC_PORT),
+            '--log-level', env.get('LOG_LEVEL', 'info').lower(),
+        ],
+        'env': full_env,
+    }
+
+
 SERVICES = {
     'backend': Service(
         'backend', BACKEND_PORT,
@@ -115,6 +148,12 @@ SERVICES = {
         [sys.executable, '-u', 'hqserver.py'],
         preflight=['aio_pika', 'websockets'],
     ),
+    'strategy_exec': Service(
+        'strategy_exec', STRATEGY_EXEC_PORT,
+        os.path.join(PROJECT_ROOT, 'strategy_exec'),
+        _strategy_exec_cmd(),
+        preflight=['fastapi', 'uvicorn'],  # backtrader 仅运行时需要，暂不预检
+    ),
     'broker': Service(
         'broker', None,   # no TCP port — pure RabbitMQ publisher
         os.path.join(PROJECT_ROOT, 'iquant'),
@@ -123,10 +162,10 @@ SERVICES = {
     ),
 }
 
-VALID_ACTIONS = ['start', 'stop', 'restart', 'status']
+VALID_ACTIONS = ['start', 'stop', 'restart', 'status', 'logs']
 # v118: broker 加入服务表 — 但 DEFAULT_SERVICES 默认跳过 (xtquant 模块依赖 QMT 客户端环境)
 #   用户可显式 `uv run python scripts/evctl.py start broker` / restart broker 启动
-DEFAULT_SERVICES = ['backend', 'frontend', 'hqserver']
+DEFAULT_SERVICES = ['backend', 'frontend', 'hqserver', 'strategy_exec']
 OPTIONAL_SERVICES = ['broker']   # v118: 需要 xtquant 本地模块, 默认不启动
 
 # ============================================================================
@@ -397,7 +436,7 @@ def kill_stragglers(pattern):
 # ============================================================================
 
 
-def spawn_detached(cmd, cwd, log_path, pid_file):
+def spawn_detached(cmd, cwd, log_path, pid_file, env=None):
     """Popen 启动后台进程, 写 pid_file. 返回 Popen."""
     log_f = open(log_path, 'ab', buffering=0)
     try:
@@ -410,6 +449,7 @@ def spawn_detached(cmd, cwd, log_path, pid_file):
                 stderr=subprocess.STDOUT,
                 stdin=subprocess.DEVNULL,
                 creationflags=_WIN_DETACHED_FLAGS,
+                env=env,
             )
         else:
             p = subprocess.Popen(
@@ -420,6 +460,7 @@ def spawn_detached(cmd, cwd, log_path, pid_file):
                 stdin=subprocess.DEVNULL,
                 close_fds=True,
                 start_new_session=True,
+                env=env,
             )
     except Exception:
         log_f.close()
@@ -454,10 +495,24 @@ def _preflight_check(svc):
     return True
 
 
+def _clear_log(svc):
+    """启动前清空日志文件（保留文件，只 truncate）"""
+    if not os.path.exists(svc.log_file):
+        return
+    try:
+        with open(svc.log_file, 'w') as f:
+            f.truncate(0)
+    except (IOError, OSError):
+        pass
+
+
 def start_service(svc):
     """启动单个服务. 端口被占 (非孤儿) 视为 skip-success. 真正失败返回 False."""
     name = svc.name
     port = svc.port
+
+    # 启动前清日志（每次 start/restart 都清，不累积）
+    _clear_log(svc)
 
     port_pid = find_pid_by_port(port)
     if port_pid is not None:
@@ -495,9 +550,11 @@ def start_service(svc):
     # 清理 stale pid 文件
     _cleanup_stale_pidfile(svc.pid_file)
 
-    # spawn
+    # spawn: strategy_exec 的 cmd 是 dict{cmd, env}
+    cmd = svc.cmd['cmd'] if isinstance(svc.cmd, dict) else svc.cmd
+    env = svc.env if isinstance(svc.cmd, dict) else None
     try:
-        p = spawn_detached(svc.cmd, svc.cwd, svc.log_file, svc.pid_file)
+        p = spawn_detached(cmd, svc.cwd, svc.log_file, svc.pid_file, env=env)
     except (OSError, IOError) as e:
         log_err('failed to spawn ' + name + ': ' + str(e))
         return False
@@ -729,9 +786,32 @@ def parse_args(argv):
 def restart_all(services=None):
     stop_all(services)
     time.sleep(1)
-    # 2026-07-10: 重启前清旧日志, 避免历史日志干扰分析
+    # _cleanup_logs_before_restart: 额外清理 server/logs/ 和 /tmp/ (历史遗留位置)
     _cleanup_logs_before_restart()
     return start_all(services)
+
+
+def _logs_all(services=None):
+    """打印指定服务(们)的日志最后 50 行"""
+    import shutil
+    targets = services if services else list(DEFAULT_SERVICES)
+    for name in targets:
+        if name not in SERVICES:
+            log_warn('unknown service: ' + name)
+            continue
+        svc = SERVICES[name]
+        if not os.path.exists(svc.log_file):
+            log_info(name + ': log file not found: ' + svc.log_file)
+            continue
+        log_info('=== ' + name + ': ' + svc.log_file + ' ===')
+        try:
+            with open(svc.log_file, 'r', errors='replace') as f:
+                lines = f.readlines()
+            for line in lines[-50:]:
+                sys.stdout.write('    ' + line)
+            sys.stdout.write('\n')
+        except (IOError, OSError) as e:
+            log_warn(name + ': cannot read log: ' + str(e))
 
 
 def _cleanup_logs_before_restart():
@@ -776,6 +856,10 @@ def main():
         return 0 if ok else 1
     if action == 'status':
         status_all()
+        return 0
+    if action == 'logs':
+        # logs 可以指定服务名，也可以不加参数打印所有
+        _logs_all(services)
         return 0
     return 0  # unreachable
 

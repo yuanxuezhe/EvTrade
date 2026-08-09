@@ -21,7 +21,7 @@ SQLAlchemy 声明基类只注册一次。
 注意：
   - 本文件不动 test 文件本身（保持向后兼容）。
   - 也不动生产代码（生产代码用 `from server.X` 走限定名）。
-  - 跑测试时仍 `cd D:/workspace/EvTrade && python -m pytest server/ -v`。
+  - 跑测试时 `cd F:/EvTrade && pytest tests/`（testpaths = tests 已在 pytest.ini 收敛）。
 """
 import sys
 from pathlib import Path

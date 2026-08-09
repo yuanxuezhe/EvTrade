@@ -11,10 +11,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Optional
+from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from strategy_exec.config import get_settings
 from strategy_exec.engines.backtrader.backtest import run_backtest
@@ -31,7 +31,10 @@ router = APIRouter(prefix="/internal", tags=["internal"])
 
 
 async def verify_internal_token(x_internal_token: Optional[str] = Header(None)) -> None:
+    """空 token 时跳过验证（strategy_exec_api_token 未配置 = 局域网不鉴权）"""
     settings = get_settings()
+    if not settings.strategy_exec_api_token:
+        return  # 局域网部署，不鉴权
     if x_internal_token is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -53,11 +56,24 @@ class RunTaskRequest(BaseModel):
     script_id: str = Field(min_length=1, max_length=64)
     stock_code: str = Field(min_length=1, max_length=16)
     mode: str = Field(pattern="^(backtest|live)$")
-    params: dict = Field(default_factory=dict)
+    params: Any = Field(default_factory=dict)
     backtest_start_date: Optional[str] = Field(default=None, pattern=r"^\d{8}$")
     backtest_end_date: Optional[str] = Field(default=None, pattern=r"^\d{8}$")
     period: Optional[str] = Field(default=None, pattern=r"^(1d|1m|5m|15m|30m|60m)$")
     fields: Optional[str] = Field(default=None)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _parse_params_before(cls, values):
+        if isinstance(values, dict) and "params" in values:
+            p = values["params"]
+            if isinstance(p, str):
+                try:
+                    import json
+                    values["params"] = json.loads(p)
+                except json.JSONDecodeError:
+                    raise ValueError(f"params 必须是 dict 或有效 JSON，收到: {p!r}")
+        return values
 
 
 class RunTaskResponse(BaseModel):
@@ -119,13 +135,26 @@ async def run_task(req: RunTaskRequest) -> RunTaskResponse:
         from strategy_exec.data_access import update_task_status
         from strategy_exec.signal.publisher import get_publisher
 
-        if not req.backtest_start_date or not req.backtest_end_date:
+        missing = []
+        if not req.backtest_start_date:
+            missing.append("backtest_start_date")
+        if not req.backtest_end_date:
+            missing.append("backtest_end_date")
+        if missing:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail={"code": "MISSING_DATES", "msg": "回测需 start_date + end_date"},
+                detail={
+                    "code": "MISSING_DATES",
+                    "msg": f"回测模式缺少必填参数: {', '.join(missing)}（格式 YYYYMMDD，如 20260101）",
+                },
             )
 
-        # 拉 K 线 (可能在 broker 不可达时失败)
+        # 步骤1: 拉历史 K 线
+        log.info(
+            "[run_task] backtest step 1/2 fetch_his_bars start: stock=%s %s~%s period=%s",
+            req.stock_code, req.backtest_start_date, req.backtest_end_date,
+            req.period or "1d",
+        )
         try:
             bars = await fetch_his_bars(
                 stock_code=req.stock_code,
@@ -134,10 +163,13 @@ async def run_task(req: RunTaskRequest) -> RunTaskResponse:
                 period=req.period or "1d",
             )
         except Exception as e:
-            log.exception("[run_task] fetch bars failed")
+            log.error("[run_task] fetch bars failed: %s", e)
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY,
-                detail={"code": "BROKER_ERROR", "msg": f"broker his_hq failed: {e}"},
+                detail={
+                    "code": "BROKER_ERROR",
+                    "msg": f"broker his_hq 行情服务未响应: {e} —— 请确认 QMT 端历史行情(his_hq)服务已启动并消费队列 EvTrade.ReqHisHq 后重试",
+                },
             )
 
         if not bars:
@@ -146,13 +178,19 @@ async def run_task(req: RunTaskRequest) -> RunTaskResponse:
                 detail={"code": "NO_DATA", "msg": "broker 未返回数据"},
             )
 
+        log.info(
+            "[run_task] backtest step 1/2 fetch_his_bars done: %d bars",
+            len(bars),
+        )
+
         # 预连接 publisher (减少首次 publish 延迟)
         try:
             await get_publisher().connect()
         except Exception as e:
             log.warning("[run_task] publisher connect failed (will retry on publish): %s", e)
 
-        # 后台异步执行回测
+        # 步骤2: 后台异步执行回测
+        log.info("[run_task] backtest step 2/2 dispatch background task=%d", req.task_id)
         asyncio.create_task(
             _run_backtest_background(
                 task_id=req.task_id,
@@ -182,7 +220,7 @@ async def run_task(req: RunTaskRequest) -> RunTaskResponse:
                 params=req.params,
             )
         except Exception as e:
-            log.exception("[run_task] start live failed")
+            log.error("[run_task] start live failed: %s", e)
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail={"code": "LIVE_START_FAILED", "msg": str(e)},
@@ -201,6 +239,10 @@ async def _run_backtest_background(
     backtest_start_date: Optional[str], backtest_end_date: Optional[str], period: str,
 ) -> None:
     """后台跑回测 (异常时更新 task status='failed')"""
+    log.info(
+        "[backtest task=%d] background start: stock=%s bars=%d %s~%s period=%s",
+        task_id, stock_code, len(bars), backtest_start_date, backtest_end_date, period,
+    )
     try:
         await asyncio.to_thread(
             run_backtest,
@@ -214,8 +256,9 @@ async def _run_backtest_background(
             backtest_end_date=backtest_end_date,
             period=period,
         )
+        log.info("[backtest task=%d] background done", task_id)
     except Exception as e:
-        log.exception("[backtest task=%d] background failed", task_id)
+        log.error("[backtest task=%d] background failed: %s", task_id, e)
         from strategy_exec.data_access import update_task_status
         try:
             update_task_status(task_id, "failed", error_msg=f"backtest exception: {e}")
@@ -241,7 +284,7 @@ async def stop_task(req: StopTaskRequest) -> StopTaskResponse:
         update_task_status(req.task_id, "stopped")
         return StopTaskResponse(ok=True, task_id=req.task_id)
     except Exception as e:
-        log.exception("[stop_task] update status failed")
+        log.error("[stop_task] update status failed: %s", e)
         return StopTaskResponse(ok=False, task_id=req.task_id)
 
 
@@ -289,7 +332,7 @@ async def receive_progress(task_id: int, req: ProgressRequest) -> ProgressRespon
         update_task_progress(task_id, req.progress)
         return ProgressResponse(ok=True, task_id=task_id)
     except Exception as e:
-        log.exception("[progress task=%d] failed", task_id)
+        log.error("[progress task=%d] failed: %s", task_id, e)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={"code": "PROGRESS_WRITE_FAILED", "msg": str(e)},

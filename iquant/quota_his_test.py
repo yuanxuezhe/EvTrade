@@ -17,8 +17,10 @@ on_quote(columns, row_dict) 回调 — 模拟"实时行情一条条到达"的场景,
 ==============================================================================
 """
 
+import datetime
 import io
 import time
+import uuid
 from msgpacket import MSG_TYPE_REQUEST, MsgPacket
 import pandas as pd
 import pika
@@ -31,8 +33,10 @@ MQ_PORT = 5672
 MQ_USER = "guest"
 MQ_PASS = "guest"
 EXCHANGE_NAME = "quota_his.exchange"
-REQ_QUEUE = "EvTrade.Test.ReqHisHq"
-ANS_QUEUE = "MyClient.AnsQueue.001"   # client-only answer queue
+REQ_QUEUE = "EvTrade.ReqHisHq"
+# Answer queue must be unique per run (NOT a fixed durable queue):
+# leftovers from a previous run would be replayed first on the next run,
+# causing stale/reordered/duplicate rows even though the market data flows.
 
 # ---------------------------------------------------------------------------
 # Request knobs (tweak as needed)
@@ -45,6 +49,32 @@ PERIOD = "1m"
 STOCK_CODE = "159992.SZ"
 START_DATE = "20260701"
 END_DATE = "20260731"
+
+
+def _unique_ans_queue() -> str:
+    """Unique per-run answer queue name; deleted by the caller when done.
+
+    The server publishes one reply per trading day to this queue by name.
+    A fixed name would leave yesterday's unconsumed replies around, and the
+    next run would drain those leftovers before the fresh replies.
+    """
+    return "MyClient.AnsQueue." + uuid.uuid4().hex[:8]
+
+
+def _expected_trading_days() -> int:
+    """Weekday count in [START_DATE, END_DATE] as an upper bound of replies.
+
+    The server emits one reply per trading day (holidays / no-data days are
+    skipped), so actual replies <= weekday count. Used only to print progress
+    and to early-stop once all days in range are received.
+    """
+    start = datetime.datetime.strptime(START_DATE[:8], "%Y%m%d").date()
+    end = datetime.datetime.strptime(END_DATE[:8], "%Y%m%d").date()
+    return sum(
+        1
+        for i in range((end - start).days + 1)
+        if (start + datetime.timedelta(days=i)).weekday() < 5
+    )
 
 
 def _iter_rows(raw_text):
@@ -75,7 +105,7 @@ def _iter_rows(raw_text):
         yield columns, dict(zip(columns, values))
 
 
-def _connect_and_setup():
+def _connect_and_setup(ans_queue):
     """建 AMQP 连接 + 声明 exchange/queue/binding, 返回 (conn, channel)."""
     credentials = pika.PlainCredentials(MQ_USER, MQ_PASS)
     conn = pika.BlockingConnection(
@@ -91,11 +121,13 @@ def _connect_and_setup():
     channel.queue_bind(
         queue=REQ_QUEUE, exchange=EXCHANGE_NAME, routing_key=REQ_QUEUE
     )
-    channel.queue_declare(queue=ANS_QUEUE, durable=True)
+    # durable=True must match the server's queue_declare(target, durable=True),
+    # otherwise the server gets a 406 PRECONDITION_FAILED and never replies.
+    channel.queue_declare(queue=ans_queue, durable=True)
     return conn, channel
 
 
-def _build_request_packet():
+def _build_request_packet(ans_queue):
     """Build his_hq request MsgPacket (stock_code / date / fields / period)."""
     pkt = MsgPacket(MSG_TYPE_REQUEST)
     pkt.set_func("his_hq")
@@ -104,7 +136,7 @@ def _build_request_packet():
     pkt.set_value("stock_code", STOCK_CODE)
     pkt.set_value("start_date", START_DATE)
     pkt.set_value("end_date", END_DATE)
-    pkt.set_value("ans_queue", ANS_QUEUE)
+    pkt.set_value("ans_queue", ans_queue)
     pkt.set_value("fields", FIELDS)
     pkt.set_value("period", PERIOD)
     pkt.finalize()
@@ -113,7 +145,7 @@ def _build_request_packet():
 
 def send_request_and_consume(
     on_quote=None,
-    inactivity_timeout=10,
+    inactivity_timeout=30,
     *,
     verbose=True,
 ):
@@ -133,9 +165,11 @@ def send_request_and_consume(
     Returns:
         int: 累计回调次数 (收到的 row 总数).
     """
-    conn, channel = _connect_and_setup()
+    ans_queue = _unique_ans_queue()
+    expected_days = _expected_trading_days()
+    conn, channel = _connect_and_setup(ans_queue)
     try:
-        pkt = _build_request_packet()
+        pkt = _build_request_packet(ans_queue)
         _, req_bytes = pkt.encode()
 
         channel.basic_publish(
@@ -145,16 +179,20 @@ def send_request_and_consume(
             print("[client] request published to " + REQ_QUEUE +
                   " (stock=" + STOCK_CODE + ", " + START_DATE + "~" + END_DATE +
                   ", fields='" + FIELDS + "', period='" + PERIOD +
-                  "'); waiting for replies...")
+                  "', ans_queue=" + ans_queue +
+                  "); waiting for replies (<= " + str(expected_days) +
+                  " trading days in range)...")
 
         total_rows = 0
+        reply_count = 0
         for method_frame, properties, body in channel.consume(
-            queue=ANS_QUEUE, inactivity_timeout=inactivity_timeout
+            queue=ans_queue, inactivity_timeout=inactivity_timeout
         ):
             if body is None:
                 if verbose:
                     print("[client] no more data (idle " + str(inactivity_timeout) +
-                          "s). total rows processed: " + str(total_rows))
+                          "s). replies=" + str(reply_count) + "/" + str(expected_days) +
+                          " trading days, total rows: " + str(total_rows))
                 break
 
             raw_text = body.decode("utf-8")
@@ -166,16 +204,31 @@ def send_request_and_consume(
                 total_rows += 1
                 row_count_in_reply += 1
 
+            reply_count += 1
+
             if verbose:
-                print("[client] 1 reply parsed into " + str(row_count_in_reply) +
+                print("[client] reply " + str(reply_count) + "/" + str(expected_days) +
+                      " parsed into " + str(row_count_in_reply) +
                       " rows (cumulative=" + str(total_rows) + ")")
 
             channel.basic_ack(delivery_tag=method_frame.delivery_tag)
+
+            if reply_count >= expected_days:
+                if verbose:
+                    print("[client] all expected trading days received (" +
+                          str(reply_count) + ")")
+                break
 
         return total_rows
     finally:
         try:
             channel.cancel()
+        except Exception:
+            pass
+        # unique per-run answer queue: delete it so leftover replies do not
+        # pollute any future run
+        try:
+            channel.queue_delete(queue=ans_queue)
         except Exception:
             pass
         conn.close()

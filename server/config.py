@@ -118,14 +118,12 @@ class Settings:
 
     # ---- Historical K-line data (v120+: strategy_exec/market_data/hq_history.py) ----
     # 拉历史 K 线走独立 RabbitMQ 通道(同 broker, 不同 exchange/queue)
-    # 默认值兼容 iquant demo (quota_his.exchange + EvTrade.Test.ReqHisHq)
-    # 如 broker 端实际队列名是 EvTrade.Testgs.ReqHisHq (少一个点),
-    # 通过 EVTRADE_HIS_HQ_REQ_QUEUE 覆盖即可
+    # 请求队列必须是 EvTrade.ReqHisHq (broker 端 his_hq 应答服务消费此队列)
     # v120+ strategy-exec-service: 此配置 EvTrade 已不直接用 (脚本策略迁移到 strategy_exec),
     # 但其他能力 (admin 拉历史 K 线验证等) 仍可用. 保留兼容
     HIS_HQ_RABBITMQ_URL: str = _env("EVTRADE_HIS_HQ_RABBITMQ_URL", "amqp://192.168.10.2:5672/")
     HIS_HQ_EXCHANGE_NAME: str = _env("EVTRADE_HIS_HQ_EXCHANGE_NAME", "quota_his.exchange")
-    HIS_HQ_REQ_QUEUE: str = _env("EVTRADE_HIS_HQ_REQ_QUEUE", "EvTrade.Test.ReqHisHq")
+    HIS_HQ_REQ_QUEUE: str = _env("EVTRADE_HIS_HQ_REQ_QUEUE", "EvTrade.ReqHisHq")
     HIS_HQ_TIMEOUT: float = _env_float("EVTRADE_HIS_HQ_TIMEOUT", 30.0)
     # broker 凭据 (默认 guest/guest, 生产应改)
     HIS_HQ_USER: str = _env("EVTRADE_HIS_HQ_USER", "guest")

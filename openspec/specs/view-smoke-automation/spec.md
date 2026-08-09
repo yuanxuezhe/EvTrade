@@ -13,17 +13,35 @@
 > - **兄弟 spec（view-testing-stack）**：单 view / 单 component 级别测试；挂载 → 操作 props/slots → 断言渲染结果 + store state
 
 ## Requirements
-### Requirement: stub-based 烟雾自动化
+### Requirement: stub-based 烟雾自动化（路径修订）
 
-`client/tests/smoke/` MUST 覆盖 add-manual-adjust-and-history-pages 6.3/6.4 Defer 的全链路状态机：
-- `today-flow.test.js` 覆盖 login → holdings.bootstrap → IDB miss → HTTP fallback → admin adjustPosition / adjustAsset → admin reconcile → 调平被冲掉
-- `history-query.test.js` 覆盖路由 → 日期 chip → stockCode 过滤 → API getOrders / getTrades → 结果渲染
+`tests/client/smoke/` MUST 覆盖 add-manual-adjust-and-history-pages 6.3/6.4 Defer 的全链路状态机（路径原 `client/tests/smoke/`）：
+- `today-flow.test.js`（迁到 `tests/client/smoke/today-flow.test.js`）覆盖 login → holdings.bootstrap → IDB miss → HTTP fallback → admin adjustPosition / adjustAsset → admin reconcile → 调平被冲掉
+- `history-query.test.js`（迁到 `tests/client/smoke/history-query.test.js`）覆盖路由 → 日期 chip → stockCode 过滤 → API getOrders / getTrades → 结果渲染
 - smoke 测试 MUST vi.mock `src/stores/ws_heartbeat` 避免 bootstrap 后 _startWs 真连 ws 服务（Node undici WebSocket 抛 ERR_INVALID_ARG_TYPE）
 - smoke 测试 MUST 在 `npm test -- --run` 默认包含，无需手动启 dev server / RPC / broker
 
-#### Scenario: 完整 today-flow 链路
+### npm script 修订
 
-- **WHEN** 测试执行：login admin → bootstrap → IDB mock miss → HTTP 拉数据 → adjustPosition +100 → adminReconcile
+`client/package.json` 的 `test` script：
+- 旧：`"test": "vitest run"`
+- 新：`"test": "vitest run --config ../tests/client/vitest.config.js"`
+
+smoke 测试在 `cd client && npm test -- --run` 仍然被自动发现并跑（vitest 通过 `--config` 加载新位置配置，`include: ../tests/client/**/*.{test,spec}.{js,mjs}` 覆盖 smoke 子目录）。
+
+## Scenarios
+
+#### Scenario: smoke 测试 CI 可跑（路径修订）
+
+- **WHEN** CI 跑 `cd client && npm test -- --run`
+- **THEN** vitest 通过 `--config ../tests/client/vitest.config.js` 加载新配置
+- **AND** smoke 测试 (`tests/client/smoke/today-flow.test.js` + `tests/client/smoke/history-query.test.js`) 与 unit 测试一起跑
+- **AND** 总时间 < 60s
+- **AND** 无需额外 step
+
+#### Scenario: 完整 today-flow 链路（路径修订）
+
+- **WHEN** 测试 `tests/client/smoke/today-flow.test.js` 执行：login admin → bootstrap → IDB mock miss → HTTP 拉数据 → adjustPosition +100 → adminReconcile
 - **THEN** 最终 holdingsStore.positions[0].vol = 1100（调增 +100）
 - **AND** 再调 adminReconcile 后 positions[0].vol = 1000（broker 真实值覆盖调平）
 - **AND** synced_from = 'rpc_full'
@@ -45,10 +63,3 @@
 - **WHEN** 测试传 startDate > endDate
 - **THEN** api.getOrders 不被调
 - **AND** UI 显示「开始日期不能晚于结束日期」错误
-
-#### Scenario: smoke 测试 CI 可跑
-
-- **WHEN** CI 跑 `cd client && npm test -- --run`
-- **THEN** smoke 测试与 unit 测试一起跑，无需额外 step
-- **AND** 总时间 < 60s
-

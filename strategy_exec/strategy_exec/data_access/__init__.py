@@ -7,10 +7,12 @@ from strategy_exec.data_access.strategy_task import (
     update_task_status,
     update_task_progress,
     write_audit,
+    append_live_signals,
 )
 
 __all__ = [
     "get_engine", "get_session", "dispose_engine",
     "get_script",
     "get_task", "update_task_status", "update_task_progress", "write_audit",
+    "append_live_signals",
 ]

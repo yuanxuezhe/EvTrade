@@ -187,7 +187,7 @@ function sourceLabel(s) {
   return { bootstrap: '启动', refresh: '刷新', user: '用户', ws: 'WS', rpc: 'RPC' }[s] || s
 }
 function sourceTagType(s) {
-  return { bootstrap: 'info', refresh: 'info', user: '', ws: 'success', rpc: 'warning' }[s] || 'info'
+  return { bootstrap: 'info', refresh: 'info', user: 'primary', ws: 'success', rpc: 'warning' }[s] || 'info'
 }
 function refLabel(k) {
   return { asset: '资金', positions: '持仓', orders: '委托', trades: '成交' }[k] || k

@@ -25,7 +25,7 @@ class Config:
     VHOST = "/"
     
     EXCHANGE_NAME = "quota_his.exchange"
-    QUEUE_REQ = "EvTrade.Testgs.ReqHisHq"
+    QUEUE_REQ = "EvTrade.ReqHisHq"
     ACCOUNT_ID = '110000035080'
 
 config = Config()

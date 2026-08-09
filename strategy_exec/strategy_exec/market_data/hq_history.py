@@ -1,22 +1,22 @@
 """
 strategy_exec.market_data.hq_history — 拉历史 K 线 (broker his_hq)
 
-📌 broker his_hq 是 xtquant 的 RabbitMQ 通道, 同 EvTrade broker RPC:
+📌 broker his_hq 是 xtquant 的 RabbitMQ 通道:
    - exchange: quota_his.exchange (topic)
-   - req_queue: EvTrade.ReqHisHq (rpc client 端)
-   - 协议: msgpacket 格式 (Requester 返 Reply)
+   - req_queue: EvTrade.ReqHisHq (broker 监听此队列)
+   - 协议: msgpacket 二进制格式 (与 iquant/quota_his_test.py 完全一致)
+   - 关键: ans_queue 放在 body 字段里，不是 reply_to header
 
-策略_exec 与 EvTrade 共享 broker, 走同一 RabbitMQ URL
+Strategy_exec 与 EvTrade 共享 broker, 走同一 RabbitMQ URL
 """
 
 from __future__ import annotations
 
 import asyncio
-import json
+import datetime
 import logging
-import time
 import uuid
-from typing import Any, Dict, List, Optional
+from typing import Any, List, Optional
 
 import aio_pika
 from aio_pika.abc import AbstractRobustConnection
@@ -30,8 +30,47 @@ class HQHistoryError(Exception):
     """拉历史 K 线失败"""
 
 
+def _iter_rows(raw_text: str):
+    """Parse broker reply body.
+
+    Wire format:
+        <col_header>\\n<row1>|<row2>|...
+    where row_i = "<stime>#<field1>#<field2>..."
+    """
+    header_line, _, body = raw_text.partition("\n")
+    columns = header_line.split(",")
+    if not body.strip():
+        return
+    for line in body.split("|"):
+        if not line:
+            continue
+        values = line.split("#")
+        yield columns, dict(zip(columns, values))
+
+
+def _weekdays_in(start: str, end: str) -> int:
+    """YYYYMMDD 区间内工作日数 — 服务端按天推送的 reply 条数上界.
+
+    法定节假日/无数据天会被服务端跳过, 因此实际 reply 数 <= 工作日数.
+    仅用于日志提示, 不作为截断依据.
+    """
+    s = datetime.datetime.strptime(start[:8], "%Y%m%d").date()
+    e = datetime.datetime.strptime(end[:8], "%Y%m%d").date()
+    return sum(
+        1
+        for i in range((e - s).days + 1)
+        if (s + datetime.timedelta(days=i)).weekday() < 5
+    )
+
+
 class HQHistoryClient:
-    """async client for broker his_hq (单连接, 复用 channel)"""
+    """async client for broker his_hq (单连接, 复用 channel)
+
+    协议参考: iquant/quota_his_test.py
+    - 使用 MsgPacket 二进制格式 (非 JSON)
+    - ans_queue 放在 body 字段里
+    - ans_queue 用 exclusive auto_delete 临时队列接收 reply
+    """
 
     def __init__(self) -> None:
         self.settings = get_settings()
@@ -43,12 +82,7 @@ class HQHistoryClient:
             return
         self._connection = await aio_pika.connect_robust(self.settings.evtrade_rabbitmq_url)
         self._channel = await self._connection.channel()
-        # declare reply queue (per-request)
-        await self._channel.declare_queue(
-            self.settings.evtrade_his_hq_req_queue,
-            durable=True,
-        )
-        log.info("[hq_history] connected, queue=%s", self.settings.evtrade_his_hq_req_queue)
+        log.info("[hq_history] connected to %s", self.settings.evtrade_rabbitmq_url)
 
     async def close(self) -> None:
         if self._connection is not None and not self._connection.is_closed:
@@ -69,56 +103,111 @@ class HQHistoryClient:
         assert self._channel is not None
 
         if fields is None:
-            fields = ["open", "high", "low", "close", "volume"]
+            fields = ["open", "close", "high", "low", "volume"]
 
-        # msgpacket 风格 request payload (简化 — 真实协议由 broker 定义)
-        request_id = str(uuid.uuid4())
-        request_payload = {
-            "func": "query_history_k_line",
-            "request_id": request_id,
-            "stock_code": stock_code,
-            "period": period,
-            "start_date": start_date,
-            "end_date": end_date,
-            "fields": fields,
-        }
+        # ── 构造 msgpacket 格式请求 (与 quota_his_test.py 完全一致) ──
+        try:
+            from msgpacket import MSG_TYPE_REQUEST, MsgPacket
+        except ImportError:
+            raise HQHistoryError("msgpacket 模块未安装: pip install msgpacket")
 
-        # 监听 reply (reply_to 临时 queue)
-        reply_queue = await self._channel.declare_queue(exclusive=True)
-        routing_key = f"{self.settings.evtrade_his_hq_req_queue}.reply.{request_id}"
+        ans_queue = f"HisHqAns.{uuid.uuid4().hex[:8]}"
+        pkt = MsgPacket(MSG_TYPE_REQUEST)
+        pkt.set_func("his_hq")
+        pkt.set_headers(6, "stock_code,start_date,end_date,ans_queue,fields,period")
+        pkt.add_row()
+        pkt.set_value("stock_code", stock_code)
+        pkt.set_value("start_date", start_date)
+        pkt.set_value("end_date", end_date)
+        pkt.set_value("ans_queue", ans_queue)  # 放 body 里，不是 reply_to
+        pkt.set_value("fields", ",".join(fields))
+        pkt.set_value("period", period)
+        pkt.finalize()
+        _, req_bytes = pkt.encode()
 
-        async with reply_queue.iterator(timeout=self.settings.evtrade_his_hq_req_timeout) as it:
-            # publish request
-            exchange = await self._channel.declare_exchange(
-                self.settings.evtrade_his_hq_exchange_name,
-                aio_pika.ExchangeType.TOPIC,
-                durable=True,
-            )
-            await exchange.publish(
-                aio_pika.Message(
-                    body=json.dumps(request_payload).encode("utf-8"),
-                    reply_to=routing_key,
-                    correlation_id=request_id,
-                ),
-                routing_key=self.settings.evtrade_his_hq_req_queue,
-            )
+        # ── 创建 answer queue 并绑定到 exchange ──
+        # 必须 durable=True (非 exclusive): broker 端 his_hq 应答服务会
+        # queue_declare(target, durable=True) 后再 publish, 若应答队列是
+        # durable=False/exclusive, 服务端 redeclare 会 406 失败 → 该天被跳过
+        # → 客户端收 0 行超时. (quota_his_test.py 即用 durable=True 成功)
+        ans_q = await self._channel.declare_queue(ans_queue, durable=True, exclusive=False, auto_delete=False)
+        exchange = await self._channel.declare_exchange(
+            self.settings.evtrade_his_hq_exchange_name,
+            aio_pika.ExchangeType.TOPIC,
+            durable=True,
+        )
+        await ans_q.bind(exchange, routing_key=ans_queue)
+        log.info(
+            "[hq_history] fetching stock=%s %s~%s period=%s fields=%s ans_queue=%s",
+            stock_code, start_date, end_date, period, fields, ans_queue,
+        )
 
-            # wait reply
-            async for msg in it:
-                async with msg.process():
-                    payload = json.loads(msg.body.decode("utf-8"))
-                    if payload.get("request_id") != request_id:
-                        continue
-                    if payload.get("code", 0) != 0:
-                        raise HQHistoryError(
-                            f"broker his_hq error: code={payload.get('code')} msg={payload.get('msg')}"
+        # ── 发布请求到 broker 监听的队列 ──
+        await exchange.publish(
+            aio_pika.Message(body=req_bytes),
+            routing_key=self.settings.evtrade_his_hq_req_queue,
+        )
+        expected_days = _weekdays_in(start_date, end_date)
+        timeout = self.settings.evtrade_his_hq_req_timeout
+        log.info(
+            "[hq_history] request published to queue=%s, waiting replies "
+            "(expected <= %d trading days, idle timeout %ss)",
+            self.settings.evtrade_his_hq_req_queue, expected_days, timeout,
+        )
+
+        # ── 等待 reply ──
+        all_rows: List[Dict[str, Any]] = []
+        reply_count = 0
+
+        try:
+            async with ans_q.iterator(timeout=timeout) as it:
+                async for msg in it:
+                    async with msg.process():
+                        raw_text = msg.body.decode("utf-8")
+                        # _iter_rows 产出 (columns, row) 元组, 这里只取 row dict
+                        # (回测引擎需要 List[Dict], 直接存元组会缺 'open' 等列)
+                        day_rows = [row for _, row in _iter_rows(raw_text)]
+                        all_rows.extend(day_rows)
+                    reply_count += 1
+                    log.info(
+                        "[hq_history] reply #%d/%d parsed into %d rows "
+                        "(cumulative=%d)", reply_count, expected_days, len(day_rows),
+                        len(all_rows),
+                    )
+                    if reply_count >= expected_days:
+                        log.info(
+                            "[hq_history] all expected %d trading days received, "
+                            "stopping early", expected_days,
                         )
-                    bars = payload.get("bars", [])
-                    log.info("[hq_history] fetched %d bars for %s %s~%s",
-                             len(bars), stock_code, start_date, end_date)
-                    return bars
+                        break
+        except asyncio.TimeoutError:
+            # 空闲超时 ≠ 失败: 服务端按天推送, 收完最后一天后没有结束标记,
+            # 只能等 idle 超时判定"流已结束". 已收到数据就视为成功返回,
+            # 只有一条都没收到才算失败 (broker 未响应).
+            if not all_rows:
+                log.error(
+                    "[hq_history] no reply within %ss — broker his_hq 未响应",
+                    timeout,
+                )
+                raise HQHistoryError(
+                    f"his_hq reply timeout ({timeout}s), received 0 rows"
+                )
+            if reply_count < expected_days:
+                log.warning(
+                    "[hq_history] stream idle, got %d/%d day replies (%d rows) — "
+                    "some days may be holidays/missing data",
+                    reply_count, expected_days, len(all_rows),
+                )
+        finally:
+            # 本轮唯一应答队列: 用完即删 (durable 队列不删会残留)
+            try:
+                await ans_q.delete()
+            except Exception:
+                pass
 
-        raise HQHistoryError(f"his_hq reply timeout ({self.settings.evtrade_his_hq_req_timeout}s)")
+        log.info("[hq_history] fetched %d bars for %s %s~%s",
+                 len(all_rows), stock_code, start_date, end_date)
+        return all_rows
 
 
 # 单例

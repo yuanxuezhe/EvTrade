@@ -6,8 +6,8 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "test": "vitest run",
-    "test:watch": "vitest"
+    "test": "vitest run --config ../tests/client/vitest.config.js",
+    "test:watch": "vitest --config ../tests/client/vitest.config.js"
   },
   "dependencies": {
     "@element-plus/icons-vue": "^2.3.1",

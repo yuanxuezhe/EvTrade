@@ -26,9 +26,11 @@ from server.auth.deps import get_current_user
 from server.models.user import User
 # v120+ strategy-exec-service: 策略运行迁到独立服务
 # Script CRUD (scripts/tasks POST/PUT/DELETE/GET) 仍用 service (直接读写 strategy_script/task 表)
-from server.strategy import service as svc
+# 2026-08-09: 旧 server/strategy/service.py 已删, CRUD 迁到 server/services/script_strategy
+from server.services import script_strategy as svc
 # DEFAULT_SCRIPT 模板迁到 strategy_exec/templates/default_bt_strategy.py
 
+from server.services.script_strategy._convert import json_loads
 log = logging.getLogger(__name__)
 
 
@@ -40,7 +42,7 @@ router = APIRouter()
 
 class ParamSpec(BaseModel):
     key: str
-    type: str = Field("int", regex="^(int|float|choice)$")
+    type: str = Field("int", pattern="^(int|float|choice)$")
     min: Optional[float] = None
     max: Optional[float] = None
     step: Optional[float] = None
@@ -92,7 +94,7 @@ class TaskCreate(BaseModel):
 
 class TaskRun(BaseModel):
     """触发任务执行: 选择 mode"""
-    mode: str = Field("backtest", regex="^(backtest|live)$")
+    mode: str = Field("backtest", pattern="^(backtest|live)$")
     # 可选: run 时覆盖 task 创建时的 params (便于试不同参数)
     params: Optional[Dict[str, Any]] = None
     # 回测专属
@@ -269,7 +271,20 @@ async def run_task_endpoint(task_id: int, req: TaskRun, user: User = Depends(get
             detail={"code": "ALREADY_RUNNING", "msg": f"任务已在 {row.status}"},
         )
 
-    # ──── 2. 预写 status='queued' + mode + execution_service='strategy_exec' ────
+    # ──── 2. 参数校验：回测必须指定起止日期 ────
+    if req.mode == "backtest":
+        if not req.backtest_start_date:
+            raise HTTPException(
+                status_code=400,
+                detail={"code": "MISSING_PARAM", "msg": "回测模式必须指定 backtest_start_date（格式 YYYYMMDD）"},
+            )
+        if not req.backtest_end_date:
+            raise HTTPException(
+                status_code=400,
+                detail={"code": "MISSING_PARAM", "msg": "回测模式必须指定 backtest_end_date（格式 YYYYMMDD）"},
+            )
+
+    # ──── 3. 预写 status='queued' + mode + execution_service='strategy_exec' ────
     from datetime import datetime
     from server.config import settings
     task_data = row._data
@@ -284,7 +299,7 @@ async def run_task_endpoint(task_id: int, req: TaskRun, user: User = Depends(get
     # ──── 3. 转发到 strategy_exec ────
     import httpx
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        async with httpx.AsyncClient(timeout=60.0) as client:
             response = await client.post(
                 f"{settings.STRATEGY_EXEC_API_URL}/internal/run-task",
                 headers={"X-Internal-Token": settings.STRATEGY_EXEC_API_TOKEN},
@@ -294,37 +309,56 @@ async def run_task_endpoint(task_id: int, req: TaskRun, user: User = Depends(get
                     "script_id": row.script_id,
                     "stock_code": row.stock_code,
                     "mode": req.mode,
-                    "params": task_data.get("params") or {},
+                    "params": json_loads(task_data.get("params")) or {},
                     "backtest_start_date": req.backtest_start_date,
                     "backtest_end_date": req.backtest_end_date,
                     "period": req.period,
                     "fields": req.fields,
                 },
             )
-    except httpx.RequestError as e:
-        log.exception("[run_task] forward to strategy_exec failed")
-        # 回滚 status
+    except httpx.TimeoutException as e:
+        err_msg = f"strategy_exec 请求超时（60s）: {e}"
+        log.error("[run_task] %s", err_msg)
         task_data["status"] = "created"
+        task_data["error_msg"] = err_msg
         row.update()
         raise HTTPException(
             status_code=503,
-            detail={"code": "STRATEGY_EXEC_UNAVAILABLE", "msg": str(e)},
+            detail={"code": "STRATEGY_EXEC_TIMEOUT", "msg": err_msg},
+        )
+    except httpx.RequestError as e:
+        err_msg = f"strategy_exec 连接失败: {type(e).__name__} {e}"
+        log.error("[run_task] %s", err_msg)
+        task_data["status"] = "created"
+        task_data["error_msg"] = err_msg
+        row.update()
+        raise HTTPException(
+            status_code=503,
+            detail={"code": "STRATEGY_EXEC_UNAVAILABLE", "msg": err_msg},
         )
 
     if response.status_code >= 400:
+        err_body = response.text
         log.error("[run_task] strategy_exec returned %d: %s",
-                  response.status_code, response.text)
-        # 回滚 status
+                  response.status_code, err_body)
+        # 把 strategy_exec 的详细错误透传给前端
         task_data["status"] = "created"
+        task_data["error_msg"] = err_body
         row.update()
+        try:
+            err_json = response.json()
+            err_msg = err_json.get("detail", {}).get("msg", err_body) if isinstance(err_json.get("detail"), dict) else str(err_json.get("detail", err_body))
+        except Exception:
+            err_msg = err_body
         raise HTTPException(
             status_code=response.status_code,
-            detail={"code": "STRATEGY_EXEC_ERROR", "msg": response.text},
+            detail={"code": err_json.get("detail", {}).get("code", "STRATEGY_EXEC_ERROR") if isinstance(err_json.get("detail"), dict) else "STRATEGY_EXEC_ERROR",
+                    "msg": err_msg},
         )
 
     log.info("[run_task] task_id=%d forwarded to strategy_exec OK", task_id)
     # 返 task 详情 (status='queued', 等 strategy_exec 异步改 running)
-    from server.strategy import service as svc
+    from server.services import script_strategy as svc
     return svc.get_task(task_id, row.user_id, is_admin=True)
 
 

@@ -268,3 +268,50 @@ def test_infra_does_not_import_upper_layers():
                 if imported_module.startswith(("server.repo.", "server.services.", "server.rpc.", "server.api.")):
                     violations.append(f"{rel_path} imports {imported_module}")
     assert not violations, "infra/ must not import upper layers:\n  " + "\n  ".join(violations)
+
+
+def test_no_tests_outside_tests_root():
+    """REQ-ARCH-006: 所有测试文件 MUST 位于 tests/ 根下.
+
+    Glob 模式覆盖 pytest + vitest 两套测试发现规则.
+    """
+    repo_root = Path(__file__).resolve().parents[2]  # tests/server/<file> → repo root
+
+    EXCLUDE_DIRS = {
+        "node_modules", "__pycache__", ".vite-cache", ".pytest_cache",
+        ".git", "evtrade.egg-info", "dist",
+    }
+
+    TEST_GLOBS = [
+        "**/test_*.py", "**/*_test.py",
+        "**/*.test.js", "**/*.spec.js",
+        "**/*.test.mjs", "**/*.spec.mjs",
+    ]
+
+    violations = []
+    for glob_pattern in TEST_GLOBS:
+        for path in repo_root.glob(glob_pattern):
+            if any(part in EXCLUDE_DIRS for part in path.parts):
+                continue
+            rel = path.relative_to(repo_root)
+            rel_str = str(rel).replace(os.sep, "/")
+            if not rel_str.startswith("tests/"):
+                violations.append(rel_str)
+
+    assert not violations, (
+        "REQ-ARCH-006 violation: test files not under tests/ root:\n"
+        + "\n".join(f"  {v}" for v in violations)
+    )
+
+
+def test_no_init_py_in_tests_subdirs():
+    """REQ-ARCH-006: tests/ 子目录 SHALL NOT 包含 __init__.py.
+
+    避免未来误建 __init__.py 把 tests/ 变成 Python 包.
+    """
+    repo_root = Path(__file__).resolve().parents[2]
+    init_files = list((repo_root / "tests").rglob("__init__.py"))
+    assert not init_files, (
+        "tests/ subdirs should not have __init__.py: \n"
+        + "\n".join(str(p.relative_to(repo_root)) for p in init_files)
+    )

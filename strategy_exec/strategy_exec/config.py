@@ -38,7 +38,7 @@ class Settings(BaseSettings):
     # ──── 服务端口 ────
     strategy_exec_port: int = Field(default=8001, ge=1, le=65535)
     strategy_exec_host: str = Field(default="0.0.0.0")
-    strategy_exec_api_token: str = Field(min_length=16)  # 必填, 至少 16 字符
+    strategy_exec_api_token: str = Field(default="")  # 空=不鉴权（局域网部署）
 
     # ──── MySQL（共享 EvTrade）────
     evtrade_db_url: str = Field(min_length=20)  # 必填
@@ -75,16 +75,7 @@ class Settings(BaseSettings):
     log_level: str = Field(default="INFO")
     log_file: str = Field(default="")
 
-    @field_validator("strategy_exec_api_token")
-    @classmethod
-    def _validate_token_not_default(cls, v: str) -> str:
-        """防止开发者用占位 token 部署"""
-        if v.startswith("__SET_"):
-            raise ValueError(
-                "STRATEGY_EXEC_API_TOKEN must be set (got placeholder). "
-                "Generate with: openssl rand -hex 32"
-            )
-        return v
+    # 无 token validator（空=不鉴权，局域网部署用）
 
     @field_validator("log_level")
     @classmethod

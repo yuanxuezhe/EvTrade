@@ -30,12 +30,23 @@ class ProjectStrategy(bt.Strategy):
     _task_id: int = 0
     _user_id: int = 0
     _script_id: str = ""
+    _task_mode: str = ""  # "backtest" | "live"
 
-    def _set_task_meta(self, task_id: int, user_id: int, script_id: str) -> None:
-        """Engine 调用: 注入 task 元数据"""
+    def _set_task_meta(
+        self, task_id: int, user_id: int, script_id: str, mode: str = ""
+    ) -> None:
+        """Engine 调用: 注入 task 元数据 (mode: backtest/live)"""
         self._task_id = task_id
         self._user_id = user_id
         self._script_id = script_id
+        self._task_mode = mode
+
+    def _bar_time(self) -> str:
+        """当前 bar 的 K 线时间 (YYYYMMDDHHMMSS) — 便于日志/审计定位是哪根 K 线触发"""
+        try:
+            return self.data.datetime.datetime(0).strftime("%Y%m%d%H%M%S")
+        except Exception:
+            return ""
 
     def buy_signal(
         self,
@@ -86,27 +97,29 @@ class ProjectStrategy(bt.Strategy):
             price_type=price_type,
             indicators=indicators or {},
             msg=msg,
+            stime=self._bar_time(),
+            mode=self._task_mode,
         )
 
         try:
-            # signal_publisher 是 async, Backtrader next() 是 sync → 跨线程投
-            coro = get_publisher().publish_signal(signal)
-            try:
-                loop = asyncio.get_event_loop()
-                if loop.is_running():
-                    # 已在 event loop 内 — schedule (fire-and-forget)
-                    future = asyncio.run_coroutine_threadsafe(coro, loop)
-                    trace_id = future.result(timeout=10)
-                else:
-                    trace_id = loop.run_until_complete(coro)
-            except RuntimeError:
-                # 无 event loop — 新建
+            # signal_publisher 是 async, Backtrader next() 是 sync.
+            # 回测在 asyncio.to_thread 里跑 → 必须跨线程投到 publisher 绑定的主 loop,
+            # 否则 asyncio.run() 新建 loop 访问主 loop 的 aio_pika 连接会报
+            # "Task attached to a different loop".
+            publisher = get_publisher()
+            coro = publisher.publish_signal(signal)
+            loop = publisher.loop
+            if loop is not None:
+                future = asyncio.run_coroutine_threadsafe(coro, loop)
+                trace_id = future.result(timeout=10)
+            else:
+                # publisher 尚未 connect — 退回当前上下文执行 (best-effort)
                 trace_id = asyncio.run(coro)
 
             log.info(
-                "[task:%d] %s signal published: stock=%s price=%.2f vol=%d trace=%s",
-                self._task_id, signal_type.value, signal.stock_code,
-                price, volume, trace_id,
+                "[task:%d][%s] %s signal published: stime=%s stock=%s price=%.2f vol=%d trace=%s",
+                self._task_id, self._task_mode, signal_type.value,
+                signal.stime, signal.stock_code, price, volume, trace_id,
             )
             self.notify_signal_published(trace_id, ok=True)
             return trace_id

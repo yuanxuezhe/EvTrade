@@ -156,9 +156,9 @@ class LiveRunner:
             cerebro.broker.setcash(100000.0)
             # runonce=False + preload=False + run 1 步 (拿到 strategy instance)
             self._strategy_instance = cerebro.run()[0]
-            self._strategy_instance._set_task_meta(self.task_id, self.user_id, self.script_id)
+            self._strategy_instance._set_task_meta(self.task_id, self.user_id, self.script_id, mode="live")
         except Exception as e:
-            log.exception("[LiveRunner %d] strategy load failed", self.task_id)
+            log.error("[LiveRunner %d] strategy load failed: %s", self.task_id, e)
             update_task_status(self.task_id, "failed", error_msg=f"strategy load: {e}")
             return
 
@@ -229,7 +229,7 @@ class LiveRunner:
             # Backtrader next() 是 sync — 直接调 (event loop 内同步代码允许)
             self._strategy_instance.next()
         except Exception as e:
-            log.exception("[LiveRunner %d] next() failed", self.task_id)
+            log.error("[LiveRunner %d] next() failed: %s", self.task_id, e)
             update_task_status(self.task_id, "failed", error_msg=f"next() exception: {e}")
             self._stop_event.set()
             return

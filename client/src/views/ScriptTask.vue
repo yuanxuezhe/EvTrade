@@ -182,6 +182,13 @@
               </div>
               <el-table :data="signalData.signals || []" size="small" border max-height="400" data-el="st-signals-table">
                 <el-table-column label="时间" prop="stime" width="140" />
+                <el-table-column label="模式" width="70">
+                  <template #default="{ row }">
+                    <el-tag size="small" :type="row.mode === 'live' ? 'danger' : 'info'">
+                      {{ row.mode === 'live' ? '实盘' : '回测' }}
+                    </el-tag>
+                  </template>
+                </el-table-column>
                 <el-table-column label="类型" width="80">
                   <template #default="{ row }">
                     <el-tag size="small" :type="_signalType(row.type)">{{ row.type }}</el-tag>
@@ -622,20 +629,20 @@ const filteredExecutionLog = computed(() => {
 
 function _phaseType(p) {
   return {
-    start: '',
+    start: 'primary',
     sandbox_ok: 'success',
     sandbox_err: 'danger',
-    on_init_start: '',
+    on_init_start: 'primary',
     on_init_done: 'success',
     on_init_err: 'danger',
     bar: 'info',
     on_bar_err: 'danger',
-    on_finish_start: '',
+    on_finish_start: 'primary',
     on_finish_done: 'success',
     on_finish_err: 'warning',
     done: 'success',
     empty_bars: 'warning',
-  }[p] || ''
+  }[p] || 'primary'
 }
 
 function _blankCreate() {
@@ -690,9 +697,9 @@ function _statusType(s) {
     pending: 'info',
     running: 'warning',
     done: 'success',
-    stopped: '',
+    stopped: 'primary',
     failed: 'danger',
-  }[s] || ''
+  }[s] || 'primary'
 }
 function _statusLabel(s) {
   return {
@@ -711,10 +718,16 @@ function _signalType(t) {
     SELL: 'danger',
     INFO: 'info',
     WARN: 'warning',
-    STOP: '',
-    TP: '',
+    STOP: 'primary',
+    TP: 'primary',
     ERROR: 'danger',
-  }[t] || ''
+  }[t] || 'primary'
+}
+
+// 提取后端错误信息: FastAPI 返回 {detail: {code, msg}} 或 {detail: '字符串'}
+function _errMsg(e, fallback = '未知错误') {
+  const d = e?.response?.data?.detail
+  return (typeof d === 'string' ? d : d?.msg) || e?.message || fallback
 }
 
 // ─────────────── 详情 ───────────────
@@ -855,7 +868,7 @@ async function onCreateTask() {
     createOpen.value = false
     await loadAll()
   } catch (e) {
-    // ignored
+    ElMessage.error('创建任务失败: ' + _errMsg(e))
   } finally {
     creating.value = false
   }
@@ -902,7 +915,7 @@ async function onRunTask() {
     runOpen.value = false
     await loadAll()
   } catch (e) {
-    // ignored
+    ElMessage.error('回测启动失败: ' + _errMsg(e))
   } finally {
     running.value = false
   }
@@ -915,7 +928,7 @@ async function onStop(row) {
     ElMessage.success('已停止')
     await loadAll()
   } catch (e) {
-    // ignored
+    ElMessage.error('停止失败: ' + _errMsg(e))
   }
 }
 
@@ -928,7 +941,7 @@ async function onDelete(row) {
     ElMessage.success('已删除')
     await loadAll()
   } catch (e) {
-    // ignored
+    ElMessage.error('删除失败: ' + _errMsg(e))
   }
 }
 

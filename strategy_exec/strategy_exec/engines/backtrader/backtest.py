@@ -48,6 +48,10 @@ def _make_pandas_data_feed(bars: List[Dict[str, Any]]):
     # 标准化列名
     rename = {"open": "open", "high": "high", "low": "low", "close": "close", "volume": "volume"}
     df = df.rename(columns={k: v for k, v in rename.items() if k in df.columns})
+    # broker his_hq 返回的 OHLCV 是字符串, Backtrader 需要 numeric
+    for col in ("open", "high", "low", "close", "volume"):
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
     # stime → datetime
     if "stime" in df.columns:
         df["dt"] = pd.to_datetime(df["stime"], format="%Y%m%d%H%M%S", errors="coerce")
@@ -143,7 +147,7 @@ def run_backtest(
     for sig in collector.signals:
         write_audit(
             task_id=task_id,
-            stime=sig.get("ts", datetime.now().isoformat()),
+            stime=sig.get("stime") or sig.get("ts") or datetime.now().strftime("%Y%m%d%H%M%S"),
             trd_date=backtest_start_date or "",
             phase="bar",
             trigger_type=sig.get("signal_type", "INFO"),
@@ -213,15 +217,23 @@ def _wrap_strategy(
 
     def patched_init(self, *args, **kwargs):
         original_init(self, *args, **kwargs)
-        self._set_task_meta(task_id, user_id, script_id)
+        self._set_task_meta(task_id, user_id, script_id, mode="backtest")
 
-    # 装饰 buy_signal/sell_signal 自动 record 到 collector
+    # 装饰 buy_signal/sell_signal 自动 record 到 collector.
+    # 关键: 回测里信号=真实成交 → 同时下 backtrader 订单 (下一 bar 按市价成交),
+    # 这样 broker 持仓/现金/盈亏会真实累积, 前端也能看到每条信号的 state/pnl.
     original_buy = strategy_cls.buy_signal
     original_sell = strategy_cls.sell_signal
+    pos_tracker = {"size": 0, "avg": 0.0}  # 长仓口径的持仓/均价跟踪
 
     def patched_buy(self, price, volume, **kw):
         trace_id = original_buy(self, price, volume, **kw)
         if trace_id:
+            self.buy(size=volume)  # 回测真实成交: 市价单, 下一 bar 成交
+            p = float(price)
+            old_size = pos_tracker["size"]
+            pos_tracker["avg"] = (old_size * pos_tracker["avg"] + volume * p) / (old_size + volume)
+            pos_tracker["size"] = old_size + volume
             collector.record({
                 "signal_type": "BUY",
                 "stock_code": str(self.data._name),
@@ -229,7 +241,12 @@ def _wrap_strategy(
                 "volume": volume,
                 "indicators": kw.get("indicators", {}),
                 "msg": kw.get("msg", ""),
-                "ts": datetime.now().isoformat(),
+                "ts": datetime.now().strftime("%Y%m%d%H%M%S"),
+                "stime": self._bar_time(),  # 触发信号的 K 线时间
+                "mode": "backtest",         # 回测信号 = 模拟成交 (不下真实单)
+                "state": {"position": pos_tracker["size"],
+                          "cash": round(self.broker.getcash() - volume * p, 2)},  # 成交后估算现金
+                "pnl": 0.0,                 # 买入不实现盈亏
                 "trace_id": trace_id,
             })
         return trace_id
@@ -237,6 +254,14 @@ def _wrap_strategy(
     def patched_sell(self, price, volume, **kw):
         trace_id = original_sell(self, price, volume, **kw)
         if trace_id:
+            self.sell(size=volume)  # 回测真实成交: 市价单, 下一 bar 成交
+            p = float(price)
+            close_vol = min(volume, pos_tracker["size"])
+            realized = (p - pos_tracker["avg"]) * close_vol if close_vol > 0 else 0.0
+            pos_tracker["size"] -= close_vol
+            if pos_tracker["size"] <= 0:
+                pos_tracker["size"] = 0
+                pos_tracker["avg"] = 0.0
             collector.record({
                 "signal_type": "SELL",
                 "stock_code": str(self.data._name),
@@ -244,7 +269,12 @@ def _wrap_strategy(
                 "volume": volume,
                 "indicators": kw.get("indicators", {}),
                 "msg": kw.get("msg", ""),
-                "ts": datetime.now().isoformat(),
+                "ts": datetime.now().strftime("%Y%m%d%H%M%S"),
+                "stime": self._bar_time(),  # 触发信号的 K 线时间
+                "mode": "backtest",         # 回测信号 = 模拟成交 (不下真实单)
+                "state": {"position": pos_tracker["size"],
+                          "cash": round(self.broker.getcash() + volume * p, 2)},  # 成交后估算现金
+                "pnl": round(realized, 2),  # 卖出实现盈亏
                 "trace_id": trace_id,
             })
         return trace_id

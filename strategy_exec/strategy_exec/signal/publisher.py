@@ -41,12 +41,16 @@ class SignalPublisher:
         self._channel: Optional[AbstractRobustChannel] = None
         self._exchange: Optional[aio_pika.abc.AbstractExchange] = None
         self._lock = asyncio.Lock()
+        self._loop: Optional[asyncio.AbstractEventLoop] = None  # connect 时的主 loop
 
     async def connect(self) -> None:
         """连接到 RabbitMQ + 声明 exchange"""
         async with self._lock:
             if self._connection is not None and not self._connection.is_closed:
                 return
+            # 记录主 event loop: 回测在 asyncio.to_thread 里跑, 策略 next() 是同步,
+            # 需要把 publish 跨线程投到主 loop (asyncio.run 会新建 loop → 连接绑主 loop 会冲突)
+            self._loop = asyncio.get_running_loop()
             self._connection = await aio_pika.connect_robust(
                 self.settings.evtrade_rabbitmq_url,
             )
@@ -68,6 +72,11 @@ class SignalPublisher:
         self._connection = None
         self._channel = None
         self._exchange = None
+
+    @property
+    def loop(self) -> Optional[asyncio.AbstractEventLoop]:
+        """publisher 绑定的主 event loop (connect 时捕获)"""
+        return self._loop
 
     async def publish_signal(self, signal: Signal) -> str:
         """推送 1 条 signal. 成功返 trace_id (用于审计关联)
@@ -102,8 +111,9 @@ class SignalPublisher:
                     timeout=self.settings.evtrade_strategy_publish_confirm_timeout,
                 )
                 log.info(
-                    "[publisher] signal published task=%d type=%s stock=%s price=%.2f vol=%d trace=%s",
-                    signal.task_id, signal.signal_type.value, signal.stock_code,
+                    "[publisher][%s] signal published task=%d stime=%s type=%s stock=%s price=%.2f vol=%d trace=%s",
+                    signal.mode, signal.task_id, signal.stime,
+                    signal.signal_type.value, signal.stock_code,
                     signal.price, signal.volume, signal.trace_id,
                 )
                 return signal.trace_id

@@ -66,6 +66,12 @@ def create_app() -> FastAPI:
     return app
 
 
+# 模块加载即配置日志级别。
+# evctl 用 `uvicorn strategy_exec.main:app` 启动, 不会执行 main(), 若不在此配置
+# 则根 logger 停在默认 WARNING, 各步骤的 INFO 日志不会落盘, 无法定位问题。
+_setup_logging(get_settings().log_level)
+
+
 # 单例 app — uvicorn 直接用 `strategy_exec.main:app`
 app = create_app()
 

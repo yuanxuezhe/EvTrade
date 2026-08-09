@@ -18,6 +18,8 @@ import ast
 import builtins
 import logging
 import sys
+import types
+import typing
 from typing import Any, Optional, Type
 
 from strategy_exec.config import get_settings
@@ -37,6 +39,47 @@ class SandboxNamespace:
         self._builtins = {
             "__builtins__": {
                 "__import__": self._safe_import,
+                # 用户脚本要定义 class (继承 bt.Strategy/ProjectStrategy),
+                # 缺 __build_class__ 时任何 class 语句都会 NameError
+                "__build_class__": builtins.__build_class__,
+                "object": builtins.object,
+                "property": builtins.property,
+                "staticmethod": builtins.staticmethod,
+                "classmethod": builtins.classmethod,
+                "Exception": builtins.Exception,
+                "ImportError": builtins.ImportError,
+                "RuntimeError": builtins.RuntimeError,
+                "NotImplementedError": builtins.NotImplementedError,
+                "StopIteration": builtins.StopIteration,
+                "KeyboardInterrupt": builtins.KeyboardInterrupt,
+                "IndexError": builtins.IndexError,
+                "KeyError": builtins.KeyError,
+                "ZeroDivisionError": builtins.ZeroDivisionError,
+                "OSError": builtins.OSError,
+                "LookupError": builtins.LookupError,
+                "ArithmeticError": builtins.ArithmeticError,
+                "ValueError": builtins.ValueError,
+                "TypeError": builtins.TypeError,
+                "AttributeError": builtins.AttributeError,
+                "getattr": builtins.getattr,
+                "setattr": builtins.setattr,
+                "hasattr": builtins.hasattr,
+                "callable": builtins.callable,
+                "iter": builtins.iter,
+                "next": builtins.next,
+                "hash": builtins.hash,
+                "id": builtins.id,
+                "super": builtins.super,
+                "format": builtins.format,
+                "pow": builtins.pow,
+                "divmod": builtins.divmod,
+                "complex": builtins.complex,
+                "ord": builtins.ord,
+                "chr": builtins.chr,
+                "bytes": builtins.bytes,
+                "bytearray": builtins.bytearray,
+                "frozenset": builtins.frozenset,
+                "slice": builtins.slice,
                 "abs": builtins.abs,
                 "all": builtins.all,
                 "any": builtins.any,
@@ -98,6 +141,16 @@ class SandboxNamespace:
         # 全局 namespace
         self._globals = dict(self._modules)
         self._globals.update(self._builtins)
+        # exec 模块级代码需要这些 dunder (脚本常写 if __name__ == "__main__")
+        self._globals.setdefault("__name__", "__sandbox__")
+        self._globals.setdefault("__file__", "<sandbox>")
+        self._globals.setdefault("__package__", None)
+        # 用户脚本定义 class 后其 __module__ 会是 '__sandbox__',
+        # Backtrader 元类在 donew() 里执行 sys.modules[cls.__module__],
+        # 必须让 sys.modules['__sandbox__'] 指向一个真实 module, 否则 KeyError.
+        _sandbox_mod = types.ModuleType("__sandbox__")
+        _sandbox_mod.__dict__.update(self._globals)
+        sys.modules["__sandbox__"] = _sandbox_mod
 
     def _safe_import(self, name: str, *args, **kwargs):
         """拦截 __import__: 仅允许白名单模块"""
@@ -105,6 +158,10 @@ class SandboxNamespace:
         settings = get_settings()
         blocked = settings.blocked_module_list()
         allowed = settings.allowed_module_list()
+        # 项目内部受信模块: ProjectStrategy 基类 (用户脚本 try/except 导入它,
+        # 沙箱已注入同名 ProjectStrategy, 此处放行以兼容常见脚本写法)
+        if name == "strategy_exec.engines.backtrader.adapter":
+            return __import__(name, *args, **kwargs)
         if top in blocked:
             raise SandboxViolationError(f"禁止 import '{name}' (blocked module)")
         if top not in allowed and top not in ("backtrader", "bt", "numpy", "np", "pandas", "pd"):

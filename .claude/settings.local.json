@@ -23,7 +23,15 @@
       "Bash(done)",
       "Bash(2)",
       "WebSearch",
-      "WebFetch(domain:github.com)"
+      "WebFetch(domain:github.com)",
+      "Bash(npm install *)",
+      "Bash(pyenv which *)",
+      "Bash(pyenv shell *)",
+      "Bash(D:/software/work/scoop/apps/pyenv/current/pyenv-win/versions/3.10.5/python.exe --version)",
+      "Bash(D:/software/work/scoop/apps/pyenv/current/pyenv-win/versions/3.10.5/python.exe -c 'import uvicorn; print\\('\\\\''uvicorn'\\\\'', uvicorn.__version__\\)')",
+      "Bash(D:/software/work/scoop/apps/pyenv/current/pyenv-win/versions/3.10.5/python.exe -c 'import websockets; print\\('\\\\''websockets'\\\\'', websockets.__version__\\)')",
+      "Bash(D:/software/work/scoop/apps/pyenv/current/pyenv-win/versions/3.10.5/python.exe -c 'import aio_pika; print\\('\\\\''aio_pika'\\\\'', aio_pika.__version__\\)')",
+      "Bash(pyenv prefix *)"
     ]
   }
 }

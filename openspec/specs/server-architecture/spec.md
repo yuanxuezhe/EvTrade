@@ -7,7 +7,7 @@ EvTrade 后端经过 v5-v13 多轮迭代，积累了 100+ Python 文件（`serve
 - 单文件职责清晰（每层文件 ≤ 250 行 CLAUDE.md 硬约束）
 - 跨层修改可预测（依赖方向规则防腐败）
 - 新增功能有归属（按业务归属到对应层）
-- 测试镜像目录清晰（`tests/server/<layer>/`）
+- 测试镜像目录清晰（`tests/<area>/<sub>/` 下，含 server/client/hq 三 area）
 
 **横向分层 vs 纵向业务模块**：本 spec 是横向分层（infra/repo/rpc/services/api）；远程 `2026-07-05-strategy_trade` 的 `services/strategy/` 是纵向业务模块。两者正交。
 
@@ -140,6 +140,114 @@ api/  →  services/  →  repo/  →  infra/  →  models/
   - 关键调用链图（place_order / cancel_order / reconcile / push handler / strategy engine 等）
   - 新增功能归属决策树（"X 业务改放进哪层"）
 - **更新时机**：每次 PR 涉及层调整时同步更新
+
+### REQ-ARCH-006: 测试目录强制约束
+
+The system SHALL 强制所有测试文件位于 `tests/` 根目录下。
+
+#### 目录布局规则
+
+- **测试 = `tests/<area>/<sub>/test_*`**
+- `<area>` ∈ `{server, client, hq}`，与生产代码所在根目录一一对应：
+  - `server/` → `tests/server/`
+  - `client/` → `tests/client/`
+  - `hq/` → `tests/hq/`
+- **子目录细化**：当生产代码是 `server/services/strategy/<sub>.py`（子包）时，测试 MUST 落在 `tests/server/services/strategy/<sub>/test_*.py`（按子模块细分）
+- **不保留** `tests/<area>/<sub>/__init__.py`（`tests/` 整体不是 Python 包）
+
+#### 禁止的位置
+
+测试文件 MUST NOT 位于以下位置：
+
+- `server/tests/...`（旧 strategy 子包测试位置，commit `1264bf0` 后的孤儿）
+- `client/tests/...`（前端 vitest 测试位置，本次迁到 `tests/client/`）
+- `hq/test_*.py`（hq 子项目测试位置，本次迁到 `tests/hq/`）
+- 任何其他非 `tests/` 根的目录
+
+#### 测试文件识别模式（CI 检查覆盖）
+
+CI 检查 MUST 匹配以下 glob 模式（同时覆盖 pytest + vitest 两侧）：
+
+- `**/test_*.py`
+- `**/*_test.py`
+- `**/*.test.js`
+- `**/*.spec.js`
+- `**/*.test.mjs`
+- `**/*.spec.mjs`
+
+#### CI 检查（新增到 `tests/server/test_layer_dependencies.py`）
+
+```python
+def test_no_tests_outside_tests_root():
+    """REQ-ARCH-006: 所有测试文件 MUST 位于 tests/ 根下."""
+    import os
+    from pathlib import Path
+
+    repo_root = Path(__file__).resolve().parents[2]
+    EXCLUDE_DIRS = {
+        "node_modules", "__pycache__", ".vite-cache", ".pytest_cache",
+        ".git", "evtrade.egg-info", "dist",
+    }
+    TEST_GLOBS = [
+        "**/test_*.py", "**/*_test.py",
+        "**/*.test.js", "**/*.spec.js",
+        "**/*.test.mjs", "**/*.spec.mjs",
+    ]
+    violations = []
+    for glob_pattern in TEST_GLOBS:
+        for path in repo_root.glob(glob_pattern):
+            if any(part in EXCLUDE_DIRS for part in path.parts):
+                continue
+            rel_str = str(path.relative_to(repo_root)).replace(os.sep, "/")
+            if not rel_str.startswith("tests/"):
+                violations.append(rel_str)
+    assert not violations, (
+        "REQ-ARCH-006 violation: test files not under tests/ root:\n"
+        + "\n".join(f"  {v}" for v in violations)
+    )
+
+
+def test_no_init_py_in_tests_subdirs():
+    """REQ-ARCH-006: tests/ 子目录 SHALL NOT 包含 __init__.py."""
+    from pathlib import Path
+    repo_root = Path(__file__).resolve().parents[2]
+    init_files = list((repo_root / "tests").rglob("__init__.py"))
+    assert not init_files, (
+        "tests/ subdirs should not have __init__.py:\n"
+        + "\n".join(str(p.relative_to(repo_root)) for p in init_files)
+    )
+```
+
+#### Scenario: 策略测试迁到 tests/server/services/strategy/<sub>/
+
+- **WHEN** 开发者为 `server/services/strategy/regime.py` 写测试
+- **THEN** 测试 MUST 在 `tests/server/services/strategy/regime/test_regime.py`
+- **AND** NOT 在 `server/tests/strategy/test_regime.py` 或其他位置
+
+#### Scenario: 前端测试迁到 tests/client/
+
+- **WHEN** 开发者为 `client/src/composables/useT0Stats.js` 写测试
+- **THEN** 测试 MUST 在 `tests/client/composables/useT0Stats.test.js`
+- **AND** NOT 在 `client/tests/composables/useT0Stats.test.js` 或其他位置
+
+#### Scenario: hq 测试迁到 tests/hq/
+
+- **WHEN** hq 子项目新增测试
+- **THEN** 测试 MUST 在 `tests/hq/test_<name>.py`
+- **AND** NOT 在 `hq/test_<name>.py` 或其他位置
+
+#### Scenario: CI 拦截违规
+
+- **WHEN** 开发者误在 `server/tests/foo/test_foo.py` 新建文件
+- **THEN** `pytest tests/server/test_layer_dependencies.py::test_no_tests_outside_tests_root` fail
+- **AND** 输出 `REQ-ARCH-006 违规：测试文件不在 tests/ 根下：server/tests/foo/test_foo.py`
+- **修复**：用 `git mv` 迁到 `tests/server/<layer>/foo/test_foo.py`
+
+#### Scenario: 误建 __init__.py 被拦截
+
+- **WHEN** 开发者误建 `tests/server/services/strategy/__init__.py`
+- **THEN** `pytest tests/server/test_layer_dependencies.py::test_no_init_py_in_tests_subdirs` fail
+- **修复**：`rm tests/server/services/strategy/__init__.py`
 
 ## Scenario: 分层违规被 CI 拦下
 

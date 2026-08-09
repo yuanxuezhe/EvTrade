@@ -40,6 +40,8 @@ class Signal:
     indicators: Dict[str, Any] = field(default_factory=dict)
     msg: str = ""
     ts: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    stime: str = ""  # 触发信号的 K 线时间 (YYYYMMDDHHMMSS), 空=未知
+    mode: str = ""   # "backtest" | "live" (区分回测模拟信号 vs 实盘信号)
     trace_id: str = field(default_factory=lambda: str(uuid.uuid4()))
 
     def to_payload(self) -> Dict[str, Any]:
@@ -68,5 +70,7 @@ def payload_to_signal(payload: Dict[str, Any]) -> Signal:
         indicators=payload.get("indicators", {}),
         msg=str(payload.get("msg", "")),
         ts=str(payload.get("ts", datetime.now(timezone.utc).isoformat())),
+        stime=str(payload.get("stime", "")),
+        mode=str(payload.get("mode", "")),
         trace_id=str(payload.get("trace_id", str(uuid.uuid4()))),
     )
