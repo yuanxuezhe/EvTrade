@@ -58,6 +58,7 @@ def task_row_to_dict(row) -> Dict[str, Any]:
         "id": d.get("id"),
         "user_id": d.get("user_id"),
         "script_id": d.get("script_id"),
+        "description": d.get("description", ""),
         "stock_code": d.get("stock_code", ""),
         "mode": d.get("mode"),
         "status": d.get("status", ""),

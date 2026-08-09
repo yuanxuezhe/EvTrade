@@ -17,7 +17,7 @@
       <h3 class="st-title">策略交易</h3>
       <div class="st-actions">
         <el-button :icon="Refresh" @click="loadAll" data-el="st-refresh">刷新</el-button>
-        <el-button :icon="Plus" type="primary" @click="openCreate" data-el="st-create">新建任务</el-button>
+        <el-button :icon="Plus" type="primary" @click="openCreate" data-el="st-create">新建策略</el-button>
       </div>
     </header>
 
@@ -31,50 +31,37 @@
               <span class="st-script-name">{{ scriptNameById(row.script_id) }}</span>
             </template>
           </el-table-column>
+          <el-table-column label="策略描述" min-width="200" show-overflow-tooltip>
+            <template #default="{ row }">
+              <span class="st-script-desc">{{ row.description || scriptDescById(row.script_id) || '—' }}</span>
+            </template>
+          </el-table-column>
           <el-table-column label="标的" prop="stock_code" width="100" />
-          <el-table-column label="模式" width="90">
+          <el-table-column label="模式" width="130">
             <template #default="{ row }">
-              <el-tag v-if="row.mode" size="small" :type="row.mode === 'live' ? 'danger' : 'info'">
-                {{ row.mode === 'live' ? '实盘' : '回测' }}
-              </el-tag>
-              <span v-else class="st-muted">—</span>
+              <!-- 模式切换按钮: 决定该任务下次运行走回测还是实盘 -->
+              <el-switch
+                :model-value="row.mode === 'live'"
+                active-text="实盘"
+                inactive-text="回测"
+                active-color="#f56c6c"
+                :disabled="row.status === 'running'"
+                @change="(v) => onToggleMode(row, v)"
+              />
             </template>
           </el-table-column>
-          <el-table-column label="状态" width="90">
+          <el-table-column label="操作" width="120" fixed="right">
             <template #default="{ row }">
-              <el-tag size="small" :type="_statusType(row.status)">{{ _statusLabel(row.status) }}</el-tag>
-            </template>
-          </el-table-column>
-          <el-table-column label="PnL" width="100" align="right">
-            <template #default="{ row }">
-              <span :class="row.pnl > 0 ? 'up' : row.pnl < 0 ? 'down' : ''">
-                {{ (row.pnl || 0).toFixed(2) }}
-              </span>
-            </template>
-          </el-table-column>
-          <el-table-column label="成交" prop="trades_count" width="60" align="right" />
-          <el-table-column label="开始" min-width="140">
-            <template #default="{ row }">
-              {{ (row.started_at || '').replace('T', ' ').slice(0, 19) }}
-            </template>
-          </el-table-column>
-          <el-table-column label="结束" min-width="140">
-            <template #default="{ row }">
-              {{ (row.finished_at || '').replace('T', ' ').slice(0, 19) }}
-            </template>
-          </el-table-column>
-          <el-table-column label="操作" width="200" fixed="right">
-            <template #default="{ row }">
-              <el-button
-                v-if="row.status !== 'running'"
-                size="small" link type="primary"
-                @click="openRun(row)" data-el="st-run"
-              >运行</el-button>
               <el-button
                 v-if="row.status === 'running'"
                 size="small" link type="danger"
                 @click="onStop(row)" data-el="st-stop"
               >停止</el-button>
+              <el-button
+                v-else
+                size="small" link type="primary"
+                @click="openRun(row)" data-el="st-run"
+              >启动</el-button>
               <el-button size="small" link type="danger" @click="onDelete(row)" data-el="st-delete">删除</el-button>
             </template>
           </el-table-column>
@@ -84,7 +71,7 @@
       <!-- 右侧: 展开的详情 -->
       <div v-if="detail" class="st-side" data-el="st-side-detail">
         <div class="st-detail">
-          <div class="st-side-title">任务 #{{ detail.id }} · {{ scriptNameById(detail.script_id) }} · {{ detail.stock_code }}</div>
+          <div class="st-side-title">策略{{ detail.id }} · {{ scriptNameById(detail.script_id) }} · {{ detail.description || scriptDescById(detail.script_id) }}</div>
           <el-descriptions :column="3" border size="small" class="st-summary">
           <el-descriptions-item label="模式">
             <el-tag v-if="detail.mode" size="small" :type="detail.mode === 'live' ? 'danger' : 'info'">
@@ -401,8 +388,8 @@
       </div>
     </div>
 
-    <!-- 新建任务抽屉 (不指定 mode) -->
-    <el-drawer v-model="createOpen" title="新建任务" size="500px">
+    <!-- 新建策略抽屉 (不指定 mode) -->
+    <el-drawer v-model="createOpen" title="新建策略" size="500px">
       <el-form :model="createForm" label-width="100px" size="small" class="st-create-form">
         <el-form-item label="脚本">
           <el-select v-model="createForm.script_id" placeholder="选择脚本" filterable style="width: 100%" @change="onScriptChange" data-el="st-form-script">
@@ -413,6 +400,16 @@
               :value="s.id"
             />
           </el-select>
+        </el-form-item>
+
+        <el-form-item label="描述">
+          <el-input
+            v-model="createForm.description"
+            type="textarea"
+            :rows="2"
+            placeholder="策略描述, 例如: 5日金叉买入 / 跌破20日均线卖出..."
+            data-el="st-form-desc"
+          />
         </el-form-item>
 
         <el-form-item label="标的">
@@ -461,32 +458,26 @@
         </template>
 
         <el-alert type="info" :closable="false" show-icon class="st-create-tip">
-          <p>任务创建后 <strong>不会自动运行</strong>, 需在列表点击 "运行" 按钮选择 "回测" 或 "实盘"。</p>
+          <p>策略创建后 <strong>不会自动运行</strong>, 需在列表点击 "启动" 按钮并选择模式运行。</p>
         </el-alert>
 
         <div class="st-form-actions">
           <el-button @click="createOpen = false">取消</el-button>
           <el-button type="primary" :loading="creating" @click="onCreateTask" data-el="st-form-submit">
-            创建任务
+            创建策略
           </el-button>
         </div>
       </el-form>
     </el-drawer>
 
-    <!-- 运行任务抽屉 (选 mode) -->
-    <el-drawer v-model="runOpen" :title="`运行任务 #${runForm.id}`" size="500px">
+    <!-- 运行策略抽屉 -->
+    <el-drawer v-model="runOpen" :title="`运行策略 #${runForm.id}`" size="500px">
       <el-form :model="runForm" label-width="100px" size="small" class="st-create-form">
-        <el-form-item label="任务">
+        <el-form-item label="策略">
           <span>{{ scriptNameById(runForm.script_id) }} / {{ runForm.stock_code }}</span>
         </el-form-item>
 
-        <el-form-item label="运行模式">
-          <el-radio-group v-model="runForm.mode" data-el="st-run-mode">
-            <el-radio-button value="backtest">回测</el-radio-button>
-            <el-radio-button value="live">实盘</el-radio-button>
-          </el-radio-group>
-        </el-form-item>
-
+        <!-- 运行模式由左侧表格"模式"切换按钮决定, 不再在抽屉里选 -->
         <template v-if="runForm.mode === 'backtest'">
           <el-form-item label="起止日期">
             <el-date-picker
@@ -512,7 +503,7 @@
         </template>
 
         <el-alert v-else type="warning" :closable="false" show-icon>
-          <p><strong>实盘任务</strong>将真实下单到券商, 请确认已测试回测且参数合理。</p>
+          <p><strong>实盘策略</strong>将真实下单到券商, 请确认已测试回测且参数合理。</p>
         </el-alert>
 
         <div class="st-form-actions">
@@ -661,6 +652,7 @@ function _blankCreate() {
   return {
     script_id: null,
     stock_code: '',
+    description: '',
     dateRange: null,
     period: '1d',
     params: {},
@@ -708,6 +700,11 @@ const filteredTasks = computed(() => tasks.value)
 function scriptNameById(id) {
   const s = scripts.value.find(x => x.id === id)
   return s?.name || `#${id}`
+}
+
+function scriptDescById(id) {
+  const s = scripts.value.find(x => x.id === id)
+  return s?.description || ''
 }
 
 function _statusType(s) {
@@ -887,6 +884,7 @@ async function onCreateTask() {
     const payload = {
       script_id: createForm.value.script_id,
       stock_code: createForm.value.stock_code,
+      description: createForm.value.description || '',
       params: createForm.value.params,
       period: createForm.value.period,
     }
@@ -895,11 +893,11 @@ async function onCreateTask() {
       payload.backtest_end_date = createForm.value.dateRange[1]
     }
     await scriptStrategyApi.createTask(payload)
-    ElMessage.success('任务已创建 (status=created), 请点击运行按钮触发')
+    ElMessage.success('策略已创建 (status=created), 请点击启动按钮触发')
     createOpen.value = false
     await loadAll()
   } catch (e) {
-    ElMessage.error('创建任务失败: ' + _errMsg(e))
+    ElMessage.error('创建策略失败: ' + _errMsg(e))
   } finally {
     creating.value = false
   }
@@ -911,13 +909,21 @@ function openRun(row) {
     id: row.id,
     script_id: row.script_id,
     stock_code: row.stock_code,
-    mode: 'backtest',
+    mode: row.mode || 'backtest',  // 模式来自表格切换按钮
     dateRange: row.backtest_start_date && row.backtest_end_date
       ? [row.backtest_start_date, row.backtest_end_date]
       : null,
     period: row.period || '1d',
   }
   runOpen.value = true
+}
+
+// 表格内模式切换: 设置该任务下次运行的模式 (回测/实盘)
+function onToggleMode(row, isLive) {
+  row.mode = isLive ? 'live' : 'backtest'
+  if (detail.value?.id === row.id) {
+    detail.value = { ...detail.value, mode: row.mode }
+  }
 }
 
 async function onRunTask() {
@@ -965,7 +971,7 @@ async function onStop(row) {
 
 async function onDelete(row) {
   try {
-    await ElMessageBox.confirm(`确认删除任务 #${row.id}?`, '删除', { type: 'warning' })
+    await ElMessageBox.confirm(`确认删除策略 #${row.id}?`, '删除', { type: 'warning' })
   } catch { return }
   try {
     await scriptStrategyApi.deleteTask(row.id)
@@ -1121,6 +1127,7 @@ onBeforeUnmount(() => {
 .up { color: var(--color-up, #f56c6c); font-weight: 600; }
 .down { color: var(--color-down, #67c23a); font-weight: 600; }
 .st-script-name { font-weight: 500; }
+.st-script-desc { color: var(--text-secondary); }
 .st-muted { color: var(--text-placeholder); }
 
 .st-summary { margin-bottom: var(--space-4); }

@@ -51,6 +51,7 @@ def create_task(
     stock_code: str,
     params: Dict[str, Any],
     *,
+    description: str = "",
     backtest_start_date: Optional[str] = None,
     backtest_end_date: Optional[str] = None,
     period: Optional[str] = None,
@@ -70,6 +71,7 @@ def create_task(
     data = {
         "user_id": user_id,
         "script_id": script_id,
+        "description": description,
         "stock_code": stock_code,
         # mode 字段保留在表里但创建时不填; run 时再写
         "mode": None,

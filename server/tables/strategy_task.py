@@ -34,6 +34,7 @@ class StrategyTask(TableBase):
         'id': '',
         'user_id': '',
         'script_id': '',
+        'description': '策略(任务)描述: 新建策略时填写, 列表/详情展示',
         'stock_code': '',
         'mode': '回测/实盘: 创建时不填, 运行 /tasks/{id}/run 时再写',
         'status': '',
@@ -60,6 +61,7 @@ class StrategyTask(TableBase):
         'id': 'int',
         'user_id': 'int',
         'script_id': 'varchar(128)',
+        'description': 'varchar(500)',
         'stock_code': 'varchar(16)',
         'mode': 'varchar(8)',
         'status': 'varchar(16)',
@@ -86,6 +88,7 @@ class StrategyTask(TableBase):
     id: int
     user_id: int
     script_id: str
+    description: str
     stock_code: str
     mode: str
     status: str

@@ -724,6 +724,10 @@ tables:
       script_id:
         type: Integer
         nullable: true
+      description:
+        type: String(500)
+        nullable: true
+        server_default: ''''
       stock_code:
         type: String(16)
         nullable: true

@@ -84,6 +84,7 @@ class TaskCreate(BaseModel):
     """创建任务: 仅存配置, 不立即执行"""
     script_id: str  # v90+ 改 varchar
     stock_code: str
+    description: str = ""  # 策略(任务)描述, 列表/详情展示
     params: Dict[str, Any] = {}
     # 以下回测专属字段可预存, run 时可被覆盖
     backtest_start_date: Optional[str] = None
@@ -108,6 +109,7 @@ class TaskOut(BaseModel):
     id: int
     user_id: int
     script_id: str  # v90+ 改 varchar
+    description: str = ""
     stock_code: str
     mode: Optional[str] = None
     status: str
@@ -230,6 +232,7 @@ def create_task_endpoint(req: TaskCreate, user: User = Depends(get_current_user)
     try:
         out = svc.create_task(
             user_id=user.id, script_id=req.script_id, stock_code=req.stock_code,
+            description=req.description,
             params=req.params,
             backtest_start_date=req.backtest_start_date,
             backtest_end_date=req.backtest_end_date,
