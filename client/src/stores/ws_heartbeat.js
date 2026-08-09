@@ -1,16 +1,23 @@
 /**
- * ws_heartbeat.js — WebSocket 连接 / 重连 / 心跳管理
+ * ws_heartbeat.js — WebSocket 连接 / 重连 / 心跳管理（v119 单向心跳）
  *
  * 职责:
  * - WS URL 构造 (含 hqserver 直连 quote_update 特例)
  * - 多个 channel 的 _openChannel / _scheduleReconnect
- * - 客户端主动 30s ping, 累计 3 次 (90s) 未回 pong 触发重连
+ * - 客户端 30s 主动 ping, 服务端收到立即回 pong（重置服务端 last_recv）
+ * - 客户端 90s 真实空闲超时主动 close 触发重连（避免网络真断时死等）
+ * - 服务端 10 分钟无任意消息 → close 4001 "idle timeout" → onclose 接 4001 → 跳登录
  * - 指数退避: delay = min(1000 * 2^retryCount, 30000)
  *
  * v95: 新增 position_update 频道 — 后端 trd_cfm 完成后主动推该标的完整持仓行,
  *      前端 applyPositionUpdate 按 stock_code 整条 ref 替换 (不增量/不 spread).
  *      (change consolidate-position-data-flow 当年删了 pos_cfm/ast_cfm channel,
  *       现在 v95 重新引入 - 但只是 position_update, 没有 asset_update)
+ * v119 (2026-08-09): 服务端不再主动 ping, 改为客户端 30s 主动 ping + 服务端 10 分钟 idle 独立计时
+ *                    - 删除 _pongMissed 计数器（时钟漂移导致 90s 一次误断）
+ *                    - 新增 _lastRecvAt 时间戳，按真实空闲时间判断超时
+ *                    - onclose 接 event, code===4001 → 调 _onTokenExpired 跳登录（不重连）
+ *                    - _onTokenExpired 走 auth.clear() + router.replace('/login')（避免硬刷新）
  *
  * 暴露 createWsManager() 工厂, 返回 { connect, disconnect, connected (ref), lastEvent (ref) }
  * 通过依赖注入 onMessage 回调（ws_dispatch.dispatchPayload）, 不直接 import dispatch
@@ -40,6 +47,11 @@ export const CHANNELS = ['order_update', 'trade_update', 'position_update', 'quo
 export const RECONNECT_BASE_DELAY = 1000
 export const RECONNECT_MAX_DELAY = 30000
 
+// v119: 客户端视角的 WS 空闲超时（90s = 3 × 30s ping 周期）
+//   比服务端 WS_IDLE_TIMEOUT (600s) 短, 优先在客户端断 → 触发指数退避重连
+//   适用于"网络真断但服务端探测不到"的场景；服务端的 600s 是兜底
+export const WS_IDLE_TIMEOUT_MS = 90_000
+
 // change ws-quote-fanout: quote_update 改为走后端 /ws/quote_update，不再直连 hqserver :8765
 //   - 原因：hqserver 是裸 ws，不支持 wss；公网访问必然 TLS 失败
 //   - 数据来源：后端 quote_consumer 已通过 ws_manager.broadcast('quote_update', ...) fanout
@@ -66,12 +78,33 @@ function _wsUrl(channel) {
 }
 
 // Token 过期检测：仅执行一次，停止所有重连并跳转登录
+// v119: 改为走 auth store + router（避免硬刷新丢业务状态），auth/router import 失败时回退硬跳转
 let _loginRedirected = false
 function _onTokenExpired() {
   if (_loginRedirected) return
   _loginRedirected = true
   log.info('token expired/empty, redirecting to login')
-  window.location.href = '/login'
+  try {
+    // 动态 import 避免 ws_heartbeat 在 auth store 初始化前被 import 时循环依赖
+    import('./auth').then(({ useAuthStore }) => {
+      try { useAuthStore().clear() } catch (_) { /* store 未就绪时忽略 */ }
+    }).catch(() => {})
+  } catch (_) { /* ignore */ }
+  try {
+    import('../router').then(({ default: router }) => {
+      try {
+        if (router.currentRoute.value.path !== '/login') {
+          router.replace({ path: '/login' })
+        }
+      } catch (_) {
+        window.location.href = '/login'
+      }
+    }).catch(() => {
+      window.location.href = '/login'
+    })
+  } catch (_) {
+    window.location.href = '/login'
+  }
 }
 
 /**
@@ -88,7 +121,7 @@ export function createWsManager(onMessage, onConnected) {
   const _reconnectTimer = {}
   const _retryCount = {}  // v7 增: 指数退避计数, per-channel
   const _heartbeatTimer = {}  // v10 增: 客户端主动 ping 定时器, per-channel
-  const _pongMissed = {}      // v10 增: 累计未回 pong 次数, per-channel
+  const _lastRecvAt = {}      // v119 增: 最后收到任意消息时间戳（Date.now()），per-channel
 
   function _openChannel(channel) {
     const url = _wsUrl(channel)
@@ -105,45 +138,51 @@ export function createWsManager(onMessage, onConnected) {
     ws.onopen = () => {
       connected.value = true
       _retryCount[channel] = 0  // v7 增: 连接成功重置退避计数
-      _pongMissed[channel] = 0  // v10 增: 重置 pong 计数
+      _lastRecvAt[channel] = Date.now()  // v119 增: 重置空闲计时
       // eslint-disable-next-line no-console
       log.info(`${channel} connected`)
       // 2026-07-14 fix-ws-reconnect-subscription: 通知业务层连接成功
       //   让 quote store 强制重发 subscribedSet (服务端 disconnect 时已 clear_ws)
       try { onConnected?.(channel) } catch (e) { /* 业务层错误不影响 ws */ }
-      // change ws-quote-fanout: 客户端 30s 主动 ping — quote_update 现在走后端，
-      //   同样走 ping/pong 心跳。后端 quote_update 通道的 heartbeat sender 已特判跳过服务端 ping，
-      //   但客户端主动 ping 后端仍会回 pong（见 server/ws/endpoint.py: ping/pong 双向逻辑）。
+      // v119: 客户端 30s 主动 ping — 服务端只回 pong（重置其 last_recv）
+      //   不再累计 _pongMissed；改为基于真实空闲时间判断超时
       if (!_heartbeatTimer[channel]) {
         _heartbeatTimer[channel] = setInterval(() => {
-          if (_sockets[channel]?.readyState === WebSocket.OPEN) {
-            try {
-              _sockets[channel].send(JSON.stringify({ type: 'ping', ts: Date.now() }))
-              _pongMissed[channel] = (_pongMissed[channel] || 0) + 1
-              // 连续 3 次 (90s) 没回 pong → 主动断开触发重连
-              if (_pongMissed[channel] >= 3) {
-                log.warn(`${channel} pong missed ${_pongMissed[channel]}x, force close`)
-                _sockets[channel]?.close()
-              }
-            } catch (_) { /* 忽略发送失败 */ }
+          const sock = _sockets[channel]
+          if (!sock || sock.readyState !== WebSocket.OPEN) return
+          try {
+            sock.send(JSON.stringify({ type: 'ping', ts: Date.now() }))
+          } catch (_) { /* 忽略发送失败 */ }
+          // 基于真实空闲时间判断（替代 v10 的 _pongMissed 计数器）
+          // 服务端 WS_IDLE_TIMEOUT = 600s; 客户端视角 90s 更激进（网络真断兜底）
+          const idleMs = Date.now() - (_lastRecvAt[channel] || Date.now())
+          if (idleMs > WS_IDLE_TIMEOUT_MS) {
+            log.warn(`${channel} no message for ${Math.round(idleMs / 1000)}s, force close`)
+            try { sock.close() } catch (_) { /* ignore */ }
           }
         }, 30000)
       }
     }
 
-    ws.onclose = () => {
-      // v7 改: 指数退避
-      const c = (_retryCount[channel] || 0) + 1
-      _retryCount[channel] = c
-      const delay = Math.min(RECONNECT_BASE_DELAY * 2 ** (c - 1), RECONNECT_MAX_DELAY)
-      // eslint-disable-next-line no-console
-      log.info(`${channel} closed, reconnect in ${delay}ms (attempt #${c})`)
+    ws.onclose = (event) => {
       // v10 增: 清理心跳定时器
       if (_heartbeatTimer[channel]) {
         clearInterval(_heartbeatTimer[channel])
         _heartbeatTimer[channel] = null
       }
-      _pongMissed[channel] = 0
+      // v119: 服务端 10 分钟 idle 超时关闭 → 前端调 _onTokenExpired 跳登录、不重连
+      //   服务端 4001 同时表示 auth 失败 / idle 超时，行为相同：踢登录
+      if (event && event.code === 4001) {
+        log.warn(`${channel} closed by server (code=4001), token expired or idle timeout`)
+        _onTokenExpired()
+        return
+      }
+      // v7 改: 其他关闭原因（网络抖动、服务端重启等）→ 指数退避重连
+      const c = (_retryCount[channel] || 0) + 1
+      _retryCount[channel] = c
+      const delay = Math.min(RECONNECT_BASE_DELAY * 2 ** (c - 1), RECONNECT_MAX_DELAY)
+      // eslint-disable-next-line no-console
+      log.info(`${channel} closed, reconnect in ${delay}ms (attempt #${c})`)
       _scheduleReconnect(channel)
     }
 
@@ -153,6 +192,8 @@ export function createWsManager(onMessage, onConnected) {
     }
 
     ws.onmessage = (e) => {
+      // v119: 任何消息到达都重置空闲计时（包括 ping/pong/业务消息）
+      _lastRecvAt[channel] = Date.now()
       let payload
       try {
         payload = JSON.parse(e.data)
@@ -161,16 +202,14 @@ export function createWsManager(onMessage, onConnected) {
         log.warn('bad payload', e.data, err)
         return
       }
-      // v10 增: ping/pong 双向心跳 (M-005)
-      //   服务端 30s 发 ping → 客户端立即回 pong (重置服务端 timeout)
-      //   客户端 30s 发 ping → 服务端回 pong (重置 _pongMissed 计数)
+      // v119: 仅响应服务端 ping → 立即回 pong；不再处理服务端主动 pong（已删）
+      //   客户端主动 ping → 服务端回 pong → 这里收到 pong 时仅重置 _lastRecvAt（首行已做）
       const t = payload?.type
       if (t === 'ping') {
         try { ws.send(JSON.stringify({ type: 'pong', ts: payload.ts })) } catch (_) { /* socket 已关 */ }
         return
       }
       if (t === 'pong') {
-        _pongMissed[channel] = 0
         return
       }
       // eslint-disable-next-line no-console
@@ -211,7 +250,7 @@ export function createWsManager(onMessage, onConnected) {
         _heartbeatTimer[ch] = null
       }
       _retryCount[ch] = 0  // v7 增: 主动断开也清计数
-      _pongMissed[ch] = 0  // v10 增
+      _lastRecvAt[ch] = 0   // v119 增
       if (_sockets[ch]) {
         _sockets[ch].onclose = null
         _sockets[ch].close()

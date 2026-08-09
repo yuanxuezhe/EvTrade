@@ -1,13 +1,15 @@
 """
-ws/endpoint.py — /ws/{channel} WebSocket 端点（v10 ping/pong 心跳 + v15 subscribe 协议）
+ws/endpoint.py — /ws/{channel} WebSocket 端点（v10 ping/pong + v15 subscribe + v119 单向 idle）
 
 行为：
 - 通过 ?token=JWT 认证，无 token → close 4001
 - 接入 ws_manager（按 channel 维护连接集）
-- 双向心跳：
-  - 收到 client `{"type":"ping"}` → 立即回 `{"type":"pong"}`
-  - 服务端 30s 主动发 ping（所有 channel 都启，含 quote_update）
-  - 60s 内没收到任何消息 → close 4408
+- 单向心跳（v119，2026-08-09 改造）：
+  - 客户端 30s 主动发 ping → 服务端立即回 pong（重置 last_recv）
+  - 服务端**不**主动 ping
+  - 服务端 10 分钟内没收到**任意**消息（ping / pong / 业务）→ close 4001 "idle timeout"
+    → 前端 onclose 看 4001 → 跳登录、停止重连
+  - 10 分钟阈值与 HTTP session 完全解耦（WS 鉴权只 decode_token，不动 session cache）
 - 业务消息（v15 新增, 2026-07-09 quote-snapshot-subscribe）：
   - 收到 client `{"type":"subscribe", "stock_codes":[...]}` →
       - 调 ws_manager.subscribe(ws, codes)
@@ -30,8 +32,8 @@ from server.repo.quote_snapshots import get_latest_multi as repo_get_latest_mult
 from server.models.user import User as UserModel  # 2026-07-10 sync_update admin 鉴权
 
 
-WS_HEARTBEAT_INTERVAL = 30  # 秒：服务端主动 ping 间隔
-WS_CLIENT_TIMEOUT = 60      # 秒：上次消息到现在的最大间隔（= 2 × heartbeat）
+WS_IDLE_TIMEOUT = 600  # 秒：WS 通道无任意消息的最大容忍（v119: 客户端 30s ping → 10 分钟内必收到消息）
+# 测试时可 monkey-patch 成小值（默认 600s 测试不现实）
 
 # 2026-07-10 sync_update 频道鉴权:admin role required
 WS_CHANNELS_REQUIRE_ADMIN = {"sync_update"}
@@ -58,6 +60,11 @@ def register_ws_endpoint(app: FastAPI):
         v21 增（2026-07-10 stock-info-crawler）：
           - sync_update 频道（admin only）
           - 鉴权校验 role=admin（其他 channel 不变）
+        v119 改（2026-08-09）：
+          - 服务端不再主动 ping；改为客户端 30s 主动 ping → 服务端立即回 pong
+          - 客户端 30s ping → 服务端仅回 pong（重置 last_recv）
+          - 服务端 10 分钟无任意消息 → close 4001 "idle timeout"
+          - WS 鉴权只 decode_token，不调 session.is_valid，不 touch session
         """
         token = websocket.query_params.get("token")
         if not token:
@@ -82,21 +89,21 @@ def register_ws_endpoint(app: FastAPI):
 
         last_recv = asyncio.get_event_loop().time()
 
-        async def heartbeat_sender():
-            """服务端主动 ping（所有 channel 都启）"""
+        async def idle_checker():
+            """WS 通道独立 idle 计时（v119: 不与 HTTP session 耦合）
+            客户端 30s 必发 ping → 10 分钟内必收到任意消息 → 否则视为前后端断开, T 掉节省资源
+            """
             try:
                 while True:
-                    await asyncio.sleep(WS_HEARTBEAT_INTERVAL)
-                    await websocket.send_json({"type": "ping", "ts": time.time()})
-                    # 超时检查：上次收到消息 > WS_CLIENT_TIMEOUT 秒 → 主动断开
+                    await asyncio.sleep(30)
                     now = asyncio.get_event_loop().time()
-                    if now - last_recv > WS_CLIENT_TIMEOUT:
-                        await websocket.close(code=4408, reason="heartbeat timeout")
+                    if now - last_recv > WS_IDLE_TIMEOUT:
+                        await websocket.close(code=4001, reason="idle timeout")
                         return
             except (WebSocketDisconnect, Exception):
                 return
 
-        sender_task = asyncio.ensure_future(heartbeat_sender())  # Py3.6.8 compat
+        idle_task = asyncio.ensure_future(idle_checker())  # Py3.6.8 compat
         try:
             while True:
                 data = await websocket.receive_text()
@@ -189,5 +196,5 @@ def register_ws_endpoint(app: FastAPI):
         except Exception as e:
             print(f"[WS] error on {channel}: {e}")
         finally:
-            sender_task.cancel()
+            idle_task.cancel()
             ws_manager.disconnect(websocket, channel)

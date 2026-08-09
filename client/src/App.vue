@@ -40,8 +40,7 @@
 </template>
 
 <script setup>
-import { computed, onMounted, onBeforeUnmount, watch } from 'vue'
-import { http } from './api'  // heartbeat 调用'
+import { computed, onMounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import Sidebar from './components/Sidebar.vue'
 import AppHeader from './components/AppHeader.vue'
@@ -89,22 +88,10 @@ onMounted(async () => {
       console.warn('[App.vue] stocksStore.initCache 失败:', e?.message || e)
     })
   }
-  // REQ-AUTH-IDLE-001 (2026-08-04): token 10min idle 失效, 前端每 5min 调一次 heartbeat
-  // 让 token last_seen_at 重置, 用户停留页面不操作时也不掉线
-  if (authStore.isAuthenticated) {
-    _heartbeatTimer = setInterval(() => {
-      http.post('/auth/heartbeat').catch((e) => {
-        console.warn('[heartbeat] failed:', e?.message || e)
-      })
-    }, 30 * 1000)  // 30s 一次 (idle 10min → 30s 内必有请求)
-  }
+  // v119 (2026-08-09): 删除 /auth/heartbeat 30s 定时器
+  //   旧逻辑用 HTTP heartbeat 让 token last_seen_at 永不过期 — 与新需求"前后端断开就 T 掉"冲突
+  //   新机制: 客户端 WS 30s ping + 后端 10 分钟独立 idle 计时 (server/ws/endpoint.py WS_IDLE_TIMEOUT)
 })
-
-onBeforeUnmount(() => {
-  if (_heartbeatTimer) clearInterval(_heartbeatTimer)
-})
-
-let _heartbeatTimer = null
 
 // 登录 / 登出时建立 / 断开 WS 订阅 + 重建 holdings 缓存
 watch(
