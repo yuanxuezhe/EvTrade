@@ -22,6 +22,8 @@ ws/endpoint.py — /ws/{channel} WebSocket 端点（v10 ping/pong + v15 subscrib
 """
 import asyncio
 import json
+import os
+import tempfile
 import time
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 
@@ -135,9 +137,6 @@ def register_ws_endpoint(app: FastAPI):
                         continue
                     try:
                         accepted = ws_manager.subscribe(websocket, codes_raw)
-                        # 2026-07-09 quick verify: 把 subscribe 事件持久化到专属 log,便于外部观察前端是否触发
-                        with open('/tmp/ws_subscribes.log', 'a') as _f:
-                            _f.write(f"[subscribe] ts={int(__import__('time').time())} remote={websocket.client[0] if websocket.client else '?'} accepted={sorted(accepted)} sub_total={len(ws_manager.subscription_index)} active={len(ws_manager.active_connections.get('quote_update', set()))}\n")
                     except ValueError as e:
                         await websocket.send_json({
                             "type": "subscribe_ack", "code": 429, "msg": str(e),
@@ -145,6 +144,17 @@ def register_ws_endpoint(app: FastAPI):
                             "snapshots": {},
                         })
                         continue
+                    # 2026-07-09 quick verify: 把 subscribe 事件持久化到专属 log,便于外部观察前端是否触发
+                    # v123 修复: 原 open('/tmp/ws_subscribes.log') 在 Windows 下 /tmp 目录不存在 →
+                    #   FileNotFoundError 未被子句 except ValueError 捕获 → 整个 subscribe 处理中断,
+                    #   WS 连接静默死亡(浏览器每 ~92s 被客户端闲置超时 force close 重连, 无限刷屏)
+                    #   改用 gettempdir() 下的固定路径 + 全量 try/except: 诊断日志失败只 print 绝不打断连接
+                    try:
+                        _log_path = os.path.join(tempfile.gettempdir(), 'ws_subscribes.log')
+                        with open(_log_path, 'a') as _f:
+                            _f.write(f"[subscribe] ts={int(time.time())} remote={websocket.client[0] if websocket.client else '?'} accepted={sorted(accepted)} sub_total={len(ws_manager.subscription_index)} active={len(ws_manager.active_connections.get('quote_update', set()))}\n")
+                    except Exception:
+                        print("[ws-subscribe] debug log write failed (non-fatal)", flush=True)
                     # 立即返当前最新快照
                     # 2026-07-10 升级: 只对 "精确 stock_code pattern" 查 DB 拿 snapshot
                     #   'SZ' / 'SH' / '000001' / '' 都是 pattern, 不能直接当 stock_code 查 DB
@@ -160,11 +170,15 @@ def register_ws_endpoint(app: FastAPI):
                     snapshots = {}
                     matched_count = 0
                     if exact_patterns:
+                        # v123: 快照查询包进 try/except —— 任何 DB 异常都不应打挂连接,
+                        #   降级为返回空 snapshots (订阅本身已生效, 后续 tick 会补数据)
                         db = SessionLocal()
                         try:
                             rows = repo_get_latest_multi(db, exact_patterns)
                             snapshots = {c: repo_to_dict(s) for c, s in rows.items()}
                             matched_count = len(snapshots)
+                        except Exception:
+                            print("[ws-subscribe] snapshot query failed (non-fatal)", flush=True)
                         finally:
                             db.close()
                     await websocket.send_json({

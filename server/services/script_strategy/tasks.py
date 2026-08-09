@@ -107,7 +107,8 @@ def get_task_logs(task_id: int, user_id: int, is_admin: bool = False) -> Optiona
     if t is None:
         return None
     if t.get("mode") == "backtest":
-        logs = (t.get("backtest_result") or {}).get("trades", []) if t.get("backtest_result") else []
+        # 交易明细在 backtest_result.best.trades (引擎契约)
+        logs = ((t.get("backtest_result") or {}).get("best") or {}).get("trades", []) if t.get("backtest_result") else []
     else:
         logs = []
     return {**t, "logs": logs}
@@ -145,7 +146,8 @@ def get_task_signals(
     signals, progress = _extract_signals_and_progress(mode, row_data)
 
     if type_filter:
-        signals = [s for s in signals if s.get("type") == type_filter]
+        # 信号对象统一字段是 signal_type (strategy_exec backtest/live 一致)
+        signals = [s for s in signals if s.get("signal_type") == type_filter]
 
     total_signals = len(signals)
     signals = signals[-limit:] if limit > 0 else signals

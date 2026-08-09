@@ -191,7 +191,7 @@
                 </el-table-column>
                 <el-table-column label="类型" width="80">
                   <template #default="{ row }">
-                    <el-tag size="small" :type="_signalType(row.type)">{{ row.type }}</el-tag>
+                    <el-tag size="small" :type="_signalType(row.signal_type || row.type)">{{ row.signal_type || row.type }}</el-tag>
                   </template>
                 </el-table-column>
                 <el-table-column label="价格" prop="price" width="80">
@@ -592,6 +592,12 @@ const PHASE_LABELS = {
   backtest_bar: { label: '🔄 跑回测', type: 'primary' },
   grid_combo: { label: '🔀 grid搜索', type: 'primary' },
   write_result: { label: '💾 写结果', type: 'info' },
+  // strategy_exec 阶段 (v123: 引擎实时进度)
+  load_script: { label: '📥 加载脚本', type: 'info' },
+  build_cerebro: { label: '🔧 构造引擎', type: 'info' },
+  running: { label: '🔄 回测中', type: 'primary' },
+  writing_result: { label: '💾 写结果', type: 'info' },
+  live_running: { label: '🟢 实盘运行中', type: 'success' },
   done: { label: '✅ 完成', type: 'success' },
   failed: { label: '❌ 失败', type: 'danger' },
 }
@@ -737,6 +743,8 @@ async function openDetail(row) {
   await nextTick()
   renderChart()
   await loadSignals()
+  if (row.status === 'running') _startProgressPoll()
+  else _stopProgressPoll()
 }
 
 async function loadSignals() {
@@ -761,6 +769,8 @@ async function loadDetail(taskId) {
       await nextTick()
       renderChart()
       await loadSignals()
+      if (t.status === 'running') _startProgressPoll()
+      else _stopProgressPoll()
     }
   } catch (e) {
     // ignored
@@ -951,46 +961,92 @@ onMounted(async () => {
   if (route.query.script_id) openCreate()
 })
 
-// 详情抽屉关闭时 dispose chart
+// 详情抽屉关闭时 dispose chart + 停轮询
 watch(detailOpen, async (v) => {
-  if (!v && chart) {
-    chart.dispose()
-    chart = null
+  if (!v) {
+    if (chart) {
+      chart.dispose()
+      chart = null
+    }
+    _stopProgressPoll()
   }
 })
 
-// 实盘运行中 → 每 5s 自动刷新信号
-let _refreshTimer = null
+// v123: 运行中任务每 3s 轮询 getTask 刷新 progress/status + /signals (回测+实盘)
+//       实时信号由 WS task_progress_update 推送 (signal_consumer 转发 MQ) 即时插入
+let _runningPollTimer = null
 const wsStore = useWsStore()  // v91.4: ws task 进度推送
 
-watch(detail, async (v) => {
-  if (_refreshTimer) {
-    clearInterval(_refreshTimer)
-    _refreshTimer = null
+function _stopProgressPoll() {
+  if (_runningPollTimer) {
+    clearTimeout(_runningPollTimer)
+    _runningPollTimer = null
   }
-  if (v && v.mode === 'live' && v.status === 'running') {
-    _refreshTimer = setInterval(() => loadSignals(), 5000)
-  }
-})
+}
 
-// v91.4: ws 实时进度推送 (1s 内到达, 代替 5s 轮询)
+function _startProgressPoll() {
+  _stopProgressPoll()
+  if (!detail.value?.id) return
+  _runningPollTimer = setTimeout(async () => {
+    try {
+      const t = await scriptStrategyApi.getTask(detail.value.id)
+      if (t) {
+        detail.value = {
+          ...detail.value,
+          status: t.status || detail.value.status,
+          progress: t.progress || detail.value.progress,
+          pnl: t.pnl ?? detail.value.pnl,
+          trades_count: t.trades_count ?? detail.value.trades_count,
+        }
+        // 回测运行中 best.signal_log 未写, loadSignals 会清掉 WS 实时插入的信号 → 跳过
+        // 实盘: 从 DB live_signals 兜底刷新 (WS 广播为主, DB flush 兜底)
+        if (detail.value?.mode === 'live') {
+          await loadSignals()
+        }
+        if (t.status === 'done' || t.status === 'failed' || t.status === 'stopped') {
+          loadDetail(detail.value.id)
+          _stopProgressPoll()
+          return
+        }
+      }
+    } catch (e) { /* 轮询失败静默, 继续下一轮 */ }
+    _startProgressPoll()
+  }, 3000)
+}
+
+// v91.4 + v123: ws 实时进度/信号推送 (signal_consumer 转发 MQ 信号 → task_progress_update 频道)
 watch(() => wsStore.lastTaskProgress, (msg) => {
-  if (!msg) return
-  if (detail.value && msg.task_id === detail.value.id) {
+  if (!msg || !detail.value) return
+  if (msg.task_id !== detail.value.id) return
+  // 实时信号 → 插入信号流顶部 (按 trace_id 去重, 前端立即可见触发信号)
+  if (msg.signal) {
+    const sig = msg.signal
+    const arr = signalData.value.signals || []
+    if (sig.trace_id && !arr.some(x => x.trace_id === sig.trace_id)) {
+      signalData.value = {
+        ...signalData.value,
+        signals: [sig, ...arr].slice(0, 500),
+        total_signals: (signalData.value.total_signals || 0) + 1,
+      }
+    }
+  }
+  // 进度 / 状态更新
+  if (msg.status || msg.progress) {
     detail.value = {
       ...detail.value,
       status: msg.status || detail.value.status,
       progress: msg.progress || detail.value.progress,
     }
-    // 回测完成 → 拉一次完整结果 (图表 + best_params 等)
-    if (msg.status === 'done' || msg.status === 'failed' || msg.status === 'stopped') {
-      loadDetail(detail.value.id)
-    }
+  }
+  // 回测/实盘完成 → 拉一次完整结果 (图表 + best_params 等), 停轮询
+  if (msg.status === 'done' || msg.status === 'failed' || msg.status === 'stopped') {
+    _stopProgressPoll()
+    loadDetail(detail.value.id)
   }
 })
 
 onBeforeUnmount(() => {
-  if (_refreshTimer) clearInterval(_refreshTimer)
+  _stopProgressPoll()
 })
 </script>
 

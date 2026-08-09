@@ -115,7 +115,7 @@ class SignalConsumer:
         log.info("[signal_consumer] stopped")
 
     async def _handle_message(self, message: aio_pika.abc.AbstractIncomingMessage) -> None:
-        """收 1 条 signal message → POST /api/orders/place"""
+        """收 1 条 signal message → 实时推前端 WS + (live BUY/SELL → POST /api/orders/place)"""
         try:
             payload = message.json()
         except Exception as e:
@@ -125,10 +125,23 @@ class SignalConsumer:
 
         trace_id = payload.get("trace_id", "")
         signal_type = payload.get("signal_type", "INFO")
+        mode = payload.get("mode", "")
 
         # 幂等: 同一 trace_id 跳过 (避免 consumer 重启后重复下单)
         if trace_id and self._is_processed(trace_id):
             log.info("[signal_consumer] dup trace_id=%s, skip", trace_id)
+            await message.ack()
+            return
+
+        # 实时推前端 (task_progress_update WS 频道) — 回测/实盘信号都推
+        await self._broadcast_task_progress(payload)
+
+        # 回测信号: 只记录 + 前端可见, 绝不下真实单
+        #   (strategy_exec 回测也会 publish signal 到 MQ, mode='backtest' 标识)
+        if mode == "backtest":
+            log.info("[signal_consumer] backtest signal (no order): type=%s task=%d stock=%s trace=%s",
+                     signal_type, payload.get("task_id"), payload.get("stock_code"), trace_id)
+            self._mark_processed(trace_id)
             await message.ack()
             return
 
@@ -177,6 +190,37 @@ class SignalConsumer:
         except Exception as e:
             log.exception("[signal_consumer] unexpected error: %s", e)
             await message.nack(requeue=True)
+
+    async def _broadcast_task_progress(self, payload: Dict[str, Any]) -> None:
+        """把 1 条 signal 实时推给前端 (task_progress_update WS 频道)
+
+        前端 ws_dispatch._onTaskProgress → wsStore.lastTaskProgress → ScriptTask.vue
+        实时插入信号流 + 更新进度。broadcast 失败绝不影响 MQ ack (非致命)。
+        """
+        try:
+            from server.ws.manager import ws_manager
+            await ws_manager.broadcast("task_progress_update", {
+                "type": "task_progress_update",
+                "data": {
+                    "task_id": payload.get("task_id"),
+                    "mode": payload.get("mode", ""),
+                    "status": "running",
+                    "signal": {
+                        "signal_type": payload.get("signal_type"),
+                        "stock_code": payload.get("stock_code"),
+                        "price": payload.get("price"),
+                        "volume": payload.get("volume"),
+                        "msg": payload.get("msg", ""),
+                        "stime": payload.get("stime", ""),
+                        "indicators": payload.get("indicators", {}),
+                        "ts": payload.get("ts", ""),
+                        "trace_id": payload.get("trace_id", ""),
+                        "mode": payload.get("mode", ""),
+                    },
+                },
+            })
+        except Exception as e:
+            log.warning("[signal_consumer] ws broadcast failed (non-fatal): %s", e)
 
     def _is_processed(self, trace_id: str) -> bool:
         """检查 trace_id 是否已处理 (24h TTL)"""

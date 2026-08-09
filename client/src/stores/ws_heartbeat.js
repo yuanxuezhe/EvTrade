@@ -33,7 +33,7 @@ const log = makeLogger('ws')
 //   - 前端 ws_dispatch._onInitCompleted 接收后做：active day 切换 + force bootstrap
 //   - 之前 ws_dispatch._onInitCompleted 写了但永远收不到 (CHANNELS 没列)，导致日初后页面不切日
 // v118: 加 'position_update' channel — broker 推 pos_push 事件 → 后端 handle_pos_push 覆盖本地 → ws 推前端
-export const CHANNELS = ['order_update', 'trade_update', 'position_update', 'quote_update', 'strategy_update', 'system_update']
+export const CHANNELS = ['order_update', 'trade_update', 'position_update', 'quote_update', 'strategy_update', 'system_update', 'task_progress_update']
 //                                                                            ^^^^^^^^^^^^^^^^
 //                                                                            v99: 日初完成后推 init_completed
 //                                                                            v95: trd_cfm payload.data.position 同时携带持仓行, 前端 _onTradeCfm 内部处理
@@ -47,10 +47,11 @@ export const CHANNELS = ['order_update', 'trade_update', 'position_update', 'quo
 export const RECONNECT_BASE_DELAY = 1000
 export const RECONNECT_MAX_DELAY = 30000
 
-// v119: 客户端视角的 WS 空闲超时（90s = 3 × 30s ping 周期）
-//   比服务端 WS_IDLE_TIMEOUT (600s) 短, 优先在客户端断 → 触发指数退避重连
-//   适用于"网络真断但服务端探测不到"的场景；服务端的 600s 是兜底
-export const WS_IDLE_TIMEOUT_MS = 90_000
+// v122: 客户端视角的 WS 空闲超时
+//   原 90_000 (3 × 30s ping) 太激进: 服务端 / 反代偶尔吞 pong 时会误断刷屏
+//   改 300_000 (5 min), 给服务端/反代留 buffer; 服务端 WS_IDLE_TIMEOUT (600s) 是兜底
+//   适用场景: 网络真断但服务端探测不到 (前端先断触发指数退避重连)
+export const WS_IDLE_TIMEOUT_MS = 300_000
 
 // change ws-quote-fanout: quote_update 改为走后端 /ws/quote_update，不再直连 hqserver :8765
 //   - 原因：hqserver 是裸 ws，不支持 wss；公网访问必然 TLS 失败
