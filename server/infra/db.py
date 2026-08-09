@@ -190,7 +190,6 @@ def init_db():
     生产环境推荐：跑一次后即把 admin URL 从 env 移除（避免 runtime 错用）。
     """
     from server.models import user, orm  # noqa: F401
-    from server.services.strategy import models as strategy_models  # noqa: F401
     from sqlalchemy import text
 
     # v20: admin engine 重新计算 pool_kwargs (不重用模块级 _engine_kwargs)

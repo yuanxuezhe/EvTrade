@@ -26,7 +26,6 @@ from server.api import clock, fee_config, sysconfig as sysconfig_api  # v78: 统
 from server.api import system as system_api  # v8: 系统级查询（active-day）
 from server.api import t0_stats, t0_aggregate
 from server.api import t0_tasks  # v18 change t0-task-management
-from server.api import strategy as strategy_api  # change strategy_trade task 9
 from server.api import script_strategy as script_strategy_api  # script-strategy change (新模块)
 from server.api import quote as quote_api  # 2026-07-09 quote-snapshot-subscribe
 from server.api import stocks as stocks_api  # v21 stock-info-crawler
@@ -293,8 +292,6 @@ app.include_router(trades.router, prefix="/api/trades", tags=["trades"], depende
 app.include_router(asset.router, prefix="/api/asset", tags=["asset"], dependencies=_AUTH)
 app.include_router(fee_config.router, prefix="/api/fee-config", tags=["fee-config"], dependencies=_AUTH)
 app.include_router(system_api.router, prefix="/api/system", tags=["system"], dependencies=_AUTH)  # v8
-# strategy REST（change strategy_trade task 9）— 端点内部 _require_engine_enabled 灰度门
-app.include_router(strategy_api.router, dependencies=_AUTH)
 # script-strategy change (新模块): 前端编写 Python 脚本 + 回测 + 实盘
 app.include_router(script_strategy_api.router, prefix="/api/script-strategy", tags=["script-strategy"], dependencies=_AUTH)
 app.include_router(quote_api.router, prefix="/api/quote", tags=["quote"], dependencies=_AUTH)  # 2026-07-09

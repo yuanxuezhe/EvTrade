@@ -276,9 +276,6 @@ def resolve_t0_user_defs(db: Session, user_def: str) -> Optional[Set[str]]:
     if not user_def:
         return None
     if user_def == 'T0':
-        from server.tables import Strategy
-        t0_ids = {
-            str(s.id) for s in Strategy.query_all() if s.type == 't0'
-        }
-        return {'T0'} | t0_ids
+        # v124: 旧 strategy 表 (type='t0' 策略) 已删除, 不再有 t0 策略 id 可匹配
+        return {'T0'}
     return {user_def}

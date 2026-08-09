@@ -32,7 +32,6 @@
   使用场景 (v28 上线, 试水点: OrderForm.vue 即 Trade.vue 下单):
     - OrderForm.vue      : v-model="form.stock_code", @select 写 form.stock_name
     - T0TaskCreateDialog : 同上
-    - StrategyConfig     : 同上
     - AdminStockConfig   : 同上
 -->
 <template>

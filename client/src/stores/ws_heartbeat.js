@@ -33,7 +33,7 @@ const log = makeLogger('ws')
 //   - 前端 ws_dispatch._onInitCompleted 接收后做：active day 切换 + force bootstrap
 //   - 之前 ws_dispatch._onInitCompleted 写了但永远收不到 (CHANNELS 没列)，导致日初后页面不切日
 // v118: 加 'position_update' channel — broker 推 pos_push 事件 → 后端 handle_pos_push 覆盖本地 → ws 推前端
-export const CHANNELS = ['order_update', 'trade_update', 'position_update', 'quote_update', 'strategy_update', 'system_update', 'task_progress_update']
+export const CHANNELS = ['order_update', 'trade_update', 'position_update', 'quote_update', 'system_update', 'task_progress_update']
 //                                                                            ^^^^^^^^^^^^^^^^
 //                                                                            v99: 日初完成后推 init_completed
 //                                                                            v95: trd_cfm payload.data.position 同时携带持仓行, 前端 _onTradeCfm 内部处理

@@ -41,7 +41,6 @@ const allItems = [
   { path: '/trade', label: '交易', icon: TrendCharts },
   { path: '/t0-trade', label: '做T', icon: Coin },
   { path: '/orders', label: '历史', icon: List },
-  { path: '/strategy-trade', label: '策略', icon: Cpu },
   { path: '/system-config', label: '管理', icon: Setting, adminOnly: true },
 ]
 

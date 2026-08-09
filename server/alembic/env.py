@@ -1,7 +1,7 @@
 """Alembic env.py — EvTrade 表结构迁移入口
 
 工作流程：
-  1. 改 ORM model（server/models/orm.py、server/services/strategy/models.py）
+  1. 改 ORM model（server/models/orm.py）
   2. alembic revision --autogenerate -m "description"
   3. 审查生成的 migration（server/alembic/versions/）
   4. alembic upgrade head
@@ -44,7 +44,6 @@ if not DATABASE_URL.startswith("mysql"):
 # ─── 导入 ORM 模型注册 metadata ─────────────────────────────────
 # 这些 import 不实例化对象，只是让 declarative_base() 注册表定义
 from server.models import user, orm  # noqa: F401
-from server.services.strategy import models as strategy_models  # noqa: F401
 from server.infra.db import Base  # declarative_base() 单例
 
 target_metadata = Base.metadata

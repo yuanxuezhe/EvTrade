@@ -26,7 +26,6 @@
 import { ElNotification } from 'element-plus'
 import { useQuoteStore } from './quote'
 import { useHoldingsStore } from './holdings'
-import { useStrategyStore } from './strategy'
 import { useSyncStore } from './sync'  // v21 stock-info-crawler
 import { useWsStore } from './ws'
 // change 2026-07-15-system-init-broadcast: 收到 init_completed 时需要刷新 asset/position store
@@ -48,7 +47,6 @@ export function dispatchPayload(payload) {
   if (t === 'ord_cfm') _onOrderCfm(payload.data)
   else if (t === 'trd_cfm') _onTradeCfm(payload.data)
   else if (t === 'quote') _onQuote(payload.data)
-  else if (t === 'strategy_update') _onStrategyUpdate(payload.data)
   // v91.4: 回测 / live task 进度推送 (ScriptTask.vue 详情实时刷新)
   else if (t === 'task_progress_update') _onTaskProgress(payload.data)
   // v99: 资金定时同步推送
@@ -379,40 +377,6 @@ function _onTaskProgress(row) {
   } catch (e) {
     log.error('_onTaskProgress failed:', e)
   }
-}
-
-function _onStrategyUpdate(row) {
-  if (!row || row.strategy_id == null) {
-    log.warn('_onStrategyUpdate 缺 strategy_id, 跳过:', row)
-    return
-  }
-  try {
-    const store = useStrategyStore()
-    const trdDate = String(row.trd_date || _todayYYYYMMDD())
-    const audit = {
-      id: row.audit_id ?? `push-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,
-      strategy_id: row.strategy_id,
-      regime_id: row.regime_id ?? null,
-      trd_date: trdDate,
-      trigger_type: row.event || 'grid_triggered',
-      flags_active: row.flags_active || [],
-      current_price: row.current_price ?? null,
-      position_vol: row.position_vol ?? null,
-      base_volume: row.base_volume ?? null,
-      action_payload: row.action || null,
-      order_no: row.order_no || null,
-      reject_reason: row.reject_reason || null,
-      created_at: row.ts || new Date().toISOString(),
-    }
-    store.appendAudit(row.strategy_id, trdDate, audit)
-  } catch (e) {
-    log.error('_onStrategyUpdate failed:', e)
-  }
-}
-
-function _todayYYYYMMDD() {
-  const d = new Date()
-  return `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`
 }
 
 // ============================================================

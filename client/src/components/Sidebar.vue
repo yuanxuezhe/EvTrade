@@ -85,7 +85,6 @@ const menuItems = computed(() => {
     // Sidebar 入口: 真正指向 /t0-trade (T0Trade.vue)
 // 路由 /to-management 改 redirect 到 /t0-trade (兼容旧书签)
     { path: '/t0-trade', label: '快速做T', icon: Coin },
-    { path: '/strategy-trade', label: '策略交易', icon: Cpu },
     // script-strategy change: 2 个新入口 (前端写脚本 + 跑任务)
     { path: '/script-dev', label: '策略开发', icon: EditPen },
     { path: '/script-task', label: '策略运行', icon: DataLine }

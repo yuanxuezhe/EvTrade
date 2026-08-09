@@ -52,8 +52,6 @@ class WSManager:
             #   (consolidate-position-data-flow 已废弃; pos_push 是 v118 后持仓唯一数据源)
             "position_update": set(),
             "quote_update": set(),
-            # change strategy_trade: 策略引擎事件频道（regime_changed / grid_triggered / regime_cooldown）
-            "strategy_update": set(),
             # change 2026-07-15-system-init-broadcast: 系统级事件频道
             #   - 日初成功 → system_status_change (v117)
             #   - (后续) 对账失败 / 切日失败等扩展位

@@ -8,8 +8,6 @@ const Trade = () => import('../views/Trade.vue')
 const Asset = () => import('../views/Asset.vue')
 // v32: 删 /holdings 独立查询页 (持仓由 Trade.vue 右上 HoldingsPanel 承担)
 // v13: HistoryOrders/HistoryTrades view 已删除
-const AlgoStrategy = () => import('../views/AlgoStrategy.vue')
-const StrategyTrade = () => import('../views/StrategyTrade.vue')
 // script-strategy change: 前端编写 Python 脚本 + 回测 + 实盘
 const ScriptDev = () => import('../views/ScriptDev.vue')
 const ScriptTask = () => import('../views/ScriptTask.vue')
@@ -46,14 +44,9 @@ const routes = [
   { path: '/to-management', redirect: '/t0-trade' },
   // 旧 /t-strategy 占位页已下线 → 旧书签统一跳快速做T
   { path: '/t-strategy', redirect: '/t0-trade' },
-  // change strategy_trade task 12: 策略交易视图（trader + admin 可访问）
-  { path: '/strategy-trade', name: 'StrategyTrade', component: StrategyTrade, meta: { title: '策略交易', requiresTrader: true } },
   // script-strategy change: 2 个新页面
   { path: '/script-dev', name: 'ScriptDev', component: ScriptDev, meta: { title: '策略开发', requiresTrader: true } },
   { path: '/script-task', name: 'ScriptTask', component: ScriptTask, meta: { title: '策略运行', requiresTrader: true } },
-  // change strategy_trade task 12: 旧 /algo-strategy 占位页 → 新 /strategy-trade
-  //   AlgoStrategy.vue 保留 (其他 view 可能引用), 但路由重定向
-  { path: '/algo-strategy', redirect: '/strategy-trade' },
   {
     path: '/users',
     name: 'Users',
