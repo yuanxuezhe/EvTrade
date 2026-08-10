@@ -1,6 +1,8 @@
 # strategy-exec — 策略运行独立服务
 
-> **来源 change**：`2026-08-09-strategy-exec-service`（Backtrader 重构 + 独立服务化）
+> **来源 change**：
+> - `2026-08-09-strategy-exec-service`（Backtrader 重构 + 独立服务化）
+> - `2026-08-10-strategy-params-sweep-best-live`（v122，schema 注入 + sweep 引擎 + live 接 best_params）— 见 REQ-SE-008 / REQ-SE-009
 > **DB schema** 详见 [`data-model/spec.md`](../data-model/spec.md)（strategy_script / strategy_task / strategy_script_audit 共享单库）
 > **EvTrade 端 REST API** 详见 [`strategy/spec.md`](../strategy/spec.md) REQ-STRAT-014~017
 
@@ -246,6 +248,174 @@ DB `strategy_task` 表加 3 字段（migration `2026-08-09-strategy-task-exec-fi
 - **THEN** 后到的写 `WHERE version=0` 不匹配（rowcount=0）
 - **AND** 重试读最新 version，再写 `WHERE version=1`
 - **AND** 最坏 case: 写失败 3 次 → 抛 OptimisticLockError → 写 error_msg
+
+### REQ-SE-008: 参数扫描（sweep backtest）
+
+> **来源 change**：`2026-08-10-strategy-params-sweep-best-live`（v122）
+> **设计**：`openspec/changes/2026-08-10-strategy-params-sweep-best-live/design.md` §2
+
+StrategyExec MUST 支持一次提交多组参数组合的回测，并按指定指标排序挑 best。
+
+#### API
+
+新增 endpoint：
+
+```
+POST /internal/run-sweep-task
+```
+
+Request：
+
+```jsonc
+{
+    "user_id": 6,
+    "script_id": "mas_v1",
+    "stock_code": "000001.SZ",
+    "backtest_start_date": "20250101",
+    "backtest_end_date": "20260701",
+    "param_grid": {
+        "fast": [3, 5, 7, 10],
+        "slow": [15, 20, 30, 60]
+    },
+    "metric": "sharpe",
+    "select_top_n": 1,
+    "concurrency": 2
+}
+```
+
+Response（202 Accepted，异步）：
+
+```jsonc
+{
+    "sweep_id": "abc123...",
+    "total_runs": 16,
+    "summary_task_id": 42
+}
+```
+
+#### 行为约束
+
+- **笛卡尔积**：`iter_param_grid(param_grid)` 生成所有组合；若某字段仅 1 个值（= 未扫描），该字段不参与笛卡尔积
+- **大小校验**：
+  - 软警告 64 组合（log warning，不阻断）
+  - 硬拒绝 512 组合（抛 `ValueError`，EvTrade 端返 400）
+- **并发控制**：`asyncio.Semaphore(concurrency)` 控制同时跑的 backtest 数（默认 2）
+- **失败容错**：任一组合失败 → 该 task `status='failed'`，其余继续；sweep_summary 记录 N 成功 M 失败，best_params 仅从成功里挑
+- **指标**：`metric` ∈ {`sharpe`, `total_return`, `calmar`}
+  - `sharpe` 取 `SharpeRatio` analyzer
+  - `total_return` = `pnl / initial_cash`（默认 cash=100000）
+  - `calmar` = `total_return / max_drawdown`（`max_drawdown=0` 返 None，避免除零）
+- **持久化**：
+  - 每个组合 = 独立 `strategy_task` row，共享 `sweep_id`
+  - 额外生成 1 个 summary task（`sweep_id=sweep_id`, `sweep_total=1`），其 `best_params` = top1 组合 params；`backtest_result.sweep_results` = 全部组合的 metric 排序数组（含失败的 `'failed'` 标记）；`backtest_result.best_metric_value` = top1 的 metric 值（顶层冗余字段）
+- **K 线共享**：1 次 `fetch_his_bars` 拉全区间，N 个组合共用（同 sweep 内）
+
+#### Scenario: 16 组合 sweep 全成功
+
+- **WHEN** POST /internal/run-sweep-task with `param_grid = {fast: [3,5,7,10], slow: [15,20,30,60]}`（16 组合）
+- **THEN** 创建 16 个 task（sweep_id 共享）+ 1 个 summary task
+- **AND** 全部 status='finished'
+- **AND** summary task.best_params = 排序 top1 组合
+- **AND** summary task.backtest_result.sweep_results = 16 行 metric 排序数组（降序）
+
+#### Scenario: 部分组合失败
+
+- **WHEN** sweep 中 2 个组合 backtest 抛错
+- **THEN** 这 2 个 task status='failed'，error_msg 记录
+- **AND** 其余 14 个 task 正常 finished
+- **AND** summary task.best_params 来自 14 个成功的（不选失败的）
+- **AND** summary task.status 仍 'finished'（不是 failed），error_msg 为空
+
+#### Scenario: 全失败兜底
+
+- **WHEN** sweep 全部组合 backtest 抛错
+- **THEN** summary task.status='failed'
+- **AND** summary task.best_params=null，best_metric_value=null
+- **AND** sweep_results 数组中所有项 status='failed'
+
+#### Scenario: grid > 512 硬拒绝
+
+- **WHEN** `count_grid_size(param_grid) > 512`
+- **THEN** 抛 `ValueError("grid size N 超过硬上限 512")`
+- **AND** EvTrade 端返 400 + `{"code": "GRID_TOO_LARGE", "msg": "..."}`
+- **AND** 不创建任何 strategy_task row
+
+#### Scenario: broker 无 K 线
+
+- **WHEN** `fetch_his_bars()` 返空（broker his_hq 异常或股票无数据）
+- **THEN** 抛 `RuntimeError("broker 未返回 K 线")`
+- **AND** 不创建任何 strategy_task row
+
+### REQ-SE-009: 实盘任务接历史 best_params
+
+> **来源 change**：`2026-08-10-strategy-params-sweep-best-live`（v122）
+
+实盘任务的 `params` MUST 可源自任一历史 backtest task（含 sweep summary task）的 `best_params`。
+
+#### 数据契约
+
+启动实盘 task 时，校验：
+
+- `task.params` 的 key 集合 ⊆ 当前 `script_id` 的 `params_schema` 的 key 集合
+- 任一 key 缺失（schema 已删字段） → 启动前返 400，msg 列出缺失 key
+- 所有 key 都已存在 → 启动 live，行为与原一致（live runner 用 `cls.p.<key>=<value>` 计算信号）
+
+#### API 扩展（EvTrade 转发层）
+
+新增查询端点（EvTrade `GET /api/strategy/tasks` 新 query params）：
+
+```
+GET /api/strategy/tasks
+  ?script_id=mas_v1
+  &status=finished
+  &has_best_params=1   // 限定 best_params 非空
+  &limit=50            // 默认 50，最大 200
+```
+
+Response TaskOut 扩展字段：
+
+```jsonc
+{
+    "task_id": 42,
+    "script_id": "mas_v1",
+    "sweep_id": "abc123...",
+    "sweep_metric": "sharpe",
+    "sweep_total": 16,
+    "best_params": {"fast": 7, "slow": 30, "qty": 100, "rsi_period": 14},
+    "backtest_metric_value": 1.82,
+    "finished_at": "2026-08-10T15:30:00",
+    "mode": "backtest"
+}
+```
+
+- `backtest_metric_value` 来源：
+  - 单 run：`backtest_result.sharpe`（或所选 metric）
+  - sweep summary：`backtest_result.best_metric_value`（顶层冗余）
+- 前端用此查询渲染 "从历史回测选参数" 弹窗
+
+#### Scenario: live 启动用 sweep 的 best_params
+
+- **WHEN** 用户在 ScriptTask 启实盘，选 task #42（sweep summary，best: fast=7, slow=30）
+- **THEN** POST /api/strategy/tasks with `mode='live', params={fast:7, slow:30, qty:100, rsi_period:14}`
+- **AND** EvTrade 转发到 strategy_exec 启 live runner
+- **AND** live runner 用 `cls.p.fast=7, cls.p.slow=30` 计算信号（Backtrader 元类自动注入）
+
+#### Scenario: best_params 引用了已删字段
+
+- **WHEN** schema 升级，删了 `rsi_period` 字段；但旧 task #42 的 best_params 还含 `rsi_period=14`
+- **AND** 用户想用 task #42 的 best 启 live
+- **THEN** 启动前校验 `best_params.key ⊆ current_schema.key`，发现 `rsi_period` 多余
+- **AND** 返 400：`"best_params 包含 schema 已删除字段: rsi_period; 请改用其他回测或手动重选"`
+
+#### Scenario: live runner 接收 schema 注入
+
+- **WHEN** LiveRunner 启动 task，`task.params` 含 fast/slow/qty/rsi_period
+- **AND** script 的 `params_schema` 含同名 4 字段
+- **THEN** `load_strategy_class(code, ProjectStrategy, params_schema=params_schema)` 注入 schema 到 `cls.params`
+- **AND** Backtrader 元类把 `task.params` 的值注入到 `cls.p.fast` / `cls.p.slow` / 等
+- **AND** 用户脚本 `next()` 读 `self.p.fast` 等得到正确值
+
+> **schema 注入机制**（loader 严格模式）：code 声明的 `params` key 集合 MUST = schema key 集合，否则 `ValueError`（不允许代码 + schema 双源）。v121+ 目标：code 不再声明 `params = (...)`，schema 为唯一契约。`params_schema=None` 时走老逻辑（不注入，backward compat）。
 
 ## Cross References
 
