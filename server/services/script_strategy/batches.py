@@ -16,7 +16,7 @@ from server.services.script_strategy._convert import (
     iso,
     json_loads,
     task_row_to_dict,
-    _extract_metric_value,
+    TASK_LIST_COLUMNS,
 )
 from server.services.script_strategy.errors import StrategyError
 from server.services.script_strategy.params import expand_param_ranges, validate_params_keys
@@ -144,7 +144,10 @@ def list_batches(
     if strat is None:
         return None
 
-    rows = StrategyTask.query_by_fields({"strategy_id": strategy_id})
+    # 轻量列 (TASK_LIST_COLUMNS): 免拖回 backtest_result 大 blob,
+    # 否则 SELECT * + ORDER BY 报 MySQL 1038 'Out of sort memory' (500)。
+    rows = StrategyTask.query_by_fields(
+        {"strategy_id": strategy_id}, columns=TASK_LIST_COLUMNS)
     groups: Dict[Any, List] = {}
     for r in rows:
         groups.setdefault(r._data.get("batch_no"), []).append(r)
@@ -155,7 +158,7 @@ def list_batches(
         best = None
         best_metric = None
         for t in finished:
-            mv = _extract_metric_value(json_loads(t._data.get("backtest_result")))
+            mv = t._data.get("backtest_metric_value")  # 已持久化, 不再解析 blob
             if mv is not None and (best_metric is None or mv > best_metric):
                 best_metric = mv
                 best = json_loads(t._data.get("params"))
@@ -182,7 +185,10 @@ def list_batch_tasks(
     strat = _require_owned_strategy(strategy_id, user_id, is_admin=is_admin)
     if strat is None:
         return None
-    rows = StrategyTask.query_by_fields({"strategy_id": strategy_id, "batch_no": batch_no})
+    rows = StrategyTask.query_by_fields(
+        {"strategy_id": strategy_id, "batch_no": batch_no},
+        columns=TASK_LIST_COLUMNS,
+    )
     rows.sort(key=lambda r: getattr(r, "_data", {}).get("id", 0))
     return [task_row_to_dict(r) for r in rows]
 

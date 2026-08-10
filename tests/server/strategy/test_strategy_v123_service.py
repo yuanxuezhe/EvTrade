@@ -195,8 +195,9 @@ def test_list_batches_best_from_finished_tasks(strategy_ctx):
         metric="sharpe", concurrency=2,
     )
     ids = b["task_ids"]
-    StrategyTask.update_one({"status": "finished", "backtest_result": json_dumps({"sharpe": 0.5})}, id=ids[0])
-    StrategyTask.update_one({"status": "finished", "backtest_result": json_dumps({"sharpe": 1.5})}, id=ids[1])
+    # 与 strategy_exec _update_task_results 契约一致: 完成时同时写 backtest_result + backtest_metric_value
+    StrategyTask.update_one({"status": "finished", "backtest_result": json_dumps({"sharpe": 0.5}), "backtest_metric_value": 0.5}, id=ids[0])
+    StrategyTask.update_one({"status": "finished", "backtest_result": json_dumps({"sharpe": 1.5}), "backtest_metric_value": 1.5}, id=ids[1])
     StrategyTask.update_one({"status": "failed", "error_msg": "boom"}, id=ids[2])
 
     batches = svc.list_batches(strategy_ctx["strategy_id"], UID)

@@ -1,7 +1,7 @@
 """
 server/tables/strategy_task.py — 自动生成 (tables-codegen skill)
 
-表: `strategy_task`  (27 字段, 主键: ['id'])
+表: `strategy_task`  (28 字段, 主键: ['id'])
 描述: MySQL table `strategy_task`
 
 ⚠️ 不要手动修改本文件 — 任何字段/主键变更请重新跑 tables-codegen
@@ -57,7 +57,8 @@ class StrategyTask(TableBase):
         'execution_pid': 'strategy_exec 进程 pid (用于排查)',
         'version': '乐观锁 (UPDATE WHERE version 等于当前值)',
         'strategy_id': '→ strategy.strategy_id (v123)',
-        'batch_no': '回测/实盘批次号 (v123, 序号表 task_batch)'
+        'batch_no': '回测/实盘批次号 (v123, 序号表 task_batch)',
+        'backtest_metric_value': '单 run 指标值 (sharpe→total_return→pnl/initial_cash)'
     }
 
     __field_types__: ClassVar[dict] = {
@@ -87,7 +88,8 @@ class StrategyTask(TableBase):
         'execution_pid': 'int',
         'version': 'int',
         'strategy_id': 'int',
-        'batch_no': 'int'
+        'batch_no': 'int',
+        'backtest_metric_value': 'float'
     }
 
     # 字段 type hints (IDE 智能提示用, 运行时不影响行为)
@@ -118,3 +120,4 @@ class StrategyTask(TableBase):
     version: int
     strategy_id: int
     batch_no: int
+    backtest_metric_value: float

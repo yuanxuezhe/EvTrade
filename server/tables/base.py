@@ -368,29 +368,48 @@ class TableBase:
 
     @classmethod
     def query_by_fields(cls, filters: Dict[str, Any],
-                        order: str = "asc", limit: Optional[int] = None) -> List[Row]:
+                        order: str = "asc", limit: Optional[int] = None,
+                        columns: Optional[List[str]] = None) -> List[Row]:
         """按多字段同时过滤 (AND 关系).
 
         Args:
             filters: {field: value} dict, 所有条件用 AND 合并
             order: 'asc' 或 'desc'
             limit: 限制返回行数
+            columns: 需返回的列白名单 (列表). None = SELECT * (全列).
+                用于列表接口跳过大型 BLOB/JSON 列 (如 strategy_task.backtest_result),
+                避免 SELECT * + ORDER BY 触发 MySQL 1038 (Out of sort memory)。
 
         Examples:
             Orders.query_by_fields({"user_id": 1, "stock_code": "000001.SZ"})
                 # user_id=1 AND stock_code='000001.SZ'
             Trades.query_by_fields({}, order="desc", limit=20)
                 # 等价 query_all('desc', limit=20)
+            StrategyTask.query_by_fields(
+                {"strategy_id": 1}, columns=["id", "status", "params"])
+                # 只取轻量列, 不拖回 backtest_result 大 blob
         """
         cls._validate_subclass()
         if order not in ("asc", "desc"):
             raise ValueError(f"order 必须是 'asc' 或 'desc', 收到 {order!r}")
         order_clause = ", ".join(f"`{pk}` {order.upper()}" for pk in cls.__pk_fields__)
+        if columns is not None:
+            # 列名必须来自本表字段 (防注入 + 防拼错列名静默失败)
+            bad = [c for c in columns if c not in cls.__fields__]
+            if bad:
+                raise ValueError(
+                    f"{cls.__tablename__} 不存在列: {bad} (可选: {sorted(cls.__fields__)})"
+                )
+            if not columns:
+                raise ValueError("columns 不能为空 list (需要全列请传 None)")
+            select_cols = ", ".join(f"`{c}`" for c in columns)
+        else:
+            select_cols = "*"
         if not filters:
-            sql = f"SELECT * FROM `{cls.__tablename__}` ORDER BY {order_clause}"
+            sql = f"SELECT {select_cols} FROM `{cls.__tablename__}` ORDER BY {order_clause}"
         else:
             wheres = " AND ".join([f"`{f}` = :f_{i}" for i, f in enumerate(filters.keys())])
-            sql = f"SELECT * FROM `{cls.__tablename__}` WHERE {wheres} ORDER BY {order_clause}"
+            sql = f"SELECT {select_cols} FROM `{cls.__tablename__}` WHERE {wheres} ORDER BY {order_clause}"
         if limit is not None:
             sql += f" LIMIT {int(limit)}"
         params = {f"f_{i}": v for i, v in enumerate(filters.values())}

@@ -12,6 +12,7 @@ from server.services.script_strategy._convert import (
     json_loads,
     task_row_to_dict,
     audit_row_to_dict,
+    TASK_LIST_COLUMNS,
 )
 
 
@@ -37,10 +38,11 @@ def list_tasks(
         filters["mode"] = mode
     if strategy_id:
         filters["strategy_id"] = strategy_id
+    # 轻量列: 列表不拖回 backtest_result 大 blob (防 MySQL 1038 / 响应膨胀)
     if filters:
-        rows = StrategyTask.query_by_fields(filters)
+        rows = StrategyTask.query_by_fields(filters, columns=TASK_LIST_COLUMNS)
     else:
-        rows = StrategyTask.query_all(order="desc")
+        rows = StrategyTask.query_by_fields({}, order="desc", columns=TASK_LIST_COLUMNS)
         rows.sort(key=lambda r: getattr(r, "_data", {}).get("id", 0), reverse=True)
     # limit 截断
     rows = list(rows)[:limit]

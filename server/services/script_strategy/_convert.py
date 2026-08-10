@@ -66,6 +66,31 @@ def strategy_row_to_dict(row) -> Dict[str, Any]:
     }
 
 
+# 列表接口轻量列白名单 (query_by_fields(columns=...) 用).
+# 排除大 BLOB/JSON 列: backtest_result / positions / live_signals / progress
+# 仅在详情 (query_one 全列) 返回。列表 SELECT * + ORDER BY 拖回最大 1.85MB 的
+# backtest_result 会让 MySQL filesort 超大行报 1038 'Out of sort memory' → 500。
+TASK_LIST_COLUMNS = (
+    "id", "user_id", "strategy_id", "batch_no", "description",
+    "stock_code", "mode", "status", "params",
+    "backtest_start_date", "backtest_end_date", "period", "fields",
+    "pnl", "trades_count", "backtest_metric_value",
+    "started_at", "finished_at", "error_msg",
+    "created_at", "updated_at", "execution_service", "execution_pid", "version",
+)
+
+
+def _row_metric_value(d: Dict[str, Any]) -> Optional[float]:
+    """行指标值: 列优先, 老行/未回填回退解析 backtest_result blob."""
+    mv = d.get("backtest_metric_value")
+    if mv is not None:
+        try:
+            return float(mv)
+        except (TypeError, ValueError):
+            return None
+    return _extract_metric_value(json_loads(d.get("backtest_result")))
+
+
 def task_row_to_dict(row) -> Dict[str, Any]:
     d = getattr(row, "_data", {})
     return {
@@ -93,7 +118,7 @@ def task_row_to_dict(row) -> Dict[str, Any]:
         "error_msg": d.get("error_msg"),
         "created_at": iso(d.get("created_at")),
         "updated_at": iso(d.get("updated_at")),
-        "backtest_metric_value": _extract_metric_value(json_loads(d.get("backtest_result"))),
+        "backtest_metric_value": _row_metric_value(d),
     }
 
 

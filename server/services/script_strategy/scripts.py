@@ -170,7 +170,7 @@ def delete_script(script_id: str, user_id: int, is_admin: bool) -> bool:
     strategies = Strategy.query_by_fields({"user_id": user_id, "script_id": script_id})
     for strat in strategies:
         sid = strat._data.get("strategy_id")
-        for task in StrategyTask.query_by_fields({"user_id": user_id, "strategy_id": sid}):
+        for task in StrategyTask.query_by_fields({"user_id": user_id, "strategy_id": sid}, columns=["id"]):
             StrategyTask.delete_one(id=task._data.get("id"))
         Strategy.delete_one(strategy_id=sid)
     return StrategyScript.delete_one(user_id=user_id, id=script_id)

@@ -135,7 +135,7 @@ def delete_strategy(strategy_id: int, user_id: int, is_admin: bool) -> bool:
         return False
     if not is_admin and getattr(row, "_data", {}).get("user_id") != user_id:
         return False
-    for task in StrategyTask.query_by_fields({"strategy_id": strategy_id}):
+    for task in StrategyTask.query_by_fields({"strategy_id": strategy_id}, columns=["id"]):
         StrategyTask.delete_one(id=task._data.get("id"))
     return Strategy.delete_one(strategy_id=strategy_id)
 

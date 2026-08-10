@@ -412,20 +412,49 @@ def _wrap_strategy(
     strategy_cls.sell_signal = patched_sell
 
 
+def _metric_value_from_result(backtest_result: Dict[str, Any]) -> Optional[float]:
+    """从 backtest_result 提取展示用指标值 (持久化到 backtest_metric_value 列).
+
+    语义必须与 server/services/script_strategy/_convert.py 的
+    _extract_metric_value 一致 (列表接口按此列展示指标, 不再解析大 blob):
+    sharpe → total_return → pnl/initial_cash 回退.
+    """
+    if not backtest_result or not isinstance(backtest_result, dict):
+        return None
+    for key in ("sharpe", "total_return"):
+        if backtest_result.get(key) is not None:
+            try:
+                return float(backtest_result[key])
+            except (TypeError, ValueError):
+                pass
+    pnl = backtest_result.get("pnl")
+    cash = backtest_result.get("initial_cash") or 100000.0
+    if pnl is not None and cash:
+        try:
+            return float(pnl) / float(cash)
+        except (TypeError, ValueError):
+            pass
+    return None
+
+
 def _update_task_results(
     task_id: int,
     backtest_result: Dict[str, Any],
     pnl: float,
     trades_count: int,
 ):
-    """上下文管理器: 写 backtest_result + pnl + trades_count (乐观锁)
+    """上下文管理器: 写 backtest_result + pnl + trades_count + 指标值 (乐观锁)
 
     v123: strategy_task 已删 best_params 列, best 回写 strategy.best_params
     (见 run_backtest 的 update_strategy_best 分支 / sweep engine).
+    backtest_metric_value: 轻量指标列 — 列表接口 SELECT 白名单免拖回大 blob,
+    规避 MySQL 1038 'Out of sort memory'.
     """
     from contextlib import contextmanager
     from strategy_exec.data_access.db import get_session
     from sqlalchemy import text
+
+    metric_value = _metric_value_from_result(backtest_result)
 
     @contextmanager
     def ctx():
@@ -443,6 +472,7 @@ def _update_task_results(
                        SET backtest_result = :r,
                            pnl = :p,
                            trades_count = :tc,
+                           backtest_metric_value = :mv,
                            version = version + 1,
                            updated_at = NOW()
                      WHERE id = :i AND version = :v
@@ -451,6 +481,7 @@ def _update_task_results(
                     "r": json.dumps(backtest_result, ensure_ascii=False),
                     "p": pnl,
                     "tc": trades_count,
+                    "mv": metric_value,
                 })
                 s.commit()
                 if result.rowcount > 0:
