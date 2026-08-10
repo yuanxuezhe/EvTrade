@@ -29,6 +29,16 @@
 - ❌ 不写 `sys_status.status` 字段为 'initializing'（trade/day-init 守门依赖 status='active'，并发交易不能被日初阻塞）
 - ❌ 不动 `do_reconcile` / positions 覆盖逻辑（既有 init 路径已满足 ②）
 
+### 后端 init 期间抑制 pos_push（`server/services/push/pos.py` + `sys_status.py`）
+
+**补充**：前端门只解决"收到后丢弃"，源头是后端 init reconcile 期间**根本不该推**。
+
+日初 `do_reconcile(reconcile_kind='init')` 全表覆盖 positions 期间，broker 并发 `pos_push` 会把每条判成"新增/变化"而广播洪峰（前端 gate 丢弃前已造成 2197 条广播）。但 init 后前端 resetForNewDay 会 RPC 全量拉权威数据，窗口期 pos_push 是**冗余**的。
+
+- `pos.py`：模块级 `_SUPPRESS_POS_PUSH` 标志 + `suppress_pos_push()` context manager；`handle_pos_push` 入口 `if _SUPPRESS_POS_PUSH: return None`（不查库/不落库/不广播）
+- `sys_status.py::init_trading_day`：`with suppress_pos_push(): result = await do_reconcile(..., reconcile_kind='init')` — 覆盖整个 init reconcile（含 qry_positions 等待 + 全表覆盖）
+- `incremental` reconcile **不**抑制（不动 positions）
+
 ### 前端丢弃门（`holdings.js` + `ws_dispatch.js`）
 
 - `holdings.js`：新增 `initializing` ref（默认 false），暴露
@@ -57,12 +67,13 @@
 
 | 层 | 文件 | 改动 |
 |---|---|---|
-| 后端 | `server/api/admin/sys_status.py` | `init_trading_day` 加 init_start/init_aborted 广播，成功广播 refactor 到共享 helper |
+| 后端 | `server/api/admin/sys_status.py` | `init_trading_day` 加 init_start/init_aborted 广播 + `with suppress_pos_push():` 包 do_reconcile(init) |
+| 后端 | `server/services/push/pos.py` | `_SUPPRESS_POS_PUSH` 标志 + `suppress_pos_push()` context manager + handler 入口短路 |
 | 前端 | `client/src/stores/holdings.js` | 新增 `initializing` ref |
 | 前端 | `client/src/stores/ws_dispatch.js` | `_onSystemStatusChange` 三态处理 + pos/ord/trd 丢弃门 + 丢弃计数 |
 | 前端 | `client/src/views/SystemInit.vue` | `handleInit` finally 关 gate（兜底） |
 | 前端 | `client/src/stores/holdings_bootstrap.js` | bootstrap/refreshAll finally 关 gate（防御） |
-| 知识库 | `openspec/specs/push/spec.md` | 新增 REQ-PUSH-043：init_start/init_aborted 广播 |
+| 知识库 | `openspec/specs/push/spec.md` | 新增 REQ-PUSH-043 + REQ-PUSH-034 init 期间抑制场景 |
 | 知识库 | `openspec/specs/frontend/spec.md` | 新增 REQ-FE-532：initializing 推送丢弃门 |
 
 ## 落地约束

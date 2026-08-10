@@ -515,6 +515,15 @@ broker 每次推送 `pos_push` 时，`handle_pos_push` MUST 在写库前对 4 �
 - **THEN** `Positions.add_one` 创建新行（现有行为不变）
 - **AND** 返回 `{position: ...}` 给前端
 
+#### Scenario: init reconcile 期间抑制 pos_push（init-push-gate 补充）
+
+- **GIVEN** `do_reconcile(reconcile_kind='init')` 正在执行（日初全表覆盖 positions）
+- **WHEN** broker 并发推任意 `pos_push`
+- **THEN** `handle_pos_push` MUST 立即返回 `None`（**不查库 / 不落库 / 不广播**）
+- **AND** init reconcile 完成后前端经 resetForNewDay RPC 全量拉取权威数据，窗口期 pos_push 为冗余
+
+**实现**：`server/services/push/pos.py` 模块级 `_SUPPRESS_POS_PUSH` 标志 + `suppress_pos_push()` context manager；`server/api/admin/sys_status.py::init_trading_day` 用 `with suppress_pos_push():` 包住 `do_reconcile(init)` 整段（含 qry_positions 等待 + 全表覆盖）。`incremental` reconcile **不**抑制（不动 positions）。
+
 ## Known Issues (from analysis)
 
 - ✅ consolidate-position-data-flow: `pos_cfm` / `ast_cfm` / `position_update` / `asset_update` 已删除（REQs 032/033），handler dead code 清除

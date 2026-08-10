@@ -1,4 +1,4 @@
-# Tasks — 日初初始化期间前端推送丢弃门
+# Tasks — 日初初始化期间推送丢弃门（前端 gate + 后端抑制）
 
 > 先 spec 后代码。每个 phase 一个 commit。
 
@@ -27,3 +27,11 @@
 - [x] 4.1 语法验证：py_compile sys_status.py + esbuild transform 前端 4 文件
 - [x] 4.2 逻辑模拟：node 模拟广播时序（init_start→洪峰丢弃→init_completed 一次汇总日志 / init_aborted 不切日 / quote 不受门影响）— 19/19 通过
 - [ ] 4.3 浏览器/ws 实测：触发日初 → 初始化期间无 push 刷屏日志，完成后一条「丢弃 N 条」汇总
+
+## 5 — 后端 init 期间抑制 pos_push（用户确认洪峰场景=日初 reconcile）
+
+- [ ] 5.1 spec 落地：REQ-PUSH-034 新增「init reconcile 期间抑制 pos_push」场景（已入 push/spec.md）
+- [x] 5.2 `pos.py`：`_SUPPRESS_POS_PUSH` + `suppress_pos_push()` context manager + handler 入口短路
+- [x] 5.3 `sys_status.py`：`with suppress_pos_push():` 包住 `do_reconcile(init)` 整段
+- [ ] 5.4 单测：新增 suppress 生效测试（suppress 期间 handler 返回 None，恢复后正常 diff）
+- [ ] 5.5 commit: `feat(push): init reconcile 期间抑制 pos_push 广播 (init-push-gate)`
