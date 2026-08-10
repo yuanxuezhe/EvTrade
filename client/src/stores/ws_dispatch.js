@@ -387,14 +387,8 @@ function _onTradeCfm(row) {
 }
 
 // (removed: _notifyOrder — replaced by _notifyOrderSmart v96)
+// (removed: _onStrategyUpdate — strategy_update 频道 2026-08-10 随网格引擎删除, commit aa70dae)
 
-/**
- * change strategy_trade task 12: strategy_update 频道分发
- * 后端 engine._broadcast() 推送:
- *   - event: 'regime_changed' / 'grid_triggered' / 'regime_cooldown'
- *   - data: { strategy_id, event, regime_id?, flags_active?, current_price?, action?, order_no?, reject_reason?, ts }
- * 这里把每条事件作为单条 audit 推入 store.appendAudit
- */
 function _onTaskProgress(row) {
   // v91.4: 回测 / live task 进度实时推送
   // payload: { task_id, status, progress: { phase, msg, bar_idx, ... } }
