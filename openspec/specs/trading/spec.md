@@ -516,31 +516,24 @@ admin 资金 / 持仓盘中调平端点，**核心合约**详见 `asset-position
 
 ### REQ-TRADE-011: Order.user_def 关联约定 + IX_ORDERS_USER_DEF + T0 端点 JOIN 迁移（strategy_trade）
 
-`strategy` 引擎触发的下单与历史 T0 委托的归属查询需要统一的 `user_def` 关联约定。
+> **变更说明（2026-08-10，commit `aa70dae`）**：strategy 表（含 `type='t0'` 策略）已删除，`resolve_t0_user_defs` 不再查询策略表（v124 起只返回 `{'T0'}`）。历史 T0 委托（含旧策略单 `user_def="5"`）仍在 `orders.user_def` 中，归属查询约定保留。
 
-- **`Order.user_def = str(strategy.id)`**：strategy 引擎下单时把 strategy 主键 int 序列化为字符串写入 `user_def` 列
-  - 与字面量 `"T0"` 共存（人工 T0 单仍写 `"T0"`，strategy 自动单写 `"5"`、`"7"` 等）
+- **`Order.user_def` 关联**：人工 T0 单写字面量 `"T0"`；旧网格策略自动单曾写 `str(strategy.id)`（如 `"5"`、`"7"`）——**策略表已删，不再产生新策略单**，历史值仍参与查询
 - **索引 `ix_orders_user_def`**：在 `Order` 表加 B-tree 索引支撑 T0 端点 JOIN 过滤
   - `server/models/orm.py::Order.Index("ix_orders_user_def", "user_def")`
   - `server/db.py::init_db` 幂等迁移：`CREATE INDEX IF NOT EXISTS ix_orders_user_def ON orders(user_def)`
 - **T0 端点 JOIN 迁移**（`server/api/t0_stats.py` + `t0_aggregate.py`）：
   - `Order.user_def == "T0"` → `Order.user_def.in_(resolve_t0_user_defs(db, "T0"))`
-  - `resolve_t0_user_defs(db, user_def) -> Optional[Set[str]]`：返 Set[str]，含字面量 `"T0"` + 所有 `type='t0'` strategy.id 的字符串化
+  - `resolve_t0_user_defs(db, user_def) -> Optional[Set[str]]`：`"T0"` → `{'T0'}`（v124 起**不再**含策略表 id）；空 → `None`（不限）；其他 → `{user_def}` 单值
   - `apply_user_def_filter(..., db=db)`：可选 db 参数，无 db 时回退到旧字面量集合（向后兼容）
   - 影响端点：`t0_stats` / `t0_history`（spec 误写为 `t0_trades`）/ `t0_exposure` / `t0_aggregate`
 - 与 REQ-TRADE-002 一致：`remark` 字段透传 `order_no`
 
-#### Scenario: strategy 委托 user_def=str(id)
+#### Scenario: 人工 T0 委托归属
 
-- **GIVEN** strategy.id=5
-- **WHEN** grid 触发下单
-- **THEN** Order.user_def MUST = "5"
-
-#### Scenario: T0 端点含 t0 strategy 单子
-
-- **GIVEN** strategy id=7, type=t0
 - **WHEN** GET /api/t0/stats?t0_only=true
-- **THEN** MUST 包含 user_def in {"T0", "7"} 的委托
+- **THEN** MUST 包含 `user_def="T0"` 的委托（`resolve_t0_user_defs(db,"T0") == {'T0'}`）
+- **AND** 历史策略单 `user_def="5"` 不再被 T0 聚合包含（策略表已删，非 `"T0"`）
 
 #### Scenario: 旧调用无 db 兼容
 

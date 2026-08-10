@@ -56,17 +56,17 @@ api/  →  services/  →  repo/  →  infra/  →  models/
 
 #### services/ 业务编排层
 - **包含**：跨表 / 跨 RPC 的业务流（`services.t0` / `services.push` / `services.reconcile` / `services.guards` / `services.strategy`）
-- **职责**：组合多个 repo 函数 + RPC 调用 + 业务规则（如 T0 配平、对账、push 编排、strategy 引擎）
+- **职责**：组合多个 repo 函数 + RPC 调用 + 业务规则（如 T0 配平、对账、push 编排、strategy 信号消费）
 - **允许 import**：`server.repo.*` / `server.rpc.*` / `server.models.*` / `server.infra.*` / `server.utils.*`
 - **不允许 import**：`server.api.*`
-- **包含远程 strategy**：`server/services/strategy/` 由远程 `2026-07-05-strategy_trade` 创建（包含 models / repository / indicators / flags / regime / grid / engine / quote_consumer / audit 等子模块）；本 spec 承认其为 services 层成员
+- **`server/services/strategy/`**：原远程 `2026-07-05-strategy_trade` 的网格引擎子模块（models / repository / indicators / flags / regime / grid / engine / audit）已随 commit `aa70dae` **删除**；现仅含 `signal_consumer`（RabbitMQ 信号 → 下单）+ `quote_consumer`（纯行情快照 + `quote_update` 广播）
 
 #### api/ 服务端接口层
-- **包含**：FastAPI routers（`api/orders/` / `api/admin/` / `api/<domain>.py` / `api/strategy.py`）
+- **包含**：FastAPI routers（`api/orders/` / `api/admin/` / `api/<domain>.py` / `api/script_strategy/`）
 - **职责**：暴露 HTTP/WS 端点；调用 services + repo；参数校验（Pydantic）；权限守卫（Depends）
 - **允许 import**：所有下层（services / rpc / repo / models / infra / ws / auth / utils / enums / middleware）
 - **不允许 import**：无（api 是最外层）
-- **包含远程 strategy**：`server/api/strategy.py` 由远程 `2026-07-05-strategy_trade` 创建（CRUD + 控制 + 审计查询 REST 端点）
+- **`server/api/strategy/`**：原远程 `2026-07-05-strategy_trade` 的网格策略 REST（CRUD + 控制 + 审计查询）已随 commit `aa70dae` **删除**；脚本策略 REST 在 `server/api/script_strategy/endpoints.py`（14 端点，v90）
 
 ### REQ-ARCH-002: 单向依赖方向强制
 
@@ -104,7 +104,6 @@ api/  →  services/  →  repo/  →  infra/  →  models/
   ```
 - **例外**（白名单）：
   - `server/api/orders/__init__.py` — 顶层 re-export 允许跨层（test_orders_api.py monkeypatch 目标）
-  - `server/api/strategy.py` — 远程 strategy_trade 顶层 re-export 允许跨层
   - `server/db.py` / `server/main.py` / `server/config.py` / `server/constants.py` — 兼容垫片/入口文件，不做层级检查
   - `server/services/push/*` — push dispatcher 编排层，跨 rpc + repo
   - `server/infra/db.py` — `init_db()` 需要 import `strategy.models` 注册到 `Base.metadata`（后续 PR 收敛为 model registry）
@@ -116,7 +115,7 @@ api/  →  services/  →  repo/  →  infra/  →  models/
 - **超过处理**：立即拆分为同模块下的子文件（按职责）
 - **CI 检查**：`tests/server/test_layer_dependencies.py::test_no_250_line_violation` 用 `wc -l` 检查所有源文件
 - **迁移期豁免**：迁移中的 facade 文件（如 `server/db.py` 转兼容垫片）暂不计入（但目标 ≤ 50 行）
-- **远程豁免**：`server/services/strategy/` 子模块（远程 `2026-07-05-strategy_trade` 实现）需在后续 PR 中逐步拆薄到 ≤ 250 行；本 spec 不动
+- **v120.5 变更（2026-08-10）**：`server/services/strategy/` 网格引擎子模块已随 commit `aa70dae` 删除；现仅存 `signal_consumer` / `quote_consumer`，不再有行数豁免项
 - **v13 已知超出**（拆分由后续 PR 处理）：
   - `server/repo/orders.py` (280 行)
   - `server/rpc/transport.py` (380 行)
@@ -130,7 +129,7 @@ api/  →  services/  →  repo/  →  infra/  →  models/
 - 外部模块 MUST 仅从 `__init__.py` 导入暴露的功能
 - 禁止"深层路径引入"（如 `from server.services.t0.core import calc_net_amount` → 应改为 `from server.services.t0 import calc_net_amount`）
 - **CI 检查**：`grep -r "from server.X.Y.Z import" server/ tests/` 0 结果（除 `__init__.py` 自身）
-- **远程豁免**：`server/services/strategy/` 多个子模块（repository / indicators / flags / regime / grid / engine 等）允许 deep import（远程 facade 模式没建 `__init__.py` 全符号 re-export）；本 spec 不动远程 strategy 子模块
+- **v120.5 变更（2026-08-10）**：`server/services/strategy/` 网格引擎子模块（repository / indicators / flags / regime / grid / engine 等）已随 commit `aa70dae` 删除，deep import 豁免不再需要；现仅存 `signal_consumer` / `quote_consumer`（二者若需豁免应单独评估）
 
 ### REQ-ARCH-005: 模块依赖图（文档化）
 
@@ -218,11 +217,13 @@ def test_no_init_py_in_tests_subdirs():
     )
 ```
 
-#### Scenario: 策略测试迁到 tests/server/services/strategy/<sub>/
+#### Scenario: 策略测试目录（v120.5 网格引擎测试已删）
 
-- **WHEN** 开发者为 `server/services/strategy/regime.py` 写测试
-- **THEN** 测试 MUST 在 `tests/server/services/strategy/regime/test_regime.py`
-- **AND** NOT 在 `server/tests/strategy/test_regime.py` 或其他位置
+> **变更说明（2026-08-10）**：网格引擎测试（`server/tests/strategy` + `tests/server/services/strategy`）已随 commit `aa70dae` 删除。
+
+- **WHEN** 开发者为 `server/services/strategy/signal_consumer.py` 写测试
+- **THEN** 测试 MUST 在 `tests/server/services/strategy/signal_consumer/test_signal_consumer.py`
+- **AND** NOT 在 `server/tests/strategy/` 或其他位置
 
 #### Scenario: 前端测试迁到 tests/client/
 
@@ -266,15 +267,17 @@ def test_no_init_py_in_tests_subdirs():
 - **WHEN** 测试用 `monkeypatch.setattr("server.api.orders.ord_stk", mock)`
 - **THEN** 路径 MUST 命中（即便 `ord_stk` 实际定义在 `server/rpc/handlers.py`，`server/api/orders/__init__.py` 顶层 re-export 必须保留 `ord_stk` 名字）
 
-## Scenario: 远程 strategy 子模块豁免
+## Scenario: strategy 子模块不再豁免
 
-- **WHEN** 开发者新增 `server/services/strategy/engine.py` 中的 import 段：`from server.services.strategy.indicators import ma`
-- **THEN** 路径虽然违反 REQ-ARCH-004（应走 `__init__.py`），但因远程 `2026-07-05-strategy_trade` 豁免，CI 不报错
-- **后续工作**：远程 strategy 模块应建 `__init__.py` 全符号 re-export；本 spec 不动
+> **变更说明（2026-08-10）**：网格引擎子模块（engine / indicators / regime / grid 等）已随 commit `aa70dae` 删除，远程豁免不再适用。
+
+- **WHEN** 开发者为 `server/services/strategy/signal_consumer.py` / `quote_consumer.py` 新增跨层 import
+- **THEN** 路径必须符合 REQ-ARCH-004（走 `__init__.py` 统一入口），无远程豁免
+- **后续工作**：不适用（豁免已随网格引擎删除撤销）
 
 ## 不在本 spec 范围
 
 - ❌ 跨层重构的**具体实施计划**（见 `changes/2026-07-06-layered-architecture-and-strategy-master/tasks.md`，已 archive）
 - ❌ 每个 repo 函数的**具体实现**（见 `data-model/spec.md` §N 字段约束 + `trading/spec.md` REQ-TRADE-NNN 业务约束）
 - ❌ 第三方库（aio_pika / SQLAlchemy）的 API 契约（见各自官方文档）
-- ❌ 远程 `services/strategy/` 子模块的 deep import 收敛（远程 `2026-07-05-strategy_trade` 豁免；后续 PR 处理）
+- ❌ ~~远程 `services/strategy/` 子模块的 deep import 收敛~~（2026-08-10 网格引擎子模块已删，豁免撤销；`signal_consumer` / `quote_consumer` 若有豁免需单独评估）

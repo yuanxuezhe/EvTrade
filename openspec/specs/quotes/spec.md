@@ -35,17 +35,19 @@ QMT 柜台通过 FANOUT exchange `quota.exchange` 推送行情快照。
 - `HQ_NUM_WORKERS` / `HQ_MAX_QUEUE_SIZE` / `HQ_PREFETCH_COUNT` / `HQ_WS_HOST` / `HQ_WS_PORT`
 - 配置从 `server/.env` 加载（与 FastAPI 后端共享）
 
-### REQ-QUOTE-005: 后端 WS 接入（strategy_trade）
+### REQ-QUOTE-005: 后端 WS 接入（QuoteConsumer）
 
-- **`QuoteConsumer`**（`server/services/strategy/quote_consumer.py`）— 后端首次接入 hqserver WebSocket
-- **单连接广播模型**：hqserver **不支持** subscribe/unsubscribe（无条件广播），QuoteConsumer 全收 tick，本地按 `stock_code` 过滤 fan-out 到对应 `StrategyEngine`
+- **`QuoteConsumer`**（`server/services/strategy/quote_consumer.py`）— 后端接入 hqserver WebSocket，**行情快照 + 前端推送**（v124 起不再耦合策略引擎）
+- **单连接广播模型**：hqserver **不支持** subscribe/unsubscribe（无条件广播），QuoteConsumer 全收 tick
+- **核心职责**：解析 tick → 写 `quote_cache`（内存快照，持久化由 `main.py` periodic flush task 负责）→ `broadcast_to_stock` 推前端 WS `/ws/quote_update`（行情面板实时刷新）
 - **连接配置**：`HQ_WS_URL`（默认 `ws://127.0.0.1:8765`，与 hqserver 同机部署时无需修改）
 - **生命周期**：模块级 singleton `_quote_consumer` + `get_quote_consumer()` / `close_quote_consumer()`（仿 RPClient 模式）
-- **启动控制**：`STRATEGY_ENGINE_ENABLED=false` 时 QuoteConsumer 不启动（与 REST 灰度门同步）
+- **启动**：app startup 后**无条件**启动（无灰度门；`STRATEGY_ENGINE_ENABLED` 已删）
 - **优雅停机**：`stop()` 设 `_stop` Event + `await ws.close()`
 - **重连退避**：指数退避 1s → 2s → 4s → 8s → 16s → 30s (cap)
-- **健康检查**：30s 心跳 log（订阅数 / buffer size）+ 60s 无 tick 警告（**不**主动重连，连接是活的）
-- **prev_close 注入**：启动时从 `QuoteSnapshot` 表读最近一日的 `prev_close`，注入每个 engine 实例
+- **健康检查**：30s 心跳 log（累计 tick 数）+ 60s 无 tick 警告（**不**主动重连，连接是活的）
+
+> **变更说明（2026-08-10，commit `aa70dae`）**：原"fan-out 到 `StrategyEngine` / `prev_close` 注入 / `STRATEGY_ENGINE_ENABLED` 启动控制"均随旧网格策略引擎删除。QuoteConsumer 现只做行情快照 + `quote_update` 广播，与策略引擎完全解耦。
 
 #### Scenario: 重连指数退避
 
@@ -63,18 +65,12 @@ QMT 柜台通过 FANOUT exchange `quota.exchange` 推送行情快照。
 - **WHEN** stop()
 - **THEN** `_stop.set()` → connect_loop 退出 + consume_loop 退出 + ws.close()
 
-#### Scenario: 灰度门关闭时不启动
+#### Scenario: tick 写快照 + 广播 quote_update
 
-- **GIVEN** STRATEGY_ENGINE_ENABLED=false
-- **WHEN** app startup
-- **THEN** MUST NOT 创建 QuoteConsumer（log info `[INIT] STRATEGY_ENGINE_ENABLED=false, quote consumer not started`）
-
-#### Scenario: tick fan-out 到匹配 engine
-
-- **GIVEN** 活跃 strategy stock_code=600519.SH
-- **WHEN** 收到 tick `stock_code=600519.SH`
-- **THEN** MUST 调 `engine.evaluate_tick(tick)`
-- **AND** 非活跃 stock 的 tick MUST 丢弃（仍记录 `_latest_price`）
+- **WHEN** 收到任意 tick
+- **THEN** MUST 写入 `quote_cache`（内存快照）
+- **AND** `broadcast_to_stock(stock_code, tick)` 推前端 `/ws/quote_update`（按订阅 pattern fan-out，见 REQ-QUOTE-006）
+- **AND** 更新 `_latest_price[stock_code]`
 
 ### REQ-QUOTE-006: WS 订阅 pattern 化（quote-pattern-subscribe 2026-07-10）
 

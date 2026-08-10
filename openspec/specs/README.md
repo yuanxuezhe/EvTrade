@@ -17,21 +17,21 @@
 | Spec | 用途 | 行数 | 最近更新 | 健康度 |
 |---|---|---|---|---|
 | [auth](./auth/spec.md) | 身份认证、JWT/RBAC、用户管理、自我管理、`/grant`（v92）、`/heartbeat`（v92）| 188 | 2026-08-08 | 🟢 |
-| [trading](./trading/spec.md) | 委托/成交/资金/T0Task（含 `REQ-TRADE-026` strategy_type v66）| 1003 | 2026-07-17 | 🟡 |
+| [trading](./trading/spec.md) | 委托/成交/资金/T0Task（含 `REQ-TRADE-026` strategy_type v66）| 996 | 2026-08-10 | 🟡 |
 | [positioning](./positioning/spec.md) | 持仓查询 + 调平 API | 132 | 2026-07-31 | 🟡 |
-| [quotes](./quotes/spec.md) | 行情分发（hqserver + 后端 WS 接入）| 155 | 2026-07-10 | 🟡 |
-| [push](./push/spec.md) | 柜台 push → DB 落库 + WS 路由（含 v118 pos_push 重新启用）| 569 | 2026-08-08 | 🟢 |
-| [frontend](./frontend/spec.md) | Vue3 路由 / 角色守卫 / Pinia / IDB / WS | 1940 | 2026-08-08 | 🟢 |
-| [configuration](./configuration/spec.md) | .env / 配置分层 / 启动校验 | 227 | 2026-08-06 | 🟡 |
+| [quotes](./quotes/spec.md) | 行情分发（hqserver + 后端 WS 接入）| 174 | 2026-08-10 | 🟡 |
+| [push](./push/spec.md) | 柜台 push → DB 落库 + WS 路由（含 v118 pos_push 重新启用）| 557 | 2026-08-10 | 🟢 |
+| [frontend](./frontend/spec.md) | Vue3 路由 / 角色守卫 / Pinia / IDB / WS | 1977 | 2026-08-10 | 🟢 |
+| [configuration](./configuration/spec.md) | .env / 配置分层 / 启动校验 | 247 | 2026-08-10 | 🟡 |
 | [rpc-protocol](./rpc-protocol/spec.md) | msgpacket RPC 客户端契约 + 字段映射 | 321 | 2026-07-07 | 🟡 |
 
 ### 跨域能力
 
 | Spec | 用途 | 行数 | 最近更新 | 健康度 |
 |---|---|---|---|---|
-| [data-model](./data-model/spec.md) | **19 张 MySQL 表**结构 + schema.yml 同步工作流 | 739 | 2026-08-08 | 🟢 |
-| [ws-protocol](./ws-protocol/spec.md) | WebSocket 推送协议（**7 个 channel**，v97 修订）| 231 | 2026-08-08 | 🟢 |
-| [strategy](./strategy/spec.md) | 网格策略引擎 + script-strategy 模块（14 端点）| 390 | 2026-08-10 | 🟢 |
+| [data-model](./data-model/spec.md) | **15 张 MySQL 表**结构 + schema.yml 同步工作流 | 711 | 2026-08-10 | 🟢 |
+| [ws-protocol](./ws-protocol/spec.md) | WebSocket 推送协议（**6 个 channel**，v97 修订）| 175 | 2026-08-10 | 🟢 |
+| [strategy](./strategy/spec.md) | 策略交易引擎（网格引擎已下线）+ script-strategy 模块（14 端点）| 400 | 2026-08-10 | 🟢 |
 | [strategy-exec](./strategy-exec/spec.md) | strategy_exec 独立策略运行服务（Backtrader 引擎 + RabbitMQ 信号推送 + 沙箱）| 267 | 2026-08-10 | 🟢 |
 | [stocks](./stocks/spec.md) | 股票基础信息管理（v23 slim-stocks-table 起）| 305 | 2026-07-16 | 🟡 |
 | [risk-management](./risk-management/spec.md) | 风险档位（4 档）+ RiskChecker 集成 | 122 | 2026-08-08 | 🟢 |
@@ -50,7 +50,7 @@
 
 | Spec | 用途 | 行数 | 最近更新 | 健康度 |
 |---|---|---|---|---|
-| [server-architecture](./server-architecture/spec.md) | 后端 5 层模块契约 + 单向依赖 | 172 | 2026-07-07 | 🟢 |
+| [server-architecture](./server-architecture/spec.md) | 后端 5 层模块契约 + 单向依赖 | 283 | 2026-08-10 | 🟢 |
 | [dev-process-control](./dev-process-control/spec.md) | 单一入口 `scripts/evctl.py` + 进程管控 | 206 | 2026-07-07 | 🟡 |
 | [view-testing-stack](./view-testing-stack/spec.md) | view 级 Vitest 基础设施（jsdom + Element Plus stub）| 54 | 2026-08-08 | 🟢 |
 | [view-smoke-automation](./view-smoke-automation/spec.md) | 端到端业务链路 smoke 测试 | 56 | 2026-08-08 | 🟢 |
@@ -125,10 +125,10 @@ mv openspec/changes/<name> openspec/changes/archive/<date>-<name>
 
 | 维度 | 数值 |
 |---|---|
-| 总能力文档 | **22** |
-| 总行数 | **~7,700** |
+| 总能力文档 | **23** |
+| 总行数 | **~8,000** |
 | 平均行数 | **~350** |
-| 7 天内更新 | 8 个（auth / configuration / data-model / frontend / push / strategy / risk-management / ws-protocol / view-*）|
+| 7 天内更新 | 11 个（auth / configuration / data-model / frontend / push / quotes / server-architecture / strategy / strategy-exec / trading / ws-protocol / view-*）|
 | 30 天以上未更新 | 11 个（auth 已修；其余待 review）|
 | 已识别的差距 | 17 处（详见 [AUDIT](./KNOWLEDGE_GAP_AUDIT.md)）|
 | 已修复 | **12 处**（P0 致命 2 + P1 高级 3 + P2 中级 4 + P3 低级 3）|

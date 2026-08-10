@@ -2,7 +2,7 @@
 
 ## Purpose
 
-19 张表（业务 6 + 策略 7 + 脚本策略 2 + 系统/用户 3 + 对账/序列 2）的**单一事实源**（single source of truth）。
+15 张表（业务 6 + 策略/脚本 3 + 系统/用户 4 + 对账/序列 2）的**单一事实源**（single source of truth）。
 任何表结构变更（加列、改类型、调 PK、改约束）必须先改本 spec，再同步到 `server/schema.yml`，然后跑 `python scripts/sync_schema.py apply` 推 DB + 重新生成 `server/tables/<表名>.py`。
 
 ORM 注释（`server/tables/<表名>.py` 自动生成）必须与本 spec 保持一致（diff 检查项之一）。
@@ -24,7 +24,7 @@ ORM 注释（`server/tables/<表名>.py` 自动生成）必须与本 spec 保持
 
 ## Tables Overview
 
-按业务域分组（共 19 张业务表 + 1 张 `order_no_seq` 序列表）：
+按业务域分组（共 14 张业务表 + 1 张 `order_no_seq` 序列表）：
 
 ### 📊 业务核心（v4 数据本地优先：本地 DB 是展示源）
 
@@ -37,38 +37,35 @@ ORM 注释（`server/tables/<表名>.py` 自动生成）必须与本 spec 保持
 | 5 | `t0_tasks` | 业务 | `id` | 否 | `server/api/t0_tasks.py` |
 | 6 | `quote_snapshots` | 行情 | `id` 自增 | 否 | `server/api/quote.py` |
 
-### 🎯 策略体系（v66 strategy_trade change + v90 script-strategy change）
+### 🎯 策略体系（v90 script-strategy change 起；v66 网格引擎 2026-08-10 已删）
 
 | # | 表 | 分类 | 主键 | 单行？ | 业务入口 |
 |---|---|---|---|---|---|
-| 7 | `strategy` | 策略 | `id` 自增 | 否 | `server/api/strategy/endpoints.py` |
-| 8 | `strategy_task` | 策略 | `id` 自增 | 否 | `server/api/script_strategy/endpoints.py` |
-| 9 | `strategy_grid` | 策略 | `id` 自增 | 否 | `server/services/strategy/` |
-| 10 | `strategy_regime` | 策略 | `id` 自增 | 否 | `server/services/strategy/` |
-| 11 | `strategy_audit` | 策略 | `id` 自增 | 否 | `server/services/strategy/` |
-| 12 | `strategy_script` | 脚本 | `(user_id, id)` 复合 | 否 | `server/api/script_strategy/endpoints.py` |
-| 13 | `strategy_script_audit` | 脚本 | `id` 自增 | 否 | `server/api/script_strategy/endpoints.py` |
+| 7 | `strategy_task` | 策略 | `id` 自增 | 否 | `server/api/script_strategy/endpoints.py` |
+| 8 | `strategy_script` | 脚本 | `(user_id, id)` 复合 | 否 | `server/api/script_strategy/endpoints.py` |
+| 9 | `strategy_script_audit` | 脚本 | `id` 自增 | 否 | `server/api/script_strategy/endpoints.py` |
 
 ### 🔐 系统/用户
 
 | # | 表 | 分类 | 主键 | 单行？ | 业务入口 |
 |---|---|---|---|---|---|
-| 14 | `users` | 系统 | `id` 自增 | 否 | `server/api/users.py` |
-| 15 | `sys_status` | 系统 | `trd_date` | 否（多日） | `server/services/trading_day.py` |
-| 16 | `sys_config` | 系统 | `(user, cfg_key)` 复合 | 否 | `server/api/sysconfig.py` |
-| 17 | `stocks` | 系统 | `stock_code` | 否（多股） | `server/api/stocks.py` |
+| 10 | `users` | 系统 | `id` 自增 | 否 | `server/api/users.py` |
+| 11 | `sys_status` | 系统 | `trd_date` | 否（多日） | `server/services/trading_day.py` |
+| 12 | `sys_config` | 系统 | `(user, cfg_key)` 复合 | 否 | `server/api/sysconfig.py` |
+| 13 | `stocks` | 系统 | `stock_code` | 否（多股） | `server/api/stocks.py` |
 
 ### 📋 日初对账 / 序列表
 
 | # | 表 | 分类 | 主键 | 单行？ | 业务入口 |
 |---|---|---|---|---|---|
-| 18 | `reconcile_report` | 历史 | `(trd_date, mode, created_at)` | 否 | `server/services/reconcile.py` |
-| 19 | `order_no_seq` | 序列 | `id` 约束 | ✅ 单行 | `server/services/order_no.py` |
+| 14 | `reconcile_report` | 历史 | `(trd_date, mode, created_at)` | 否 | `server/services/reconcile.py` |
+| 15 | `order_no_seq` | 序列 | `id` 约束 | ✅ 单行 | `server/services/order_no.py` |
 
 > **变更说明**：
 > - v14 起从 SQLite 迁到 MySQL（v20 强制 MySQL-only）；本 spec 早期版本描述 SQLite 时代
-> - v66 strategy_trade change：新增 `strategy` / `strategy_task` / `strategy_grid` / `strategy_regime` / `strategy_audit` 5 张策略表
+> - v66 strategy_trade change：新增 `strategy` / `strategy_task` / `strategy_grid` / `strategy_regime` / `strategy_audit` 5 张策略表（**其中 4 张网格引擎表已随 v120.5 删除**）
 > - v90 script-strategy change（2026-08-01）：新增 `strategy_script` / `strategy_script_audit` 2 张脚本策略表 + 扩展 `strategy_task` 字段
+> - **v120.5 grid-engine-removal（2026-08-10）**：DROP `strategy` / `strategy_regime` / `strategy_grid` / `strategy_audit` / `stocks_legacy` 5 张表（migration `server/migrations/2026-08-10-drop-legacy-strategy-tables.py`，commit `aa70dae`）。网格引擎被脚本策略取代；schema.yml 同步移除 4 张表定义（19 → 15 张）
 > - v120 strategy-exec-service change（2026-08-09）：`strategy_task` 加 3 字段 `execution_service`（'evtrade'/'strategy_exec'）/ `execution_pid` / `version`（乐观锁，migration `2026-08-09-strategy-task-exec-fields.py`）。运行引擎迁到独立服务 `strategy_exec/`；其 `progress` / `live_signals` / `status` 由 strategy_exec 写（`WHERE version=:v` 乐观锁，见 [`strategy-exec/spec.md`](../strategy-exec/spec.md) REQ-SE-007），EvTrade 侧 `strategy_script` / `strategy_script_audit` 只读、`strategy_task` 仅 `signal_consumer` 消费侧写 `status`/`order_no`
 > - v18 t0_tasks change：新增 `t0_tasks` 表（v18）+ `orders.task_id` 列
 > - v23 slim-stocks-table：精简 `stocks` 字段

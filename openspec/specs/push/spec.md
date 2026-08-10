@@ -341,7 +341,8 @@ broker xtquant 协议不发送 `pos_cfm` 与 `ast_cfm` 推送事件（xtquant �
 > **变更历史**：
 > - v118 之前（change consolidate-position-data-flow）：删除 pos_cfm / ast_cfm + `position_update` / `asset_update` 频道断流
 > - **v118**（change broker-callback-pos-push）：重新启用 `position_update` 频道，但走**新事件 `pos_push`**（broker position_callback），不再走旧 pos_cfm
-> - 同时新增 `strategy_update`（v66）/ `system_update`（v117）/ `task_progress_update`（v91.4）
+> - 同时新增 `system_update`（v117）/ `task_progress_update`（v91.4）
+> - **v120.5 grid-engine-removal（2026-08-10）**：`strategy_update` 频道随网格引擎删除（commit `aa70dae`），已从 `ws_manager.active_connections` 移除
 
 **当前权威推送映射表**（引用 `server/services/push/routes.py::_PUSH_CHANNEL`）：
 
@@ -355,17 +356,16 @@ broker xtquant 协议不发送 `pos_cfm` 与 `ast_cfm` 推送事件（xtquant �
 
 | channel | 触发源 |
 |---|---|
-| `strategy_update` | `server/services/strategy/engine.py::_broadcast()` 推 `regime_changed` / `grid_triggered` / `regime_cooldown` |
 | `system_update` | 日初对账（`sys_status.py:130`）+ RPC 健康监测（`rpc_health.py:129`）推 `system_status_change` / `rpc_status` / `asset_update`（v117 合并 init_completed）|
 | `task_progress_update` | `server/services/script_strategy/` 任务进度（v91.4）|
 | `quote_update` | **不走后端**，前端直连 hqserver `:8765`（归属 `ws-protocol/spec.md`）|
 
-> **T0 策略频道** `t0_strategy_update`：常量定义在 `server/services/strategy/t0/engine.py:42`，**未注册到 ws_manager.active_connections**（v92 起独立频道；如需启用需补 routes.py + ws/manager.py 注册）
+> **变更说明（2026-08-10）**：`strategy_update` 频道（原由 `engine.py::_broadcast()` 推 `regime_changed` / `grid_triggered` / `regime_cooldown`）随网格引擎删除已下线；`t0_strategy_update`（T0 策略引擎 `t0/engine.py:42`）也已随引擎删除。
 
 #### Scenario: routes.py 与 ws-manager 注册表一致
 
 - **WHEN** 启动服务加载 `server/services/push/routes.py::_PUSH_CHANNEL`
-- **THEN** `ws_manager.active_connections` 必须包含所有 key（`order_update` / `trade_update` / `position_update`）+ 所有非 push 业务频道（`strategy_update` / `system_update` / `task_progress_update`）
+- **THEN** `ws_manager.active_connections` 必须包含所有 key（`order_update` / `trade_update` / `position_update`）+ 所有非 push 业务频道（`system_update` / `task_progress_update`）
 - **AND** `quote_update` 仅在 `ws_manager.active_connections` 出现但不在 `_PUSH_CHANNEL`（走 hqserver 不走后端路由）
 
 #### Scenario: 旧 pos_cfm / ast_cfm 路由不再存在
@@ -434,46 +434,11 @@ RS2: [{
 - 用 `order_no`（解析 `remark` 字段得到）作为 Trade PK 第二段（PK = `(trd_date, order_no, trade_id)`）
 - 若 `remark` 解析失败 → 打 warning 日志，跳过该条成交（不要让一条缺关联的成交写入）
 
-### REQ-PUSH-040: strategy_update 频道（strategy_trade）
+### REQ-PUSH-040: strategy_update 频道（strategy_trade）— 已删除（2026-08-10）
 
-- **频道常量**：`STRATEGY_WS_CHANNEL = "strategy_update"`（注册到 `ws_manager.active_connections`）
-- **payload schema**（由 `engine._broadcast()` 推送）：
-  ```json
-  {
-    "type": "strategy_update",
-    "channel": "strategy_update",
-    "ts": "ISO8601",
-    "data": {
-      "strategy_id": 5,
-      "event": "regime_changed | grid_triggered | regime_cooldown",
-      "regime_id": 11,
-      "flags_active": ["ma_bullish", "vol_breakout"],
-      "current_price": 10.5,
-      "position_vol": 1000,
-      "base_volume": 300,
-      "action": { "direction": "buy", "volume": 200, "trigger_price": 10.0, "grid_id": 33 },
-      "order_no": "ORD-001",
-      "reject_reason": null,
-      "trd_date": "20260706"
-    }
-  }
-  ```
-- **前端分发**：`ws_dispatch.js::_onStrategyUpdate(row)` 把 `data` 包装为 `AuditRecord` 调 `store.appendAudit(strategy_id, trd_date, audit)`
-- **缺 strategy_id**：静默丢弃（console.warn）
-- **event 字段**：3 种枚举
-  - `regime_changed` — 当前匹配 regime 变更
-  - `grid_triggered` — 网格触发（含 action 字段 + 可能含 order_no）
-  - `regime_cooldown` — 冷却期内尝试切换被拒（reject_reason=`cooldown_active`）
-
-#### Scenario: strategy_update 缺 strategy_id 静默丢弃
-
-- **WHEN** payload.data.strategy_id 缺失
-- **THEN** MUST console.warn + 不写入 audit cache
-
-#### Scenario: grid_triggered 含 order_no
-
-- **WHEN** 买单已报 status='50'
-- **THEN** audit 记录 MUST 含 `order_no='ORD-...'` + `trigger_type='grid_triggered'`
+> **变更说明**：commit `aa70dae` 删除网格策略引擎，`strategy_update` 频道已从 `ws_manager.active_connections` 移除，推送方 `engine.py::_broadcast()` 已删。REQ-PUSH-040 原 payload schema（`regime_changed` / `grid_triggered` / `regime_cooldown`）、`ws_dispatch.js::_onStrategyUpdate` 分发、`store.appendAudit` 及关联 Scenario 全部失效。
+>
+> **历史正文**保留在 `strategy/spec.md` REQ-STRAT-011（已标记删除）。
 
 ### REQ-PUSH-034: pos_push 无变化时跳过落库与广播
 
@@ -533,7 +498,7 @@ broker 每次推送 `pos_push` 时，`handle_pos_push` MUST 在写库前对 4 �
 
 ## 业务事件频道（2026-07-15-system-init-broadcast）
 
-> **注**：REQ-PUSH-006 在原 spec 复用编号（GAP-014：编号未唯一化）。本节实际是 `REQ-PUSH-041`（system_update）+ `REQ-PUSH-042`（strategy_update）+ `REQ-PUSH-040`（已在上面章节）。完整唯一化编号留给 GAP-014 处理（不要在本 change 内动）。
+> **注**：REQ-PUSH-006 在原 spec 复用编号（GAP-014：编号未唯一化）。本节实际是 `REQ-PUSH-041`（system_update）+ `REQ-PUSH-042`（原 strategy_update，**2026-08-10 已随网格引擎删除**）+ `REQ-PUSH-040`（已在上面章节）。完整唯一化编号留给 GAP-014 处理（不要在本 change 内动）。
 
 ### REQ-PUSH-041: system_update 频道
 

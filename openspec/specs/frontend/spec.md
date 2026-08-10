@@ -1102,36 +1102,13 @@ The system SHALL 让 `client/src/components/QuotePanel.vue` 中
 - **THEN** MUST 显示 D-1..D-30 倒序数值列表 (lazy load via @show)
 - **AND** 移动端 (< 768px) MUST 静态隐藏 popover (避免 hover 不工作)
 
-### REQ-FE-310: 策略交易路由 + 角色守卫（strategy_trade）
+### REQ-FE-310: 网格策略前端 — 已删除（2026-08-10 grid-engine-removal）
 
-- **`/strategy-trade` 路由**：`client/src/views/StrategyTrade.vue` 主视图（左侧 StrategyList + 编辑表单 / 右侧 StrategyMonitor）
-- **角色守卫**：`meta.requiresTrader = true`（trader 或 admin 可访问）
-- **旧路由重定向**：`/algo-strategy` → `/strategy-trade`（旧书签兼容）
-- **WS 频道**：在 `ws_heartbeat.js::CHANNELS` 加 `'strategy_update'`，由 `ws_dispatch.js::_onStrategyUpdate` 分发到 `useStrategyStore().appendAudit`
-- **导航栏入口**：Sidebar.vue 加 `/strategy-trade` 链接
+> **变更说明**：commit `aa70dae` 删除网格策略前端——`StrategyTrade.vue` / `AlgoStrategy.vue` / `useStrategyTrade.js` / `modules/strategy/(8)` / `components/strategy/StrategyList.vue` / `stores/strategy.js` / `api/strategy.js`，并清 `router` / `Sidebar` / `BottomNav` / `AppHeader` 中 `/strategy-trade` 入口 + `ws_heartbeat` 中 `strategy_update` 频道 + `ws_dispatch.js` 中 `_onStrategyUpdate` 分发。
+>
+> 原 `/strategy-trade` 路由、角色守卫、`/algo-strategy` 重定向、`strategy_update` WS 频道及关联 Scenario **全部删除**。
 
-#### Scenario: trader 访问 /strategy-trade
-
-- **GIVEN** role=trader
-- **WHEN** router push /strategy-trade
-- **THEN** MUST 渲染 StrategyTrade 视图
-
-#### Scenario: 非 trader 访问 /strategy-trade
-
-- **GIVEN** role ≠ trader 且 ≠ admin
-- **WHEN** router push /strategy-trade
-- **THEN** MUST 重定向到 /
-
-#### Scenario: 旧 /algo-strategy 重定向
-
-- **WHEN** router push /algo-strategy
-- **THEN** MUST 重定向到 /strategy-trade
-
-#### Scenario: strategy_update WS 推送到 audit cache
-
-- **WHEN** 收到 WS payload `type='strategy_update', data.strategy_id=5`
-- **THEN** MUST 包装为 AuditRecord 推入 `store.auditCache[5][trd_date]`
-- **AND** 缺 strategy_id MUST 静默丢弃
+**现行策略前端**：脚本策略 `ScriptDev.vue` / `ScriptTask.vue` / `client/src/api/script_strategy.js`（见 `strategy/spec.md` REQ-STRAT-017）。
 
 ### REQ-FE-510: OrderForm 价格类型单行布局 (2026-07-09 重构, 与 T0 一致)
 
@@ -1272,16 +1249,16 @@ The system SHALL provide `client/src/components/StockCodePicker.vue` as the stri
 ### REQ-FE-520: QuoteConsumer 7×24 启用（与策略引擎解耦，2026-07-09 重构）
 
 `backend.QuoteConsumer` 在 FastAPI startup 后**无条件**启动，连 `ws://127.0.0.1:8765` 拉 tick，broadcast 到 `ws_manager['quote_update']`。
-行情与 `STRATEGY_ENGINE_ENABLED` 开关解耦：即使策略引擎关闭，前端 Holdings/Positions/Trade 等页面仍通过 `quote_update` WS channel 实时收到最新价/市值推送。
+行情与策略引擎解耦：前端 Holdings/Positions/Trade 等页面始终通过 `quote_update` WS channel 实时收到最新价/市值推送。
 
-#### Scenario: 策略引擎关闭但页面打开
+> **变更说明（2026-08-10）**：`STRATEGY_ENGINE_ENABLED` 灰度门已随网格引擎下线（commit `aa70dae`）从 `server/config.py` 删除——QuoteConsumer 本就无条件启动，此解耦语义不变。
 
-- **WHEN** `.env` 中 `STRATEGY_ENGINE_ENABLED=0`
-- **AND** 前端打开 Holdings / Positions / Trade 页面
-- **THEN** QuoteConsumer 仍然在 backend startup 时启动
+#### Scenario: 页面实时行情不依赖策略引擎
+
+- **WHEN** 前端打开 Holdings / Positions / Trade 页面
+- **THEN** QuoteConsumer 在 backend startup 时启动
 - **AND** `quote_update` WS channel 正常推送 tick 数据
 - **AND** 前端页面市值/最新价实时更新
-- **AND** 策略 REST API (`/api/strategy/*`) 仍返回 503（策略引擎保持关闭）
 
 ### REMOVED Requirements
 

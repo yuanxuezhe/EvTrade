@@ -250,7 +250,7 @@ DB `strategy_task` 表加 3 字段（migration `2026-08-09-strategy-task-exec-fi
 ## Cross References
 
 - EvTrade 端 script-strategy REST API / 数据模型 / 前端：`strategy/spec.md` REQ-STRAT-014~017（CRUD 仍在 EvTrade，仅**运行引擎**迁到本服务）
-- 网格策略引擎（仍在 EvTrade 进程内）：`strategy/spec.md` REQ-STRAT-001~013
+- ~~网格策略引擎（仍在 EvTrade 进程内）~~ → **2026-08-10 已删除**（commit `aa70dae`；`strategy/spec.md` REQ-STRAT-001~013 已标记下线）
 - 风控（不在 strategy_exec）：`risk-management/spec.md`
 - 配置 env：`configuration/spec.md` REQ-CFG-XXX（`STRATEGY_EXEC_*` / `EVTRADE_STRATEGY_*` / `EVTRADE_HIS_HQ_*` / `HQ_WS_URL` / `SANDBOX_*`）
 - 信号消费（EvTrade 端下单）：`server/services/strategy/signal_consumer.py` + `push/spec.md`
@@ -260,7 +260,7 @@ DB `strategy_task` 表加 3 字段（migration `2026-08-09-strategy-task-exec-fi
 
 | 项 | 时机 |
 |---|---|
-| 网格策略独立化 | 后续 change |
+| ~~网格策略独立化~~ | 作废（2026-08-10 网格引擎已整体删除）|
 | strategy_exec HA（多实例 + 选举）| 后续 change |
 | 多策略组合优化器 | 后续 change（Backtrader 支持）|
 | 策略回测报告 Web 渲染 | 后续 change（独立 BI 模块）|

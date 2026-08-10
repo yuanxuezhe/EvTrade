@@ -1,19 +1,28 @@
-# strategy — 网格策略交易引擎
+# strategy — 策略交易引擎（网格引擎已下线）
 
-> 📖 **DB schema** 详见 [`data-model/spec.md`](../data-model/spec.md) §4（Strategy / StrategyRegime / StrategyGrid / StrategyAudit）
-> 📖 **接口契约** 详见 [`../../../docs/server-rest-api.md`](../../../docs/server-rest-api.md) §strategy
+> **网格引擎下线（2026-08-10，commit `aa70dae`）**：REQ-STRAT-001~013（regime/grid 网格策略引擎）代码已彻底删除（后端 `api/strategy/` + `services/strategy/` 死代码 + `tables/strategy*.py`；前端 `StrategyTrade.vue` / `stores/strategy.js` / `api/strategy.js` / `strategy_update` WS 频道；DB DROP 4 张表）。本节保留为**历史正文**，不再是现行契约。
+>
+> **现行策略形态**：**脚本策略**（REQ-STRAT-014~017），引擎在独立服务 `strategy_exec/`（见 [`strategy-exec/spec.md`](../strategy-exec/spec.md)）。
+>
+> 📖 **DB schema** 详见 [`data-model/spec.md`](../data-model/spec.md)（`strategy_script` / `strategy_script_audit` / `strategy_task`）
+> 📖 **REST 契约**：脚本策略端点见本 spec REQ-STRAT-015（`/api/script-strategy/*`）
 
 ## Purpose
 
-为单只标的配置**多档「参数集 (regime)」**，按实时行情**量价标志 (flags)** 自动切换参数集 + 按当前 regime 的网格配置自动下单。
+（网格引擎 Purpose 已随 `aa70dae` 下线。现行：见下方 **Script-Strategy 模块** 一节）
 
-**核心约束**：
-- **底仓保护**：策略卖单不允许把持仓打到 `base_volume` 以下。`base_volume` 是保留底仓，每档 regime 可独立覆盖。
-- **清仓标志**：regime 可设 `clear_position=true`，激活时跳过底仓保护，全部卖出（含底仓）。是底仓保护机制的**唯一合法打破路径**。
+~~为单只标的配置**多档「参数集 (regime)」**，按实时行情**量价标志 (flags)** 自动切换参数集 + 按当前 regime 的网格配置自动下单。~~
 
 ## Requirements
 
-### REQ-STRAT-001: 策略 CRUD
+> ### 🗑️ REQ-STRAT-001 ~ REQ-STRAT-013：已删除（2026-08-10 grid-engine-removal）
+>
+> 以下 13 个 Requirement 描述**旧网格策略引擎**（regime/grid），已随 commit `aa70dae` 从代码库删除：
+> 端点（`/api/strategy/*`）、引擎（`services/strategy/engine.py`）、4 张表（strategy / strategy_regime / strategy_grid / strategy_audit）、前端（`StrategyTrade.vue` / `strategy_update` WS 频道）全部下线。
+>
+> **保留历史正文的目的**：spec 演进史是"为什么这样决策"的证据（同 `docs/specs-history/` 思路）。阅读时请当作**已删除契约**，勿当作现行行为。
+
+### REQ-STRAT-001: 策略 CRUD（已删除）
 
 - `POST /api/strategy` — 新建（含嵌套 regimes + grids）
 - `GET /api/strategy` — 列表，可按 `status` / `type` 过滤
@@ -267,7 +276,7 @@
 
 ## Script-Strategy 模块（v90 change, 2026-08-01）
 
-> **背景**：REQ-STRAT-001~013 覆盖**网格策略引擎**（change strategy_trade）。v90 起新增独立的**脚本策略模块**（change script-strategy），允许用户在前端写 Python 脚本 + 回测 + 实盘。本节补登。
+> **背景**：REQ-STRAT-001~013 覆盖**网格策略引擎**（change strategy_trade，**2026-08-10 已删除**，见上文删除横幅）。v90 起新增独立的**脚本策略模块**（change script-strategy），允许用户在前端写 Python 脚本 + 回测 + 实盘。本节补登，也是当前 spec 的**主体**。
 >
 > **v120（2026-08-09 strategy-exec-service）**：脚本策略的**运行引擎**已迁到独立服务 `strategy_exec/`（Backtrader 重构，见 [`strategy-exec/spec.md`](../strategy-exec/spec.md)）。REQ-STRAT-014/015/017（数据模型 / REST API / 前端）仍在 EvTrade 不变；**REQ-STRAT-016 引擎运行时已迁移**，本节仅保留 EvTrade 侧仍相关的契约。
 
@@ -384,8 +393,9 @@
 
 - 行情来源：`quotes/spec.md` REQ-QUOTE-001（hqserver 推送）
 - 委托下发：`trading/spec.md` REQ-TRADE-002（place 流程 + user_def 关联）
-- 脚本策略脚本：脚本字段（`code`/`params_schema`/`is_public`）定义在 `data-model/spec.md` §12 strategy_script
-- 脚本策略审计：定义在 `data-model/spec.md` §13 strategy_script_audit
-- WS 推送：`push/spec.md` REQ-PUSH-007（push_handlers 字段映射）
-- 前端入口：`frontend/spec.md` REQ-FE-310（strategy-trade 路由 + 角色守卫）
-- 配置：`configuration/spec.md` REQ-CFG-008（2 个新 env）
+- 脚本策略脚本：脚本字段（`code`/`params_schema`/`is_public`）定义在 `data-model/spec.md`（`strategy_script` 表）
+- 脚本策略审计：定义在 `data-model/spec.md`（`strategy_script_audit` 表）
+- 引擎：`strategy-exec/spec.md` REQ-SE-003~005（Backtrader 引擎 / RabbitMQ 信号 / 用户脚本接口）
+- WS 推送：`push/spec.md`（`task_progress_update` 频道，ScriptTask.vue 实时刷新）
+- 前端：`frontend/spec.md`（ScriptDev.vue / ScriptTask.vue）
+- 配置：`configuration/spec.md` REQ-CFG-012（strategy_exec env）
