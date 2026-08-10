@@ -20,6 +20,7 @@ REST 端点:
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 from typing import List, Dict, Any, Optional
+from datetime import datetime
 import logging
 
 from server.auth.deps import get_current_user
@@ -130,6 +131,11 @@ class TaskOut(BaseModel):
     error_msg: Optional[str] = None
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
+    # v122+ sweep 字段 (Phase 5 of `2026-08-10-strategy-params-sweep-best-live`)
+    sweep_id: Optional[str] = None
+    sweep_metric: Optional[str] = None
+    sweep_total: Optional[int] = None
+    backtest_metric_value: Optional[float] = None
 
 
 # ─────────────── Script endpoints ───────────────
@@ -213,9 +219,24 @@ def delete_script_endpoint(script_id: str, user: User = Depends(get_current_user
 def list_tasks_endpoint(
     status_filter: Optional[str] = Query(None, alias="status"),
     mode_filter: Optional[str] = Query(None, alias="mode"),
+    script_id: Optional[str] = Query(None, description="v122+: 限定脚本 ID"),
+    has_best_params: bool = Query(False, description="v122+: 仅 best_params 非空 (含单 run + sweep summary)"),
+    limit: int = Query(50, ge=1, le=200, description="最大返回数 (默认 50, 上限 200)"),
     user: User = Depends(get_current_user),
 ):
-    return svc.list_tasks(user.id, user.role == "admin", status=status_filter, mode=mode_filter)
+    """列 task
+
+    v122+ 新增 query (Phase 5):
+    - script_id: 限定脚本
+    - has_best_params=1: 仅 best_params 非空 (前端"从历史回测选"用)
+    - limit: 默认 50, 上限 200
+    """
+    return svc.list_tasks(
+        user.id, user.role == "admin",
+        status=status_filter, mode=mode_filter,
+        script_id=script_id, has_best_params=has_best_params,
+        limit=limit,
+    )
 
 
 @router.get("/tasks/{task_id}", response_model=TaskOut)
@@ -363,6 +384,180 @@ async def run_task_endpoint(task_id: int, req: TaskRun, user: User = Depends(get
     # 返 task 详情 (status='queued', 等 strategy_exec 异步改 running)
     from server.services import script_strategy as svc
     return svc.get_task(task_id, row.user_id, is_admin=True)
+
+
+# ─────────────── v122+ sweep 转发端点 ───────────────
+
+
+class RunSweepRequest(BaseModel):
+    """REQ-SE-008 sweep 启动请求 (EvTrade 转发层)"""
+    param_grid: Dict[str, List[Any]] = Field(..., min_length=1)
+    metric: str = Field("sharpe", pattern="^(sharpe|total_return|calmar)$")
+    select_top_n: int = Field(1, ge=1, description="保留 top N (默认 1, summary 仍按全部 sweep_results 排序)")
+    concurrency: int = Field(2, ge=1, le=16)
+    period: Optional[str] = Field(None, pattern="^(1d|1m|5m|15m|30m|60m)$")
+
+
+class RunSweepResponse(BaseModel):
+    """sweep 启动后立即返 (后台异步跑)"""
+    sweep_id: str
+    total_runs: int
+    summary_task_id: int
+    msg: str = "sweep accepted, running in background"
+
+
+@router.post(
+    "/tasks/{task_id}/run-sweep",
+    response_model=RunSweepResponse,
+    status_code=202,
+)
+async def run_sweep_endpoint(
+    task_id: int, req: RunSweepRequest, user: User = Depends(get_current_user),
+):
+    """REQ-SE-008: 转发 sweep 启动到 strategy_exec.
+
+    流程:
+    1. 权限校验 (同 run-task)
+    2. 预创建 N 个组合 task + 1 个 summary task (EvTrade 本地 DB), 共享 sweep_id
+    3. 转发 POST /internal/run-sweep-task 到 strategy_exec (异步跑)
+    4. 202 Accepted 立即返 sweep_id + summary_task_id
+    """
+    log.info(
+        "[run_sweep] user=%s task_id=%d metric=%s grid=%s concurrency=%d",
+        user.username, task_id, req.metric, req.param_grid, req.concurrency,
+    )
+
+    # ──── 1. 权限校验 + 读 task ────
+    from server.tables import StrategyScript
+    row = StrategyTask.query_one(id=task_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail={"code": "TASK_NOT_FOUND"})
+    if user.role != "admin" and row.user_id != user.id:
+        raise HTTPException(status_code=403, detail={"code": "FORBIDDEN"})
+    if row.status != "created":
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "NOT_PENDING", "msg": f"sweep 仅接受 status='created' 任务, 当前 {row.status}"},
+        )
+
+    task_data = row._data
+    script_id = task_data["script_id"]
+    user_id = task_data["user_id"]
+    stock_code = task_data["stock_code"]
+    backtest_start_date = task_data.get("backtest_start_date")
+    backtest_end_date = task_data.get("backtest_end_date")
+    if not backtest_start_date or not backtest_end_date:
+        raise HTTPException(
+            status_code=400,
+            detail={"code": "MISSING_DATES", "msg": "sweep 任务必须在 task 创建时指定 backtest_start_date 和 backtest_end_date"},
+        )
+
+    # ──── 2. 算组合数 (前端 UI 也算过, 这里兜底) ────
+    import itertools
+    sweep_keys = {k: v for k, v in req.param_grid.items() if isinstance(v, list) and len(v) >= 2}
+    fixed = {k: v[0] for k, v in req.param_grid.items() if isinstance(v, list) and len(v) == 1}
+    if not sweep_keys:
+        raise HTTPException(
+            status_code=400,
+            detail={"code": "EMPTY_GRID", "msg": "param_grid 至少需要 1 个字段含 ≥2 元素 (用于扫描)"},
+        )
+    total_runs = 1
+    for v in sweep_keys.values():
+        total_runs *= len(v)
+    if total_runs > 512:
+        raise HTTPException(
+            status_code=400,
+            detail={"code": "GRID_TOO_LARGE", "msg": f"组合数 {total_runs} 超过硬上限 512"},
+        )
+
+    # ──── 3. EvTrade 本地预创建 N 个组合 task + 1 个 summary (共享 sweep_id) ────
+    import uuid
+    sweep_id = uuid.uuid4().hex[:32]
+    sweep_total = total_runs + 1  # 含 summary
+
+    from server.tables import StrategyTask as TaskTbl
+    import json as _json
+    sweep_metric = req.metric
+    combo_task_ids = []
+    for combo in itertools.product(*sweep_keys.values()):
+        params_dict = dict(fixed, **dict(zip(sweep_keys.keys(), combo)))
+        data = {
+            "user_id": user_id,
+            "script_id": script_id,
+            "stock_code": stock_code,
+            "description": task_data.get("description", ""),
+            "mode": "backtest",
+            "status": "queued",
+            "params": _json.dumps(params_dict, ensure_ascii=False),
+            "period": req.period or task_data.get("period") or "1d",
+            "backtest_start_date": backtest_start_date,
+            "backtest_end_date": backtest_end_date,
+            "sweep_id": sweep_id,
+            "sweep_metric": sweep_metric,
+            "sweep_total": sweep_total,
+            "execution_service": "strategy_exec",
+            "started_at": datetime.now(),
+        }
+        new_row = TaskTbl.add_one(data)
+        combo_task_ids.append(getattr(new_row, "_data", {}).get("id"))
+
+    # 创建 summary task
+    summary_data = {**data,
+                    "params": "{}",
+                    "description": f"Sweep summary ({total_runs} runs, metric={sweep_metric})"}
+    summary_row = TaskTbl.add_one(summary_data)
+    summary_task_id = getattr(summary_row, "_data", {}).get("id")
+
+    log.info(
+        "[run_sweep] pre-created %d combo tasks + summary task=%d sweep_id=%s",
+        len(combo_task_ids), summary_task_id, sweep_id,
+    )
+
+    # ──── 4. 转发 strategy_exec (后台异步跑 sweep) ────
+    from server.config import settings
+    import httpx
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            response = await client.post(
+                f"{settings.STRATEGY_EXEC_API_URL}/internal/run-sweep-task",
+                headers={"X-Internal-Token": settings.STRATEGY_EXEC_API_TOKEN},
+                json={
+                    "user_id": user_id,
+                    "script_id": script_id,
+                    "stock_code": stock_code,
+                    "backtest_start_date": backtest_start_date,
+                    "backtest_end_date": backtest_end_date,
+                    "param_grid": req.param_grid,
+                    "metric": sweep_metric,
+                    "select_top_n": req.select_top_n,
+                    "concurrency": req.concurrency,
+                    "period": req.period,
+                },
+            )
+    except httpx.TimeoutException as e:
+        err_msg = f"strategy_exec sweep 请求超时: {e}"
+        log.error("[run_sweep] %s", err_msg)
+        raise HTTPException(status_code=503, detail={"code": "STRATEGY_EXEC_TIMEOUT", "msg": err_msg})
+    except httpx.RequestError as e:
+        err_msg = f"strategy_exec sweep 连接失败: {type(e).__name__} {e}"
+        log.error("[run_sweep] %s", err_msg)
+        raise HTTPException(status_code=503, detail={"code": "STRATEGY_EXEC_UNAVAILABLE", "msg": err_msg})
+
+    if response.status_code >= 400:
+        err_body = response.text
+        log.error("[run_sweep] strategy_exec returned %d: %s", response.status_code, err_body)
+        raise HTTPException(
+            status_code=response.status_code,
+            detail={"code": "STRATEGY_EXEC_ERROR", "msg": err_body},
+        )
+
+    log.info("[run_sweep] sweep_id=%s forwarded to strategy_exec OK (%d combos)", sweep_id, total_runs)
+
+    return RunSweepResponse(
+        sweep_id=sweep_id,
+        total_runs=total_runs,
+        summary_task_id=summary_task_id,
+    )
 
 
 @router.post("/tasks/{task_id}/stop")
