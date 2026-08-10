@@ -54,12 +54,12 @@
             <template #default="{ row }">
               <el-button
                 v-if="row.status === 'running'"
-                size="small" type="danger" plain
+                size="small" type="danger"
                 @click="onStop(row)" data-el="st-stop"
               >停止</el-button>
               <el-button
                 v-else
-                size="small" type="primary" plain
+                size="small" type="primary"
                 @click="openRun(row)" data-el="st-run"
               >启动</el-button>
               <el-button
