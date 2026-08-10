@@ -4,9 +4,9 @@
 
 ## 1. 序号表泛化（多生成器）
 
-- [ ] 1.1 `order_no_seq` 表改结构：加 `seq_name` PK，现有行 `seq_name='order_no'`；新增 `task_batch` 行（迁移脚本，幂等）
-- [ ] 1.2 `server/services/order_no.py` 抽 `next_seq(db, name)`（原子 UPSERT +1），`next_order_no` 改为 `next_seq(db, 'order_no')`，行为不变
-- [ ] 1.3 `server/tables/order_no_seq.py` 重新生成（tables-codegen）对齐新结构
+- [x] 1.1 `order_no_seq` 表改结构：加 `seq_name` PK，现有行 `seq_name='order_no'`；新增 `task_batch` 行（迁移脚本 `2026-08-11-order-no-seq-multi-generator.py`，幂等）
+- [x] 1.2 `server/repo/orders.py`（实际位置，非 services/order_no.py）抽 `next_seq(name, db)`（原子 UPSERT +1），`next_order_no` 改为委托 `next_seq('order_no', db)`，行为不变
+- [x] 1.3 `server/tables/order_no_seq.py` 重新生成（tables-codegen，经临时目录避开 `__init__.py` 覆盖）对齐新结构 + schema.yml/orm.py 同步
 
 ## 2. `strategy` 表 + `strategy_task` 重构（迁移）
 

@@ -366,16 +366,14 @@ class QuoteSnapshot(Base):
 # ─────────────── 序列 ───────────────
 
 class OrderNoSeq(Base):
-    """订单序号生成器（单行）
+    """序号生成器（v123 多生成器，按 seq_name 分键）
 
+    生成器: order_no（订单）/ task_batch（策略批次）
     📖 详见 `openspec/specs/data-model/spec.md` §5
     """
     __tablename__ = "order_no_seq"
-    __table_args__ = (
-        CheckConstraint("id = 1", name="ck_order_no_seq_single_row"),
-    )
 
-    id = Column(Integer, primary_key=True, default=1)
+    seq_name = Column(String(32), primary_key=True)
     last_value = Column(Integer, nullable=False, default=10000000)  # 8 位起
     updated_at = Column(DateTime, nullable=False, default=_utcnow, onupdate=_utcnow)
 

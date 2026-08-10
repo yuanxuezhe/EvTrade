@@ -26,6 +26,7 @@ from server.repo.orders import (
     insert_pending_order,
     is_cancellable,
     next_order_no,
+    next_seq,
     reset_to,
 )
 from server.repo.system import TradingClock
@@ -45,5 +46,6 @@ __all__ = [
     "insert_pending_order",
     "is_cancellable",
     "next_order_no",
+    "next_seq",
     "reset_to",
 ]

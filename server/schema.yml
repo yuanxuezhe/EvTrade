@@ -42,12 +42,12 @@ tables:
         nullable: false
         default: 
   order_no_seq:
-    pk: ['id']
+    pk: ['seq_name']
     columns:
-      id:
-        type: Integer
+      seq_name:
+        type: String(32)
         nullable: false
-        default: 0
+        default:
       last_value:
         type: Integer
         nullable: false
@@ -55,7 +55,7 @@ tables:
       updated_at:
         type: DateTime
         nullable: false
-        default: 
+        default:
   orders:
     pk: ['trd_date', 'order_no']
     columns:

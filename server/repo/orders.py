@@ -31,20 +31,50 @@ from server.tables.reconcile_report import ReconcileReport
 # 8 位订单序号生成器 (v6 起 8 位单调递增; SQLite ≥ 3.21 三步分离)
 # ================================================================
 
+def next_seq(name: str, db=None) -> str:
+    """按 seq_name 分键的原子自增序号生成器 (v123 多生成器泛化).
+
+    旧 `next_order_no` 的 3 步分离方案 (SQLite ≥ 3.21 兼容) 按 `seq_name` 分键复用:
+        1) INSERT IGNORE INTO order_no_seq (seq_name, last_value, updated_at) ...  # 兜底初始化
+        2) UPDATE ... SET last_value = last_value + 1 WHERE seq_name = :name ...   # 自增
+        3) SELECT last_value ...                                                  # 读出
+
+    函数内 commit (沿用旧约定), 调用方不需要再 commit.
+    上限保护: 8 位数字最大 99999999, 达到上限时拒绝继续分配.
+    db 参数保留 (兼容旧调用方: next_seq(db, name)), 实际依赖 tables 层 get_conn().
+    """
+    with get_conn() as conn:
+        # 步 1: 兜底初始化 (生成器行不存在时插入 last_value=10000000)
+        # `last_value` 是 MySQL 8.0 保留字必须反引号包裹
+        conn.execute(text("""
+            INSERT IGNORE INTO `order_no_seq` (`seq_name`, `last_value`, `updated_at`)
+            VALUES (:name, 10000000, CURRENT_TIMESTAMP)
+        """), {"name": name})
+        # 步 2: 自增 (单 UPDATE 保证原子性)
+        conn.execute(text("""
+            UPDATE `order_no_seq`
+            SET `last_value` = `last_value` + 1, `updated_at` = CURRENT_TIMESTAMP
+            WHERE `seq_name` = :name
+        """), {"name": name})
+        conn.commit()
+        # 步 3: 读出 (新事务里读, 不加锁)
+        val = conn.execute(text(
+            "SELECT `last_value` FROM `order_no_seq` WHERE `seq_name` = :name"
+        ), {"name": name}).scalar()
+    if val is None:
+        raise RuntimeError(f"seq '{name}' 读取失败")
+    if val >= 99999999:
+        raise RuntimeError(
+            f"seq '{name}' 已达上限 ({val}), 请手动扩容或迁移新序号段"
+        )
+    return str(val)
+
+
 def next_order_no(db=None) -> str:
     """原子自增, 返回 8 位数字字符串. 函数内自动 commit (破坏旧约定).
 
-    实现: 三步分离 (SQLite ≥ 3.21 兼容方案, 2026-06-22 因 Python 3.6.8 自带
-    SQLite 3.21.0 不支持 ON CONFLICT...DO UPDATE...RETURNING, 从 2026-06-21
-    提案的方案 A 降级):
-        1) INSERT OR IGNORE INTO order_no_seq ...  # 兜底初始化
-        2) UPDATE order_no_seq SET last_value = last_value + 1 ...  # 自增
-        3) SELECT last_value FROM order_no_seq ...  # 读出
-
-    优势:
-      1. 兼容当前 SQLite 3.21.0 (业务不中断)
-      2. 函数内 commit, 消除"调用方漏 commit 导致序号回退"风险
-      3. SQLite 串行写入保证并发安全 (无应用层锁)
+    实现: 委托通用序号生成器 next_seq(db, 'order_no') — v123 多生成器泛化,
+    行为与旧实现完全一致 (order_no 生成器行初值 10000000, 每次 +1, 8 位上限).
 
     上限保护: 8 位数字最大 99999999, 达到上限时拒绝继续分配.
 
@@ -52,48 +82,22 @@ def next_order_no(db=None) -> str:
     TableBase 标准方法). 函数内 commit, 调用方不需要再 commit.
     db 参数保留 (兼容旧调用方: next_order_no(db)) — v80.3 实际不依赖 db.
     """
-    with get_conn() as conn:
-        # 步 1: 兜底初始化 (id=1 不存在时插入 last_value=10000000)
-        # v18 修复 MySQL 兼容: (a) `last_value` 是 MySQL 8.0 保留字必须反引号包裹
-        #                       (b) `INSERT OR IGNORE` 是 sqlite 方言, MySQL 是 `INSERT IGNORE`
-        # v80.3: 用 text() 包裹, 通过 SQLAlchemy 的 dialect 自动判断 (简化分支)
-        conn.execute(text("""
-            INSERT IGNORE INTO `order_no_seq` (`id`, `last_value`, `updated_at`)
-            VALUES (1, 10000000, CURRENT_TIMESTAMP)
-        """))
-        # 步 2: 自增 (保留 SELECT FOR UPDATE 等价语义 — 这里用单 UPDATE 保证原子性)
-        conn.execute(text("""
-            UPDATE `order_no_seq`
-            SET `last_value` = `last_value` + 1, `updated_at` = CURRENT_TIMESTAMP
-            WHERE `id` = 1
-        """))
-        conn.commit()
-        # 步 3: 读出 (新事务里读, 不加锁)
-        val = conn.execute(text(
-            "SELECT `last_value` FROM `order_no_seq` WHERE `id` = 1"
-        )).scalar()
-    if val is None:
-        raise RuntimeError("order_no_seq 读取失败")
-    if val >= 99999999:
-        raise RuntimeError(
-            f"order_no 已达上限 ({val}), 请手动扩容或迁移新序号段"
-        )
-    return str(val)
+    return next_seq('order_no', db)
 
 
 def get_current_no(db=None) -> int:
-    """查询当前序号 (不递增). v80.3: 用 OrderNoSeq.query_one."""
-    row = OrderNoSeq.query_one(id=1)
+    """查询当前序号 (不递增). v80.3: 用 OrderNoSeq.query_one. v123: 键改 seq_name='order_no'."""
+    row = OrderNoSeq.query_one(seq_name='order_no')
     if not row:
         return 10000000
     return row.last_value
 
 
 def reset_to(db=None, value: int = 0) -> None:
-    """重置序号 (仅测试/迁移用). v80.3: 用 OrderNoSeq.update_one."""
+    """重置序号 (仅测试/迁移用). v80.3: 用 OrderNoSeq.update_one. v123: 键改 seq_name='order_no'."""
     OrderNoSeq.update_one(
         {"last_value": value, "updated_at": datetime.now()},
-        id=1,
+        seq_name='order_no',
     )
 
 
