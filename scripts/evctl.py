@@ -137,8 +137,14 @@ SERVICES = {
     'backend': Service(
         'backend', BACKEND_PORT,
         PROJECT_ROOT,
+        # ws_ping 探测阈值放宽 (2026-08-10 ws-keepalive-ping-slack):
+        #   uvicorn 默认 ws_ping_timeout=20s 太紧 — 浏览器 quote_update 全市场订阅时
+        #   渲染 backpressure 使 native pong 延迟 ~20-30s, 探测误断 1011 keepalive ping timeout,
+        #   前端每 ~2.3min 重连。对齐 hq/hqserver.py 既有 ping_timeout=60 先例。
+        #   保留探测 (真正死连接 60s 内仍被踢), 仅放宽 pong 容忍窗口。
         [sys.executable, '-u', '-m', 'uvicorn', 'server.main:app',
-         '--host', '0.0.0.0', '--port', str(BACKEND_PORT)],
+         '--host', '0.0.0.0', '--port', str(BACKEND_PORT),
+         '--ws-ping-interval', '20', '--ws-ping-timeout', '60'],
         preflight=['uvicorn'],
     ),
     'frontend': Service(
