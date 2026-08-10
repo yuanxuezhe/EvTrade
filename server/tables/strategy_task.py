@@ -1,7 +1,7 @@
 """
 server/tables/strategy_task.py — 自动生成 (tables-codegen skill)
 
-表: `strategy_task`  (23 字段, 主键: ['id'])
+表: `strategy_task`  (26 字段, 主键: ['id'])
 描述: 脚本策略任务：回测 / 实盘运行态 + 结果
 
 ⚠️ 不要手动修改本文件 — 任何字段/主键变更请重新跑 tables-codegen
@@ -54,7 +54,10 @@ class StrategyTask(TableBase):
         'updated_at': '',
         'live_signals': '实盘信号流: 用户 script signal() + doorder 自动记录 (限 500 条, LiveRunner 每 5s flush)',
         'fields': '历史行情字段白名单, 默认 open,close,high,low',
-        'progress': '实时回测进度 (phase/current/total/bar_idx/total_bars/elapsed_ms)'
+        'progress': '实时回测进度 (phase/current/total/bar_idx/total_bars/elapsed_ms)',
+        'sweep_id': '同一 sweep 多 task 共享, summary task 也带 (用 sweep_total=1 区分)',
+        'sweep_metric': '排序指标名 sharpe / total_return / calmar',
+        'sweep_total': '同 sweep 的 task 总数 (冗余但查快; 前端直接拿不用 COUNT)'
     }
 
     __field_types__: ClassVar[dict] = {
@@ -81,7 +84,10 @@ class StrategyTask(TableBase):
         'updated_at': 'datetime',
         'live_signals': 'json',
         'fields': 'varchar(64)',
-        'progress': 'json'
+        'progress': 'json',
+        'sweep_id': 'varchar(32)',
+        'sweep_metric': 'varchar(32)',
+        'sweep_total': 'int'
     }
 
     # 字段 type hints (IDE 智能提示用, 运行时不影响行为)
@@ -109,3 +115,6 @@ class StrategyTask(TableBase):
     live_signals: Any
     fields: str
     progress: Any
+    sweep_id: str
+    sweep_metric: str
+    sweep_total: int
