@@ -153,19 +153,24 @@ def update_script(
 
 
 def delete_script(script_id: str, user_id: int, is_admin: bool) -> bool:
-    """删除脚本 (v90+ 复合 PK). 级联: 先删引用它的 task (FK 严格约束), 再删 script。
+    """删除脚本 (v90+ 复合 PK). 级联: task → strategy → script。
+
+    v123 任务不再直接挂 script_id, 需先删引用该脚本的策略 (及其 task),
+    再删脚本本身。策略的 task 一并删除 (FK 严格约束)。
 
     📌 新架构 (strategy_exec 独立服务): 不再本地停实盘任务 —
        正在 strategy_exec 跑的任务由该服务管理, 这里仅做本地 DB 行清理。
     """
-    from server.tables import StrategyScript, StrategyTask
+    from server.tables import StrategyScript, StrategyTask, Strategy
     row = StrategyScript.query_one(user_id=user_id, id=script_id)
     if row is None:
         return False
     if not is_admin and getattr(row, "_data", {}).get("user_id") != user_id:
         return False
-    related_tasks = StrategyTask.query_by_fields({"user_id": user_id, "script_id": script_id})
-    for task in related_tasks:
-        task_id = task._data.get("id")
-        StrategyTask.delete_one(id=task_id)
+    strategies = Strategy.query_by_fields({"user_id": user_id, "script_id": script_id})
+    for strat in strategies:
+        sid = strat._data.get("strategy_id")
+        for task in StrategyTask.query_by_fields({"user_id": user_id, "strategy_id": sid}):
+            StrategyTask.delete_one(id=task._data.get("id"))
+        Strategy.delete_one(strategy_id=sid)
     return StrategyScript.delete_one(user_id=user_id, id=script_id)

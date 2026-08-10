@@ -1,7 +1,7 @@
 """
 server/services/script_strategy/_convert.py — TableBase Row ↔ API dict 转换
 
-职责单一: 把 strategy_script / strategy_task / strategy_script_audit 的行
+职责单一: 把 strategy / strategy_script / strategy_task / strategy_script_audit 的行
 转成 API 返回用的 dict (幂等, 无 DB 写入, 无外部副作用)。
 """
 import json
@@ -52,19 +52,33 @@ def script_row_to_dict(row) -> Dict[str, Any]:
     }
 
 
+def strategy_row_to_dict(row) -> Dict[str, Any]:
+    d = getattr(row, "_data", {})
+    return {
+        "strategy_id": d.get("strategy_id"),
+        "user_id": d.get("user_id"),
+        "script_id": d.get("script_id"),
+        "name": d.get("name", ""),
+        "status": d.get("status", "draft"),
+        "best_params": json_loads(d.get("best_params")),
+        "created_at": iso(d.get("created_at")),
+        "updated_at": iso(d.get("updated_at")),
+    }
+
+
 def task_row_to_dict(row) -> Dict[str, Any]:
     d = getattr(row, "_data", {})
     return {
         "id": d.get("id"),
         "user_id": d.get("user_id"),
-        "script_id": d.get("script_id"),
+        "strategy_id": d.get("strategy_id"),
+        "batch_no": d.get("batch_no"),
         "description": d.get("description", ""),
         "stock_code": d.get("stock_code", ""),
         "mode": d.get("mode"),
         "status": d.get("status", ""),
         "params": json_loads(d.get("params"), default={}),
         "backtest_result": json_loads(d.get("backtest_result")),
-        "best_params": json_loads(d.get("best_params")),
         "backtest_start_date": d.get("backtest_start_date"),
         "backtest_end_date": d.get("backtest_end_date"),
         "period": d.get("period"),
@@ -79,35 +93,30 @@ def task_row_to_dict(row) -> Dict[str, Any]:
         "error_msg": d.get("error_msg"),
         "created_at": iso(d.get("created_at")),
         "updated_at": iso(d.get("updated_at")),
-        # v122+ sweep 字段 (Phase 5 of `2026-08-10-strategy-params-sweep-best-live`)
-        "sweep_id": d.get("sweep_id"),
-        "sweep_metric": d.get("sweep_metric"),
-        "sweep_total": d.get("sweep_total"),
         "backtest_metric_value": _extract_metric_value(json_loads(d.get("backtest_result"))),
     }
 
 
-def _extract_metric_value(backtest_result: Optional[Dict[str, Any]]) -> Optional[float]:
-    """从 backtest_result 提取前端展示用的 metric_value.
+def _extract_metric_value(backtest_result: Optional[Dict[str, Any]], metric: str = "sharpe") -> Optional[float]:
+    """从 backtest_result 提取 metric_value (前端展示 + 批次 best 排序用).
 
-    - 单 run: backtest_result.sharpe (preferred) / total_return fallback
-    - sweep summary: backtest_result.best_metric_value (顶层冗余, sweep engine 写入)
+    v123 移除了 sweep summary task, 每行 task 直接携带自身 backtest_result:
+    - 优先所选 metric 字段 (sharpe/total_return/calmar)
+    - 回退 sharpe → total_return → pnl/initial_cash
     """
     if not backtest_result or not isinstance(backtest_result, dict):
         return None
-    # sweep summary 路径: best_metric_value 在顶层 (sweep engine 写的)
-    bv = backtest_result.get("best_metric_value")
-    if bv is not None:
+    if metric in backtest_result:
         try:
-            return float(bv)
+            return float(backtest_result[metric])
         except (TypeError, ValueError):
             pass
-    # 单 run 路径
-    if backtest_result.get("sharpe") is not None:
-        try:
-            return float(backtest_result["sharpe"])
-        except (TypeError, ValueError):
-            pass
+    for key in ("sharpe", "total_return"):
+        if backtest_result.get(key) is not None:
+            try:
+                return float(backtest_result[key])
+            except (TypeError, ValueError):
+                pass
     # 回退到 pnl / initial_cash
     pnl = backtest_result.get("pnl")
     cash = backtest_result.get("initial_cash") or 100000.0

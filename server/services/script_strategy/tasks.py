@@ -18,44 +18,16 @@ from server.services.script_strategy._convert import (
 def list_tasks(
     user_id: int, is_admin: bool = False, status: Optional[str] = None,
     mode: Optional[str] = None,
-    script_id: Optional[str] = None,
-    has_best_params: bool = False,
+    strategy_id: Optional[int] = None,
     limit: int = 50,
 ) -> List[Dict[str, Any]]:
     """列 task (含 filter)
 
-    v122+ 新增 filter (Phase 5 of `2026-08-10-strategy-params-sweep-best-live`):
-    - script_id: 限定脚本
-    - has_best_params: 仅 best_params 非空 (含单 run 退化 + sweep summary)
+    v123 filter:
+    - strategy_id: 限定策略
     - limit: 默认 50, 上限 200 (endpoint 层强制)
     """
     from server.tables import StrategyTask
-    if has_best_params:
-        # best_params 是 JSON, 需自定义 SQL 判非空
-        from sqlalchemy import text
-        from server.tables.base import get_engine, Row
-        with get_engine().connect() as conn:
-            where = ["best_params IS NOT NULL", "best_params != ''", "best_params != '{}'"]
-            params_d: Dict[str, Any] = {}
-            if not is_admin:
-                where.append("user_id = :uid"); params_d["uid"] = user_id
-            if status:
-                where.append("status = :status"); params_d["status"] = status
-            if mode:
-                where.append("mode = :mode"); params_d["mode"] = mode
-            if script_id:
-                where.append("script_id = :script_id"); params_d["script_id"] = script_id
-            rows = conn.execute(
-                text(f"""
-                    SELECT * FROM strategy_task
-                     WHERE {' AND '.join(where)}
-                     ORDER BY id DESC
-                     LIMIT :lim
-                """),
-                {**params_d, "lim": int(limit)},
-            ).mappings().all()
-        return [task_row_to_dict(Row(dict(r))) for r in rows]
-
     filters: Dict[str, Any] = {}
     if not is_admin:
         filters["user_id"] = user_id
@@ -63,8 +35,8 @@ def list_tasks(
         filters["status"] = status
     if mode:
         filters["mode"] = mode
-    if script_id:
-        filters["script_id"] = script_id
+    if strategy_id:
+        filters["strategy_id"] = strategy_id
     if filters:
         rows = StrategyTask.query_by_fields(filters)
     else:
@@ -87,7 +59,7 @@ def get_task(task_id: int, user_id: int, is_admin: bool = False) -> Optional[Dic
 
 def create_task(
     user_id: int,
-    script_id: str,
+    strategy_id: int,
     stock_code: str,
     params: Dict[str, Any],
     *,
@@ -96,26 +68,34 @@ def create_task(
     backtest_end_date: Optional[str] = None,
     period: Optional[str] = None,
     fields: Optional[str] = None,
+    mode: Optional[str] = None,
+    batch_no: Optional[int] = None,
+    status: str = "created",
 ) -> Dict[str, Any]:
-    """创建任务 (不立即执行, status='created'), 需再调 /tasks/{id}/run 触发
+    """创建任务 (v123: 挂 strategy_id, 可带 batch_no).
+
+    创建不立即执行; 由 backtest/live 端点转发 strategy_exec 后异步运行。
+    批次任务由 strategies.create_backtest_batch / create_live_batch 复用本函数。
 
     Raises:
-        ValueError: 脚本不存在 / 权限
+        ValueError: 策略不存在 / 权限
     """
-    from server.tables import StrategyTask, StrategyScript
-    script = StrategyScript.query_one(user_id=user_id, id=script_id)
-    if script is None:
-        raise ValueError(f"script_id {script_id} 不存在 (user_id={user_id})")
+    from server.tables import StrategyTask, Strategy
+    strat = Strategy.query_one(strategy_id=strategy_id)
+    if strat is None:
+        raise ValueError(f"strategy_id {strategy_id} 不存在")
+    if getattr(strat, "_data", {}).get("user_id") != user_id:
+        raise ValueError(f"strategy_id {strategy_id} 不属于 user_id={user_id}")
 
     now = datetime.now()
     data = {
         "user_id": user_id,
-        "script_id": script_id,
+        "strategy_id": strategy_id,
+        "batch_no": batch_no,
         "description": description,
         "stock_code": stock_code,
-        # mode 字段保留在表里但创建时不填; run 时再写
-        "mode": None,
-        "status": "created",     # 仅创建, 未运行
+        "mode": mode,            # 创建时即定 mode (backtest/live 由 batch 语义决定)
+        "status": status,
         "params": json_dumps(params),
         "period": period or "1d",
         "fields": fields or "open,close,high,low",  # 默认 OHLC, 用户可改

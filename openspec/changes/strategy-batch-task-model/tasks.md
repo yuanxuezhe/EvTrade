@@ -18,11 +18,11 @@
 
 ## 3. 后端 API（策略 CRUD + 批次 + 实盘门禁）
 
-- [ ] 3.1 `server/api/script_strategy/endpoints.py`：新增 strategies 子资源 CRUD（`POST /strategies {name, script_id}` 不填参数/不定模式）
-- [ ] 3.2 `POST /strategies/{id}/backtest`：单次=1 行 task / 扫描=按 param_ranges 展开 N 行 task，生成 batch（next_seq task_batch）+ 转发 strategy_exec
-- [ ] 3.3 `GET /strategies/{id}/batches` + `GET /strategies/{id}/batches/{batch_no}/tasks`：批次聚合 + 任务表格数据（参数列 + 结果列）
-- [ ] 3.4 `POST /strategies/{id}/live`：校验 `best_params` 非空（否则 400 `NO_BEST_PARAMS`），用 best_params 建 1 行 live task（新 batch_no）并转发
-- [ ] 3.5 `GET /tasks/{id}` 详情/`stop`/`DELETE` 改挂 strategy 语义（脚本字段经 strategy→script 解析）
+- [x] 3.1 新增 `server/api/script_strategy/strategies.py` + `server/services/script_strategy/strategies.py`：strategies 子资源 CRUD（`POST /strategies {name, script_id}` 不填参数/不定模式）；删除 v122 `POST /tasks` / `run` / `run-sweep` 端点
+- [x] 3.2 `POST /strategies/{id}/backtest`：单次=1 行 task / 扫描=param_ranges 类型驱动展开 N 行 task（含端点/choice/string 固定），生成 batch（next_seq task_batch）+ 转发 strategy_exec（run-task / run-sweep-task 带 strategy_id+batch_no）
+- [x] 3.3 `GET /strategies/{id}/batches` + `GET /strategies/{id}/batches/{batch_no}/tasks`：批次聚合（GROUP BY batch_no，best=finished 按 sharpe 优先 metric top1）+ 任务表格数据
+- [x] 3.4 `POST /strategies/{id}/live`：校验 `best_params` 非空（否则 400 `NO_BEST_PARAMS`），用 best_params 建 1 行 live task（新 batch_no）并转发
+- [x] 3.5 `GET /tasks/{id}` 详情/`stop`/`DELETE` 保留；`task_row_to_dict`/`TaskOut` 改 strategy_id+batch_no；`list_tasks` strategy_id filter；`scripts.delete_script` 级联 task→strategy→script
 
 ## 4. strategy_exec 引擎适配
 
