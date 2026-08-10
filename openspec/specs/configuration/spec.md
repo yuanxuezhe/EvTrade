@@ -88,6 +88,34 @@ EvTrade 部署在 Windows（开发/QMT 柜台）+ Linux（前后端服务），�
   - 与 `HQ_WS_HOST` / `HQ_WS_PORT` 组合（`ws://{HQ_WS_HOST}:{HQ_WS_PORT}`）语义一致；用 URL 形式便于部署时切换网络拓扑
   - QuoteConsumer 默认 `ws://127.0.0.1:8765`（与 hqserver 同机）；跨机部署时需显式覆盖
 
+### REQ-CFG-012: strategy_exec 服务 env（v120 strategy-exec-service，2026-08-09）
+
+**EvTrade 侧**（`server/config.py`，`/tasks/{id}/run` + `/tasks/{id}/stop` 转发用）：
+
+| Key | 默认 | 说明 |
+|---|---|---|
+| `STRATEGY_EXEC_API_URL` | `http://127.0.0.1:8001` | strategy_exec 服务 base URL（EvTrade 转发 POST /internal/run-task / stop-task）|
+| `STRATEGY_EXEC_API_TOKEN` | `""` | `X-Internal-Token` header 值；strategy_exec 侧该 token 为空 = 局域网不鉴权 |
+
+**strategy_exec 侧**（`strategy_exec/strategy_exec/config.py`，独立 `strategy_exec/.env`）：
+
+| Key | 默认 | 说明 |
+|---|---|---|
+| `STRATEGY_EXEC_PORT` / `STRATEGY_EXEC_HOST` | `8001` / `0.0.0.0` | 监听端口 / host |
+| `STRATEGY_EXEC_API_TOKEN` | `""` | 校验 `X-Internal-Token`；空 = 不鉴权（局域网部署）|
+| `EVTRADE_STRATEGY_EXCHANGE_NAME` | `strategy.exchange` | signal topic exchange（durable）|
+| `EVTRADE_STRATEGY_SIGNAL_QUEUE` | `EvTrade.StrategySignal` | signal queue（durable，EvTrade signal_consumer 订阅）|
+| `EVTRADE_STRATEGY_PUBLISH_CONFIRM_TIMEOUT` | `5` | publisher confirm 超时（秒）|
+| `EVTRADE_STRATEGY_PUBLISH_RETRIES` | `3` | 推送失败重试次数 |
+| `EVTRADE_HIS_HQ_EXCHANGE_NAME` / `EVTRADE_HIS_HQ_REQ_QUEUE` / `EVTRADE_HIS_HQ_REQ_TIMEOUT` | `quota_his.exchange` / `EvTrade.ReqHisHq` / `30` | 历史 K 线 RabbitMQ 拓扑 |
+| `HQ_WS_URL` | `ws://127.0.0.1:8765/quota.broadcast` | hqserver 实时行情 WS（实盘 tick 订阅，自动重连）|
+| `SANDBOX_BLOCKED_MODULES` / `SANDBOX_ALLOWED_MODULES` | 见 REQ-SE-006 | 用户脚本沙箱 import 黑/白名单 |
+| `EVTRADE_DB_URL` / `EVTRADE_RABBITMQ_URL` | 必填 | 复用 EvTrade 同库 / 同 RabbitMQ |
+
+- strategy_exec 复用 EvTrade 根 `.venv`（pydantic v2 + `pydantic-settings`），无独立 pyproject.toml/Dockerfile
+- 启动：`python -m strategy_exec.main --port 8001` 或 `strategy_exec/scripts/evctl_strategy_exec.py`
+- 详见 [`strategy-exec/spec.md`](../strategy-exec/spec.md) REQ-SE-001（部署）/ REQ-SE-002（internal endpoint 鉴权）/ REQ-SE-004（RabbitMQ 拓扑）
+
 ### REQ-CFG-009: MySQL 数据库连接（v14 sqlite → mysql 迁移，v20 强制 MySQL-only 永久标准）
 
 | Key | 默认 | 说明 |

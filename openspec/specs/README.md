@@ -1,7 +1,7 @@
 # EvTrade OpenSpec 知识库索引
 
 > **OpenSpec** 是 EvTrade 的活工作流规范体系（proposal → spec-delta → 实施 → 归档）。
-> 本目录 `openspec/specs/` 是 **22 个能力文档**（capability specs）的存放处，是项目知识的"单一事实源（single source of truth）"。
+> 本目录 `openspec/specs/` 是 **23 个能力文档**（capability specs）的存放处，是项目知识的"单一事实源（single source of truth）"。
 >
 > **用法**：
 > - 改代码前先看相关 spec（`AGENTS.md` §"步骤 0"）
@@ -10,7 +10,7 @@
 
 ---
 
-## 📋 能力文档总览（22 个 spec）
+## 📋 能力文档总览（23 个 spec）
 
 ### 核心能力（与 AGENTS.md §"8 个 capability" 对齐）
 
@@ -32,6 +32,7 @@
 | [data-model](./data-model/spec.md) | **19 张 MySQL 表**结构 + schema.yml 同步工作流 | 739 | 2026-08-08 | 🟢 |
 | [ws-protocol](./ws-protocol/spec.md) | WebSocket 推送协议（**7 个 channel**，v97 修订）| 231 | 2026-08-08 | 🟢 |
 | [strategy](./strategy/spec.md) | 网格策略引擎 + script-strategy 模块（14 端点）| 394 | 2026-08-08 | 🟢 |
+| [strategy-exec](./strategy-exec/spec.md) | strategy_exec 独立策略运行服务（Backtrader 引擎 + RabbitMQ 信号推送 + 沙箱）| 267 | 2026-08-10 | 🟢 |
 | [stocks](./stocks/spec.md) | 股票基础信息管理（v23 slim-stocks-table 起）| 305 | 2026-07-16 | 🟡 |
 | [risk-management](./risk-management/spec.md) | 风险档位（4 档）+ RiskChecker 集成 | 122 | 2026-08-08 | 🟢 |
 | [system-init](./system-init/spec.md) | 系统初始化 / 日初对账 / 三屏障 | 168 | 2026-07-15 | 🟡 |

@@ -69,6 +69,7 @@ ORM 注释（`server/tables/<表名>.py` 自动生成）必须与本 spec 保持
 > - v14 起从 SQLite 迁到 MySQL（v20 强制 MySQL-only）；本 spec 早期版本描述 SQLite 时代
 > - v66 strategy_trade change：新增 `strategy` / `strategy_task` / `strategy_grid` / `strategy_regime` / `strategy_audit` 5 张策略表
 > - v90 script-strategy change（2026-08-01）：新增 `strategy_script` / `strategy_script_audit` 2 张脚本策略表 + 扩展 `strategy_task` 字段
+> - v120 strategy-exec-service change（2026-08-09）：`strategy_task` 加 3 字段 `execution_service`（'evtrade'/'strategy_exec'）/ `execution_pid` / `version`（乐观锁，migration `2026-08-09-strategy-task-exec-fields.py`）。运行引擎迁到独立服务 `strategy_exec/`；其 `progress` / `live_signals` / `status` 由 strategy_exec 写（`WHERE version=:v` 乐观锁，见 [`strategy-exec/spec.md`](../strategy-exec/spec.md) REQ-SE-007），EvTrade 侧 `strategy_script` / `strategy_script_audit` 只读、`strategy_task` 仅 `signal_consumer` 消费侧写 `status`/`order_no`
 > - v18 t0_tasks change：新增 `t0_tasks` 表（v18）+ `orders.task_id` 列
 > - v23 slim-stocks-table：精简 `stocks` 字段
 

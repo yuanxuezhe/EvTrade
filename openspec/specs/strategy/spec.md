@@ -268,6 +268,8 @@
 ## Script-Strategy 模块（v90 change, 2026-08-01）
 
 > **背景**：REQ-STRAT-001~013 覆盖**网格策略引擎**（change strategy_trade）。v90 起新增独立的**脚本策略模块**（change script-strategy），允许用户在前端写 Python 脚本 + 回测 + 实盘。本节补登。
+>
+> **v120（2026-08-09 strategy-exec-service）**：脚本策略的**运行引擎**已迁到独立服务 `strategy_exec/`（Backtrader 重构，见 [`strategy-exec/spec.md`](../strategy-exec/spec.md)）。REQ-STRAT-014/015/017（数据模型 / REST API / 前端）仍在 EvTrade 不变；**REQ-STRAT-016 引擎运行时已迁移**，本节仅保留 EvTrade 侧仍相关的契约。
 
 ### REQ-STRAT-014: 脚本策略数据模型（2 张表 + strategy_task 扩展）
 
@@ -332,37 +334,31 @@
 - **AND** 立即返回 task_id（异步不等待回测完成）
 - **WHEN** 客户端 POST /tasks/{id}/run
 - **THEN** 写 mode='backtest', status='running', started_at=now
-- **AND** 回测引擎跑（`server/strategy/runtime/`）
+- **AND** 回测引擎在 strategy_exec 跑（见 [`strategy-exec/spec.md`](../strategy-exec/spec.md) REQ-SE-003）
 - **AND** progress 字段实时更新（通过 `task_progress_update` ws 推送）
 - **WHEN** 回测完成
 - **THEN** 写 backtest_result / best_params / pnl / trades_count / finished_at / status='completed'
 
-### REQ-STRAT-016: 回测 / 实盘引擎运行时
+### REQ-STRAT-016: 回测 / 实盘引擎运行时（v120 已迁移 strategy_exec）
 
-- 路径：`server/strategy/runtime/`（含 `his_hq.py` 历史行情读取 + `backtest.py` 回测主循环 + `live.py` 实盘 runner）
-- **回测引擎**（BacktestEngine）：
-  - 输入：`(script_id, params, start_date, end_date, fields=['open,close,high,low'])`
-  - 主循环：逐 bar 调用户 `on_bar(ctx, bar)` → 写 `strategy_script_audit` → 更新 `progress`
-  - 输出：写入 `strategy_task.backtest_result` / `best_params` / `pnl` / `trades_count`
-- **实盘 runner**（LiveRunner, v8ff+）：
-  - 订阅行情（`quote_consumer.py`），逐 tick 调 `on_tick(ctx, tick)`
-  - 限 `live_signals` JSON 数组最多 500 条，**每 5 秒 flush** 一次到 DB
-  - 走 ws 后端订阅（v8ff `_subscribe_extra` + `latest_ticks`）
-  - T+1 策略做 T：用户脚本可基于历史持仓发当日单（独立 v118+ 处理）
-- 风险档位集成（`RiskChecker`，v__）：
-  - 单笔最大 / 当日笔数 / 单股仓位上限 / 最大回撤 — 触发即拒单
+> **v120 迁移（2026-08-09 strategy-exec-service）**：回测/实盘引擎已迁到独立服务 `strategy_exec/`（Backtrader 重构，基于 `bt.Cerebro`）。原 `server/strategy/runtime/` 目录已删除。引擎实现见 [`strategy-exec/spec.md`](../strategy-exec/spec.md) REQ-SE-003（引擎）/ REQ-SE-004（RabbitMQ 信号推送）/ REQ-SE-005（用户脚本接口）。本节仅保留 **EvTrade 侧仍相关**的契约：
+
+- 用户脚本接口 **BREAKING**：v90 `on_bar/on_tick/ctx.lib.doorder` 废弃，改为 Backtrader `ProjectStrategy.next()` + `self.buy_signal()/self.sell_signal()`（见 strategy-exec REQ-SE-005；迁移指南 `docs/strategy-migration-v90-to-bt.md`）
+- `live_signals` 环形缓冲（限 500 条，每 5s flush 到 DB）：由 strategy_exec `LiveRunner` 实现（`append_live_signals`）
+- 风险档位集成（`RiskChecker`，**仍 EvTrade 侧**）：单笔最大 / 当日笔数 / 单股仓位上限 / 最大回撤 — 触发即拒单
+- signal 消费 + 下单：EvTrade `server/services/strategy/signal_consumer.py` 订阅 signal → 调 `/api/orders/place`
 
 #### Scenario: 回测进度推送
 
 - **GIVEN** 回测中, 当前 bar_idx=500, total_bars=10000
-- **WHEN** 主循环每 N bar 写一次 progress
+- **WHEN** strategy_exec 回测主循环每 N bar 写一次 progress（`update_task_progress`）
 - **THEN** `strategy_task.progress` 更新为 `{phase: 'bar', current: 500, total: 10000, bar_idx: 500, total_bars: 10000, elapsed_ms: ...}`
-- **AND** ws 推 `task_progress_update` channel（前端 ScriptTask.vue 详情实时刷新）
+- **AND** EvTrade ws_manager 读 DB 变化推 `task_progress_update` channel（前端 ScriptTask.vue 详情实时刷新）
 
 #### Scenario: 实盘 live_signals 限 500
 
-- **WHEN** live_signals 累计达 500 条
-- **THEN** 第 501 条起**覆盖**最早（环形缓冲）
+- **WHEN** strategy_exec live_signals 累计达 500 条
+- **THEN** 第 501 条起**覆盖**最早（环形缓冲，`append_live_signals`）
 - **AND** 每 5s flush 到 DB（不是逐条写 — 避免高频 IO）
 
 ### REQ-STRAT-017: 前端 2 个 view + 14 端点客户端
