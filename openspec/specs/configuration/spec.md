@@ -103,8 +103,8 @@ EvTrade 部署在 Windows（开发/QMT 柜台）+ Linux（前后端服务），�
 |---|---|---|
 | `STRATEGY_EXEC_PORT` / `STRATEGY_EXEC_HOST` | `8001` / `0.0.0.0` | 监听端口 / host |
 | `STRATEGY_EXEC_API_TOKEN` | `""` | 校验 `X-Internal-Token`；空 = 不鉴权（局域网部署）|
-| `EVTRADE_STRATEGY_EXCHANGE_NAME` | `strategy.exchange` | signal topic exchange（durable）|
-| `EVTRADE_STRATEGY_SIGNAL_QUEUE` | `EvTrade.StrategySignal` | signal queue（durable，EvTrade signal_consumer 订阅）|
+| `EVTRADE_STRATEGY_EXCHANGE_NAME` | `strategy.exchange` | signal topic exchange（durable）——**EvTrade 与 strategy_exec 双方都读此 env**（server/config.py `STRATEGY_EXCHANGE_NAME`）|
+| `EVTRADE_STRATEGY_SIGNAL_QUEUE` | `EvTrade.StrategySignal` | signal queue（durable，EvTrade signal_consumer 订阅）——**双方都读**（server/config.py `STRATEGY_SIGNAL_QUEUE`）|
 | `EVTRADE_STRATEGY_PUBLISH_CONFIRM_TIMEOUT` | `5` | publisher confirm 超时（秒）|
 | `EVTRADE_STRATEGY_PUBLISH_RETRIES` | `3` | 推送失败重试次数 |
 | `EVTRADE_HIS_HQ_EXCHANGE_NAME` / `EVTRADE_HIS_HQ_REQ_QUEUE` / `EVTRADE_HIS_HQ_REQ_TIMEOUT` | `quota_his.exchange` / `EvTrade.ReqHisHq` / `30` | 历史 K 线 RabbitMQ 拓扑 |
