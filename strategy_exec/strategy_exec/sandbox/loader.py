@@ -20,8 +20,10 @@ import logging
 import sys
 import types
 import typing
+from collections import OrderedDict
 from typing import Any, Dict, List, Optional, Set, Type
 
+from backtrader.metabase import AutoInfoClass
 from strategy_exec.config import get_settings
 
 log = logging.getLogger(__name__)
@@ -239,8 +241,9 @@ def load_strategy_class(
 
 # ──── Schema 注入 helpers (v121+, 2026-08-10) ────
 # 决策: schema 是 params 的唯一真源, 代码里不应再写 params = (...).
-# loader 拿 schema 后覆盖 cls.params — backtrader 元类下次实例化时
-# 会从 cls.params 读 tuple 装到 self.p, 透明生效.
+# loader 拿 schema 后覆盖 cls.params — 必须保持为 backtrader 可实例化的
+# Params 类 (AutoInfoClass 派生, callable), 实例化时 metabase.donew 执行
+# cls.params() 取值装到 self.p. 不能换成裸 tuple (会报 not callable).
 # strict 模式: code 声明的 keys 与 schema 不一致 → 直接 ValueError (fail-fast).
 
 
@@ -325,8 +328,13 @@ def _inject_params_from_schema(
             f"  v121+: schema 是唯一契约, 请同步代码里的 params = (...) 或调整 schema"
         )
 
-    # 覆盖 cls.params — backtrader 元类 next time 会读 cls.params 装到 self.p
-    cls.params = tuple((p["key"], p["default"]) for p in params_schema)
+    # 覆盖 cls.params — 必须保持为 backtrader 可实例化的 Params 类!
+    # 不能换成裸 tuple: metaclass 实例化时 metabase.donew 会执行 cls.params()
+    # (AutoInfoClass 派生类可调用), 裸 tuple 会报 "'tuple' object is not callable".
+    # 正确做法: 从 AutoInfoClass 空基 _derive 出新派生类, 保持 schema key 顺序
+    # (若用继承的 cls.params 当基, _derive 会保留代码声明的原顺序).
+    newparams = OrderedDict((p["key"], p["default"]) for p in params_schema)
+    cls.params = AutoInfoClass._derive(cls.__name__, newparams, [])
     log.debug("[loader.inject] %s.params 已被 schema 覆盖: %s",
               cls.__name__, sorted(schema_keys))
     return cls

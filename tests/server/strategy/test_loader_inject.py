@@ -60,10 +60,26 @@ class MAStrategy(bt.Strategy):
         {"key": "slow", "default": 30, "type": "int"},
     ]
     cls = load_strategy_class(code, bt.Strategy, params_schema=schema)
-    # loader 注入后 cls.params 是 tuple, dict() 直接转
-    assert isinstance(cls.params, tuple)
+    # loader 注入后 cls.params 必须是 backtrader 可实例化的 Params 类
+    # (v123 回归: 不能是裸 tuple, 否则 metaclass 实例化时 cls.params() 报
+    #  "'tuple' object is not callable")
+    assert callable(cls.params)
     params_dict = _params_to_dict(cls.params)
     assert params_dict == {"fast": 7, "slow": 30}
+    # 回归: 真实 cerebro.run() 实例化 (走 MetaParams.donew 的 cls.params())
+    # 直接 cls() 会因缺 cerebro owner 报 _next_stid, 故用完整 addstrategy + run.
+    import pandas as pd
+    df = pd.DataFrame(
+        {"open": [1, 2, 3], "high": [1, 2, 3], "low": [1, 2, 3],
+         "close": [1, 2, 3], "volume": [100] * 3, "openinterest": [0] * 3},
+        index=pd.to_datetime(["2024-01-01", "2024-01-02", "2024-01-03"]),
+    )
+    cerebro = bt.Cerebro()
+    cerebro.adddata(bt.feeds.PandasData(dataname=df))
+    cerebro.addstrategy(cls, fast=7, slow=30)
+    cerebro.run()
+    # 实例化参数生效: 用策略实例的参数类断言
+    assert dict(cls.params._getpairs()) == {"fast": 7, "slow": 30}
 
 
 def test_schema_injects_preserves_order():
@@ -82,8 +98,8 @@ class MAStrategy(bt.Strategy):
         {"key": "slow", "default": 30},
     ]
     cls = load_strategy_class(code, bt.Strategy, params_schema=schema)
-    # 注入后是 tuple, 按 schema 顺序
-    keys = [p[0] for p in cls.params]
+    # 注入后按 schema 顺序 (Params 类 _getitems 保持顺序)
+    keys = [k for k, _ in cls.params._getitems()]
     assert keys == ["fast", "slow"]  # schema 顺序优先
 
 

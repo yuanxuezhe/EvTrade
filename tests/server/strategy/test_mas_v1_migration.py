@@ -136,5 +136,5 @@ def test_stripped_code_works_with_loader_inject():
     ]
     cls = load_strategy_class(new_code, bt.Strategy, params_schema=schema)
     # 注入成功 → cls.params 包含 4 个 schema key, 默认值来自 schema
-    params_dict = dict(cls.params)
+    params_dict = dict(cls.params._getpairs())
     assert params_dict == {"fast": 5, "slow": 20, "qty": 100, "rsi_period": 14}
