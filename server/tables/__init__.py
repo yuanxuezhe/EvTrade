@@ -15,6 +15,7 @@ from server.tables.positions import Positions  # noqa: F401
 from server.tables.quote_snapshots import QuoteSnapshots  # noqa: F401
 from server.tables.reconcile_report import ReconcileReport  # noqa: F401
 from server.tables.stocks import Stocks  # noqa: F401
+from server.tables.strategy import Strategy  # noqa: F401
 from server.tables.strategy_script import StrategyScript  # noqa: F401
 from server.tables.strategy_script_audit import StrategyScriptAudit  # noqa: F401
 from server.tables.strategy_task import StrategyTask  # noqa: F401

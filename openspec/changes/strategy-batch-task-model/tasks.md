@@ -10,11 +10,11 @@
 
 ## 2. `strategy` 表 + `strategy_task` 重构（迁移）
 
-- [ ] 2.1 建 `strategy` 表（strategy_id 自增 PK / user_id / script_id / name / status / best_params JSON NULL / 时间戳，索引 (user_id, script_id)）
-- [ ] 2.2 `strategy_task` 加 `strategy_id` + `batch_no`；回填：每个 task 按 script_id 映射到策略（先为每个 strategy_script 建同名 strategy 再映射）
-- [ ] 2.3 `strategy_task` 删 `script_id` / `best_params` / `sweep_id` / `sweep_total` / `sweep_metric` 列
-- [ ] 2.4 `server/tables/strategy.py` 新增（tables-codegen）+ `server/tables/strategy_task.py` 重新生成
-- [ ] 2.5 `server/schema.yml` 与 `server/models/orm.py` 同步（diff 0 除注释）
+- [x] 2.1 建 `strategy` 表（strategy_id 自增 PK / user_id / script_id / name / status / best_params JSON NULL / 时间戳，索引 (user_id, script_id)）— 迁移 `2026-08-11-add-strategy-table-refactor-task.py`
+- [x] 2.2 `strategy_task` 加 `strategy_id` + `batch_no`；回填：每个 task 按 script_id 映射到策略（先为每个 strategy_script 建同名 strategy 再映射；batch 按 sweep_id 分组/无则每 task 独立）
+- [x] 2.3 `strategy_task` 删 `script_id` / `best_params` / `sweep_id` / `sweep_total` / `sweep_metric` 列
+- [x] 2.4 `server/tables/strategy.py` 新增（tables-codegen，经临时目录）+ `server/tables/strategy_task.py` 重新生成 + `__init__.py` 追加导入
+- [x] 2.5 `server/schema.yml` 同步（strategy/strategy_task diff 0，其余为既有无关 drift；orm.py 无 strategy 模型，无需改）
 
 ## 3. 后端 API（策略 CRUD + 批次 + 实盘门禁）
 

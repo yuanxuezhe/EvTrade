@@ -403,7 +403,44 @@ tables:
       updated_at:
         type: DateTime
         nullable: false
-        default: 
+        default:
+  strategy:
+    pk: ['strategy_id']
+    columns:
+      strategy_id:
+        type: Integer
+        nullable: false
+        default: 0
+        autoincrement: true
+      user_id:
+        type: Integer
+        nullable: false
+        default: 0
+      script_id:
+        type: String(64)
+        nullable: false
+        default:
+      name:
+        type: String(64)
+        nullable: false
+        default:
+      status:
+        type: String(16)
+        nullable: false
+        default: ''draft''
+      best_params:
+        type: JSON
+        nullable: true
+      created_at:
+        type: DateTime
+        nullable: false
+        default:
+      updated_at:
+        type: DateTime
+        nullable: false
+        default:
+    indexes:
+      ix_strategy_user_script: ['user_id', 'script_id']
   strategy_script:
     pk: ['user_id', 'id']
     columns:
@@ -516,12 +553,15 @@ tables:
       user_id:
         type: Integer
         nullable: true
-      script_id:
+      strategy_id:
+        type: Integer
+        nullable: true
+      batch_no:
         type: Integer
         nullable: true
       description:
         type: String(500)
-        nullable: true
+        nullable: false
         server_default: ''''
       stock_code:
         type: String(16)
@@ -539,9 +579,6 @@ tables:
         type: JSON
         nullable: true
       backtest_result:
-        type: JSON
-        nullable: true
-      best_params:
         type: JSON
         nullable: true
       backtest_start_date:
@@ -595,6 +632,19 @@ tables:
       progress:
         type: JSON
         nullable: true
+      execution_service:
+        type: String(16)
+        nullable: false
+        server_default: ''evtrade''
+      execution_pid:
+        type: Integer
+        nullable: true
+      version:
+        type: Integer
+        nullable: false
+        server_default: ''0''
+    indexes:
+      ix_strategy_task_batch: ['strategy_id', 'batch_no', 'status']
   sys_config:
     pk: ['user', 'cfg_key']
     columns:
