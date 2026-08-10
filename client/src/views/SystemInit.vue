@@ -191,6 +191,11 @@ async function handleInit() {
     ElMessage.error('日初失败：' + (e.msg || e.message))
   } finally {
     loading.init = false
+    // change init-push-gate: 兜底关门 — 即便 ws init_start/init_completed/init_aborted 广播丢失,
+    //   HTTP 响应返回即代表 init 生命周期结束, 强制恢复推送处理 (防丢弃门卡死)
+    try {
+      useHoldingsStore().initializing = false
+    } catch (_e) { /* store 未就绪时忽略 */ }
   }
 }
 

@@ -38,6 +38,19 @@ import { makeLogger } from '../utils/logger'
 
 const log = makeLogger('ws')
 
+// change init-push-gate: 系统初始化期间丢弃的推送计数 (模块级, 跨多次广播累积)
+//   init_start 清零 → pos/ord/trd 被丢弃时累加 → init_completed/init_aborted 时一次汇总日志
+let _discardedDuringInit = 0
+
+/** init-push-gate: 系统初始化中? (holdings.initializing === true) */
+function _isInitializing() {
+  try {
+    return useHoldingsStore().initializing === true
+  } catch (_e) {
+    return false
+  }
+}
+
 /**
  * payload 入口（ws_heartbeat 的 onmessage 调用）
  * payload = { type, channel, ts, data }
@@ -97,6 +110,11 @@ function _onPosPush(data) {
   //   2) 后端 dispatcher wrap: { position: { stock_code, vol, avl_vol, ... } }
   const row = data.position || data
   if (!row || !row.stock_code) return
+  // change init-push-gate: 系统初始化中 → 丢弃 (reconcile 窗口不写中间态, 只计数不刷屏)
+  if (_isInitializing()) {
+    _discardedDuringInit += 1
+    return
+  }
   try {
     const hs = useHoldingsStore()
     // v118: 整条 ref 替换 (broker 永远权威, 不增量)
@@ -189,6 +207,11 @@ function _onQuote(row) {
 function _onOrderCfm(row) {
   if (!row || !row.order_no) {
     log.warn('_onOrderCfm 缺 order_no, 跳过:', row)
+    return
+  }
+  // change init-push-gate: 系统初始化中 → 丢弃 (只计数不刷屏)
+  if (_isInitializing()) {
+    _discardedDuringInit += 1
     return
   }
 
@@ -335,6 +358,11 @@ function _onTradeCfm(row) {
     log.warn('_onTradeCfm 缺 trade_id, 跳过:', row)
     return
   }
+  // change init-push-gate: 系统初始化中 → 丢弃 (只计数不刷屏)
+  if (_isInitializing()) {
+    _discardedDuringInit += 1
+    return
+  }
 
   try {
     const holdings = useHoldingsStore()
@@ -466,6 +494,23 @@ function _onSystemStatusChange(data) {
     + ' status=' + (data.status || '-')
     + ' report_id=' + (data.report_id || '-'),
   )
+  // change init-push-gate: 初始化生命周期三态 — 开关「推送丢弃门」
+  //   init_start → 开 gate (reconcile 窗口丢弃 pos/ord/trd 洪峰)
+  if (data.change_kind === 'init_start') {
+    _discardedDuringInit = 0
+    try { useHoldingsStore().initializing = true } catch (_e) { /* store 未就绪时忽略 */ }
+    log.info('初始化开始: 开启推送丢弃门, reconcile 期间丢弃 pos/ord/trd 推送')
+    return
+  }
+  //   init_aborted → 关 gate (失败, 不切日, 不 resetForNewDay)
+  if (data.change_kind === 'init_aborted') {
+    const n = _discardedDuringInit
+    _discardedDuringInit = 0
+    try { useHoldingsStore().initializing = false } catch (_e) { /* store 未就绪时忽略 */ }
+    if (n > 0) log.warn(`初始化中止: 恢复推送处理, 期间丢弃 ${n} 条推送`)
+    else log.info('初始化中止: 恢复推送处理 (无丢弃)')
+    return
+  }
   // 1) 主动写 activeTrdDate (如果 payload 带了) — 让前端状态机立刻跟随后端
   if (data.trd_date) {
     try {
@@ -484,6 +529,11 @@ function _onSystemStatusChange(data) {
   // v117.1: 移除 rpc_status 写入 — rpc_status 独立走 type='rpc_status' 路径 (rpc_health 5s 推一次)
   // 2) 切日/初始化 → 走 resetForNewDay (主路径)
   if (data.change_kind === 'init_completed' || data.change_kind === 'day_init') {
+    // change init-push-gate: init_completed → 关丢弃门 + 一次汇总日志 (丢弃 N 条)
+    const _n = _discardedDuringInit
+    _discardedDuringInit = 0
+    try { useHoldingsStore().initializing = false } catch (_e) { /* store 未就绪时忽略 */ }
+    if (_n > 0) log.info(`初始化完成: 恢复推送处理, 期间丢弃 ${_n} 条推送`)
     try {
       const hs = useHoldingsStore()
       if (typeof hs.resetForNewDay === 'function') {

@@ -53,6 +53,12 @@ export const useHoldingsStore = defineStore('holdings', () => {
     asset: 'idle', positions: 'idle', orders: 'idle', trades: 'idle'
   })
 
+  // ---- change init-push-gate: 系统初始化中标志 ------------------------------
+  //   后端 init_start 广播置 true → init_completed/init_aborted 置 false。
+  //   true 期间 ws_dispatch 丢弃 pos/ord/trd 推送 (只计数不刷屏),
+  //   避免日初 reconcile 窗口把 broker 洪峰写进 positions/orders/trades 中间态。
+  const initializing = ref(false)
+
   // ---- 操作流水 -------------------------------------------------------
   const loadHistory = ref([])
   const { log, clearHistory } = createLogger(loadHistory)
@@ -89,6 +95,8 @@ export const useHoldingsStore = defineStore('holdings', () => {
     activeTrdDate, activeDayStatus,
     refCounts, loading, bootstrapped, lastUpdated,
     idbSyncStatus, log,
+    // change init-push-gate: bootstrap/refreshAll 完成后兜底关丢弃门 (清 stuck gate)
+    initializing,
   })
 
   // 启动 ws 的回调（避免 holdings_bootstrap.js 反向依赖 ws store）
@@ -138,6 +146,8 @@ export const useHoldingsStore = defineStore('holdings', () => {
     // state（21 view 直接读, 必须全部暴露）
     positions, orders, trades, cachedAsset,
     loading, bootstrapped, lastUpdated, refCounts, idbSyncStatus,
+    // change init-push-gate: 系统初始化中标志 (ws_dispatch 丢弃门读, SystemInit/刷新兜底写)
+    initializing,
     loadHistory,
     // v8: 激活交易日权威源（推送守门用）
     activeTrdDate, activeDayStatus,

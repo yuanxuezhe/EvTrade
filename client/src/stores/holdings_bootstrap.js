@@ -45,6 +45,8 @@ export function createBootstrap({
   activeTrdDate, activeDayStatus,
   refCounts, loading, bootstrapped, lastUpdated,
   idbSyncStatus, log,
+  // change init-push-gate: bootstrap/refreshAll 完成兜底关丢弃门 (清 stuck gate)
+  initializing,
 }) {
   const refs = { positions, orders, trades, cachedAsset, refCounts, idbSyncStatus, log }
 
@@ -198,6 +200,8 @@ export function createBootstrap({
       idbSyncStatus.value = { asset: 'error', positions: 'error', orders: 'error', trades: 'error' }
     } finally {
       loading.value = false
+      // change init-push-gate: bootstrap 结束兜底关丢弃门 (日初 resetForNewDay → bootstrap 时自动清 gate)
+      initializing.value = false
     }
   }
 
@@ -309,6 +313,8 @@ export function createBootstrap({
       idbSyncStatus.value = { asset: 'error', positions: 'error', orders: 'error', trades: 'error' }
     } finally {
       loading.value = false
+      // change init-push-gate: 手动刷新结束兜底关丢弃门 (清 stuck gate)
+      initializing.value = false
     }
   }
 
