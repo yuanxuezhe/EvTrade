@@ -7,7 +7,7 @@
 - [x] 1.1 创建 change proposal（proposal.md）
 - [x] 1.2 spec-deltas：`quotes.md`（REQ-QUOTE-007）+ `frontend.md`（REQ-FE-531）
 - [x] 1.3 主 spec 落地：`openspec/specs/quotes/spec.md` + `openspec/specs/frontend/spec.md`
-- [ ] 1.4 commit: `docs(spec): 新增 REQ-QUOTE-007 auto-sub 全市场阈值 + REQ-FE-531 pos_push 批量合并`
+- [x] 1.4 commit: `docs(spec): 新增 REQ-QUOTE-007 auto-sub 全市场阈值 + REQ-FE-531 pos_push 批量合并`（`1aae3ca`）
 
 ## 2 — 前端 auto-sub 全市场阈值
 
@@ -15,7 +15,7 @@
   - [x] 2.1.1 codeSet 去重后 >100 → `quote.subscribe(全量 codes)` 一次 + 置标志 + 一条「切全市场订阅」日志
   - [x] 2.1.2 已全市场订阅 → 直接 return（不再逐只订阅/刷日志）
   - [x] 2.1.3 持仓缩回 ≤100 → 退出全市场模式 + 清 `_lastSubscribedCodes`
-- [ ] 2.2 commit: `fix(holdings): auto-sub 持仓>100 切 '' 全市场订阅一次 (holdings-auto-sub-batch)`
+- [x] 2.2 commit: `fix(holdings): auto-sub 持仓>100 切 '' 全市场订阅一次 (holdings-auto-sub-batch)`（`7e77af4`）
 
 ## 3 — WS 新持仓批量合并
 
@@ -23,7 +23,7 @@
   - [x] 3.1.1 `_pendingNewPositions` 按 stock_code 去重
   - [x] 3.1.2 100ms trailing debounce → 一次 `unshift(...batch)` + 「批量新增 N 只」日志
   - [x] 3.1.3 已有持仓「持仓刷新」路径不变
-- [ ] 3.2 commit: `fix(holdings): WS 新持仓 100ms 批量合并 + 单条日志 (holdings-auto-sub-batch)`
+- [x] 3.2 commit: `fix(holdings): WS 新持仓 100ms 批量合并 + 单条日志 (holdings-auto-sub-batch)`（`9701b03`）
 
 ## 4 — 验证
 
