@@ -50,19 +50,22 @@
               />
             </template>
           </el-table-column>
-          <el-table-column label="操作" width="120" fixed="right">
+          <el-table-column label="操作" width="180" fixed="right">
             <template #default="{ row }">
               <el-button
                 v-if="row.status === 'running'"
-                size="small" link type="danger"
+                size="small" type="danger" plain
                 @click="onStop(row)" data-el="st-stop"
               >停止</el-button>
               <el-button
                 v-else
-                size="small" link type="primary"
+                size="small" type="primary" plain
                 @click="openRun(row)" data-el="st-run"
               >启动</el-button>
-              <el-button size="small" link type="danger" @click="onDelete(row)" data-el="st-delete">删除</el-button>
+              <el-button
+                size="small" type="danger" link
+                @click="onDelete(row)" data-el="st-delete"
+              >删除</el-button>
             </template>
           </el-table-column>
         </el-table>
