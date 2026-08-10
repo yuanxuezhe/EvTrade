@@ -428,7 +428,7 @@ async def run_sweep_endpoint(
     )
 
     # ──── 1. 权限校验 + 读 task ────
-    from server.tables import StrategyScript
+    from server.tables import StrategyScript, StrategyTask
     row = StrategyTask.query_one(id=task_id)
     if row is None:
         raise HTTPException(status_code=404, detail={"code": "TASK_NOT_FOUND"})
