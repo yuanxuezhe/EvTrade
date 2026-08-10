@@ -4,9 +4,10 @@ QMT 行情 publisher：把 subscribe_whole_quote 收到的行情快照广播到 RabbitMQ。
 
 优化要点：
   1. 彻底移除了锁内部的 print(line) 同步阻塞 I/O，极大地释放了 QMT 回调和 Worker 的性能。
-  2. 降低 Worker 数量（16 -> 2），增大单批次吞吐量（20 -> 500），大幅减少多线程 GIL 和 asyncio 锁竞争。
+  2. 降低 Worker 数量（16 -> 1），增大单批次吞吐量（20 -> 500），大幅减少多线程 GIL 和 asyncio 锁竞争。
   3. 优化了空仓等待机制，避免 CPU 空转。
 """
+from collections import deque
 import threading
 import asyncio
 import aio_pika
@@ -16,7 +17,7 @@ class Config:
     RABBITMQ_URL = "amqp://192.168.10.2:5672/?heartbeat=60"
     EXCHANGE_NAME = "quota.exchange"
     QUEUE_NAME = "EvQuota"      # 固定队列名
-    NUM_WORKERS = 2             # 减少 Worker 数量，2个足以吞吐数万条/秒
+    NUM_WORKERS = 1             # 减少 Worker 数量，2个足以吞吐数万条/秒
     BATCH_SIZE = 1000            # 提升批量上限，以应对全推行情
     SNAPSHOT_INTERVAL = 0.005   # 队列空时 sleep 5毫秒，防止抢占 CPU
 
@@ -27,7 +28,7 @@ config = Config()
 class _InvisibleStorage:
     __slots__ = ()
     inner_box = {
-        "snapshot_dict": {},   # code -> line (str)
+        "quote_queue": deque(),  # 使用双端队列，FIFO 保留每一条 LV1 切片
         "loop": None,
         "thread": None,
         "active": False,
@@ -37,42 +38,42 @@ class _InvisibleStorage:
 
 
 # ================================================================
-# 核心异步分发 Worker
+# 核心异步分发 Worker (流水模式)
 # ================================================================
 async def quota_snapshot_worker(worker_id, exchange, auth_token):
     publish_func = exchange.publish
-    print(f"[Worker-{worker_id}] 启动成功，进入工作循环...", flush=True)
+    print(f"[Worker-{worker_id}] 启动成功，进入 LV1 流水分发模式...", flush=True)
 
     while (
         _InvisibleStorage.inner_box["active"]
         and _InvisibleStorage.inner_box["token"] == auth_token
     ):
-        batch_lines = []
+        raw_queue = None
         
-        # 极快地批量弹出任务并释放锁
+        # 1. 瞬间拿锁，直接“偷走”整个 deque 并替换为新的 deque
+        # 拿锁耗时 < 1 微秒，QMT 回调没有任何感知
         with _InvisibleStorage.lock:
-            snap = _InvisibleStorage.inner_box["snapshot_dict"]
-            if snap:
-                # 动态自适应批量取出
-                keys = list(snap.keys())[:config.BATCH_SIZE]
-                for k in keys:
-                    batch_lines.append(snap.pop(k))
+            if _InvisibleStorage.inner_box["quote_queue"]:
+                raw_queue = _InvisibleStorage.inner_box["quote_queue"]
+                _InvisibleStorage.inner_box["quote_queue"] = deque()
 
-        if batch_lines:
-            # 合并为一条消息，用换行符分隔
-            body = "\n".join(batch_lines).encode("gbk")
-            msg = aio_pika.Message(body, delivery_mode=1)
-            try:
-                await publish_func(msg, routing_key="")   # fanout 忽略 routing_key
-            except asyncio.CancelledError:
-                break
-            except Exception as e:
-                print(f"[Worker-{worker_id}] publish error: {e}", flush=True)
-                await asyncio.sleep(0.1)
+        # 2. 在锁外处理数据并打包发布
+        if raw_queue:
+            batch_lines = list(raw_queue)
             
-            # 由 aio_pika 内部的隐式 await 让出控制权即可，如非极端情况无需手动 sleep(0)
+            # 按 BATCH_SIZE 打包，避免单条消息过大
+            for i in range(0, len(batch_lines), config.BATCH_SIZE):
+                chunk = batch_lines[i : i + config.BATCH_SIZE]
+                body = "\n".join(chunk).encode("gbk")
+                msg = aio_pika.Message(body, delivery_mode=1)
+                try:
+                    await publish_func(msg, routing_key="")
+                except asyncio.CancelledError:
+                    return
+                except Exception as e:
+                    print(f"[Worker-{worker_id}] publish error: {e}", flush=True)
+                    await asyncio.sleep(0.05)
         else:
-            # 队列为空时等待，让出 CPU 给 QMT 回调线程和网络 IO
             await asyncio.sleep(config.SNAPSHOT_INTERVAL)
 
     print(f"[Worker-{worker_id}] 退出循环。", flush=True)
@@ -147,7 +148,7 @@ def init(ContextInfo):
     _InvisibleStorage.inner_box["token"] += 1
     current_token = _InvisibleStorage.inner_box["token"]
     with _InvisibleStorage.lock:
-        _InvisibleStorage.inner_box["snapshot_dict"].clear()
+        _InvisibleStorage.inner_box["quote_queue"].clear()
     _InvisibleStorage.inner_box["active"] = True
 
     _InvisibleStorage.inner_box["thread"] = threading.Thread(
@@ -168,21 +169,17 @@ def init(ContextInfo):
     ContextInfo.subscribe_whole_quote(['SZ', 'SH'], on_quote)
 
 
+# ================================================================
+# QMT 同步回调：极速追加到 deque
+# ================================================================
 def on_quote(datas):
-    """QMT 同步回调：极其干净，只负责极其迅速地写入字典，不加任何延时逻辑。"""
     if not _InvisibleStorage.inner_box["active"]:
         return
     lines = format_quote(datas)
     
-    # 瞬间拿锁、赋值、放锁。内部绝无 print 阻碍
+    # deque.extend 是 C 级别的原生追加，极快
     with _InvisibleStorage.lock:
-        snap = _InvisibleStorage.inner_box["snapshot_dict"]
-        for line in lines:
-            try:
-                code = line.split("|", 1)[0]
-                snap[code] = line
-            except Exception:
-                pass
+        _InvisibleStorage.inner_box["quote_queue"].extend(lines)
 
 
 def format_quote(datas):
@@ -231,7 +228,7 @@ def stop(ContextInfo):
         _InvisibleStorage.inner_box["thread"].join(timeout=3)
     
     with _InvisibleStorage.lock:
-        _InvisibleStorage.inner_box["snapshot_dict"].clear()
+        _InvisibleStorage.inner_box["quote_queue"].clear()
         
     print("[Stop] 广播引擎已平稳、安全退出。", flush=True)
 
