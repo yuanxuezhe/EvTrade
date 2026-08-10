@@ -70,7 +70,7 @@ def create_task(
     fields: Optional[str] = None,
     mode: Optional[str] = None,
     batch_no: Optional[int] = None,
-    status: str = "created",
+    status: str = "queued",  # v123 状态机: queued → running → finished / failed / stopped
 ) -> Dict[str, Any]:
     """创建任务 (v123: 挂 strategy_id, 可带 batch_no).
 

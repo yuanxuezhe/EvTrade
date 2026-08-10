@@ -309,7 +309,7 @@ async def run_sweep_batch(
                     "task_id": task_id,
                     "params": combo,
                     "metric_value": metric_value,
-                    "status": "completed",
+                    "status": "finished",
                     "error_msg": None,
                 }
             except Exception as e:
@@ -326,8 +326,8 @@ async def run_sweep_batch(
     results = await asyncio.gather(*(_run_one(t) for t in tasks))
 
     # ──── 4. 排序 + 回写 strategy.best_params ────
-    # 排序: completed (按 metric_value 降序) 排前, failed 排后
-    completed = [r for r in results if r["status"] == "completed" and r["metric_value"] is not None]
+    # 排序: finished (按 metric_value 降序) 排前, failed 排后
+    completed = [r for r in results if r["status"] == "finished" and r["metric_value"] is not None]
     failed = [r for r in results if r not in completed]
     completed.sort(key=lambda r: r["metric_value"], reverse=True)
 

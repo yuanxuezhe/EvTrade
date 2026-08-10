@@ -256,7 +256,7 @@ def run_backtest(
 
     with _update_task_results(task_id, backtest_result, pnl, len(signals)):
         update_task_status(
-            task_id, "completed",
+            task_id, "finished",  # v123: 终态统一 'finished' (设计契约, list_batches 聚合)
             finished_at=datetime.now().isoformat(),
             execution_pid=None,
         )
