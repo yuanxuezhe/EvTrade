@@ -67,6 +67,7 @@ ORM 注释（`server/tables/<表名>.py` 自动生成）必须与本 spec 保持
 > - v90 script-strategy change（2026-08-01）：新增 `strategy_script` / `strategy_script_audit` 2 张脚本策略表 + 扩展 `strategy_task` 字段
 > - **v120.5 grid-engine-removal（2026-08-10）**：DROP `strategy` / `strategy_regime` / `strategy_grid` / `strategy_audit` / `stocks_legacy` 5 张表（migration `server/migrations/2026-08-10-drop-legacy-strategy-tables.py`，commit `aa70dae`）。网格引擎被脚本策略取代；schema.yml 同步移除 4 张表定义（19 → 15 张）
 > - v120 strategy-exec-service change（2026-08-09）：`strategy_task` 加 3 字段 `execution_service`（'evtrade'/'strategy_exec'）/ `execution_pid` / `version`（乐观锁，migration `2026-08-09-strategy-task-exec-fields.py`）。运行引擎迁到独立服务 `strategy_exec/`；其 `progress` / `live_signals` / `status` 由 strategy_exec 写（`WHERE version=:v` 乐观锁，见 [`strategy-exec/spec.md`](../strategy-exec/spec.md) REQ-SE-007），EvTrade 侧 `strategy_script` / `strategy_script_audit` 只读、`strategy_task` 仅 `signal_consumer` 消费侧写 `status`/`order_no`
+> - **v122 strategy-params-sweep-best-live（2026-08-10）**：`strategy_task` 加 3 sweep 列 `sweep_id VARCHAR(32) NULL` / `sweep_metric VARCHAR(32) NULL` / `sweep_total INT NULL`（migration `2026-08-11-add-strategy-sweep-fields.py`，commit `6808e8b`）。同 sweep 多 task 共享 `sweep_id`；summary task 也带 `sweep_id`（用 `sweep_total=1` 区分自身）。前端按 `sweep_id IS NULL` 判断单 run。详见 [`strategy-exec/spec.md`](../strategy-exec/spec.md) REQ-SE-008 / [`strategy/spec.md`](../strategy/spec.md) REQ-STRAT-016 扩展
 > - v18 t0_tasks change：新增 `t0_tasks` 表（v18）+ `orders.task_id` 列
 > - v23 slim-stocks-table：精简 `stocks` 字段
 
