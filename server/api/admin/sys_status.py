@@ -137,8 +137,14 @@ async def init_trading_day(
     #   reconcile 期间 broker 仍可能推 pos_push/ord_cfm/trd_cfm 洪峰, 前端据此丢弃 (不写状态/不刷屏)
     _broadcast_init_change('init_start', 'initializing', req.trd_date, _previous_trd_date, None)
 
-    # v118: 系统初始化走 init 路径 (覆盖 positions 表, 一次性同步 broker 持仓)
-    result = await do_reconcile(db, req.trd_date, by_user, reconcile_kind='init')
+    # change init-push-gate: init reconcile 期间**后端**抑制 pos_push (DB 写 + 广播)
+    #   do_reconcile(init) 全表覆盖 positions 时, broker 并发 pos_push 逐条判"新增/变化"会广播洪峰;
+    #   但 init 后前端 resetForNewDay RPC 全量拉权威数据, 窗口期 pos_push 冗余 → with 抑制
+    #   incremental (manual reconcile) 不动 positions, 不抑制
+    from server.services.push.pos import suppress_pos_push
+    with suppress_pos_push():
+        # v118: 系统初始化走 init 路径 (覆盖 positions 表, 一次性同步 broker 持仓)
+        result = await do_reconcile(db, req.trd_date, by_user, reconcile_kind='init')
 
     if not result['ok']:
         db.commit()

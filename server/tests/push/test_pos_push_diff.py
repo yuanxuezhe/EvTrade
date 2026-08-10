@@ -199,6 +199,44 @@ def test_cost_price_only_change_triggers_update(fake_positions):
     assert fake_positions["update_one_calls"][0]["data"]["cost_price"] == 13.0
 
 
+def test_suppress_during_init_reconcile_skips_all(fake_positions):
+    """REQ-PUSH-034 init 期间抑制: suppress_pos_push() 窗口内 pos_push 全部短路
+
+    Given: DB 已有 stock_code="X" 行 (且与 broker 推值不同 → 正常会走 UPDATE+广播)
+    When:  `with suppress_pos_push():` 窗口内 broker 推 pos_push
+    Then:  handle_pos_push 返回 None
+    And:   Positions.query_by / add_one / update_one 都不被调用 (不查库/不落库/不广播)
+    And:   退出窗口后恢复: 同一条推 → 正常走 diff (变化 → update)
+    """
+    from server.services.push.pos import suppress_pos_push
+
+    fake_positions["store"]["X"] = _FakeRow(
+        stock_code="X", stock_name="", last_vol=100, vol=100, avl_vol=100, cost_price=12.5,
+    )
+    row = {
+        "stock_code": "X",
+        "last_vol": 100,
+        "volume": 200,        # → vol=200 (与 DB 不同, 正常会触发 update)
+        "avl_amt": 150,
+        "avg_price": 13.0,
+    }
+
+    # suppress 窗口内: 全部短路
+    with suppress_pos_push():
+        result = handle_pos_push(db=None, row=row, ts="20260810110000")
+    assert result is None
+    assert fake_positions["query_by_calls"] == []
+    assert fake_positions["add_one_calls"] == []
+    assert fake_positions["update_one_calls"] == []
+
+    # 退出窗口后恢复: 正常 diff → update + 广播
+    result2 = handle_pos_push(db=None, row=row, ts="20260810110000")
+    assert isinstance(result2, dict)
+    assert "position" in result2
+    assert len(fake_positions["update_one_calls"]) == 1
+    assert fake_positions["update_one_calls"][0]["data"]["vol"] == 200
+
+
 def test_missing_stock_code_returns_none(fake_positions):
     """stock_code 缺失 → 返回 None, 不触碰 Positions"""
     row = {"last_vol": 100, "volume": 100, "avl_amt": 100, "avg_price": 12.5}

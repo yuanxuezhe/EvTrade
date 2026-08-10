@@ -26,6 +26,29 @@ from server.services.push.helpers import _int, _float, _str, _position_to_out_di
 # 与 REQ-PUSH-031 (trd_cfm 增量作用域) 保持一致
 _POS_DIFF_FIELDS = ('last_vol', 'vol', 'avl_vol', 'cost_price')
 
+# change init-push-gate: init reconcile 期间抑制 pos_push (DB 写 + 广播)
+#   日初 do_reconcile(init) 全表覆盖 positions 期间, broker 并发 pos_push 会把每条
+#   判成"新增/变化"而广播洪峰 (前端 gate 丢弃前已造成 2197 条广播)。
+#   但 init 后前端 resetForNewDay 会 RPC 全量拉权威数据, 窗口期 pos_push 是冗余 → 整体抑制。
+#   incremental reconcile 不抑制 (不动 positions)。
+_SUPPRESS_POS_PUSH = False
+
+
+class suppress_pos_push:
+    """context manager: init reconcile 期间抑制 pos_push 处理 (线程安全, 原子赋值).
+
+    init_trading_day 用 `with suppress_pos_push(): result = await do_reconcile(init)` 包住,
+    覆盖 qry_positions 等待 + 全表覆盖窗口。退出时无条件复位 (含异常路径)。
+    """
+    def __enter__(self):
+        global _SUPPRESS_POS_PUSH
+        _SUPPRESS_POS_PUSH = True
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        global _SUPPRESS_POS_PUSH
+        _SUPPRESS_POS_PUSH = False
+        return False
+
 
 def _fields_unchanged(existing_pos, incoming: Dict[str, Any]) -> bool:
     """REQ-PUSH-034: 比对 4 业务字段, 全等返回 True.
@@ -56,6 +79,10 @@ def handle_pos_push(db, row: Dict[str, Any], ts: str) -> Optional[Dict[str, Any]
     与 parsers_business._parse_positions 的 rename 对齐:
       volume → vol, avl_amt → avl_vol, avg_price → cost_price
     """
+    # change init-push-gate: init reconcile 期间抑制 — 不查库 / 不落库 / 不广播
+    if _SUPPRESS_POS_PUSH:
+        return None
+
     stock_code = _str(row.get('stock_code', ''))
     if not stock_code:
         return None

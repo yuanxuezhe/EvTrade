@@ -30,8 +30,8 @@
 
 ## 5 — 后端 init 期间抑制 pos_push（用户确认洪峰场景=日初 reconcile）
 
-- [ ] 5.1 spec 落地：REQ-PUSH-034 新增「init reconcile 期间抑制 pos_push」场景（已入 push/spec.md）
+- [x] 5.1 spec 落地：REQ-PUSH-034 新增「init reconcile 期间抑制 pos_push」场景（已入 push/spec.md）
 - [x] 5.2 `pos.py`：`_SUPPRESS_POS_PUSH` + `suppress_pos_push()` context manager + handler 入口短路
 - [x] 5.3 `sys_status.py`：`with suppress_pos_push():` 包住 `do_reconcile(init)` 整段
-- [ ] 5.4 单测：新增 suppress 生效测试（suppress 期间 handler 返回 None，恢复后正常 diff）
+- [x] 5.4 单测：新增 suppress 生效测试（suppress 期间 handler 返回 None，恢复后正常 diff）— 7/7 通过
 - [ ] 5.5 commit: `feat(push): init reconcile 期间抑制 pos_push 广播 (init-push-gate)`
