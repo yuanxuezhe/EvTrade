@@ -45,8 +45,8 @@
 
 ## 6. 测试与回归
 
-- [ ] 6.1 迁移脚本幂等自测（dev 重建 DB + 存量 task→strategy 映射验证）
-- [ ] 6.2 后端单测：策略 CRUD、批次生成、best 覆盖、实盘门禁（NO_BEST_PARAMS）
-- [ ] 6.3 strategy_exec 单测：param_ranges 展开（含端点）、16 组合、部分失败回写 best、全失败不写、grid>512 拒绝
-- [ ] 6.4 前端：批次表格动态列、类型化扫描表单、实盘徽章、门禁提示
-- [ ] 6.5 回归：现有单次回测行为不变（`mode=backtest` 1 行 task 可跑可查）；`next_order_no` 委托序号行为不变
+- [x] 6.1 迁移脚本幂等自测（dev 重建 DB + 存量 task→strategy 映射验证）
+- [x] 6.2 后端单测：策略 CRUD、批次生成、best 覆盖、实盘门禁（NO_BEST_PARAMS）
+- [x] 6.3 strategy_exec 单测：param_ranges 展开（含端点）、16 组合、部分失败回写 best、全失败不写、grid>512 拒绝
+- [x] 6.4 前端：批次表格动态列、类型化扫描表单、实盘徽章、门禁提示
+- [x] 6.5 回归：现有单次回测行为不变（`mode=backtest` 1 行 task 可跑可查）；`next_order_no` 委托序号行为不变
