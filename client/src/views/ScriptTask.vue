@@ -50,7 +50,7 @@
               />
             </template>
           </el-table-column>
-          <el-table-column label="操作" width="180" fixed="right">
+          <el-table-column label="操作" width="200" fixed="right">
             <template #default="{ row }">
               <el-button
                 v-if="row.status === 'running'"
@@ -63,7 +63,7 @@
                 @click="openRun(row)" data-el="st-run"
               >启动</el-button>
               <el-button
-                size="small" type="danger" link
+                size="small" type="danger"
                 @click="onDelete(row)" data-el="st-delete"
               >删除</el-button>
             </template>
