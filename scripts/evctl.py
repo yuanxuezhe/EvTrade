@@ -100,9 +100,12 @@ def _vite_cmd():
         '--strictPort',
     ]
 
-
 def _strategy_exec_cmd():
-    """构造 strategy_exec 的启动命令 (从 .env 加载环境变量)."""
+    """构造 strategy_exec 的启动命令 (从 .env 加载环境变量).
+
+    v120+: strategy_exec 复用 EvTrade 根 .venv (dependencies 在根 pyproject.toml)
+    sys.executable = 根 .venv/bin/python
+    """
     env_file = os.path.join(PROJECT_ROOT, 'strategy_exec', '.env')
     env = {}
     if os.path.exists(env_file):
@@ -112,6 +115,7 @@ def _strategy_exec_cmd():
                 if line and not line.startswith('#') and '=' in line:
                     k, v = line.split('=', 1)
                     env[k.strip()] = v.strip()
+
     # 合并当前进程环境变量（保留 PYTHONPATH 等）
     import copy
     full_env = copy.copy(os.environ)
