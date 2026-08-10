@@ -405,7 +405,7 @@ Response（202）：
 - `sweep_id: Optional[str]`
 - `sweep_metric: Optional[str]`
 - `sweep_total: Optional[int]`
-- `backtest_metric_value: Optional[float]` — 单 run 取自 `backtest_result.sharpe`（或所选 metric）；sweep summary 取自 `backtest_result.best_metric_value`（顶层冗余）
+- `backtest_metric_value: Optional[float]` — 已持久化到 `strategy_task.backtest_metric_value` 列（strategy_exec 完成时一并写, 语义 sharpe→total_return→pnl/initial_cash）；列表查询用列免拖回大 blob, 规避 MySQL 1038。老行/未回填时读端回退解析 `backtest_result`。sweep summary 语义见 sweep 引擎（v123 不再建 summary task）。
 
 #### Scenario: 回测进度推送
 
