@@ -67,6 +67,13 @@ export const scriptStrategyApi = {
     return data
   },
 
+  async runSweepTask(id, payload) {
+    // v122+ 参数扫描: payload 含 param_grid + metric + select_top_n + concurrency
+    // 返 { sweep_id, total_runs, summary_task_id }
+    const { data } = await http.post(`/script-strategy/tasks/${id}/run-sweep`, payload)
+    return data
+  },
+
   async stopTask(id) {
     const { data } = await http.post(`/script-strategy/tasks/${id}/stop`)
     return data
@@ -79,6 +86,14 @@ export const scriptStrategyApi = {
   async getTaskLogs(id) {
     const { data } = await http.get(`/script-strategy/tasks/${id}/logs`)
     return data
+  },
+
+  async listFinishedBacktests({ scriptId, hasBestParams = true, limit = 50 } = {}) {
+    // v122+ 拉历史 backtest (含 sweep summary) 供 live 选参数
+    // has_best_params=1 限定 best_params 非空 (单 run + sweep summary)
+    const params = { has_best_params: hasBestParams ? 1 : 0, limit }
+    if (scriptId) params.script_id = scriptId
+    return this.listTasks(params)
   },
 
   async getTaskSignals(id, { type = null, limit = 500 } = {}) {
