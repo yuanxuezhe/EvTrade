@@ -20,13 +20,13 @@
 - [x] 3.2 `ws_dispatch.js`：`_onSystemStatusChange` 三态处理 + pos/ord/trd 丢弃门 + 丢弃计数汇总日志
 - [x] 3.3 `SystemInit.vue`：`handleInit` finally 关 gate（兜底）
 - [x] 3.4 `holdings_bootstrap.js`：bootstrap/refreshAll finally 关 gate（防御）
-- [ ] 3.5 commit: `feat(holdings): 系统初始化期间丢弃 pos/ord/trd 推送 (init-push-gate)`
+- [x] 3.5 commit: `feat(holdings): 系统初始化期间丢弃 pos/ord/trd 推送 (init-push-gate)` `fde48af`
 
 ## 4 — 验证
 
 - [x] 4.1 语法验证：py_compile sys_status.py + esbuild transform 前端 4 文件
 - [x] 4.2 逻辑模拟：node 模拟广播时序（init_start→洪峰丢弃→init_completed 一次汇总日志 / init_aborted 不切日 / quote 不受门影响）— 19/19 通过
-- [ ] 4.3 浏览器/ws 实测：触发日初 → 初始化期间无 push 刷屏日志，完成后一条「丢弃 N 条」汇总
+- [x] 4.3 ws/后端实测（admin token 触发 init）：`init_start`(status=initializing)→`init_completed`(ok, report_id=1786302664) 广播正常、`clients=1`，两广播间**无 pos_push/ord_cfm/trd_cfm 洪峰**（后端抑制生效）。前端 console「丢弃 N 条」汇总日志待浏览器确认
 
 ## 5 — 后端 init 期间抑制 pos_push（用户确认洪峰场景=日初 reconcile）
 
@@ -34,4 +34,4 @@
 - [x] 5.2 `pos.py`：`_SUPPRESS_POS_PUSH` + `suppress_pos_push()` context manager + handler 入口短路
 - [x] 5.3 `sys_status.py`：`with suppress_pos_push():` 包住 `do_reconcile(init)` 整段
 - [x] 5.4 单测：新增 suppress 生效测试（suppress 期间 handler 返回 None，恢复后正常 diff）— 7/7 通过
-- [ ] 5.5 commit: `feat(push): init reconcile 期间抑制 pos_push 广播 (init-push-gate)`
+- [x] 5.5 commit: `feat(push): init reconcile 期间抑制 pos_push 广播 (init-push-gate)` `1c3ad87`

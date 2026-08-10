@@ -19,4 +19,4 @@
 
 - [x] 3.1 `py_compile` 迁移脚本
 - [x] 3.2 回归：push 测试 7/7 通过 + 100KB 写入 local_positions_json 成功（OVERFLOW_TEST_OK）
-- [ ] 3.3 用户实测：重试 POST /api/admin/sys-status/init → 200（不再 500）
+- [x] 3.3 实测：admin token 触发 init → HTTP 200（3806ms），`local_positions_json` 写入 **427,549 字节**，日志无 1406；`init_start`/`init_completed` 广播正常且中间无 pos_push 洪峰（抑制生效）
