@@ -48,13 +48,25 @@ def client():
 
 
 def _cleanup():
-    for s in Strategy.query_by_fields({"user_id": UID}):
-        sid = s._data.get("strategy_id")
-        for t in StrategyTask.query_by_fields({"strategy_id": sid}):
-            StrategyTask.delete_one(id=t._data["id"])
-        Strategy.delete_one(strategy_id=sid)
-    for sc in StrategyScript.query_by_fields({"user_id": UID}):
-        StrategyScript.delete_one(user_id=UID, id=sc._data["id"])
+    """删除上次运行的测试数据 (按真实 DB user id 而非用户名后缀 UID)。
+
+    v123 修正: 之前按 user_id=UID(990010003) 过滤, 但表中 user_id 是自增真实
+    id, 该过滤永远不命中 → 每次运行都泄漏 strategy/strategy_task/strategy_script。
+    """
+    db = SessionLocal()
+    try:
+        u = db.query(User).filter_by(username=USERNAME).first()
+        uid = u.id if u else None
+    finally:
+        db.close()
+    if uid is not None:
+        for s in Strategy.query_by_fields({"user_id": uid}):
+            sid = s._data.get("strategy_id")
+            for t in StrategyTask.query_by_fields({"strategy_id": sid}):
+                StrategyTask.delete_one(id=t._data["id"])
+            Strategy.delete_one(strategy_id=sid)
+        for sc in StrategyScript.query_by_fields({"user_id": uid}):
+            StrategyScript.delete_one(user_id=uid, id=sc._data["id"])
     db = SessionLocal()
     try:
         db.query(User).filter_by(username=USERNAME).delete()
