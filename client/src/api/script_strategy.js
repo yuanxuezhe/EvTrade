@@ -1,12 +1,14 @@
 /**
- * script_strategy.js — script-strategy change: 前端 API 客户端
+ * script_strategy.js — script-strategy change: 前端 API 客户端 (v123)
  *
  * 端点前缀: /api/script-strategy
  *
- * 模块结构:
- *   Script CRUD:  listScripts / getScript / createScript / updateScript / deleteScript
- *   Task 控制:    listTasks / getTask / createTask / stopTask / deleteTask / getTaskLogs
- *   Template:     getDefaultTemplate
+ * 模块结构 (v123 三层模型: script → strategy → strategy_task):
+ *   Script CRUD:   listScripts / getScript / createScript / updateScript / deleteScript / getDefaultTemplate
+ *   Strategy CRUD: listStrategies / getStrategy / createStrategy / updateStrategy / deleteStrategy
+ *   回测/批次:     backtestStrategy / listBatches / listBatchTasks
+ *   实盘:          startLive
+ *   Task 控制:     listTasks / getTask / stopTask / deleteTask / getTaskLogs / getTaskSignals
  */
 import { http } from './index'
 
@@ -43,6 +45,63 @@ export const scriptStrategyApi = {
     return data
   },
 
+  // ─────────────── Strategy CRUD (v123) ───────────────
+
+  async listStrategies({ status = null, only_mine = false } = {}) {
+    const params = {}
+    if (status) params.status = status
+    if (only_mine) params.only_mine = only_mine
+    const { data } = await http.get('/script-strategy/strategies', { params })
+    return data
+  },
+
+  async getStrategy(id) {
+    const { data } = await http.get(`/script-strategy/strategies/${id}`)
+    return data
+  },
+
+  async createStrategy(payload) {
+    // payload: { name, script_id } (创建不填参数、不定模式)
+    const { data } = await http.post('/script-strategy/strategies', payload)
+    return data
+  },
+
+  async updateStrategy(id, patch) {
+    const { data } = await http.put(`/script-strategy/strategies/${id}`, patch)
+    return data
+  },
+
+  async deleteStrategy(id) {
+    await http.delete(`/script-strategy/strategies/${id}`)
+  },
+
+  // ─────────────── 回测 / 批次 (v123) ───────────────
+
+  async backtestStrategy(id, payload) {
+    // payload: { mode, stock_code, backtest_start_date, backtest_end_date,
+    //           params | param_ranges, period, metric, concurrency }
+    const { data } = await http.post(`/script-strategy/strategies/${id}/backtest`, payload)
+    return data
+  },
+
+  async listBatches(id) {
+    const { data } = await http.get(`/script-strategy/strategies/${id}/batches`)
+    return data
+  },
+
+  async listBatchTasks(id, batchNo) {
+    const { data } = await http.get(`/script-strategy/strategies/${id}/batches/${batchNo}/tasks`)
+    return data
+  },
+
+  // ─────────────── 实盘门禁 (v123) ───────────────
+
+  async startLive(id, payload) {
+    // payload: { stock_code } — best_params 门禁在后端, 400 NO_BEST_PARAMS
+    const { data } = await http.post(`/script-strategy/strategies/${id}/live`, payload)
+    return data
+  },
+
   // ─────────────── Task 控制 ───────────────
 
   async listTasks(params = {}) {
@@ -52,25 +111,6 @@ export const scriptStrategyApi = {
 
   async getTask(id) {
     const { data } = await http.get(`/script-strategy/tasks/${id}`)
-    return data
-  },
-
-  async createTask(payload) {
-    // 不带 mode (创建时不指定, 由 run 决定)
-    const { data } = await http.post('/script-strategy/tasks', payload)
-    return data
-  },
-
-  async runTask(id, payload) {
-    // 触发任务执行: payload 含 mode (backtest/live) + 回测专属 start/end/period
-    const { data } = await http.post(`/script-strategy/tasks/${id}/run`, payload)
-    return data
-  },
-
-  async runSweepTask(id, payload) {
-    // v122+ 参数扫描: payload 含 param_grid + metric + select_top_n + concurrency
-    // 返 { sweep_id, total_runs, summary_task_id }
-    const { data } = await http.post(`/script-strategy/tasks/${id}/run-sweep`, payload)
     return data
   },
 
@@ -86,14 +126,6 @@ export const scriptStrategyApi = {
   async getTaskLogs(id) {
     const { data } = await http.get(`/script-strategy/tasks/${id}/logs`)
     return data
-  },
-
-  async listFinishedBacktests({ scriptId, hasBestParams = true, limit = 50 } = {}) {
-    // v122+ 拉历史 backtest (含 sweep summary) 供 live 选参数
-    // has_best_params=1 限定 best_params 非空 (单 run + sweep summary)
-    const params = { has_best_params: hasBestParams ? 1 : 0, limit }
-    if (scriptId) params.script_id = scriptId
-    return this.listTasks(params)
   },
 
   async getTaskSignals(id, { type = null, limit = 500 } = {}) {

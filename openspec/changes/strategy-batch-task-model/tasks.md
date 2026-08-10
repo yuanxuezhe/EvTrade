@@ -34,14 +34,14 @@
 
 ## 5. 前端 ScriptTask 批次/任务两段式 UI
 
-- [ ] 5.1 ScriptTask.vue：顶部策略选择/新建（{name, script_id}），去掉建任务时填 params 的入口
-- [ ] 5.2 单次回测表单：全部参数按 `params_schema` 类型渲染，默认值=default
-- [ ] 5.3 参数扫描表单：int/float → 起止+步长（默认带出 min/max/step）；choice → 逗号分隔值列表；string → 固定值；提交生成批次
-- [ ] 5.4 批次列表（batch_no/时间/mode/task_count/best）+ 批次内任务表格（前几列参数动态列、后几列结果）
-- [ ] 5.5 点击任务行 → 下方详情（backtest_result 图表/信号/audit）
-- [ ] 5.6 实盘启动：best_params 为空提示"请先回测生成最优参数"并阻止；成功后显示"实盘"徽章
-- [ ] 5.7 `client/src/api/script_strategy.js` 对齐新端点（strategies/batches/backtest/live）
-- [ ] 5.8 订阅 ws `task_progress_update` 实时刷新批次内任务进度
+- [x] 5.1 ScriptTask.vue：顶部策略选择/新建（{name, script_id}），去掉建任务时填 params 的入口
+- [x] 5.2 单次回测表单：全部参数按 `params_schema` 类型渲染，默认值=default（BacktestForm）
+- [x] 5.3 参数扫描表单：int/float → 起止+步长（默认带出 min/max/step）；choice → 逗号分隔值列表；string → 固定值；提交生成批次（BacktestForm，软 64/硬 512）
+- [x] 5.4 批次列表（batch_no/时间/mode/task_count/best）+ 批次内任务表格（前几列参数动态列、后几列结果，BatchTasksTable）
+- [x] 5.5 点击任务行 → 下方详情（backtest_result 图表/信号/audit，TaskDetail 下钻）
+- [x] 5.6 实盘启动：best_params 为空提示"请先回测生成最优参数"并阻止；成功后显示"实盘"徽章（st-live-badge）
+- [x] 5.7 `client/src/api/script_strategy.js` 对齐新端点（strategies/batches/backtest/live）
+- [x] 5.8 订阅 ws `task_progress_update` 实时刷新批次内任务进度（节流刷新批次列表+当前批次任务，就地更新详情）
 
 ## 6. 测试与回归
 
