@@ -79,7 +79,44 @@ def task_row_to_dict(row) -> Dict[str, Any]:
         "error_msg": d.get("error_msg"),
         "created_at": iso(d.get("created_at")),
         "updated_at": iso(d.get("updated_at")),
+        # v122+ sweep 字段 (Phase 5 of `2026-08-10-strategy-params-sweep-best-live`)
+        "sweep_id": d.get("sweep_id"),
+        "sweep_metric": d.get("sweep_metric"),
+        "sweep_total": d.get("sweep_total"),
+        "backtest_metric_value": _extract_metric_value(json_loads(d.get("backtest_result"))),
     }
+
+
+def _extract_metric_value(backtest_result: Optional[Dict[str, Any]]) -> Optional[float]:
+    """从 backtest_result 提取前端展示用的 metric_value.
+
+    - 单 run: backtest_result.sharpe (preferred) / total_return fallback
+    - sweep summary: backtest_result.best_metric_value (顶层冗余, sweep engine 写入)
+    """
+    if not backtest_result or not isinstance(backtest_result, dict):
+        return None
+    # sweep summary 路径: best_metric_value 在顶层 (sweep engine 写的)
+    bv = backtest_result.get("best_metric_value")
+    if bv is not None:
+        try:
+            return float(bv)
+        except (TypeError, ValueError):
+            pass
+    # 单 run 路径
+    if backtest_result.get("sharpe") is not None:
+        try:
+            return float(backtest_result["sharpe"])
+        except (TypeError, ValueError):
+            pass
+    # 回退到 pnl / initial_cash
+    pnl = backtest_result.get("pnl")
+    cash = backtest_result.get("initial_cash") or 100000.0
+    if pnl is not None and cash:
+        try:
+            return float(pnl) / float(cash)
+        except (TypeError, ValueError):
+            pass
+    return None
 
 
 def audit_row_to_dict(row) -> Dict[str, Any]:

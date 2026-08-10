@@ -18,20 +18,60 @@ from server.services.script_strategy._convert import (
 def list_tasks(
     user_id: int, is_admin: bool = False, status: Optional[str] = None,
     mode: Optional[str] = None,
+    script_id: Optional[str] = None,
+    has_best_params: bool = False,
+    limit: int = 50,
 ) -> List[Dict[str, Any]]:
+    """列 task (含 filter)
+
+    v122+ 新增 filter (Phase 5 of `2026-08-10-strategy-params-sweep-best-live`):
+    - script_id: 限定脚本
+    - has_best_params: 仅 best_params 非空 (含单 run 退化 + sweep summary)
+    - limit: 默认 50, 上限 200 (endpoint 层强制)
+    """
     from server.tables import StrategyTask
-    filters = {}
+    if has_best_params:
+        # best_params 是 JSON, 需自定义 SQL 判非空
+        from sqlalchemy import text
+        from server.tables.base import get_engine, Row
+        with get_engine().connect() as conn:
+            where = ["best_params IS NOT NULL", "best_params != ''", "best_params != '{}'"]
+            params_d: Dict[str, Any] = {}
+            if not is_admin:
+                where.append("user_id = :uid"); params_d["uid"] = user_id
+            if status:
+                where.append("status = :status"); params_d["status"] = status
+            if mode:
+                where.append("mode = :mode"); params_d["mode"] = mode
+            if script_id:
+                where.append("script_id = :script_id"); params_d["script_id"] = script_id
+            rows = conn.execute(
+                text(f"""
+                    SELECT * FROM strategy_task
+                     WHERE {' AND '.join(where)}
+                     ORDER BY id DESC
+                     LIMIT :lim
+                """),
+                {**params_d, "lim": int(limit)},
+            ).mappings().all()
+        return [task_row_to_dict(Row(dict(r))) for r in rows]
+
+    filters: Dict[str, Any] = {}
     if not is_admin:
         filters["user_id"] = user_id
     if status:
         filters["status"] = status
     if mode:
         filters["mode"] = mode
+    if script_id:
+        filters["script_id"] = script_id
     if filters:
         rows = StrategyTask.query_by_fields(filters)
     else:
         rows = StrategyTask.query_all(order="desc")
         rows.sort(key=lambda r: getattr(r, "_data", {}).get("id", 0), reverse=True)
+    # limit 截断
+    rows = list(rows)[:limit]
     return [task_row_to_dict(r) for r in rows]
 
 
