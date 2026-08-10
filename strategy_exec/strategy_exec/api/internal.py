@@ -444,12 +444,22 @@ async def run_sweep_task(req: RunSweepTaskRequest) -> RunSweepTaskResponse:
     EvTrade 已预建批次内 task 行 (strategy_id + batch_no + params 落库).
     strategy_exec 只读批次跑 backtest, 不再自建 task / summary task.
     """
+    from strategy_exec.signal.publisher import get_publisher
+
     total_runs = count_param_ranges(req.param_ranges)
     log.info(
         "[run_sweep_task] strategy_id=%d batch_no=%d user=%d script=%s stock=%s metric=%s runs=%d",
         req.strategy_id, req.batch_no, req.user_id, req.script_id, req.stock_code,
         req.metric, total_runs,
     )
+
+    # 预连接 publisher 并绑定主 loop (与 run_task 一致). 缺失时首次 publish 在
+    # 回测线程 (asyncio.to_thread) 内走 asyncio.run → 临时 loop, 关闭后后续
+    # publish 报 "Event loop is closed" → 整批任务 failed.
+    try:
+        await get_publisher().connect()
+    except Exception as e:
+        log.warning("[run_sweep_task] publisher connect failed (will retry on publish): %s", e)
 
     asyncio.create_task(
         _run_sweep_batch_background(
