@@ -551,3 +551,33 @@ broker 每次推送 `pos_push` 时，`handle_pos_push` MUST 在写库前对 4 �
 
 - **WHEN** 当前 system_update 频道无 ws 连接
 - **THEN** ws_manager.broadcast 静默返回（不抛异常），与现有 quote/order/trade 频道行为一致
+
+### REQ-PUSH-043: init 生命周期广播 init_start / init_aborted（init-push-gate 2026-08-10）
+
+后端 `init_trading_day`（`server/api/admin/sys_status.py`）MUST 在 init 生命周期关键点广播 `system_status_change`（复用 `system_update` 频道）：
+
+- **init_start**：`do_reconcile(reconcile_kind='init')` **调用前**广播，`status='initializing'`，`change_kind='init_start'` — 前端据此开推送丢弃门
+- **init_aborted**：reconcile 失败分支 MUST 广播，`status='error'`，`change_kind='init_aborted'`（原失败路径无广播，若缺失前端门会死锁）
+- **init_completed**：既有成功广播保留（`status='ok'/'partial'`，`change_kind='init_completed'`）— 前端据此关门 + resetForNewDay
+
+统一承载字段：`{ type:'system_status_change', change_kind, trd_date, previous_trd_date, status, report_id, ts }`。
+
+**不在范围**：不写 `sys_status.status` 为 'initializing'（trade/day-init 守门依赖 status='active'）。
+
+#### Scenario: 日初开始先广播 init_start
+
+- **WHEN** admin POST /api/admin/sys-status/init
+- **THEN** 在 `do_reconcile` 执行前 MUST 广播 `change_kind='init_start'`, `status='initializing'`
+- **AND** 前端收到后开丢弃门
+
+#### Scenario: 日初失败补广播 init_aborted
+
+- **WHEN** `do_reconcile` 失败（result.ok=False）
+- **THEN** MUST 广播 `change_kind='init_aborted'`, `status='error'`
+- **AND** 前端收到后关丢弃门（不 resetForNewDay）
+
+#### Scenario: 日初成功关门前先广播 init_completed
+
+- **WHEN** `do_reconcile` 成功
+- **THEN** MUST 广播 `change_kind='init_completed'`（既有行为）
+- **AND** 前端收到后关丢弃门 + resetForNewDay
