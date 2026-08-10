@@ -110,3 +110,59 @@ def test_ws_idle_timeout_does_not_fire_when_pinging(client, monkeypatch):
             _t.sleep(0.3)
         # 3 秒后连接仍在 (不被踢) — 主动 send_text 不抛即说明连接仍 OPEN
         ws.send_text(json.dumps({"type": "ping", "ts": _t.time()}))
+
+
+def test_ws_ping_touches_session_cache(client, monkeypatch):
+    """v120+: WS ping 应自动续期 HTTP session cache
+    客户端 ping → 服务端 ping handler → 调 session.touch(token) → last_seen_at 变新
+    """
+    import time as _t
+    from auth import session as session_mod
+
+    # 注入 fake time: 起始 1000.0
+    fake_now = [1000.0]
+    monkeypatch.setattr(session_mod.time, "time", lambda: fake_now[0])
+
+    token = _make_token()
+    # WS 鉴权只 decode_token, 不调 register_token — 必须手动注册才能观察 touch
+    session_mod.register_token(token, user_id=1, role="trader")
+    initial_ts = session_mod._TOKEN_CACHE[token]["last_seen_at"]
+    assert initial_ts == 1000.0
+
+    # 跳到 100s 后, 发 ping — 此时 fake_now = 1100.0
+    fake_now[0] += 100
+
+    with client.websocket_connect(f"/ws/order_update?token={token}") as ws:
+        ws.send_text(json.dumps({"type": "ping", "ts": _t.time()}))
+        reply = ws.receive_json()
+        assert reply["type"] == "pong"
+
+    # 验证 last_seen_at 已被 reset 到发 ping 那一刻(1100.0, 严格大于 1000.0)
+    new_ts = session_mod._TOKEN_CACHE[token]["last_seen_at"]
+    assert new_ts > initial_ts
+    assert new_ts == 1100.0
+
+
+def test_ws_ping_keeps_session_alive_past_idle_threshold(client, monkeypatch):
+    """v120+ 边界: WS 持续 ping → session.touch 持续刷新 → 即使窗口过 600s 也保持有效
+    关键路径防御, 防止回归 (touch 被某次改动忽略)
+    """
+    import time as _t
+    from auth import session as session_mod
+
+    fake_now = [5000.0]
+    monkeypatch.setattr(session_mod.time, "time", lambda: fake_now[0])
+
+    token = _make_token()
+    session_mod.register_token(token, user_id=1, role="trader")
+
+    with client.websocket_connect(f"/ws/order_update?token={token}") as ws:
+        # 发 3 次 ping, 每次间隔跳 300s, 累计 900s > 600s 阈值
+        for i in range(3):
+            fake_now[0] += 300
+            ws.send_text(json.dumps({"type": "ping", "ts": _t.time()}))
+            ws.receive_json()  # pong
+            # 每次 ping 后 session 仍应有效
+            assert session_mod.is_valid(token) is True, (
+                f"session invalidated at iter {i}, time={fake_now[0]}"
+            )

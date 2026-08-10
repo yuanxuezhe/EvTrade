@@ -28,6 +28,7 @@ import time
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 
 from server.auth.security import decode_token
+from server.auth.session import touch as session_touch  # v120+: WS ping 续期 HTTP session
 from server.db import SessionLocal
 from server.ws.manager import ws_manager, match_pattern
 from server.repo.quote_snapshots import get_latest_multi as repo_get_latest_multi, to_dict as repo_to_dict
@@ -67,6 +68,9 @@ def register_ws_endpoint(app: FastAPI):
           - 客户端 30s ping → 服务端仅回 pong（重置 last_recv）
           - 服务端 10 分钟无任意消息 → close 4001 "idle timeout"
           - WS 鉴权只 decode_token，不调 session.is_valid，不 touch session
+        v120 改（2026-08-10）：
+          - ping handler 调 session.touch(token)，让 WS 通信时自动续期 HTTP session
+          - 保持"WS 真断 → HTTP session 也跟着过期"的语义（WS 断了 ping 就停了 → idle_checker 10min 后关 WS + session 自然过期）
         """
         token = websocket.query_params.get("token")
         if not token:
@@ -120,6 +124,11 @@ def register_ws_endpoint(app: FastAPI):
                 msg_type = parsed.get("type")
                 # ping/pong：客户端主动 ping → 服务端立即回 pong
                 if msg_type == "ping":
+                    # v120+ (2026-08-10): 用 WS ping 自动续期 HTTP session cache。
+                    # 客户端 30s ping → last_seen_at 持续刷新,
+                    # 保证只要 WS 还活着, session 就不会因 10 分钟 idle 过期。
+                    # touch() 已是幂等 no-op: token 不在 cache 时静默 return。
+                    session_touch(token)
                     await websocket.send_json({"type": "pong", "ts": parsed.get("ts")})
                     continue
                 # 2026-07-09 quote-snapshot-subscribe: 订阅协议
