@@ -106,10 +106,11 @@ def run_backtest(
         update_task_status(task_id, "failed", error_msg=f"script not found: ({user_id}, {script_id})")
         raise ValueError(f"script not found: ({user_id}, {script_id})")
     code = script_row["code"]
+    params_schema = script_row.get("params_schema") or None
     _phase("load_script", f"加载脚本 script_id={script_id}")
 
     try:
-        strategy_cls = load_strategy_class(code, ProjectStrategy)
+        strategy_cls = load_strategy_class(code, ProjectStrategy, params_schema=params_schema)
     except Exception as e:
         update_task_status(task_id, "failed", error_msg=f"sandbox load failed: {e}")
         raise

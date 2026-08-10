@@ -22,7 +22,7 @@ import logging
 import os
 import time
 from collections import deque
-from typing import Any, Deque, Dict, Optional
+from typing import Any, Deque, Dict, List, Optional
 
 import websockets
 from sqlalchemy import text
@@ -103,6 +103,7 @@ class LiveRunner:
         stock_code: str,
         params: Dict[str, Any],
         code: str,
+        params_schema: Optional[List[Dict[str, Any]]] = None,
     ) -> None:
         self.task_id = task_id
         self.user_id = user_id
@@ -110,6 +111,7 @@ class LiveRunner:
         self.stock_code = stock_code
         self.params = params
         self.code = code
+        self.params_schema = params_schema
 
         self.settings = get_settings()
         self._stop_event = asyncio.Event()
@@ -145,7 +147,7 @@ class LiveRunner:
         """主循环: 连接 WS → 收 tick → 调 next()"""
         # ──── 加载策略 ────
         try:
-            strategy_cls = load_strategy_class(self.code, ProjectStrategy)
+            strategy_cls = load_strategy_class(self.code, ProjectStrategy, params_schema=self.params_schema)
             # 构造 (无 cerebro, 直接 instantiate)
             # bt.Strategy 需要 cerebro 上下文, 简化: 用临时 cerebro 启动
             import backtrader as bt
@@ -306,6 +308,7 @@ async def start_live_runner(
         stock_code=stock_code,
         params=params,
         code=script_row["code"],
+        params_schema=script_row.get("params_schema") or None,
     )
     await runner.start()
     _manager.start_runner(runner)
