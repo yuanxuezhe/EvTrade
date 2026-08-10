@@ -112,32 +112,36 @@ def get_default_script_template():
         os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))),
         "strategy_exec", "strategy_exec", "templates", "default_bt_strategy.py",
     )
+    code_str = "# DEFAULT_BT_STRATEGY_CODE not found"
+    params_schema: list = []
     try:
         with open(_TEMPLATE_PATH, "r", encoding="utf-8") as f:
             src = f.read()
-        # 提取 DEFAULT_BT_STRATEGY_CODE 字符串内容
+        # 提取 DEFAULT_BT_STRATEGY_CODE / DEFAULT_BT_STRATEGY_PARAMS_SCHEMA
+        # schema 与代码同源解析 → 避免硬编码漂移导致 strict mode 不一致
         tree = ast.parse(src)
-        code_str = None
         for node in ast.walk(tree):
-            if isinstance(node, ast.Assign):
-                for target in node.targets:
-                    if isinstance(target, ast.Name) and target.id == "DEFAULT_BT_STRATEGY_CODE":
-                        code_str = ast.literal_eval(node.value)
-                        break
-        if code_str is None:
-            code_str = "# DEFAULT_BT_STRATEGY_CODE not found"
+            if not isinstance(node, ast.Assign):
+                continue
+            for target in node.targets:
+                if not isinstance(target, ast.Name):
+                    continue
+                if target.id == "DEFAULT_BT_STRATEGY_CODE":
+                    code_str = ast.literal_eval(node.value)
+                elif target.id == "DEFAULT_BT_STRATEGY_PARAMS_SCHEMA":
+                    params_schema = ast.literal_eval(node.value)
     except Exception as e:
         log.warning("[template] 读 strategy_exec 模板失败: %s", e)
         code_str = f"# 模板加载失败: {e}\n# 请检查 strategy_exec/templates/default_bt_strategy.py"
-
-    return {
-        "code": code_str,
-        "params_schema": [
-            {"key": "fast", "type": "int", "min": 3, "max": 10, "step": 1, "default": 5},
-            {"key": "slow", "type": "int", "min": 15, "max": 30, "step": 5, "default": 20},
-            {"key": "qty", "type": "int", "min": 100, "max": 1000, "step": 100, "default": 100},
-        ],
-    }
+    if not params_schema:
+        # 兜底: 与模板 DEFAULT_BT_STRATEGY_PARAMS_SCHEMA 保持一致 (含 rsi_period)
+        params_schema = [
+            {"key": "fast", "type": "int", "min": 3, "max": 30, "step": 1, "default": 5},
+            {"key": "slow", "type": "int", "min": 10, "max": 120, "step": 1, "default": 20},
+            {"key": "qty", "type": "int", "min": 100, "max": 10000, "step": 100, "default": 100},
+            {"key": "rsi_period", "type": "int", "min": 6, "max": 30, "step": 1, "default": 14},
+        ]
+    return {"code": code_str, "params_schema": params_schema}
 
 
 __all__ = ["router"]

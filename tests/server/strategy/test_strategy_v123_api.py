@@ -246,3 +246,38 @@ def test_live_success_forwards_run_task(client, user_and_cleanup, strategy_id, m
     assert payload["mode"] == "live"
     assert payload["params"] == {"fast": 5, "slow": 2}
     assert payload["task_id"] == task_id == body["task_id"]
+
+
+def test_default_template_schema_matches_code(client, user_and_cleanup):
+    """默认模板 schema 必须与代码 params 声明一致 (v121 strict contract).
+
+    v123 bug 回归: 端点硬编码 schema 漏 rsi_period → 从模板建的脚本 backtest
+    报 "code 多出: ['rsi_period']"。防止模板 schema 与代码再次漂移。
+    """
+    import ast
+    h = user_and_cleanup
+    r = client.get("/api/script-strategy/templates/default", headers=h)
+    assert r.status_code == 200
+    tpl = r.json()
+    assert tpl["params_schema"], "template must ship params_schema"
+    assert "rsi_period" in {p["key"] for p in tpl["params_schema"]}
+
+    # 扫模板代码顶层 class 的 params = (...) 声明 keys
+    tree = ast.parse(tpl["code"])
+    code_keys = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.ClassDef):
+            continue
+        for stmt in node.body:
+            if isinstance(stmt, ast.Assign) and len(stmt.targets) == 1:
+                tgt = stmt.targets[0]
+                if isinstance(tgt, ast.Name) and tgt.id == "params":
+                    for elt in stmt.value.elts:
+                        if isinstance(elt, (ast.Tuple, ast.List)) and elt.elts:
+                            first = elt.elts[0]
+                            if isinstance(first, ast.Constant) and isinstance(first.value, str):
+                                code_keys.add(first.value)
+    schema_keys = {p["key"] for p in tpl["params_schema"]}
+    assert schema_keys == code_keys, (
+        f"template drift (strict): schema={sorted(schema_keys)} code={sorted(code_keys)}"
+    )
