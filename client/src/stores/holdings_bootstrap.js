@@ -49,12 +49,39 @@ export function createBootstrap({
   const refs = { positions, orders, trades, cachedAsset, refCounts, idbSyncStatus, log }
 
   // ---- v32 quote 自动订阅: 只要持仓涉及的标的, 都订阅行情 ----
+  // holdings-auto-sub-batch: 持仓去重后 > FULL_MARKET_THRESHOLD 时切 '' 全市场订阅一次,
+  //   已全市场订阅则跳过逐只增量 (broker 重连全量推时避免 2197 条 +1 刷屏日志)
+  const FULL_MARKET_THRESHOLD = 100
   let _lastSubscribedCodes = []
+  let _fullMarketSubscribed = false
   function _syncQuoteSubs(newPositions) {
     const codes = (Array.isArray(newPositions) ? newPositions : [])
       .map(p => p?.stock_code)
       .filter(Boolean)
     const codeSet = [...new Set(codes)]
+
+    // 持仓 > 阈值 → '' 全市场订阅一次; 已订阅直接 return (不再逐只增量/刷日志)
+    if (codeSet.length > FULL_MARKET_THRESHOLD) {
+      if (!_fullMarketSubscribed) {
+        _fullMarketSubscribed = true
+        _lastSubscribedCodes = codeSet
+        try {
+          const qs = useQuoteStore()
+          qs.subscribe(codeSet)  // quote.js 内部 >100 → [''] 全市场
+          log('ok', '行情', 'auto-sub', `持仓 ${codeSet.length} 只 > ${FULL_MARKET_THRESHOLD}, 切全市场订阅 ('' 一次)`)
+        } catch (e) {
+          log('warn', '行情', 'auto-sub', `quote subscribe 异常: ${e?.message || e}`)
+        }
+      }
+      return
+    }
+
+    // 持仓缩回 ≤ 阈值 → 退出全市场模式, 恢复逐只增量
+    if (_fullMarketSubscribed) {
+      _fullMarketSubscribed = false
+      _lastSubscribedCodes = []
+    }
+
     const lastSet = new Set(_lastSubscribedCodes)
     const added = codeSet.filter(c => !lastSet.has(c))
     const removedNotInPos = _lastSubscribedCodes.filter(c => !codeSet.includes(c))
