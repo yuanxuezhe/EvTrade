@@ -1,39 +1,18 @@
 [project]
 name = "strategy-exec"
 version = "0.1.0"
-description = "EvTrade strategy execution service (Backtrader + RabbitMQ)"
+description = "EvTrade strategy execution service (Backtrader + RabbitMQ) — v120+ 复用 EvTrade 根 .venv"
 requires-python = ">=3.10"
 authors = [{ name = "EvTrade" }]
-dependencies = [
-    # HTTP framework
-    "fastapi>=0.110",
-    "uvicorn[standard]>=0.27",
-    # Config / schema validation
-    "pydantic>=2.5",
-    "pydantic-settings>=2.1",
-    # Database (shared with EvTrade)
-    "sqlalchemy>=2.0",
-    "pymysql>=1.1",
-    "cryptography>=41.0",  # pymysql 鉴权需要
-    # RabbitMQ
-    "aio-pika>=9.4",
-    "pika>=1.3",
-    # Market data WS (Phase 2)
-    "websockets>=12.0",
-    # Backtrader + helpers (Phase 2)
-    "backtrader>=1.9.78.123",
-    "pandas>=2.0",
-    "numpy>=1.24",
-    # Logging / utils
-    "loguru>=0.7",
-    "tenacity>=8.2",
-]
+# v120+ 不再独立 venv, 复用 EvTrade 根 .venv
+# 依赖在 EvTrade 根 pyproject.toml + 手动 uv pip install 维护
+dependencies = []
 
 [project.optional-dependencies]
 dev = [
     "pytest>=7.4",
     "pytest-asyncio>=0.23",
-    "httpx>=0.27",  # 测试 FastAPI TestClient
+    "httpx>=0.27",
 ]
 
 [project.scripts]
@@ -57,7 +36,7 @@ target-version = "py310"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W", "UP"]
-ignore = ["E501"]  # line too long (允许到 120)
+ignore = ["E501"]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/*" = ["E402"]  # imports not at top of file OK in tests
+"tests/*" = ["E402"]

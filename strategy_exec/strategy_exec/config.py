@@ -15,8 +15,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import List
 
-from pydantic import Field, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import BaseSettings, Field, validator
 
 log = logging.getLogger(__name__)
 
@@ -26,14 +25,14 @@ _ENV_FILE = _PROJECT_ROOT / ".env"
 
 
 class Settings(BaseSettings):
-    """Pydantic Settings — 强类型 + 自动校验"""
+    """Pydantic Settings — 强类型 + 自动校验 (v120+ 复用 EvTrade 根 .venv, 用 pydantic v1 API)"""
 
-    model_config = SettingsConfigDict(
-        env_file=str(_ENV_FILE) if _ENV_FILE.exists() else None,
-        env_file_encoding="utf-8",
-        case_sensitive=False,
-        extra="ignore",
-    )
+    # v1 BaseSettings 用 Config inner class + env_file 等参数
+    class Config:
+        env_file = str(_ENV_FILE) if _ENV_FILE.exists() else None
+        env_file_encoding = "utf-8"
+        case_sensitive = False
+        extra = "ignore"
 
     # ──── 服务端口 ────
     strategy_exec_port: int = Field(default=8001, ge=1, le=65535)
@@ -77,7 +76,7 @@ class Settings(BaseSettings):
 
     # 无 token validator（空=不鉴权，局域网部署用）
 
-    @field_validator("log_level")
+    @validator("log_level")
     @classmethod
     def _normalize_log_level(cls, v: str) -> str:
         v = v.upper()
