@@ -20,7 +20,7 @@ import logging
 import sys
 import types
 import typing
-from typing import Any, Optional, Type
+from typing import Any, Dict, List, Optional, Set, Type
 
 from strategy_exec.config import get_settings
 
@@ -178,6 +178,7 @@ def load_strategy_class(
     code: str,
     project_strategy_cls: Type,
     expected_class_name: Optional[str] = None,
+    params_schema: Optional[List[Dict[str, Any]]] = None,
 ) -> Type:
     """加载用户脚本, 返用户定义的 bt.Strategy 子类
 
@@ -185,13 +186,16 @@ def load_strategy_class(
         code: 用户脚本源码 (字符串)
         project_strategy_cls: 项目基类 (ProjectStrategy)
         expected_class_name: 期望类名 (默认: 找第一个 bt.Strategy 子类)
+        params_schema: 参数 schema (v121+, list[dict], 每个含 key/type/default/...).
+            None = 老行为, 不注入, 依赖代码里 cls.params = (...) 声明.
+            非空 = strict fail-fast: 用 schema 覆盖 cls.params, 代码声明必须一致.
 
     Returns:
         用户定义的策略类 (Type[bt.Strategy])
 
     Raises:
         SandboxViolationError: import 黑名单/未授权
-        ValueError: 用户脚本未定义 bt.Strategy 子类 / AST 语法错
+        ValueError: 用户脚本未定义 bt.Strategy 子类 / AST 语法错 / schema 不一致
     """
     # ──── 1. AST 静态扫描: 检查危险调用 ────
     _static_check(code)
@@ -216,13 +220,116 @@ def load_strategy_class(
             raise ValueError(
                 f"类 '{expected_class_name}' 不是 ProjectStrategy 的子类"
             )
-        return cls
+    else:
+        # 默认: 找第一个 ProjectStrategy 子类
+        cls = None
+        for obj in ns.globals_dict.values():
+            if isinstance(obj, type) and issubclass(obj, project_strategy_cls) and obj is not project_strategy_cls:
+                cls = obj
+                break
+        if cls is None:
+            raise ValueError("用户脚本未定义任何 ProjectStrategy 子类")
 
-    # 默认: 找第一个 ProjectStrategy 子类
-    for obj in ns.globals_dict.values():
-        if isinstance(obj, type) and issubclass(obj, project_strategy_cls) and obj is not project_strategy_cls:
-            return obj
-    raise ValueError("用户脚本未定义任何 ProjectStrategy 子类")
+    # ──── 5. (v121+) schema 注入: schema 是唯一契约, 覆盖 cls.params ────
+    if params_schema is not None:
+        cls = _inject_params_from_schema(cls, code, params_schema)
+
+    return cls
+
+
+# ──── Schema 注入 helpers (v121+, 2026-08-10) ────
+# 决策: schema 是 params 的唯一真源, 代码里不应再写 params = (...).
+# loader 拿 schema 后覆盖 cls.params — backtrader 元类下次实例化时
+# 会从 cls.params 读 tuple 装到 self.p, 透明生效.
+# strict 模式: code 声明的 keys 与 schema 不一致 → 直接 ValueError (fail-fast).
+
+
+def _extract_declared_keys_from_source(code: str) -> Set[str]:
+    """AST 扫用户脚本源码, 提取顶层 class 定义中 `params = (("k", default), ...)` 的 key 集合.
+
+    静态扫 (不实例化类), 只识别 class 体里直接赋值的 `params` tuple.
+    支持 nested tuple / list 形式 (Backtrader 标准).
+    不支持的写法 (罕见) → 该 keys 当空集, 由 inject 函数按需校验.
+    """
+    try:
+        tree = ast.parse(code)
+    except SyntaxError:
+        return set()  # 语法错让上层报
+    keys: Set[str] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.ClassDef):
+            continue
+        for stmt in node.body:
+            # 只识别 class 体顶层 `params = (...)` 赋值
+            if isinstance(stmt, ast.Assign) and len(stmt.targets) == 1:
+                tgt = stmt.targets[0]
+                if isinstance(tgt, ast.Name) and tgt.id == "params":
+                    keys.update(_parse_params_tuple(stmt.value))
+                    break  # 一个 class 一个 params, 找到就停
+    return keys
+
+
+def _parse_params_tuple(node: ast.AST) -> Set[str]:
+    """ast 节点 (Tuple/List) → key 集合. 元素必须是 (str, Any) tuple."""
+    if not isinstance(node, (ast.Tuple, ast.List)):
+        return set()
+    out: Set[str] = set()
+    for elt in node.elts:
+        if isinstance(elt, (ast.Tuple, ast.List)) and elt.elts:
+            first = elt.elts[0]
+            # 只接受 string 字面量 (避免误识别数字/变量)
+            if isinstance(first, ast.Constant) and isinstance(first.value, str):
+                out.add(first.value)
+    return out
+
+
+def _inject_params_from_schema(
+    cls: Type,
+    code: str,
+    params_schema: List[Dict[str, Any]],
+) -> Type:
+    """以 schema 为准, 覆盖 cls.params (strict fail-fast).
+
+    Args:
+        cls: 用户策略类 (ProjectStrategy 子类, 已 exec 加载)
+        code: 用户脚本源码 (供 AST 扫 code 声明的 keys)
+        params_schema: list of dict, each 含 'key' 字段
+
+    Returns:
+        同一个 cls (params 已被覆盖, backtrader 元类下次会读到新值)
+
+    Raises:
+        ValueError: schema 空 / schema key 与 code 声明不一致
+    """
+    if not params_schema:
+        raise ValueError(
+            "params_schema 为空但 loader 收到非 None — 拒绝注入, "
+            "防止回退到老行为. 请确认 script_row.params_schema 正确写入."
+        )
+
+    schema_keys = {p["key"] for p in params_schema if isinstance(p, dict) and "key" in p}
+    if not schema_keys:
+        raise ValueError("params_schema 全无有效 'key' 字段")
+
+    declared = _extract_declared_keys_from_source(code)
+
+    if declared and declared != schema_keys:
+        # 只有当代码里实际声明了 params 才走 strict 比较.
+        # v121+ 目标态: 代码无 params tuple, schema 是唯一真源 → allowed (declared = ∅).
+        only_code = declared - schema_keys
+        only_schema = schema_keys - declared
+        raise ValueError(
+            f"策略类声明的 params 与 schema 不一致 (strict mode):\n"
+            f"  code 多出: {sorted(only_code) or '(无)'}\n"
+            f"  schema 多出: {sorted(only_schema) or '(无)'}\n"
+            f"  v121+: schema 是唯一契约, 请同步代码里的 params = (...) 或调整 schema"
+        )
+
+    # 覆盖 cls.params — backtrader 元类 next time 会读 cls.params 装到 self.p
+    cls.params = tuple((p["key"], p["default"]) for p in params_schema)
+    log.debug("[loader.inject] %s.params 已被 schema 覆盖: %s",
+              cls.__name__, sorted(schema_keys))
+    return cls
 
 
 # ──── 危险调用 AST 检测 ────
