@@ -72,10 +72,17 @@ def run_backtest(
     backtest_start_date: Optional[str] = None,
     backtest_end_date: Optional[str] = None,
     period: str = "1d",
+    strategy_id: Optional[int] = None,
+    update_strategy_best: bool = False,
 ) -> Dict[str, Any]:
     """跑一次回测, 返结果 dict (pnl / trades / signal_log)
 
     bars: 来自 broker his_hq 的 K 线数据 (list of dict, 含 open/high/low/close/volume/stime)
+
+    v123:
+    - strategy_id: 任务所属策略 (仅用于回写 best_params 定位)
+    - update_strategy_best: True=本次回测成功后把 params 写 strategy.best_params
+      (单次回测=True; 扫描批次内组合任务=False, best 由 sweep engine 统一回写)
 
     Raises:
         SandboxViolationError / ValueError / RuntimeError
@@ -247,12 +254,22 @@ def run_backtest(
         },
     }
 
-    with _update_task_results(task_id, backtest_result, pnl, len(signals), best_params=params):
+    with _update_task_results(task_id, backtest_result, pnl, len(signals)):
         update_task_status(
             task_id, "completed",
             finished_at=datetime.now().isoformat(),
             execution_pid=None,
         )
+
+    # v123: 单次回测成功后把本次 params 回写 strategy.best_params
+    # (扫描批次不在这写 — sweep engine 按批次内 finished tasks 排序统一回写 top1)
+    if update_strategy_best and strategy_id:
+        from strategy_exec.data_access import update_strategy_best_params
+        try:
+            update_strategy_best_params(strategy_id, params)
+        except Exception as e:
+            log.warning("[backtest task=%d] write strategy.best_params failed: %s",
+                        task_id, e)
 
     log.info("[backtest task=%d] done: pnl=%.2f (%.2f%%), signals=%d",
              task_id, pnl, pnl_pct, len(signals))
@@ -400,9 +417,12 @@ def _update_task_results(
     backtest_result: Dict[str, Any],
     pnl: float,
     trades_count: int,
-    best_params: Optional[Dict[str, Any]] = None,
 ):
-    """上下文管理器: 写 backtest_result + best_params + pnl + trades_count (乐观锁)"""
+    """上下文管理器: 写 backtest_result + pnl + trades_count (乐观锁)
+
+    v123: strategy_task 已删 best_params 列, best 回写 strategy.best_params
+    (见 run_backtest 的 update_strategy_best 分支 / sweep engine).
+    """
     from contextlib import contextmanager
     from strategy_exec.data_access.db import get_session
     from sqlalchemy import text
@@ -421,7 +441,6 @@ def _update_task_results(
                 result = s.execute(text("""
                     UPDATE strategy_task
                        SET backtest_result = :r,
-                           best_params = :bp,
                            pnl = :p,
                            trades_count = :tc,
                            version = version + 1,
@@ -430,7 +449,6 @@ def _update_task_results(
                 """), {
                     "i": task_id, "v": v,
                     "r": json.dumps(backtest_result, ensure_ascii=False),
-                    "bp": json.dumps(best_params or {}, ensure_ascii=False),
                     "p": pnl,
                     "tc": trades_count,
                 })

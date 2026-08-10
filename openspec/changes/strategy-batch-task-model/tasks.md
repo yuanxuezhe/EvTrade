@@ -26,11 +26,11 @@
 
 ## 4. strategy_exec 引擎适配
 
-- [ ] 4.1 `data_access/strategy_task.py`：run-task 请求体带 `strategy_id`，落库写 `strategy_id`
-- [ ] 4.2 `api/internal.py` `run-sweep-task`：请求体改 `param_ranges`（int/float 起止+步长含端点 / choice 值列表 / string 固定）+ `batch_no`
-- [ ] 4.3 `engines/backtrader/sweep.py`：按 param_ranges 类型化展开组合 → 笛卡尔积（软 64 / 硬 512）；批次内 tasks 共享 batch_no；并发 Semaphore；失败容错
-- [ ] 4.4 批次完成后：按 batch 内 finished tasks 以 metric 排序取 top1 → `UPDATE strategy SET best_params`（全部失败不写）
-- [ ] 4.5 移除 summary task / sweep_summary 逻辑；`backtest_result` 不再需要 sweep_results 顶层冗余
+- [x] 4.1 `data_access/strategy_task.py`：删 `create_sweep_task`/`update_sweep_summary`（列已删）；新增 `get_batch_tasks(strategy_id, batch_no)` 批次读 + `update_strategy_best_params(strategy_id, best_params)` 回写 `strategy` 表；`get_task` JSON 解析列表去 `best_params`
+- [x] 4.2 `api/internal.py`：`run-task` 请求体加 `strategy_id`（回测转发带 `update_strategy_best=True`）；`run-sweep-task` 请求体改 `param_ranges`（int/float 起止+步长含端点 / choice 值列表 / string 固定）+ `batch_no`，响应返 `batch_no`；不再建 summary task
+- [x] 4.3 `engines/backtrader/sweep.py`：新增 `iter_param_ranges`/`count_param_ranges` 类型化展开 → 笛卡尔积（软 64 / 硬 512）；`run_sweep_batch` 读批次内已有 task（params 取 DB）跑，并发 Semaphore，失败容错
+- [x] 4.4 批次完成后：按 batch 内 finished tasks 以 metric 排序取 top1 → `update_strategy_best_params` 写 `strategy.best_params`（全部失败不写）；单次回测成功后 `run_backtest` 直接回写本次 params
+- [x] 4.5 移除 summary task / sweep_summary / sweep_id 逻辑；`_update_task_results` 删 `best_params` 写；`data_access/__init__.py` 导出同步
 
 ## 5. 前端 ScriptTask 批次/任务两段式 UI
 

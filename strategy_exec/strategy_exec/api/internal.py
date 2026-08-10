@@ -22,9 +22,8 @@ from strategy_exec.engines.backtrader.live import (
     start_live_runner, stop_live_runner, is_running,
 )
 from strategy_exec.engines.backtrader.sweep import (
-    run_sweep,
-    generate_sweep_id,
-    count_grid_size,
+    run_sweep_batch,
+    count_param_ranges,
     SWEEP_HARD_LIMIT,
     ALLOWED_METRICS,
 )
@@ -60,6 +59,7 @@ async def verify_internal_token(x_internal_token: Optional[str] = Header(None)) 
 class RunTaskRequest(BaseModel):
     task_id: int = Field(ge=1)
     user_id: int = Field(ge=0)
+    strategy_id: int = Field(ge=1)  # v123: 任务归属策略 (best_params 回写目标)
     script_id: str = Field(min_length=1, max_length=64)
     stock_code: str = Field(min_length=1, max_length=16)
     mode: str = Field(pattern="^(backtest|live)$")
@@ -98,22 +98,26 @@ class StopTaskResponse(BaseModel):
     task_id: int
 
 
-# ──────────── v122+ sweep schemas (Phase 4 of `2026-08-10-strategy-params-sweep-best-live`) ────────────
+# ──────────── v123+ sweep schemas (strategy-batch-task-model) ────────────
 
 
 class RunSweepTaskRequest(BaseModel):
-    """REQ-SE-008 sweep 启动请求"""
+    """v123 sweep 启动请求 — 批次已由 EvTrade 预建好 task 行, strategy_exec 只跑.
+
+    body: {user_id, strategy_id, script_id, stock_code, backtest_start_date,
+           backtest_end_date, batch_no, param_ranges, metric, concurrency, period}
+    """
     user_id: int = Field(ge=0)
+    strategy_id: int = Field(ge=1)   # best_params 回写目标
     script_id: str = Field(min_length=1, max_length=64)
     stock_code: str = Field(min_length=1, max_length=16)
     backtest_start_date: str = Field(pattern=r"^\d{8}$")
     backtest_end_date: str = Field(pattern=r"^\d{8}$")
-    param_grid: Dict[str, List[Any]] = Field(min_length=1)
+    batch_no: int = Field(ge=1)       # 批次号 (序号表 task_batch)
+    param_ranges: Dict[str, Dict[str, Any]] = Field(min_length=1)
     metric: str = Field(default="sharpe")
-    select_top_n: int = Field(default=1, ge=1)
     concurrency: int = Field(default=2, ge=1, le=16)
     period: Optional[str] = Field(default=None, pattern=r"^(1d|1m|5m|15m|30m|60m)$")
-    description: Optional[str] = Field(default=None, max_length=500)
 
     @model_validator(mode="after")
     def _validate_specific(self):
@@ -122,23 +126,19 @@ class RunSweepTaskRequest(BaseModel):
             raise ValueError(
                 f"metric 必须是 {ALLOWED_METRICS} 之一, 收到: {self.metric!r}"
             )
-        # grid 大小硬上限检查 (前端可预先警告, 但 API 也兜底)
-        size = 1
-        active = [v for v in self.param_grid.values() if isinstance(v, list) and len(v) >= 2]
-        for v in active:
-            size *= len(v)
+        # grid 大小硬上限检查 (EvTrade 已校验, strategy_exec 兜底)
+        size = count_param_ranges(self.param_ranges)
         if size > SWEEP_HARD_LIMIT:
             raise ValueError(
-                f"param_grid 总组合数 {size} 超过硬上限 {SWEEP_HARD_LIMIT}"
+                f"param_ranges 展开总组合数 {size} 超过硬上限 {SWEEP_HARD_LIMIT}"
             )
         return self
 
 
 class RunSweepTaskResponse(BaseModel):
-    """202 Accepted — 返 sweep_id + 总数 + summary task_id, 实际跑在后台"""
-    sweep_id: str
+    """202 Accepted — 返 batch_no + 总数, 实际跑在后台"""
+    batch_no: int
     total_runs: int
-    summary_task_id: int
     msg: str = "sweep accepted, running in background"
 
 
@@ -176,8 +176,8 @@ class ProgressResponse(BaseModel):
 async def run_task(req: RunTaskRequest) -> RunTaskResponse:
     """启动任务 (回测 or 实盘), 后台异步执行"""
     log.info(
-        "[run_task] task_id=%d mode=%s stock=%s script=%s",
-        req.task_id, req.mode, req.stock_code, req.script_id,
+        "[run_task] task_id=%d mode=%s stock=%s script=%s strategy_id=%d",
+        req.task_id, req.mode, req.stock_code, req.script_id, req.strategy_id,
     )
 
     if req.mode == "backtest":
@@ -246,6 +246,7 @@ async def run_task(req: RunTaskRequest) -> RunTaskResponse:
             _run_backtest_background(
                 task_id=req.task_id,
                 user_id=req.user_id,
+                strategy_id=req.strategy_id,
                 script_id=req.script_id,
                 stock_code=req.stock_code,
                 params=req.params,
@@ -285,11 +286,14 @@ async def run_task(req: RunTaskRequest) -> RunTaskResponse:
 
 
 async def _run_backtest_background(
-    task_id: int, user_id: int, script_id: str, stock_code: str,
+    task_id: int, user_id: int, strategy_id: int, script_id: str, stock_code: str,
     params: dict, bars: list,
     backtest_start_date: Optional[str], backtest_end_date: Optional[str], period: str,
 ) -> None:
-    """后台跑回测 (异常时更新 task status='failed')"""
+    """后台跑回测 (异常时更新 task status='failed')
+
+    v123: 单次回测成功 → 把 params 回写 strategy.best_params (update_strategy_best=True)
+    """
     log.info(
         "[backtest task=%d] background start: stock=%s bars=%d %s~%s period=%s",
         task_id, stock_code, len(bars), backtest_start_date, backtest_end_date, period,
@@ -306,6 +310,8 @@ async def _run_backtest_background(
             backtest_start_date=backtest_start_date,
             backtest_end_date=backtest_end_date,
             period=period,
+            strategy_id=strategy_id,
+            update_strategy_best=True,
         )
         log.info("[backtest task=%d] background done", task_id)
     except Exception as e:
@@ -390,36 +396,40 @@ async def receive_progress(task_id: int, req: ProgressRequest) -> ProgressRespon
         )
 
 
-# ──────────── v122+ sweep endpoint ────────────
+# ──────────── v123+ sweep endpoint ────────────
 
 
-async def _run_sweep_background(
-    user_id: int, script_id: str, stock_code: str,
-    param_grid: Dict[str, List[Any]], metric: str,
+async def _run_sweep_batch_background(
+    strategy_id: int, batch_no: int, user_id: int, script_id: str, stock_code: str,
+    param_ranges: Dict[str, Dict[str, Any]], metric: str,
     backtest_start_date: str, backtest_end_date: str,
-    period: str, concurrency: int, sweep_id: str, description: Optional[str],
+    period: str, concurrency: int,
 ) -> None:
-    """后台跑 sweep (异常时仅 log, 不影响已落库的 task)"""
+    """后台跑已预建的扫描批次 (异常时仅 log, 不影响已落库的 task)"""
     log.info(
-        "[sweep %s] background start: user=%d script=%s stock=%s metric=%s grid=%d",
-        sweep_id, user_id, script_id, stock_code, metric, count_grid_size(param_grid),
+        "[sweep strategy=%d batch=%d] background start: user=%d script=%s stock=%s metric=%s runs=%d",
+        strategy_id, batch_no, user_id, script_id, stock_code, metric,
+        count_param_ranges(param_ranges),
     )
     try:
-        result = await run_sweep(
+        result = await run_sweep_batch(
+            strategy_id=strategy_id, batch_no=batch_no,
             user_id=user_id, script_id=script_id, stock_code=stock_code,
-            param_grid=param_grid, metric=metric,
+            param_ranges=param_ranges, metric=metric,
             backtest_start_date=backtest_start_date,
             backtest_end_date=backtest_end_date,
             period=period, concurrency=concurrency,
-            sweep_id=sweep_id, description=description,
         )
         log.info(
-            "[sweep %s] background done: total=%d succeeded=%d failed=%d best_metric=%.4f",
-            sweep_id, result["total_runs"], result["succeeded"],
+            "[sweep strategy=%d batch=%d] background done: total=%d succeeded=%d failed=%d best_metric=%.4f",
+            strategy_id, batch_no, result["total_runs"], result["succeeded"],
             result["failed"], result.get("best_metric_value") or 0.0,
         )
     except Exception as e:
-        log.error("[sweep %s] background failed: %s", sweep_id, e)
+        log.error(
+            "[sweep strategy=%d batch=%d] background failed: %s",
+            strategy_id, batch_no, e,
+        )
 
 
 @router.post(
@@ -429,50 +439,29 @@ async def _run_sweep_background(
     dependencies=[Depends(verify_internal_token)],
 )
 async def run_sweep_task(req: RunSweepTaskRequest) -> RunSweepTaskResponse:
-    """REQ-SE-008 sweep 启动端点 — 立即返 202 + sweep_id, 后台异步跑.
+    """v123 sweep 启动端点 — 立即返 202 + batch_no, 后台异步跑.
 
-    流程:
-    1. 预生成 sweep_id (uuid4 hex[:32])
-    2. 创建 summary task row (status='pending', params={}, sweep_id 已绑)
-    3. asyncio.create_task(_run_sweep_background) — 真正跑在后台
-    4. 返 202 Accepted 给 EvTrade (EvTrade 再 1 次性创建 N 个组合 task 行, 共用 sweep_id)
+    EvTrade 已预建批次内 task 行 (strategy_id + batch_no + params 落库).
+    strategy_exec 只读批次跑 backtest, 不再自建 task / summary task.
     """
-    sweep_id = generate_sweep_id()
-    total_runs = count_grid_size(req.param_grid)
+    total_runs = count_param_ranges(req.param_ranges)
     log.info(
-        "[run_sweep_task] sweep_id=%s user=%d script=%s stock=%s metric=%s grid=%d",
-        sweep_id, req.user_id, req.script_id, req.stock_code,
+        "[run_sweep_task] strategy_id=%d batch_no=%d user=%d script=%s stock=%s metric=%s runs=%d",
+        req.strategy_id, req.batch_no, req.user_id, req.script_id, req.stock_code,
         req.metric, total_runs,
     )
 
-    # 预创建 summary task (sweep 引擎最终会 update 它)
-    from strategy_exec.data_access import create_sweep_task
-    summary_task_id = create_sweep_task(
-        user_id=req.user_id, script_id=req.script_id, stock_code=req.stock_code,
-        params={}, sweep_id=sweep_id, sweep_metric=req.metric,
-        sweep_total=total_runs + 1,  # +1 = summary
-        backtest_start_date=req.backtest_start_date,
-        backtest_end_date=req.backtest_end_date,
-        period=req.period or "1d",
-        description=req.description or f"Sweep summary ({total_runs} runs, metric={req.metric})",
-    )
-
-    # 后台跑
     asyncio.create_task(
-        _run_sweep_background(
+        _run_sweep_batch_background(
+            strategy_id=req.strategy_id, batch_no=req.batch_no,
             user_id=req.user_id, script_id=req.script_id, stock_code=req.stock_code,
-            param_grid=req.param_grid, metric=req.metric,
+            param_ranges=req.param_ranges, metric=req.metric,
             backtest_start_date=req.backtest_start_date,
             backtest_end_date=req.backtest_end_date,
             period=req.period or "1d",
             concurrency=req.concurrency,
-            sweep_id=sweep_id, description=req.description,
         ),
-        name=f"sweep-{sweep_id}",
+        name=f"sweep-batch-{req.strategy_id}-{req.batch_no}",
     )
 
-    return RunSweepTaskResponse(
-        sweep_id=sweep_id,
-        total_runs=total_runs,
-        summary_task_id=summary_task_id,
-    )
+    return RunSweepTaskResponse(batch_no=req.batch_no, total_runs=total_runs)

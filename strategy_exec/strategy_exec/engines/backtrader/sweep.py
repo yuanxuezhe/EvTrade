@@ -1,35 +1,28 @@
 """
-strategy_exec.engines.backtrader.sweep — 参数扫描引擎 (v122+, Phase 4 of `2026-08-10-strategy-params-sweep-best-live`)
+strategy_exec.engines.backtrader.sweep — 参数扫描引擎 (v123, strategy-batch-task-model)
 
-REQ-SE-008: 一次提交多组参数组合的回测, 按指定指标 (sharpe/total_return/calmar) 排序挑 best.
+v123 重写: EvTrade 在调用 strategy_exec 前已为批次预建好 task 行
+(strategy_id + batch_no + params 已落库). strategy_exec 只负责:
 
-📌 流程:
-    1. iter_param_grid(param_grid) → 笛卡尔积 (单值字段不参与)
-    2. validate_grid_size → 软警告 64 / 硬拒绝 512
-    3. asyncio.Semaphore(concurrency) 并发跑 run_backtest
-    4. 每个组合 = 独立 strategy_task row (共享 sweep_id)
-    5. 失败单组合 → status='failed', 记录 error_msg, sweep 继续
-    6. 全部完成后 → 1 个 summary task (sweep_id 共享, status='completed')
+  1. param_ranges 类型化展开组合 → 校验笛卡尔积大小 (软警告 64 / 硬拒绝 512)
+  2. 按 (strategy_id, batch_no) 读批次内已有 task (params 取自 DB, 不自建)
+  3. asyncio.Semaphore(concurrency) 并发跑 run_backtest
+  4. 失败单 task → status='failed', 其余继续 (容错, 不中断批次)
+  5. 批次完成 → 按 metric 取 finished top1 → UPDATE strategy SET best_params
+     (全部失败不写)
 
-📌 单 run 复用:
-    直接调 run_backtest — 它已支持 params + bars + schema 注入 (Phase 2 改).
-    sweep 不重复实现 backtest 逻辑, 仅做并发编排 + 结果聚合.
+不再自建 task / summary task / sweep_id; backtest_result 不再有 sweep_results 顶层冗余.
 """
 
 from __future__ import annotations
 
 import asyncio
 import itertools
-import json
 import logging
-import uuid
-from typing import Any, AsyncIterator, Dict, Iterator, List, Optional
-
-from sqlalchemy import text
+from typing import Any, Dict, Iterator, List, Optional
 
 from strategy_exec.data_access import (
-    create_sweep_task, update_sweep_summary,
-    update_task_status, get_session,
+    get_batch_tasks, update_strategy_best_params,
 )
 from strategy_exec.engines.backtrader.backtest import run_backtest
 from strategy_exec.market_data.hq_history import fetch_his_bars
@@ -50,56 +43,99 @@ ALLOWED_METRICS = ("sharpe", "total_return", "calmar")
 # ──── 纯函数 helpers (无 IO, 单测友好) ────
 
 
-def iter_param_grid(param_grid: Dict[str, List[Any]]) -> Iterator[Dict[str, Any]]:
-    """笛卡尔积展开.
+def _expand_values(spec: Dict[str, Any]) -> List[Any]:
+    """按 spec.type 展开一个参数的取值序列.
 
     Args:
-        param_grid: {param_name: [v1, v2, ...]}
+        spec: {type: int|float|choice|string, ...}
+          - int:    {start, end, step} 含端点, 步进取整
+          - float:  {start, end, step} 含端点, 末位钳到 end 防浮点漂移
+          - choice: {values: [...]} 原样取值
+          - string: {value} 固定 (返回单元素)
+
+    Returns:
+        list of 参数值; 空列表 = 该参数无可用取值 (调用方应跳过)
+    """
+    if not spec or not isinstance(spec, dict):
+        return []
+    t = spec.get("type")
+    if t == "int":
+        start = spec.get("start")
+        end = spec.get("end")
+        step = spec.get("step") or 1
+        if start is None or end is None or step <= 0:
+            return []
+        out: List[Any] = []
+        v = float(start)
+        while v <= float(end):
+            out.append(int(round(v)))
+            v += float(step)
+        return out
+    if t == "float":
+        start = spec.get("start")
+        end = spec.get("end")
+        step = spec.get("step") or 1
+        if start is None or end is None or step <= 0:
+            return []
+        out = []
+        v = float(start)
+        while v <= float(end):
+            out.append(round(v, 10))
+            v += float(step)
+        # 防浮点末位差一跳: 保证最后一个值正好是 end
+        if out and out[-1] != float(end):
+            out.append(float(end))
+        return out
+    if t == "choice":
+        return [v for v in (spec.get("values") or []) if v is not None and v != ""]
+    if t == "string":
+        v = spec.get("value")
+        return [v] if v is not None else []
+    return []
+
+
+def iter_param_ranges(param_ranges: Dict[str, Dict[str, Any]]) -> Iterator[Dict[str, Any]]:
+    """按类型展开 param_ranges → 笛卡尔积.
+
+    Args:
+        param_ranges: {param_name: {type, start, end, step | values | value}}
 
     Yields:
         每组合 1 个 dict {param_name: value}.
 
     约定:
-        - 字段值是空 list → 该字段跳过 (当成未配置)
-        - 字段值是 1 个元素 list → 该字段**不参与**笛卡尔积 (固定值)
-        - 至少需要 1 个字段含 ≥2 元素, 否则只产出 1 个组合
+        - 参数展开后 1 个取值 → 该字段**不参与**笛卡尔积 (固定值)
+        - 参数展开后空列表 → 跳过 (不放进任何组合, sandbox 默认兜底)
+        - 至少需要 1 个字段含 ≥2 取值, 否则只产出 1 个组合 (全是固定值)
     """
-    if not param_grid:
+    if not param_ranges:
         return iter([{}])
 
-    # 过滤空 list
-    active = {k: v for k, v in param_grid.items() if v}
+    fixed: Dict[str, Any] = {}
+    active: Dict[str, List[Any]] = {}
+    for key, spec in param_ranges.items():
+        vals = _expand_values(spec)
+        if not vals:
+            continue  # 无可用取值 → 跳过
+        if len(vals) == 1:
+            fixed[key] = vals[0]
+        else:
+            active[key] = vals
+
     if not active:
-        return iter([{}])
-
-    # 单值字段: 不参与笛卡尔积 (保留在每组合里)
-    fixed = {k: v[0] for k, v in active.items() if len(v) == 1}
-    sweep_keys = {k: v for k, v in active.items() if len(v) >= 2}
-
-    if not sweep_keys:
-        # 全是单值, 只产 1 个组合 (即 fixed 的合并)
         return iter([dict(fixed)])
 
-    # 笛卡尔积
-    keys = list(sweep_keys.keys())
-    value_lists = [sweep_keys[k] for k in keys]
+    keys = list(active.keys())
+    value_lists = [active[k] for k in keys]
     return (
         dict(fixed, **dict(zip(keys, combo)))
         for combo in itertools.product(*value_lists)
     )
 
 
-def count_grid_size(param_grid: Dict[str, List[Any]]) -> int:
-    """算 param_grid 总组合数 (用于 validate, 不迭代全部)"""
-    if not param_grid:
-        return 1
-    active = [v for v in param_grid.values() if v and len(v) >= 2]
-    if not active:
-        return 1
-    size = 1
-    for v in active:
-        size *= len(v)
-    return size
+def count_param_ranges(param_ranges: Dict[str, Dict[str, Any]]) -> int:
+    """算 param_ranges 展开后总组合数 (用于 validate, 不迭代全部)"""
+    return len(list(iter_param_ranges(param_ranges)))
 
 
 def validate_grid_size(grid_size: int, soft_warn: int = SWEEP_SOFT_WARN,
@@ -162,45 +198,38 @@ def extract_metric_value(backtest_result: Dict[str, Any], metric: str) -> Option
 # ──── 主流程 ────
 
 
-def generate_sweep_id() -> str:
-    """uuid4 hex 截 32 位 (DB sweep_id VARCHAR(32))"""
-    return uuid.uuid4().hex[:32]
-
-
-async def run_sweep(
+async def run_sweep_batch(
+    strategy_id: int,
+    batch_no: int,
     user_id: int,
     script_id: str,
     stock_code: str,
-    param_grid: Dict[str, List[Any]],
+    param_ranges: Dict[str, Dict[str, Any]],
     metric: str,
     backtest_start_date: str,
     backtest_end_date: str,
     *,
     period: str = "1d",
     concurrency: int = 2,
-    sweep_id: Optional[str] = None,
-    select_top_n: int = 1,
-    description: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """跑一次 sweep: 笛卡尔积展开 → 并发跑 backtest → 写 summary task.
+    """跑一个已预建好的扫描批次: 读批次 task → 并发 backtest → 写 strategy.best_params.
 
     Args:
-        user_id / script_id / stock_code: 任务归属
-        param_grid: {param_name: [v1, v2, ...]}
+        strategy_id: 策略主键 (best_params 回写目标)
+        batch_no: 批次号 (strategy_task.batch_no, EvTrade 预生成)
+        user_id / script_id / stock_code: 任务归属 (回测转发用)
+        param_ranges: {param_name: {type, start, end, step | values | value}} 类型化扫描定义
         metric: 'sharpe' / 'total_return' / 'calmar'
         backtest_start_date / backtest_end_date: YYYYMMDD
         period: K 线周期 (1d / 1m / ...)
-        concurrency: 同时跑的 backtest 数 (默认 2, env STRATEGY_SWEEP_CONCURRENCY 可覆盖)
-        sweep_id: 自定义 sweep_id (默认 uuid4 hex[:32])
-        select_top_n: 取 top N 组合写 best_params (默认 1)
-        description: 任务描述
+        concurrency: 同时跑的 backtest 数 (默认 2)
 
     Returns:
         {
-            'sweep_id': str,
+            'strategy_id': int,
+            'batch_no': int,
             'total_runs': int,
-            'summary_task_id': int,
-            'best_params': dict,
+            'best_params': dict | None,
             'best_metric_value': float | None,
             'succeeded': int,
             'failed': int,
@@ -208,21 +237,35 @@ async def run_sweep(
 
     Raises:
         ValueError: grid > SWEEP_HARD_LIMIT / metric 不合法
-        RuntimeError: 拉 K 线失败 / DB 失败
+        RuntimeError: 拉 K 线失败 / 批次不存在 / DB 失败
     """
     validate_metric(metric)
 
-    grid_size = count_grid_size(param_grid)
+    combos = list(iter_param_ranges(param_ranges))
+    grid_size = len(combos)
     validate_grid_size(grid_size)
 
-    sweep_id = sweep_id or generate_sweep_id()
+    # ──── 1. 读批次内已有 task (params 已在 DB, 不自建) ────
+    tasks = get_batch_tasks(strategy_id, batch_no)
+    if not tasks:
+        raise RuntimeError(
+            f"batch 不存在: strategy_id={strategy_id} batch_no={batch_no}"
+        )
+    if len(tasks) != grid_size:
+        log.warning(
+            "[sweep strategy=%d batch=%d] DB task 数 %d != param_ranges 展开数 %d, "
+            "按 DB 实际任务跑",
+            strategy_id, batch_no, len(tasks), grid_size,
+        )
 
     log.info(
-        "[sweep] start sweep_id=%s user=%d script=%s stock=%s grid=%d metric=%s concurrency=%d",
-        sweep_id, user_id, script_id, stock_code, grid_size, metric, concurrency,
+        "[sweep] start strategy_id=%d batch_no=%d user=%d script=%s stock=%s "
+        "runs=%d metric=%s concurrency=%d",
+        strategy_id, batch_no, user_id, script_id, stock_code,
+        len(tasks), metric, concurrency,
     )
 
-    # ──── 1. 拉一次 K 线 (所有组合共享) ────
+    # ──── 2. 拉一次 K 线 (所有组合共享) ────
     try:
         bars = await fetch_his_bars(
             stock_code=stock_code,
@@ -231,37 +274,22 @@ async def run_sweep(
             period=period,
         )
     except Exception as e:
-        log.error("[sweep %s] fetch_his_bars failed: %s", sweep_id, e)
+        log.error("[sweep strategy=%d batch=%d] fetch_his_bars failed: %s",
+                  strategy_id, batch_no, e)
         raise RuntimeError(f"broker his_hq 行情拉取失败: {e}") from e
 
     if not bars:
         raise RuntimeError(f"broker 未返回 K 线数据 (stock={stock_code})")
 
-    # ──── 2. 展开 grid + 预创建所有 task row ────
-    combos = list(iter_param_grid(param_grid))
-    sweep_total = len(combos) + 1  # +1 = summary task
-    log.info("[sweep %s] generated %d combinations", sweep_id, len(combos))
-
-    # 预创建所有组合 task (status='pending'), 这样 sweep_id 就绑好了
-    combo_task_ids: List[int] = []
-    for combo in combos:
-        task_id = create_sweep_task(
-            user_id=user_id, script_id=script_id, stock_code=stock_code,
-            params=combo, sweep_id=sweep_id, sweep_metric=metric,
-            sweep_total=sweep_total,
-            backtest_start_date=backtest_start_date,
-            backtest_end_date=backtest_end_date,
-            period=period,
-            description=description,
-        )
-        combo_task_ids.append(task_id)
-
     # ──── 3. 并发跑 backtest (Semaphore 控制) ────
     sem = asyncio.Semaphore(max(1, concurrency))
 
-    async def _run_one(combo: Dict[str, Any], task_id: int) -> Dict[str, Any]:
+    async def _run_one(task: Dict[str, Any]) -> Dict[str, Any]:
+        task_id = task["id"]
+        combo = task.get("params") or {}
         async with sem:
-            log.info("[sweep %s] task=%d start params=%s", sweep_id, task_id, combo)
+            log.info("[sweep strategy=%d batch=%d] task=%d start params=%s",
+                     strategy_id, batch_no, task_id, combo)
             try:
                 # run_backtest 是 sync 函数 → asyncio.to_thread
                 result = await asyncio.to_thread(
@@ -271,88 +299,61 @@ async def run_sweep(
                     backtest_start_date=backtest_start_date,
                     backtest_end_date=backtest_end_date,
                     period=period,
+                    strategy_id=strategy_id,   # 单组合回写由批次统一处理
+                    update_strategy_best=False,
                 )
                 metric_value = extract_metric_value(result, metric)
-                log.info("[sweep %s] task=%d OK metric=%.4f", sweep_id, task_id, metric_value or 0.0)
+                log.info("[sweep strategy=%d batch=%d] task=%d OK metric=%.4f",
+                         strategy_id, batch_no, task_id, metric_value or 0.0)
                 return {
                     "task_id": task_id,
                     "params": combo,
                     "metric_value": metric_value,
                     "status": "completed",
-                    "metric": metric,
+                    "error_msg": None,
                 }
             except Exception as e:
-                log.warning("[sweep %s] task=%d FAILED: %s", sweep_id, task_id, e)
+                log.warning("[sweep strategy=%d batch=%d] task=%d FAILED: %s",
+                            strategy_id, batch_no, task_id, e)
                 return {
                     "task_id": task_id,
                     "params": combo,
                     "metric_value": None,
                     "status": "failed",
                     "error_msg": str(e)[:200],
-                    "metric": metric,
                 }
 
-    results = await asyncio.gather(*(_run_one(c, tid) for c, tid in zip(combos, combo_task_ids)))
+    results = await asyncio.gather(*(_run_one(t) for t in tasks))
 
-    # ──── 4. 排序 + 写 summary task ────
+    # ──── 4. 排序 + 回写 strategy.best_params ────
     # 排序: completed (按 metric_value 降序) 排前, failed 排后
     completed = [r for r in results if r["status"] == "completed" and r["metric_value"] is not None]
     failed = [r for r in results if r not in completed]
     completed.sort(key=lambda r: r["metric_value"], reverse=True)
-    sorted_results = completed + failed
 
     best_params = completed[0]["params"] if completed else None
     best_metric_value = completed[0]["metric_value"] if completed else None
 
-    # 创建 summary task
-    summary_task_id = create_sweep_task(
-        user_id=user_id, script_id=script_id, stock_code=stock_code,
-        params={},  # summary 无单组 params
-        sweep_id=sweep_id, sweep_metric=metric, sweep_total=sweep_total,
-        backtest_start_date=backtest_start_date,
-        backtest_end_date=backtest_end_date,
-        period=period,
-        description=description or f"Sweep summary ({len(combos)} runs, metric={metric})",
-    )
-
-    if completed:
-        # 写 summary (best_params + sweep_results 排序后数组)
-        update_sweep_summary(
-            task_id=summary_task_id,
-            sweep_results=sorted_results,
-            best_params=best_params,
-            best_metric_value=best_metric_value,
-            metric=metric,
-        )
+    if best_params is not None:
+        # 有完成的组合 → 写 strategy.best_params (全部失败不写)
+        update_strategy_best_params(strategy_id, best_params)
     else:
-        # 全失败 → summary 也标 failed
-        update_task_status(
-            summary_task_id, "failed",
-            error_msg=f"sweep 全失败 ({len(failed)}/{len(combos)} 失败), 无 best_params",
+        log.warning(
+            "[sweep strategy=%d batch=%d] 全部 %d 组合失败, 不写 best_params",
+            strategy_id, batch_no, len(tasks),
         )
-        log.warning("[sweep %s] all %d combos failed", sweep_id, len(combos))
 
     log.info(
-        "[sweep %s] done: %d succeeded, %d failed, best_metric=%.4f",
-        sweep_id, len(completed), len(failed), best_metric_value or 0.0,
+        "[sweep strategy=%d batch=%d] done: %d succeeded, %d failed, best_metric=%.4f",
+        strategy_id, batch_no, len(completed), len(failed), best_metric_value or 0.0,
     )
 
     return {
-        "sweep_id": sweep_id,
-        "total_runs": len(combos),
-        "summary_task_id": summary_task_id,
+        "strategy_id": strategy_id,
+        "batch_no": batch_no,
+        "total_runs": len(tasks),
         "best_params": best_params,
         "best_metric_value": best_metric_value,
         "succeeded": len(completed),
         "failed": len(failed),
     }
-
-
-async def stream_sweep_progress(sweep_id: str) -> AsyncIterator[Dict[str, Any]]:
-    """(预留) 流式 yield sweep 进度 — 给前端 SSE / WS 订阅.
-
-    当前 phase 未启用, 留接口. 实现需每个组合 update_task_progress 加 phase='sweep_running'.
-    """
-    # TODO: Phase 5+ 加 WS 进度推送
-    if False:
-        yield {}
