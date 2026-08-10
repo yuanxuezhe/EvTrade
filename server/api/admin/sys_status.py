@@ -75,6 +75,37 @@ class ReconcileRequest(BaseModel):
     mode: str = "manual"
 
 
+def _broadcast_init_change(change_kind, status, trd_date, previous_trd_date, report_id):
+    """init 生命周期广播 (init_start / init_aborted / init_completed) — fire-and-forget, 不阻塞 HTTP
+
+    change init-push-gate: 前端据此开关「初始化推送丢弃门」
+      - init_start    → 开 gate (reconcile 期间丢弃 pos/ord/trd 洪峰)
+      - init_aborted  → 关 gate (失败, 不切日)
+      - init_completed → 关 gate (既有成功路径)
+    """
+    try:
+        from server.ws.manager import ws_manager
+        _ts = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
+        asyncio.ensure_future(ws_manager.broadcast(
+            'system_update',
+            {
+                'type': 'system_status_change',
+                'change_kind': change_kind,
+                'trd_date': trd_date,
+                'previous_trd_date': previous_trd_date,
+                'status': status,
+                'report_id': report_id,
+                'ts': _ts,
+            },
+            trace_id=f"init:{trd_date}:{report_id or 'start'}:{change_kind}",
+        ))
+    except Exception as _e:
+        import logging
+        logging.getLogger(__name__).warning(
+            "init_trading_day ws broadcast failed (%s): %s", change_kind, _e
+        )
+
+
 @router.post("/init", response_model=InitResponse,
              dependencies=[Depends(require_rpc_ok)])  # v101: 切日前 RPC 健康
 async def init_trading_day(
@@ -102,11 +133,18 @@ async def init_trading_day(
     except Exception:
         _previous_trd_date = None
 
+    # change init-push-gate: init_start 广播 → 前端开「初始化推送丢弃门」
+    #   reconcile 期间 broker 仍可能推 pos_push/ord_cfm/trd_cfm 洪峰, 前端据此丢弃 (不写状态/不刷屏)
+    _broadcast_init_change('init_start', 'initializing', req.trd_date, _previous_trd_date, None)
+
     # v118: 系统初始化走 init 路径 (覆盖 positions 表, 一次性同步 broker 持仓)
     result = await do_reconcile(db, req.trd_date, by_user, reconcile_kind='init')
 
     if not result['ok']:
         db.commit()
+        # change init-push-gate: 失败补广播 init_aborted → 前端关 gate
+        #   (原失败路径无广播, 若缺失前端门会一直开, 推送被永久丢弃)
+        _broadcast_init_change('init_aborted', 'error', req.trd_date, _previous_trd_date, result['report_id'])
         return InitResponse(
             code=1,
             msg=result['error'] or '对账失败',
@@ -121,30 +159,10 @@ async def init_trading_day(
 
     # v25: 日初成功后 ws 推 system_status_change (v117), 让前端自动刷新 holdings/asset/position 缓存
     #   v117: 去掉 init_completed 类型, 合并到 system_update channel — type='system_status_change'
-    #   payload 含 rpc_status 字段 + trd_date + previous_trd_date (切日轨迹)
-    try:
-        from server.ws.manager import ws_manager
-        _init_status = 'partial' if result.get('error') else 'ok'
-        _ts = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
-        asyncio.ensure_future(ws_manager.broadcast(
-            'system_update',
-            {
-                'type': 'system_status_change',     # v117: 替换 init_completed
-                'change_kind': 'init_completed',    # 保留旧语义供前端过渡用
-                'trd_date': req.trd_date,           # v117: 交易日信息 (用户口径: 必须有)
-                'previous_trd_date': _previous_trd_date,
-                'status': _init_status,             # 'ok' / 'partial'
-                # v117.1: 移除 rpc_status 字段 — 用户口径: rpc_status 仍独立走自己的 type='rpc_status' 路径
-                'report_id': result['report_id'],
-                'ts': _ts,
-            },
-            trace_id=f"init:{req.trd_date}:{result['report_id']}",
-        ))
-    except Exception as _e:
-        import logging
-        logging.getLogger(__name__).warning(
-            "init_trading_day ws broadcast failed: %s", _e
-        )
+    #   v117.1: 移除 rpc_status 字段 — 用户口径: rpc_status 仍独立走自己的 type='rpc_status' 路径
+    #   change init-push-gate: refactor 到共享 helper _broadcast_init_change (init_completed → 前端关 gate)
+    _init_status = 'partial' if result.get('error') else 'ok'
+    _broadcast_init_change('init_completed', _init_status, req.trd_date, _previous_trd_date, result['report_id'])
 
     return InitResponse(
         code=0,
