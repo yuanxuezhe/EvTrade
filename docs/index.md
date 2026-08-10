@@ -15,8 +15,8 @@
 
 | 文档 | 范围 | 何时查阅 |
 |---|---|---|
-| [strategy_trading_guide.md](strategy_trading_guide.md) | 网格策略 / T0 策略的创建、风控、实盘使用 | 用户配置策略、排查触发/下单 |
 | [strategy-migration-v90-to-bt.md](strategy-migration-v90-to-bt.md) | v90 用户脚本 → Backtrader（strategy_exec）迁移指南 + 3 个例子 | 迁移旧脚本、写新 Backtrader 策略 |
+| [strategy_trading_guide.md](strategy_trading_guide.md) | **已下线历史指南**（网格/T0 策略 `/api/strategy/*` 已删，2026-08-10） | 追溯旧网格策略用法；**现行请用** strategy-migration-v90-to-bt.md |
 
 ## 历史与设计
 

@@ -1,5 +1,16 @@
 # EvTrade 策略交易使用指南
 
+> ## ⛔ 已下线（2026-08-10，commit `aa70dae`）
+>
+> 本指南描述的**网格策略 / T0 策略接口（`/api/strategy/*`）已随旧网格策略引擎删除**：REST 端点、`StrategyTrade.vue` 前端、`strategy_update` WS 频道、`STRATEGY_ENGINE_ENABLED` 配置均已移除，`strategy` / `strategy_regime` / `strategy_grid` / `strategy_audit` 表已 DROP。
+>
+> **现行策略形态**：**脚本策略**（前端 `ScriptDev.vue` / `ScriptTask.vue` 写 Python 脚本 + 回测 + 实盘），引擎为独立服务 `strategy_exec/`（Backtrader）。
+> 参考：
+> - 引擎与用户脚本接口：`openspec/specs/strategy-exec/spec.md`
+> - v90 用户脚本 → Backtrader 迁移指南：[`strategy-migration-v90-to-bt.md`](./strategy-migration-v90-to-bt.md)
+>
+> 本文件保留为**历史记录**（T0 日内做T部分接口也已迁移/改版），不再作为操作依据。
+
 ## 目录
 
 1. [前置准备](#1-前置准备)
