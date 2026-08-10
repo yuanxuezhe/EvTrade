@@ -8,6 +8,9 @@ from strategy_exec.data_access.strategy_task import (
     update_task_progress,
     write_audit,
     append_live_signals,
+    # v122+ sweep helpers
+    create_sweep_task,
+    update_sweep_summary,
 )
 
 __all__ = [
@@ -15,4 +18,6 @@ __all__ = [
     "get_script",
     "get_task", "update_task_status", "update_task_progress", "write_audit",
     "append_live_signals",
+    # v122+ sweep
+    "create_sweep_task", "update_sweep_summary",
 ]
