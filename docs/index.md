@@ -11,6 +11,13 @@
 | [ws-push.md](ws-push.md) | 4 个 WS 频道 + payload 字段 + 心跳协议 | 前端订阅推送、调试推送状态机 |
 | [msgpacket-python-api.md](msgpacket-python-api.md) | msgpacket 库的 Python API 速查（外部依赖） | 排查 msgpacket 协议层 |
 
+## 策略指南
+
+| 文档 | 范围 | 何时查阅 |
+|---|---|---|
+| [strategy_trading_guide.md](strategy_trading_guide.md) | 网格策略 / T0 策略的创建、风控、实盘使用 | 用户配置策略、排查触发/下单 |
+| [strategy-migration-v90-to-bt.md](strategy-migration-v90-to-bt.md) | v90 用户脚本 → Backtrader（strategy_exec）迁移指南 + 3 个例子 | 迁移旧脚本、写新 Backtrader 策略 |
+
 ## 历史与设计
 
 | 目录 | 内容 | 何时查阅 |

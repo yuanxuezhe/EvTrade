@@ -9,16 +9,14 @@ EvTrade 项目的策略运行独立服务（change `2026-08-09-strategy-exec-ser
 
 ## 启动
 
-```bash
-# 1. 装依赖（独立 venv）
-cd strategy_exec
-uv sync                # 或 pip install -e .
+> **依赖**：复用 EvTrade 根 `.venv`（pydantic v2 + `pydantic-settings`），无独立 pyproject.toml/Dockerfile（2026-08-09 决策，commit `154a36b`）。确保在 EvTrade 根环境已装 `backtrader` / `aio-pika` / `websockets` 等依赖。
 
-# 2. 复制环境变量
+```bash
+# 1. 复制环境变量
 cp .env.example .env
 # 编辑 .env：填 EVTRADE_DB_URL / EVTRADE_RABBITMQ_URL / STRATEGY_EXEC_API_TOKEN
 
-# 3. 启动
+# 2. 启动（用根 .venv 的 python）
 python -m strategy_exec.main --port 8001
 # 或
 python scripts/evctl_strategy_exec.py start
@@ -49,42 +47,40 @@ curl http://localhost:8001/health
 
 ```
 strategy_exec/
-├── pyproject.toml
 ├── README.md
 ├── .env.example
 ├── .gitignore
-├── Dockerfile
 ├── strategy_exec/
 │   ├── __init__.py
 │   ├── main.py                # FastAPI app 入口
-│   ├── config.py              # Pydantic Settings
+│   ├── config.py              # Pydantic Settings（复用根 .venv, pydantic v2 + pydantic-settings）
 │   ├── api/
 │   │   ├── __init__.py
 │   │   ├── health.py
-│   │   └── internal.py        # 4 endpoint (mock in Phase 1)
+│   │   └── internal.py        # 4 internal endpoint（run/stop/status/progress）
 │   ├── templates/
-│   │   └── default_bt_strategy.py  # Phase 5 默认 Backtrader demo
-│   ├── engines/               # Phase 2 (Backtrader)
-│   ├── data_access/           # Phase 2
-│   ├── signal/                # Phase 2 (RabbitMQ publisher)
-│   ├── market_data/           # Phase 2 (hqserver WS + history)
-│   ├── sandbox/               # Phase 2 (用户脚本 loader)
-│   ├── risk/                  # Phase 2 (占位, 无风控)
-│   └── utils/
-├── scripts/
-│   └── evctl_strategy_exec.py  # start/stop/status/restart
-└── tests/
+│   │   └── default_bt_strategy.py  # 默认 Backtrader 双均线模板
+│   ├── engines/
+│   │   └── backtrader/        # adapter(ProjectStrategy) + backtest + live(LiveRunner)
+│   ├── data_access/           # db + strategy_script + strategy_task（乐观锁）
+│   ├── signal/                # RabbitMQ publisher（publisher confirms + 重试）
+│   ├── market_data/           # hq_history(RabbitMQ) + hq_ws_client(hqserver WS)
+│   └── sandbox/               # 用户脚本 loader（沙箱）
+└── scripts/
+    └── evctl_strategy_exec.py  # start/stop/status/restart
 ```
 
 ## 阶段进度
 
 | Phase | 状态 | 内容 |
 |---|---|---|
-| 1 | ✅ 本 commit | 骨架 + 配置 + 启动器 + mock API |
-| 2 | ⏳ 待实施 | Backtrader 集成 + 数据访问 + 信号推送 |
-| 3 | ⏳ 待实施 | EvTrade signal_consumer + 转发 |
-| 4 | ⏳ 待实施 | 清理旧引擎 + DB 迁移 |
-| 5 | ✅ 本 commit | 默认 demo 模板（其他文档/迁移留待后续）|
+| 1 | ✅ | 骨架 + 配置 + 启动器 + 4 internal endpoint |
+| 2 | ✅ | Backtrader 集成 + 数据访问 + 信号推送 |
+| 3 | ✅ | EvTrade signal_consumer + 转发 endpoint |
+| 4 | ✅ | 清理旧引擎 + DB 迁移（strategy_task +3 字段）|
+| 5 | ✅ | 默认 demo 模板 + spec + 迁移指南 |
+
+> 旧网格策略引擎（regime/grid）清理见 commit `aa70dae`；script-strategy 引擎迁移详见 `openspec/specs/strategy-exec/spec.md`。
 
 ## 依赖
 
@@ -111,7 +107,6 @@ mysql -h <host> -P 33066 -u EvTrade -p evtrade \
 
 ## 相关文档
 
-- SPEC: `openspec/changes/2026-08-09-strategy-exec-service/proposal.md`
-- 设计: `openspec/changes/2026-08-09-strategy-exec-service/design.md`
-- 任务: `openspec/changes/2026-08-09-strategy-exec-service/tasks.md`
-- Spec delta: `openspec/changes/2026-08-09-strategy-exec-service/spec-deltas/strategy-exec.md`
+- 能力 spec：`openspec/specs/strategy-exec/spec.md`（REQ-SE-001~007，已归档）
+- 迁移指南：`docs/strategy-migration-v90-to-bt.md`（v90 用户脚本 → Backtrader）
+- 任务: `openspec/changes/2026-08-09-strategy-exec-service/tasks.md`（归档前）
