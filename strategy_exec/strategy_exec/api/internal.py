@@ -14,7 +14,7 @@ import logging
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
-from pydantic import BaseModel, Field, root_validator
+from pydantic import BaseModel, Field, model_validator
 
 from strategy_exec.config import get_settings
 from strategy_exec.engines.backtrader.backtest import run_backtest
@@ -62,7 +62,7 @@ class RunTaskRequest(BaseModel):
     period: Optional[str] = Field(default=None, pattern=r"^(1d|1m|5m|15m|30m|60m)$")
     fields: Optional[str] = Field(default=None)
 
-    @root_validator(pre=True)
+    @model_validator(mode="before")
     @classmethod
     def _parse_params_before(cls, values):
         if isinstance(values, dict) and "params" in values:
