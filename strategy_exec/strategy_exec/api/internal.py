@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any, Optional
+from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
 from pydantic import BaseModel, Field, model_validator
@@ -20,6 +20,13 @@ from strategy_exec.config import get_settings
 from strategy_exec.engines.backtrader.backtest import run_backtest
 from strategy_exec.engines.backtrader.live import (
     start_live_runner, stop_live_runner, is_running,
+)
+from strategy_exec.engines.backtrader.sweep import (
+    run_sweep,
+    generate_sweep_id,
+    count_grid_size,
+    SWEEP_HARD_LIMIT,
+    ALLOWED_METRICS,
 )
 
 
@@ -89,6 +96,50 @@ class StopTaskRequest(BaseModel):
 class StopTaskResponse(BaseModel):
     ok: bool
     task_id: int
+
+
+# ──────────── v122+ sweep schemas (Phase 4 of `2026-08-10-strategy-params-sweep-best-live`) ────────────
+
+
+class RunSweepTaskRequest(BaseModel):
+    """REQ-SE-008 sweep 启动请求"""
+    user_id: int = Field(ge=0)
+    script_id: str = Field(min_length=1, max_length=64)
+    stock_code: str = Field(min_length=1, max_length=16)
+    backtest_start_date: str = Field(pattern=r"^\d{8}$")
+    backtest_end_date: str = Field(pattern=r"^\d{8}$")
+    param_grid: Dict[str, List[Any]] = Field(min_length=1)
+    metric: str = Field(default="sharpe")
+    select_top_n: int = Field(default=1, ge=1)
+    concurrency: int = Field(default=2, ge=1, le=16)
+    period: Optional[str] = Field(default=None, pattern=r"^(1d|1m|5m|15m|30m|60m)$")
+    description: Optional[str] = Field(default=None, max_length=500)
+
+    @model_validator(mode="after")
+    def _validate_specific(self):
+        # metric 必须在白名单内
+        if self.metric not in ALLOWED_METRICS:
+            raise ValueError(
+                f"metric 必须是 {ALLOWED_METRICS} 之一, 收到: {self.metric!r}"
+            )
+        # grid 大小硬上限检查 (前端可预先警告, 但 API 也兜底)
+        size = 1
+        active = [v for v in self.param_grid.values() if isinstance(v, list) and len(v) >= 2]
+        for v in active:
+            size *= len(v)
+        if size > SWEEP_HARD_LIMIT:
+            raise ValueError(
+                f"param_grid 总组合数 {size} 超过硬上限 {SWEEP_HARD_LIMIT}"
+            )
+        return self
+
+
+class RunSweepTaskResponse(BaseModel):
+    """202 Accepted — 返 sweep_id + 总数 + summary task_id, 实际跑在后台"""
+    sweep_id: str
+    total_runs: int
+    summary_task_id: int
+    msg: str = "sweep accepted, running in background"
 
 
 class TaskStatusResponse(BaseModel):
@@ -337,3 +388,91 @@ async def receive_progress(task_id: int, req: ProgressRequest) -> ProgressRespon
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={"code": "PROGRESS_WRITE_FAILED", "msg": str(e)},
         )
+
+
+# ──────────── v122+ sweep endpoint ────────────
+
+
+async def _run_sweep_background(
+    user_id: int, script_id: str, stock_code: str,
+    param_grid: Dict[str, List[Any]], metric: str,
+    backtest_start_date: str, backtest_end_date: str,
+    period: str, concurrency: int, sweep_id: str, description: Optional[str],
+) -> None:
+    """后台跑 sweep (异常时仅 log, 不影响已落库的 task)"""
+    log.info(
+        "[sweep %s] background start: user=%d script=%s stock=%s metric=%s grid=%d",
+        sweep_id, user_id, script_id, stock_code, metric, count_grid_size(param_grid),
+    )
+    try:
+        result = await run_sweep(
+            user_id=user_id, script_id=script_id, stock_code=stock_code,
+            param_grid=param_grid, metric=metric,
+            backtest_start_date=backtest_start_date,
+            backtest_end_date=backtest_end_date,
+            period=period, concurrency=concurrency,
+            sweep_id=sweep_id, description=description,
+        )
+        log.info(
+            "[sweep %s] background done: total=%d succeeded=%d failed=%d best_metric=%.4f",
+            sweep_id, result["total_runs"], result["succeeded"],
+            result["failed"], result.get("best_metric_value") or 0.0,
+        )
+    except Exception as e:
+        log.error("[sweep %s] background failed: %s", sweep_id, e)
+
+
+@router.post(
+    "/run-sweep-task",
+    response_model=RunSweepTaskResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    dependencies=[Depends(verify_internal_token)],
+)
+async def run_sweep_task(req: RunSweepTaskRequest) -> RunSweepTaskResponse:
+    """REQ-SE-008 sweep 启动端点 — 立即返 202 + sweep_id, 后台异步跑.
+
+    流程:
+    1. 预生成 sweep_id (uuid4 hex[:32])
+    2. 创建 summary task row (status='pending', params={}, sweep_id 已绑)
+    3. asyncio.create_task(_run_sweep_background) — 真正跑在后台
+    4. 返 202 Accepted 给 EvTrade (EvTrade 再 1 次性创建 N 个组合 task 行, 共用 sweep_id)
+    """
+    sweep_id = generate_sweep_id()
+    total_runs = count_grid_size(req.param_grid)
+    log.info(
+        "[run_sweep_task] sweep_id=%s user=%d script=%s stock=%s metric=%s grid=%d",
+        sweep_id, req.user_id, req.script_id, req.stock_code,
+        req.metric, total_runs,
+    )
+
+    # 预创建 summary task (sweep 引擎最终会 update 它)
+    from strategy_exec.data_access import create_sweep_task
+    summary_task_id = create_sweep_task(
+        user_id=req.user_id, script_id=req.script_id, stock_code=req.stock_code,
+        params={}, sweep_id=sweep_id, sweep_metric=req.metric,
+        sweep_total=total_runs + 1,  # +1 = summary
+        backtest_start_date=req.backtest_start_date,
+        backtest_end_date=req.backtest_end_date,
+        period=req.period or "1d",
+        description=req.description or f"Sweep summary ({total_runs} runs, metric={req.metric})",
+    )
+
+    # 后台跑
+    asyncio.create_task(
+        _run_sweep_background(
+            user_id=req.user_id, script_id=req.script_id, stock_code=req.stock_code,
+            param_grid=req.param_grid, metric=req.metric,
+            backtest_start_date=req.backtest_start_date,
+            backtest_end_date=req.backtest_end_date,
+            period=req.period or "1d",
+            concurrency=req.concurrency,
+            sweep_id=sweep_id, description=req.description,
+        ),
+        name=f"sweep-{sweep_id}",
+    )
+
+    return RunSweepTaskResponse(
+        sweep_id=sweep_id,
+        total_runs=total_runs,
+        summary_task_id=summary_task_id,
+    )
