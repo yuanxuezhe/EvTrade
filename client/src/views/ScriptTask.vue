@@ -153,6 +153,13 @@
           <h4>权益曲线</h4>
           <div ref="chartRef" class="st-chart"></div>
 
+          <!-- v122+: sweep summary 任务的 per-combo 结果表 -->
+          <SweepResultsTable
+            v-if="detail.sweep_id && detail.backtest_result?.sweep_results"
+            :backtest-result="detail.backtest_result"
+            :metric="detail.sweep_metric || 'sharpe'"
+          />
+
           <!-- 详情子 Tab: 信号流 / 进度时间轴 / 交易明细 -->
           <h4>执行详情</h4>
           <el-tabs v-model="detailSubTab" class="st-detail-tabs" data-el="st-detail-tabs">
@@ -479,41 +486,109 @@
 
         <!-- 运行模式由左侧表格"模式"切换按钮决定, 不再在抽屉里选 -->
         <template v-if="runForm.mode === 'backtest'">
-          <el-form-item label="起止日期">
-            <el-date-picker
-              v-model="runForm.dateRange"
-              type="daterange"
-              value-format="YYYYMMDD"
-              range-separator="~"
-              start-placeholder="开始"
-              end-placeholder="结束"
-              style="width: 100%"
-            />
+          <!-- v122+: 回测 tab: [单次回测] / [参数扫描] -->
+          <el-form-item label="运行模式">
+            <el-radio-group v-model="runTab" size="small" data-el="st-run-tab">
+              <el-radio-button value="backtest">单次回测</el-radio-button>
+              <el-radio-button value="sweep">参数扫描</el-radio-button>
+            </el-radio-group>
           </el-form-item>
-          <el-form-item label="K线周期">
-            <el-select v-model="runForm.period">
-              <el-option label="1分钟" value="1m" />
-              <el-option label="5分钟" value="5m" />
-              <el-option label="15分钟" value="15m" />
-              <el-option label="30分钟" value="30m" />
-              <el-option label="1小时" value="1h" />
-              <el-option label="1日" value="1d" />
-            </el-select>
+
+          <template v-if="runTab === 'backtest'">
+            <el-form-item label="起止日期">
+              <el-date-picker
+                v-model="runForm.dateRange"
+                type="daterange"
+                value-format="YYYYMMDD"
+                range-separator="~"
+                start-placeholder="开始"
+                end-placeholder="结束"
+                style="width: 100%"
+              />
+            </el-form-item>
+            <el-form-item label="K线周期">
+              <el-select v-model="runForm.period">
+                <el-option label="1分钟" value="1m" />
+                <el-option label="5分钟" value="5m" />
+                <el-option label="15分钟" value="15m" />
+                <el-option label="30分钟" value="30m" />
+                <el-option label="1小时" value="1h" />
+                <el-option label="1日" value="1d" />
+              </el-select>
+            </el-form-item>
+          </template>
+
+          <template v-else>
+            <SweepForm
+              :schema="currentScriptSchema"
+              :task-id="runForm.id"
+              @submit="onRunSweep"
+              @cancel="runTab = 'backtest'"
+            />
+            <div v-if="sweepResult" class="st-sweep-result">
+              <el-alert type="success" :closable="true" @close="sweepResult = null" show-icon>
+                <p>扫描已启动 — sweep_id=<code>{{ sweepResult.sweep_id }}</code>, 共 {{ sweepResult.total_runs }} 个组合, summary task #{{ sweepResult.summary_task_id }}</p>
+              </el-alert>
+            </div>
+          </template>
+        </template>
+
+        <template v-else>
+          <!-- v122+: 实盘参数来源 -->
+          <el-alert type="warning" :closable="false" show-icon>
+            <p><strong>实盘策略</strong>将真实下单到券商, 请确认已测试回测且参数合理。</p>
+          </el-alert>
+          <el-form-item label="参数来源">
+            <el-radio-group v-model="liveParamSource" size="small" data-el="st-live-source">
+              <el-radio-button value="default">默认值</el-radio-button>
+              <el-radio-button value="picker">从历史回测选</el-radio-button>
+              <el-radio-button value="manual">手动指定</el-radio-button>
+            </el-radio-group>
+          </el-form-item>
+          <el-form-item v-if="liveParamSource === 'picker'" label="已选参数">
+            <div class="st-live-preview">
+              <el-tag
+                v-for="(v, k) in (livePickerParams || {})"
+                :key="k"
+                size="small"
+                effect="plain"
+                type="info"
+                style="margin-right: 4px"
+              >{{ k }}={{ v }}</el-tag>
+              <el-button size="small" link @click="pickerOpen = true" data-el="st-open-picker">选...</el-button>
+            </div>
+          </el-form-item>
+          <el-form-item v-else-if="liveParamSource === 'manual'" label="JSON">
+            <el-input
+              v-model="liveManualParams"
+              type="textarea"
+              :rows="3"
+              placeholder='{"fast": 7, "slow": 30}'
+            />
           </el-form-item>
         </template>
 
-        <el-alert v-else type="warning" :closable="false" show-icon>
-          <p><strong>实盘策略</strong>将真实下单到券商, 请确认已测试回测且参数合理。</p>
-        </el-alert>
-
         <div class="st-form-actions">
           <el-button @click="runOpen = false">取消</el-button>
-          <el-button type="primary" :loading="running" @click="onRunTask" data-el="st-run-submit">
+          <el-button
+            v-if="!(runForm.mode === 'backtest' && runTab === 'sweep')"
+            type="primary"
+            :loading="running"
+            @click="onRunTask"
+            data-el="st-run-submit"
+          >
             {{ runForm.mode === 'live' ? '启动实盘' : '开始回测' }}
           </el-button>
         </div>
       </el-form>
     </el-drawer>
+
+    <!-- v122+: 历史回测选择 dialog -->
+    <BacktestPicker
+      v-model="pickerOpen"
+      :script-id="runForm.script_id || ''"
+      @select="onPickerSelect"
+    />
   </div>
 </template>
 
@@ -526,6 +601,10 @@ import * as echarts from 'echarts'
 import { scriptStrategyApi } from '../api/script_strategy'
 import { useWsStore } from '../stores/ws'  // v91.4: 实时进度推送
 import { formatPrice } from '../composables/usePricePrecision'
+// v122+ sweep + 从历史回测选参数
+import SweepForm from '../components/strategy/SweepForm.vue'
+import BacktestPicker from '../components/strategy/BacktestPicker.vue'
+import SweepResultsTable from '../components/strategy/SweepResultsTable.vue'
 
 const route = useRoute()
 
@@ -542,6 +621,11 @@ let chart = null
 
 const createForm = ref(_blankCreate())
 const runForm = ref(_blankRun())
+// v122+ 运行抽屉 tabs / 实盘参数来源
+const runTab = ref('backtest')              // 'backtest' | 'sweep'
+const liveParamSource = ref('default')       // 'default' | 'picker' | 'manual'
+const pickerOpen = ref(false)                // BacktestPicker dialog 显隐
+const liveManualParams = ref('{}')           // 手动模式 JSON 输入
 
 // 详情面板子 Tab + 信号过滤
 const detailSubTab = ref('signals')  // 'signals' | 'progress' | 'trades' | 'execution'
@@ -915,6 +999,11 @@ function openRun(row) {
       : null,
     period: row.period || '1d',
   }
+  // v122+: 重置 sweep/live-picker 状态
+  runTab.value = 'backtest'
+  liveParamSource.value = 'default'
+  livePickerParams.value = null
+  sweepResult.value = null
   runOpen.value = true
 }
 
@@ -936,6 +1025,20 @@ async function onRunTask() {
       ElMessage.warning('回测起止日期不完整')
       return
     }
+  } else if (runForm.value.mode === 'live') {
+    // v122+: live 参数来源校验
+    if (liveParamSource.value === 'picker' && !livePickerParams.value) {
+      ElMessage.warning('请先从历史回测选择参数')
+      return
+    }
+    if (liveParamSource.value === 'manual') {
+      try {
+        JSON.parse(liveManualParams.value || '{}')
+      } catch (e) {
+        ElMessage.warning('手动 JSON 格式错误')
+        return
+      }
+    }
   }
   running.value = true
   try {
@@ -946,6 +1049,9 @@ async function onRunTask() {
       payload.period = runForm.value.period
     } else {
       payload.period = runForm.value.period
+      // v122+: live params (default 模式不传, 后端用 schema defaults)
+      if (liveParamSource.value === 'picker') payload.params = livePickerParams.value
+      else if (liveParamSource.value === 'manual') payload.params = JSON.parse(liveManualParams.value || '{}')
     }
     await scriptStrategyApi.runTask(runForm.value.id, payload)
     ElMessage.success('已启动')
@@ -980,6 +1086,35 @@ async function onDelete(row) {
   } catch (e) {
     ElMessage.error('删除失败: ' + _errMsg(e))
   }
+}
+
+// ─────────────── v122+ sweep + live picker ───────────────
+const sweepResult = ref(null)
+const livePickerParams = ref(null)
+
+const currentScriptSchema = computed(() => {
+  const s = scripts.value.find((x) => x.id === runForm.value?.script_id)
+  return s?.params_schema || []
+})
+
+async function onRunSweep(payload) {
+  running.value = true
+  try {
+    const res = await scriptStrategyApi.runSweepTask(runForm.value.id, payload)
+    sweepResult.value = res
+    ElMessage.success(`扫描已启动, ${res.total_runs} 个组合`)
+    runOpen.value = false
+    await loadAll()
+  } catch (e) {
+    ElMessage.error('扫描启动失败: ' + _errMsg(e))
+  } finally {
+    running.value = false
+  }
+}
+
+function onPickerSelect(payload) {
+  livePickerParams.value = payload.best_params || {}
+  ElMessage.success(`已选 #${payload.task_id} 的最优参数`)
 }
 
 // ─────────────── mount ───────────────
