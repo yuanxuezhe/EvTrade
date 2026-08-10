@@ -372,11 +372,11 @@ ORM 注释（`server/tables/<表名>.py` 自动生成）必须与本 spec 保持
 | `trd_date` | String(8) | NO | — | 交易日 PK |
 | `mode` | String(16) | NO | — | `auto` / `manual` PK |
 | `created_at` | DateTime | NO | utcnow | PK（同 mode 同日可多次） |
-| `diffs_json` | Text | NO | "[]" | 差异明细 JSON |
-| `broker_asset_json` | Text | NO | "" | 柜台资金快照 |
-| `local_asset_json` | Text | NO | "" | 本地资金快照 |
-| `broker_positions_json` | Text | NO | "" | 柜台持仓快照 |
-| `local_positions_json` | Text | NO | "" | 本地持仓快照 |
+| `diffs_json` | LONGTEXT | NO | "[]" | 差异明细 JSON |
+| `broker_asset_json` | LONGTEXT | NO | "" | 柜台资金快照 |
+| `local_asset_json` | LONGTEXT | NO | "" | 本地资金快照 |
+| `broker_positions_json` | LONGTEXT | NO | "" | 柜台持仓快照 |
+| `local_positions_json` | LONGTEXT | NO | "" | 本地持仓快照（init 全量快照可达数百 KB） |
 | `rpc_status` | String(16) | NO | "ok" | `ok` / `partial` / `failed` |
 | `error_message` | String(512) | NO | "" | 错误信息 |
 | `created_by` | Integer | YES | NULL | FK users.id |
