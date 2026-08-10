@@ -279,6 +279,8 @@
 > **背景**：REQ-STRAT-001~013 覆盖**网格策略引擎**（change strategy_trade，**2026-08-10 已删除**，见上文删除横幅）。v90 起新增独立的**脚本策略模块**（change script-strategy），允许用户在前端写 Python 脚本 + 回测 + 实盘。本节补登，也是当前 spec 的**主体**。
 >
 > **v120（2026-08-09 strategy-exec-service）**：脚本策略的**运行引擎**已迁到独立服务 `strategy_exec/`（Backtrader 重构，见 [`strategy-exec/spec.md`](../strategy-exec/spec.md)）。REQ-STRAT-014/015/017（数据模型 / REST API / 前端）仍在 EvTrade 不变；**REQ-STRAT-016 引擎运行时已迁移**，本节仅保留 EvTrade 侧仍相关的契约。
+>
+> **v122（2026-08-10 strategy-params-sweep-best-live）**：REQ-STRAT-016 扩展 2 端点（`POST /tasks/{id}/run-sweep` 转发 + `GET /tasks` 加 3 query params）+ TaskOut 加 4 字段。Sweep / best_params live 接入详见 [`strategy-exec/spec.md`](../strategy-exec/spec.md) REQ-SE-008 / REQ-SE-009。
 
 ### REQ-STRAT-014: 脚本策略数据模型（2 张表 + strategy_task 扩展）
 
@@ -348,7 +350,7 @@
 - **WHEN** 回测完成
 - **THEN** 写 backtest_result / best_params / pnl / trades_count / finished_at / status='completed'
 
-### REQ-STRAT-016: 回测 / 实盘引擎运行时（v120 已迁移 strategy_exec）
+### REQ-STRAT-016: 回测 / 实盘引擎运行时（v120 已迁移 strategy_exec, v122 扩 sweep + best）
 
 > **v120 迁移（2026-08-09 strategy-exec-service）**：回测/实盘引擎已迁到独立服务 `strategy_exec/`（Backtrader 重构，基于 `bt.Cerebro`）。原 `server/strategy/runtime/` 目录已删除。引擎实现见 [`strategy-exec/spec.md`](../strategy-exec/spec.md) REQ-SE-003（引擎）/ REQ-SE-004（RabbitMQ 信号推送）/ REQ-SE-005（用户脚本接口）。本节仅保留 **EvTrade 侧仍相关**的契约：
 
@@ -356,6 +358,54 @@
 - `live_signals` 环形缓冲（限 500 条，每 5s flush 到 DB）：由 strategy_exec `LiveRunner` 实现（`append_live_signals`）
 - 风险档位集成（`RiskChecker`，**仍 EvTrade 侧**）：单笔最大 / 当日笔数 / 单股仓位上限 / 最大回撤 — 触发即拒单
 - signal 消费 + 下单：EvTrade `server/services/strategy/signal_consumer.py` 订阅 signal → 调 `/api/orders/place`
+
+#### v122 扩展（2026-08-10 strategy-params-sweep-best-live）
+
+EvTrade 转发层加 2 端点，TaskOut 加 4 字段。完整 sweep 引擎语义 + best_params live 接入见 [`strategy-exec/spec.md`](../strategy-exec/spec.md) REQ-SE-008 / REQ-SE-009。
+
+**新增端点 1** — `POST /api/strategy/tasks/{id}/run-sweep`（转发到 strategy_exec）：
+
+Request：
+
+```jsonc
+{
+    "param_grid": { "fast": [3,5,7,10], "slow": [15,20,30,60] },
+    "metric": "sharpe",
+    "select_top_n": 1,
+    "concurrency": 2
+}
+```
+
+Response（202）：
+
+```jsonc
+{
+    "sweep_id": "abc123...",
+    "total_runs": 16,
+    "summary_task_id": 42
+}
+```
+
+行为：
+
+- 鉴权同 `run-task`（需登录，普通用户只能 sweep 自己的，admin 任意）
+- `task_id`（path）必须是该用户的未开始 task（status='pending'）；sweep 创建子 task 全部继承此父 task 的 script_id / stock_code
+- EvTrade 端不存 sweep 状态（strategy_exec 单独写 strategy_task 表）
+- 预创建 N+1 个 strategy_task 行（sweep_id 共享），再转发 strategy_exec
+
+**新增端点 2** — `GET /api/strategy/tasks` 加 query params：
+
+- `script_id`: 限定脚本
+- `status='finished'`: 仅已完成
+- `has_best_params=1`: 仅 best_params 非空（含单 run 退化 + sweep summary）
+- `limit=50`: 默认 50，最大 200（endpoint 层强制）
+
+**TaskOut 扩字段**（共 4）：
+
+- `sweep_id: Optional[str]`
+- `sweep_metric: Optional[str]`
+- `sweep_total: Optional[int]`
+- `backtest_metric_value: Optional[float]` — 单 run 取自 `backtest_result.sharpe`（或所选 metric）；sweep summary 取自 `backtest_result.best_metric_value`（顶层冗余）
 
 #### Scenario: 回测进度推送
 
@@ -369,6 +419,26 @@
 - **WHEN** strategy_exec live_signals 累计达 500 条
 - **THEN** 第 501 条起**覆盖**最早（环形缓冲，`append_live_signals`）
 - **AND** 每 5s flush 到 DB（不是逐条写 — 避免高频 IO）
+
+#### Scenario: sweep 16 组合全成功 (v122)
+
+- **WHEN** POST /tasks/{id}/run-sweep with `param_grid = {fast: [3,5,7,10], slow: [15,20,30,60]}`
+- **THEN** EvTrade 预创建 16 个 task + 1 个 summary task（共享 sweep_id）
+- **AND** 转发 strategy_exec → run_sweep 异步跑 16 组合
+- **AND** summary task 最终 status='finished', best_params=排序 top1 组合
+- **AND** 用户 GET /tasks?has_best_params=1&script_id=mas_v1 看到 summary task，backtest_metric_value=top1 sharpe
+
+#### Scenario: sweep grid 超硬上限 (v122)
+
+- **WHEN** count_grid_size(param_grid) > 512
+- **THEN** EvTrade 端返 400, `{"code": "GRID_TOO_LARGE", "msg": "组合数 N 超过硬上限 512, 请缩小网格"}`
+- **AND** 不创建任何 strategy_task 行
+
+#### Scenario: live 启动用 sweep best_params (v122)
+
+- **WHEN** 用户在 ScriptTask 启实盘，选 task #42（sweep summary best: fast=7, slow=30）
+- **THEN** POST /tasks with `mode='live', params={fast:7, slow:30, qty:100, rsi_period:14}`
+- **AND** EvTrade 转发 strategy_exec → LiveRunner 用 cls.p.fast=7, cls.p.slow=30 算信号
 
 ### REQ-STRAT-017: 前端 2 个 view + 14 端点客户端
 
