@@ -223,9 +223,32 @@ export function createPushHandlers(deps) {
    *   Position 行内所有字段都是后端权威的最终值, 不需要前端推断.
    *
    *   - 找到: positions[idx] = row (整条 ref 替换, 触发 reactive)
-   *   - 找不到: positions.unshift(row) (新持仓 — 比如首次买入)
+   *   - 找不到: 新持仓短窗口批量合并 (_pendingNewPositions, 100ms trailing debounce 后
+   *            一次 unshift + 一条「批量新增 N 只」日志; 避免洪峰逐条刷屏)
    *   - 无 stock_code: 跳过 (防御)
    */
+  // holdings-auto-sub-batch: WS pos_push 洪峰时新持仓批量合并
+  const NEW_POS_BATCH_MS = 100
+  let _pendingNewPositions = []
+  let _newPosFlushTimer = null
+  function _queueNewPosition(row) {
+    // 按 stock_code 去重: 同 code 多次推送只保留最新
+    const i = _pendingNewPositions.findIndex(p => p.stock_code === row.stock_code)
+    if (i >= 0) _pendingNewPositions[i] = row
+    else _pendingNewPositions.push(row)
+    // trailing debounce: 静默 100ms 后 flush 一次
+    if (_newPosFlushTimer) clearTimeout(_newPosFlushTimer)
+    _newPosFlushTimer = setTimeout(_flushNewPositions, NEW_POS_BATCH_MS)
+  }
+  function _flushNewPositions() {
+    _newPosFlushTimer = null
+    const batch = _pendingNewPositions
+    _pendingNewPositions = []
+    if (batch.length === 0) return
+    positions.value.unshift(...batch)
+    log('info', '持仓', 'ws', `批量新增 ${batch.length} 只新持仓`)
+  }
+
   function applyPositionUpdate(row) {
     if (!row || !row.stock_code) return
     const idx = positions.value.findIndex((p) => p.stock_code === row.stock_code)
@@ -233,8 +256,7 @@ export function createPushHandlers(deps) {
       positions.value[idx] = row  // v95: 整条 ref 替换, 不 spread
       log('info', '持仓', 'ws', `持仓刷新: ${row.stock_code} vol=${row.vol} avl=${row.avl_vol} cost=${row.cost_price}`)
     } else {
-      positions.value.unshift(row)
-      log('info', '持仓', 'ws', `新持仓: ${row.stock_code} vol=${row.vol} avl=${row.avl_vol} cost=${row.cost_price}`)
+      _queueNewPosition(row)  // 批量合并: 100ms 静默窗口后一次 flush
     }
   }
 
