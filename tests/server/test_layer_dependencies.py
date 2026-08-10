@@ -212,6 +212,8 @@ def test_no_250_line_violation():
         "server/models/orm.py",  # 344
         "server/services/t0/aggregators.py",  # 283
         "server/api/t0_stats.py",  # 253
+        # 一次性迁移脚本 (已应用, 不可重构; 275 行含存量 task→strategy 回填/去重)
+        "server/migrations/2026-08-11-add-strategy-table-refactor-task.py",
     }
     violations = []
     for filepath in _collect_server_py_files():

@@ -8,7 +8,9 @@ strategy_script_audit) + 回测批次生成 (param_ranges 类型驱动) + 实盘
 
 外部唯一入口: `from server.services import script_strategy as svc`
   - scripts.py    — Script CRUD (list / get / get_by_name / create / update / delete)
-  - strategies.py — Strategy CRUD (list/get/create/update/delete) + 回测批次 + 实盘门禁 (v123)
+  - strategies.py — Strategy CRUD (list/get/create/update/delete)
+  - batches.py    — 回测/实盘批次 + 聚合查询 (v123)
+  - params.py     — param_ranges 类型驱动展开
   - tasks.py      — Task CRUD (list / get / create / delete / logs / signals / audit)
 """
 from server.services.script_strategy.scripts import (
@@ -26,6 +28,8 @@ from server.services.script_strategy.strategies import (
     create_strategy,
     update_strategy,
     delete_strategy,
+)
+from server.services.script_strategy.batches import (
     create_backtest_batch,
     list_batches,
     list_batch_tasks,

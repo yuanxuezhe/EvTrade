@@ -15,140 +15,32 @@ REST 端点 (前缀 /api/script-strategy):
   POST   /strategies/{strategy_id}/live      实盘启动 (best_params 门禁, 转发 strategy_exec)
 
 批次创建不执行; 运行时转发到独立服务 strategy_exec (8001), 202 Accepted 立即返回。
+请求/响应 schema 在 schemas.py, 转发 helpers 在 forward.py (经本模块命名空间引入以兼容 monkeypatch)。
 """
 import logging
-from typing import Any, Dict, List, Optional
+from typing import List, Optional
 
-import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel, Field
 
 from server.auth.deps import get_current_user
 from server.models.user import User
 from server.services import script_strategy as svc
 from server.services.script_strategy.strategies import StrategyError
+from server.api.script_strategy.forward import _forward_run_task, _forward_run_sweep
+from server.api.script_strategy.schemas import (
+    BacktestRequest,
+    BacktestResponse,
+    BatchOut,
+    LiveRequest,
+    LiveResponse,
+    StrategyCreate,
+    StrategyOut,
+    StrategyUpdate,
+)
 
 log = logging.getLogger(__name__)
 
 router = APIRouter()
-
-
-# ─────────────── Pydantic schemas ───────────────
-
-
-class StrategyCreate(BaseModel):
-    name: str
-    script_id: str  # v90+ 脚本 id 是用户自命名 varchar
-
-
-class StrategyUpdate(BaseModel):
-    name: Optional[str] = None
-    status: Optional[str] = Field(None, pattern="^(draft|active|archived)$")
-
-
-class StrategyOut(BaseModel):
-    strategy_id: int
-    user_id: int
-    script_id: str
-    name: str
-    status: str
-    best_params: Optional[Dict[str, Any]] = None
-    script: Optional[Dict[str, Any]] = None
-    created_at: Optional[str] = None
-    updated_at: Optional[str] = None
-
-
-class BacktestRequest(BaseModel):
-    """回测请求: mode=single (params) 或 mode=sweep (param_ranges)"""
-    mode: str = Field("single", pattern="^(single|sweep)$")
-    stock_code: str
-    backtest_start_date: str = Field(..., description="YYYYMMDD")
-    backtest_end_date: str = Field(..., description="YYYYMMDD")
-    # single
-    params: Optional[Dict[str, Any]] = None
-    # sweep (v123 D5 类型驱动: int/float start/end/step 含端点, choice values, string 固定)
-    param_ranges: Optional[Dict[str, Dict[str, Any]]] = None
-    period: Optional[str] = Field(None, pattern="^(1d|1m|5m|15m|30m|60m)$")
-    fields: Optional[str] = None
-    metric: str = Field("sharpe", pattern="^(sharpe|total_return|calmar)$")
-    concurrency: int = Field(2, ge=1, le=16)
-
-
-class BacktestResponse(BaseModel):
-    batch_no: int
-    total_runs: int
-    mode: str
-    metric: str
-    over_soft_limit: bool = False
-    msg: str = "backtest accepted, running in background"
-
-
-class LiveRequest(BaseModel):
-    stock_code: str
-    fields: Optional[str] = None
-
-
-class LiveResponse(BaseModel):
-    batch_no: int
-    task_id: int
-    mode: str = "live"
-    msg: str = "live accepted, running in background"
-
-
-class BatchOut(BaseModel):
-    batch_no: Optional[int]
-    created_at: Optional[str] = None
-    mode: Optional[str] = None
-    task_count: int = 0
-    finished_count: int = 0
-    failed_count: int = 0
-    best_params: Optional[Dict[str, Any]] = None
-    best_metric_value: Optional[float] = None
-
-
-# ─────────────── forward helpers (→ strategy_exec) ───────────────
-
-
-async def _forward_run_task(task_id: int, payload: Dict[str, Any]):
-    """转发单任务运行 (回测/实盘) 到 strategy_exec /internal/run-task"""
-    from server.config import settings
-    try:
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            resp = await client.post(
-                f"{settings.STRATEGY_EXEC_API_URL}/internal/run-task",
-                headers={"X-Internal-Token": settings.STRATEGY_EXEC_API_TOKEN},
-                json=payload,
-            )
-    except httpx.TimeoutException as e:
-        raise HTTPException(status_code=503, detail={"code": "STRATEGY_EXEC_TIMEOUT", "msg": f"strategy_exec 请求超时: {e}"})
-    except httpx.RequestError as e:
-        raise HTTPException(status_code=503, detail={"code": "STRATEGY_EXEC_UNAVAILABLE", "msg": f"strategy_exec 连接失败: {type(e).__name__} {e}"})
-    if resp.status_code >= 400:
-        try:
-            err = resp.json()
-            code = err.get("detail", {}).get("code", "STRATEGY_EXEC_ERROR") if isinstance(err.get("detail"), dict) else "STRATEGY_EXEC_ERROR"
-            msg = err.get("detail", {}).get("msg", resp.text) if isinstance(err.get("detail"), dict) else str(err.get("detail", resp.text))
-        except Exception:
-            code, msg = "STRATEGY_EXEC_ERROR", resp.text
-        raise HTTPException(status_code=resp.status_code, detail={"code": code, "msg": msg})
-
-
-async def _forward_run_sweep(payload: Dict[str, Any]):
-    """转发扫描批次到 strategy_exec /internal/run-sweep-task"""
-    from server.config import settings
-    try:
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            resp = await client.post(
-                f"{settings.STRATEGY_EXEC_API_URL}/internal/run-sweep-task",
-                headers={"X-Internal-Token": settings.STRATEGY_EXEC_API_TOKEN},
-                json=payload,
-            )
-    except httpx.TimeoutException as e:
-        raise HTTPException(status_code=503, detail={"code": "STRATEGY_EXEC_TIMEOUT", "msg": f"strategy_exec sweep 请求超时: {e}"})
-    except httpx.RequestError as e:
-        raise HTTPException(status_code=503, detail={"code": "STRATEGY_EXEC_UNAVAILABLE", "msg": f"strategy_exec sweep 连接失败: {type(e).__name__} {e}"})
-    if resp.status_code >= 400:
-        raise HTTPException(status_code=resp.status_code, detail={"code": "STRATEGY_EXEC_ERROR", "msg": resp.text})
 
 
 # ─────────────── Strategy CRUD ───────────────
