@@ -44,12 +44,16 @@ def create_backtest_batch(
 
     不执行, 由 api 层转发 strategy_exec; 完成后 strategy_exec 按 metric 回写 best_params。
 
+    v125 绑定标的: 策略有绑定 stock_code 时优先用它 (请求提供且不一致 → STOCK_MISMATCH);
+    存量 NULL 行回退请求的 stock_code。
+
     Returns:
         dict: batch_no / total_runs / mode / metric / sweep_keys / task_ids /
               strategy_id / script_id / stock_code / 日期 / period / fields / over_soft_limit
     Raises:
         StrategyError: NO_STRATEGY / NO_SCRIPT / MISSING_DATES / MISSING_PARAM /
-                       MISSING_RANGES / UNKNOWN_PARAM / GRID_TOO_LARGE / INVALID_MODE
+                       MISSING_RANGES / UNKNOWN_PARAM / GRID_TOO_LARGE / INVALID_MODE /
+                       STOCK_MISMATCH / BACKTEST_FORBIDDEN
     """
     from server.services.script_strategy.scripts import get_script
 
