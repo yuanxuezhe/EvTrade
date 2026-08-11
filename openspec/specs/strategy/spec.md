@@ -513,6 +513,61 @@ Response（202）：
 - **THEN** 返回 409 `{"code": "BATCH_RUNNING"}`
 - **AND** 不生成新批次, 不废弃原任务
 
+### REQ-STRAT-019: 策略可见性与权限矩阵 (v125 change, 2026-08-11)
+
+策略模块改为**纯回测**:策略级显式 `is_public` + 绑定标的 `stock_code`,他人公开策略只读精简可见、不可回测。实盘/黑盒跟随移出本模块(Part 2 策略下单另行设计)。
+
+**数据模型**(`strategy` 表 +2 列,迁移 `2026-08-11-add-strategy-visibility.py`):
+
+- `is_public: tinyint NOT NULL DEFAULT 0` — 0=私有(默认) 1=公开(列表可见,供策略下单选择);**存量策略默认私有**(迁移默认 0)
+- `stock_code: varchar(16) NULL` — 策略绑定标的(新建必填,只针对此标的回测;存量 NULL 回退请求标的)
+- `create_strategy` 必填 `stock_code`;标的创建后不可改(update 不含该字段)
+
+**权限矩阵**:
+
+| 操作 | 本人(owner) | 他人·公开策略 | 他人·私有策略 |
+|---|---|---|---|
+| 列表可见 | ✓(完整) | ✓(精简卡片) | ✗ 404 |
+| 查看详情 | ✓(含脚本/参数) | ✓ 精简(不含代码/best_params) | ✗ 404 |
+| 修改/删除/公开开关 | ✓ | ✗ | ✗ |
+| 回测/批次/重测 | ✓ | ✗ 403 BACKTEST_FORBIDDEN | ✗ 404 STRATEGY_NOT_FOUND |
+
+- 隐私原则:他人**私有**策略一律 `404 STRATEGY_NOT_FOUND`(不泄漏存在性);他人**公开**策略的受限操作(回测)返回 `403`(用户已在列表看到它)。
+- 错误码:`403 BACKTEST_FORBIDDEN` / `404 STRATEGY_NOT_FOUND` / `400 STOCK_MISMATCH` / `400 MISSING_STOCK`。
+
+**端点变更**:
+
+- 删除 `POST /strategies/{strategy_id}/live`(策略模块纯回测;实盘能力 Part 2 重建)
+- `POST /strategies/{strategy_id}` 请求加必填 `stock_code`
+- `PUT /strategies/{strategy_id}` 可改 `is_public`
+- `GET /strategies` / `GET /strategies/{id}`:他人公开返回精简视图(`is_public` + `stock_code`,无 `script`/`best_params`)
+- `BacktestRequest.stock_code` 改 Optional(标的由策略绑定决定;提供且不匹配 → `400 STOCK_MISMATCH`)
+
+**前端**:
+
+- `ScriptTask.vue`:新建策略必选标的;列表区分「我的 / 公开」;他人公开策略**只读精简卡片**(无回测/批次/编辑入口);公开/私有开关仅 owner;移除「实盘」按钮 + live 徽章
+- `ScriptDev.vue`:他人公开脚本表单只读(禁用编辑/删除/保存)
+
+#### Scenario: 作者发布公开策略
+
+- **GIVEN** 用户 A 创建策略(必填标的 600519.SH),设 `is_public=true`
+- **WHEN** 用户 B 调 GET /strategies
+- **THEN** 看到 A 的策略精简卡片(名称/标的/owner/is_public),不含脚本源码与 best_params
+- **AND** B 调 GET /strategies/{id} → 精简视图;调回测/批次 → `403 {"code": "BACKTEST_FORBIDDEN"}`
+
+#### Scenario: 非 owner 回测被拒
+
+- **GIVEN** 用户 A 的私有策略
+- **WHEN** 用户 B 调 GET /strategies 或回测
+- **THEN** 一律 `404 {"code": "STRATEGY_NOT_FOUND"}`,不泄漏策略存在性
+
+#### Scenario: 策略绑定标的 + 回测标的失配
+
+- **GIVEN** 策略绑定 600519.SH
+- **WHEN** 回测请求带 `stock_code=000001.SZ`
+- **THEN** 返回 `400 {"code": "STOCK_MISMATCH"}`
+- **AND** 回测不带 stock_code → 固定用策略绑定标的 600519.SH
+
 ## Cross References
 
 - 行情来源：`quotes/spec.md` REQ-QUOTE-001（hqserver 推送）
