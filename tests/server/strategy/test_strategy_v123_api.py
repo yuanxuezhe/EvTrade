@@ -28,9 +28,7 @@ from models.user import User  # noqa: E402
 from auth.security import hash_password, create_access_token  # noqa: E402
 from auth import session as auth_session  # noqa: E402
 from server.main import app  # noqa: E402
-from server.services import script_strategy as svc  # noqa: E402
 from server.tables import Strategy, StrategyTask, StrategyScript  # noqa: E402
-from server.services.script_strategy._convert import json_dumps  # noqa: E402
 
 UID = 990010003
 USERNAME = f"ut_api_{UID}"

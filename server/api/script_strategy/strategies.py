@@ -3,9 +3,9 @@ server/api/script_strategy/strategies.py — 策略 CRUD + 回测批次 端点 (
 
 REST 端点 (前缀 /api/script-strategy):
   GET    /strategies                         策略列表
-  GET    /strategies/{strategy_id}           策略详情 (含脚本)
+  GET    /strategies/{strategy_id}           策略详情 (owner/admin 含脚本; 他人公开精简)
   POST   /strategies                         创建 {name, script_id, stock_code}
-  PUT    /strategies/{strategy_id}           更新 (仅 user_id=me)
+  PUT    /strategies/{strategy_id}           更新 name/status/is_public (仅 owner)
   DELETE /strategies/{strategy_id}           删除
 
   POST   /strategies/{strategy_id}/backtest  单次回测 / 参数扫描 (生成批次, 转发 strategy_exec)
@@ -22,7 +22,7 @@ v125: 策略模块纯回测, 无实盘。策略绑定标的 (stock_code), 回测
 import logging
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from server.auth.deps import get_current_user
 from server.models.user import User
