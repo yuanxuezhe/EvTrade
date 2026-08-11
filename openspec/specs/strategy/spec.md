@@ -459,6 +459,60 @@ Response（202）：
 - **THEN** `router.push({path: '/script-task', query: {script_id}})`
 - **AND** ScriptTask.vue onMounted 自动用 script_id 预填创建 task 表单
 
+### REQ-STRAT-018: 批次重测（v124 change, 2026-08-11）
+
+批次列表支持**重测**：按原批次配置（params / 标的 / 区间 / 周期 / metric）重建一个**新批次**（新
+`batch_no`, 全部 task status='queued'）并重新执行；原批次全部 task 置 `status='abandoned'`（废弃,
+不再计入 finished/failed/best）。
+
+**端点**：
+
+- `POST /strategies/{strategy_id}/batches/{batch_no}/retest` → 202 `{batch_no, total_runs, mode, metric, over_soft_limit}`
+  - 校验：批次存在 / 归属策略有权限 / `mode='backtest'`（live 不可重测 → 400 `NOT_RETESTABLE`）
+  - **运行中批次拒绝**：仍有 `queued`/`running` task → 409 `BATCH_RUNNING`（strategy_exec 正写这些行,
+    废弃会被覆盖）
+  - 原批次 task 全部 → `abandoned`（批量 `UPDATE strategy_task SET status='abandoned' WHERE strategy_id+batch_no`）
+  - 新批次转发 strategy_exec：sweep → `/internal/run-sweep-task`（`param_ranges` 由 task params 去重重建,
+    与 strategy_exec `iter_param_ranges` 精确同网格）; single → `/internal/run-task`
+  - 废弃的 task 行保留（可追溯历史）, 不删除
+
+**metric 持久化（v124 起）**：
+
+- `strategy_task` 增 `metric VARCHAR(16)` 列, 批次创建时落库（`create_backtest_batch` 传 metric）
+- 老批次回填 `'sharpe'`（无历史记录, 用默认排序指标）
+- 重测读取原批次 task 的 metric 忠实还原; 若未持久化（老批次）回退 `'sharpe'`
+
+**批次列表扩展**（`BatchOut`）：
+
+- `metric: str` — 批次排序指标
+- `abandoned_count: int` — 废弃 task 数
+- `abandoned: bool` — 批次已全部废弃（被重测替代）
+- best 聚合只看**非废弃** finished task
+
+#### Scenario: 重测单次回测批次
+
+- **GIVEN** batch #B（single, 1 个 finished task, params={fast:3, slow:2}）
+- **WHEN** POST /strategies/{id}/batches/{B}/retest
+- **THEN** 原 batch #B 的 task status → 'abandoned'（批次列表显示"已废弃"）
+- **AND** 生成新 batch #B'（1 个 queued task, 同 params）, 转发 strategy_exec 重新跑
+- **AND** 响应 `{batch_no: B', total_runs: 1, mode: 'single'}`
+
+#### Scenario: 重测参数扫描批次（忠实还原 metric）
+
+- **GIVEN** batch #S（sweep, 6 个 finished task, metric='total_return', param_ranges 展开 6 组合）
+- **WHEN** POST /strategies/{id}/batches/{S}/retest
+- **THEN** 原 batch #S 全部 task → 'abandoned'
+- **AND** 新 batch #S' 建 6 个 queued task, 读取原 task 的 metric='total_return'
+- **AND** param_ranges 由 6 个 task params 去重重建（`{fast: choice[1,2,3], slow: choice[5,10]}`）
+- **AND** 转发 strategy_exec 用 metric='total_return' 选 top1
+
+#### Scenario: 运行中批次禁止重测
+
+- **GIVEN** batch #R 有 1 个 running task
+- **WHEN** POST /strategies/{id}/batches/{R}/retest
+- **THEN** 返回 409 `{"code": "BATCH_RUNNING"}`
+- **AND** 不生成新批次, 不废弃原任务
+
 ## Cross References
 
 - 行情来源：`quotes/spec.md` REQ-QUOTE-001（hqserver 推送）
