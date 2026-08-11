@@ -60,6 +60,8 @@ def strategy_row_to_dict(row) -> Dict[str, Any]:
         "script_id": d.get("script_id"),
         "name": d.get("name", ""),
         "status": d.get("status", "draft"),
+        "is_public": bool(d.get("is_public", 0)),  # v125 显式可见性
+        "stock_code": d.get("stock_code"),          # v125 绑定标的
         "best_params": json_loads(d.get("best_params")),
         "created_at": iso(d.get("created_at")),
         "updated_at": iso(d.get("updated_at")),

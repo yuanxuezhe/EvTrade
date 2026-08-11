@@ -1,7 +1,7 @@
 """
 server/tables/strategy.py — 自动生成 (tables-codegen skill)
 
-表: `strategy`  (8 字段, 主键: ['strategy_id'])
+表: `strategy`  (10 字段, 主键: ['strategy_id'])
 描述: MySQL table `strategy`
 
 ⚠️ 不要手动修改本文件 — 任何字段/主键变更请重新跑 tables-codegen
@@ -9,7 +9,7 @@ server/tables/strategy.py — 自动生成 (tables-codegen skill)
 from datetime import datetime
 from server.tables.base import TableBase, Row
 from typing import Any
-from typing import Any, ClassVar, Tuple
+from typing import Any, ClassVar, Optional, Tuple
 
 
 class Strategy(TableBase):
@@ -36,6 +36,8 @@ class Strategy(TableBase):
         'script_id': '',
         'name': '',
         'status': '',
+        'is_public': '策略是否公开: 0=私有 1=公开',
+        'stock_code': '策略绑定标的 (新建时必填)',
         'best_params': '',
         'created_at': '',
         'updated_at': ''
@@ -47,6 +49,8 @@ class Strategy(TableBase):
         'script_id': 'varchar(64)',
         'name': 'varchar(64)',
         'status': 'varchar(16)',
+        'is_public': 'tinyint',
+        'stock_code': 'varchar(16)',
         'best_params': 'json',
         'created_at': 'datetime',
         'updated_at': 'datetime'
@@ -58,6 +62,8 @@ class Strategy(TableBase):
     script_id: str
     name: str
     status: str
+    is_public: int
+    stock_code: Optional[str]
     best_params: Any
     created_at: datetime
     updated_at: datetime
