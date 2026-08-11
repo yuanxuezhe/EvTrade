@@ -30,6 +30,8 @@ from server.infra.db import engine as app_engine  # noqa: E402
 
 MIG_SEQ = os.path.join(_PROJECT_ROOT, "server", "migrations", "2026-08-11-order-no-seq-multi-generator.py")
 MIG_STRATEGY = os.path.join(_PROJECT_ROOT, "server", "migrations", "2026-08-11-add-strategy-table-refactor-task.py")
+MIG_VISIBILITY = os.path.join(
+    _PROJECT_ROOT, "server", "migrations", "2026-08-11-add-strategy-visibility.py")
 
 
 def _load(modname: str, path: str):
@@ -139,3 +141,13 @@ def test_strategy_migration_reapply_idempotent(mig):
     after_tasks = _strategy_invariants()
     assert before_tasks == after_tasks, \
         f"幂等复跑不应新增/删除 task: {before_tasks} -> {after_tasks}"
+
+
+def test_visibility_migration_reapply_idempotent():
+    """strategy 可见性迁移再跑一次 → 不抛错, 新列仍在."""
+    vis_mod = _load("mig_visibility", MIG_VISIBILITY)
+    cols = {c["name"] for c in inspect(app_engine).get_columns("strategy")}
+    assert {"is_public", "stock_code"} <= cols, f"strategy 缺 v125 列: {cols}"
+    _run_ok(vis_mod)
+    cols2 = {c["name"] for c in inspect(app_engine).get_columns("strategy")}
+    assert {"is_public", "stock_code"} <= cols2
