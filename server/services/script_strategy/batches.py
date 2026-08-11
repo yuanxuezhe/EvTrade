@@ -108,6 +108,7 @@ def create_backtest_batch(
             backtest_end_date=backtest_end_date,
             period=period, fields=fields,
             mode="backtest", batch_no=batch_no, status="queued",
+            metric=metric,  # 批次排序指标落库 (重测还原用)
         )
         task_ids.append(t["id"])
 
@@ -137,7 +138,11 @@ def list_batches(
 
     Returns:
         [{batch_no, created_at, mode, task_count, finished_count, failed_count,
-          best_params, best_metric_value}] or None (无权限)
+          abandoned_count, abandoned, metric, best_params, best_metric_value}]
+          or None (无权限)
+
+    v124 批次重测: 被重测替代的批次全部 task status='abandoned' → 不再计入
+    finished/failed/best; 批次行标 abandoned=True + abandoned_count。
     """
     from server.tables import StrategyTask
     strat = _require_owned_strategy(strategy_id, user_id, is_admin=is_admin)
@@ -154,7 +159,12 @@ def list_batches(
 
     batches = []
     for bn, tasks in groups.items():
-        finished = [t for t in tasks if t._data.get("status") == "finished"]
+        # 重测废弃: abandoned task 不计入 finished/failed/best
+        abandoned = [t for t in tasks if t._data.get("status") == "abandoned"]
+        finished = [
+            t for t in tasks
+            if t._data.get("status") == "finished" and t._data.get("status") != "abandoned"
+        ]
         best = None
         best_metric = None
         for t in finished:
@@ -170,6 +180,9 @@ def list_batches(
             "task_count": len(tasks),
             "finished_count": len(finished),
             "failed_count": sum(1 for t in tasks if t._data.get("status") == "failed"),
+            "abandoned_count": len(abandoned),
+            "abandoned": len(abandoned) == len(tasks) > 0,
+            "metric": first.get("metric") or "sharpe",  # 批次排序指标 (重测还原)
             "best_params": best,
             "best_metric_value": best_metric,
         })
@@ -191,6 +204,111 @@ def list_batch_tasks(
     )
     rows.sort(key=lambda r: getattr(r, "_data", {}).get("id", 0))
     return [task_row_to_dict(r) for r in rows]
+
+
+def _reconstruct_ranges(combos: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+    """从批次 task params 重建 sweep param_ranges (供 strategy_exec forward 计数/校验).
+
+    原批次由 create_backtest_batch 按 param_ranges 笛卡尔积生成 → 每字段不同取值集合
+    唯一确定网格. 重建为 {key: {type: 'choice', values: [...]}} 与 strategy_exec 的
+    iter_param_ranges 兼容, count_param_ranges 与原网格精确一致。
+    """
+    distinct: Dict[str, List[Any]] = {}
+    for c in combos:
+        for k, v in c.items():
+            if k not in distinct:
+                distinct[k] = []
+            if v not in distinct[k]:
+                distinct[k].append(v)
+    return {k: {"type": "choice", "values": vals} for k, vals in distinct.items()}
+
+
+def retest_batch(
+    strategy_id: int, batch_no: int, user_id: int, is_admin: bool = False,
+) -> Dict[str, Any]:
+    """重测批次 (v124): 按原批次配置重建新批次, 原批次全部 task 置 'abandoned' 废弃.
+
+    语义:
+    - 新 batch_no = next_seq(task_batch); 新 task 沿用原 task 的 params/标的/区间/周期
+    - 排序指标 metric 从原批次 task 读取 (v124 起落库, 老批次回填 'sharpe')
+    - 原批次 task 全部 status → 'abandoned' (不再计入 finished/failed/best)
+    - sweep 批次: param_ranges 由 task params 去重重建, 供 API 层转发 strategy_exec
+
+    Raises:
+        StrategyError: NO_STRATEGY / BATCH_NOT_FOUND / NOT_RETESTABLE (非回测批次) /
+                       BATCH_RUNNING (批次仍有 queued/running task)
+    """
+    from server.tables import StrategyTask
+
+    strat = _require_owned_strategy(strategy_id, user_id, is_admin=is_admin)
+    if strat is None:
+        raise StrategyError("NO_STRATEGY", f"strategy_id {strategy_id} 不存在或无权访问")
+    sd = strat._data
+
+    # 1. 读原批次 task (轻量列)
+    rows = StrategyTask.query_by_fields(
+        {"strategy_id": strategy_id, "batch_no": batch_no},
+        columns=TASK_LIST_COLUMNS,
+    )
+    if not rows:
+        raise StrategyError("BATCH_NOT_FOUND", f"batch_no {batch_no} 不存在")
+    rows.sort(key=lambda r: getattr(r, "_data", {}).get("id", 0))
+
+    first = rows[0]._data
+    if first.get("mode") != "backtest":
+        raise StrategyError("NOT_RETESTABLE", f"仅回测批次可重测, 当前 mode={first.get('mode')}")
+
+    # 2. 运行中禁止重测 (strategy_exec 正在写这些 task 行, 废弃会被覆盖)
+    active = [t for t in rows if t._data.get("status") in ("queued", "running")]
+    if active:
+        raise StrategyError(
+            "BATCH_RUNNING",
+            f"批次仍有 {len(active)} 个任务未结束 (queued/running), 请先等待完成或停止后再重测",
+        )
+
+    # 3. 重建批次 (新 batch_no, 沿用原配置)
+    metric = first.get("metric") or "sharpe"
+    combos = [json_loads(t._data.get("params"), default={}) for t in rows]
+    is_sweep = len(combos) > 1
+    new_batch_no = int(next_seq("task_batch"))
+    task_ids = []
+    for c in combos:
+        t = create_task(
+            user_id=user_id, strategy_id=strategy_id, stock_code=first.get("stock_code"),
+            params=c,
+            description=sd.get("name", "") or f"strategy-{strategy_id}",
+            backtest_start_date=first.get("backtest_start_date"),
+            backtest_end_date=first.get("backtest_end_date"),
+            period=first.get("period"), fields=first.get("fields"),
+            mode="backtest", batch_no=new_batch_no, status="queued",
+            metric=metric,
+        )
+        task_ids.append(t["id"])
+
+    # 4. 原批次全部 task → abandoned (废弃)
+    StrategyTask.update_by_fields(
+        {"status": "abandoned", "updated_at": datetime.now()},
+        strategy_id=strategy_id, batch_no=batch_no,
+    )
+
+    return {
+        "batch_no": new_batch_no,
+        "total_runs": len(task_ids),
+        "mode": "sweep" if is_sweep else "single",
+        "metric": metric,
+        "concurrency": 2,
+        "strategy_id": strategy_id,
+        "script_id": sd.get("script_id"),
+        "stock_code": first.get("stock_code"),
+        "backtest_start_date": first.get("backtest_start_date"),
+        "backtest_end_date": first.get("backtest_end_date"),
+        "period": first.get("period"),
+        "fields": first.get("fields"),
+        "task_ids": task_ids,
+        "param_ranges": _reconstruct_ranges(combos) if is_sweep else None,
+        "params": combos[0] if not is_sweep else None,
+        "over_soft_limit": len(task_ids) > 64,
+    }
 
 
 def create_live_batch(

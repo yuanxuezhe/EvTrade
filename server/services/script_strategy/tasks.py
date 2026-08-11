@@ -72,7 +72,8 @@ def create_task(
     fields: Optional[str] = None,
     mode: Optional[str] = None,
     batch_no: Optional[int] = None,
-    status: str = "queued",  # v123 状态机: queued → running → finished / failed / stopped
+    status: str = "queued",  # v123 状态机: queued → running → finished / failed / stopped / abandoned
+    metric: Optional[str] = None,  # 批次排序指标 (sweep top1 选择, 重测还原用)
 ) -> Dict[str, Any]:
     """创建任务 (v123: 挂 strategy_id, 可带 batch_no).
 
@@ -107,6 +108,7 @@ def create_task(
         "finished_at": None,
         "backtest_start_date": backtest_start_date,
         "backtest_end_date": backtest_end_date,
+        "metric": metric,
         "created_at": now,
         "updated_at": now,
     }

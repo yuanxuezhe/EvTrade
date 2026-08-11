@@ -148,5 +148,8 @@ class BatchOut(BaseModel):
     task_count: int = 0
     finished_count: int = 0
     failed_count: int = 0
+    abandoned_count: int = 0       # v124: 重测废弃的 task 数
+    abandoned: bool = False        # v124: 批次已被重测替代 (全部 task 废弃)
+    metric: str = "sharpe"         # v124: 批次排序指标 (sweep top1 选择)
     best_params: Optional[Dict[str, Any]] = None
     best_metric_value: Optional[float] = None

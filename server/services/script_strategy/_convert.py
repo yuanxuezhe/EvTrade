@@ -76,7 +76,7 @@ TASK_LIST_COLUMNS = (
     "id", "user_id", "strategy_id", "batch_no", "description",
     "stock_code", "mode", "status", "params",
     "backtest_start_date", "backtest_end_date", "period", "fields",
-    "pnl", "trades_count", "backtest_metric_value",
+    "pnl", "trades_count", "backtest_metric_value", "metric",
     "started_at", "finished_at", "error_msg",
     "created_at", "updated_at", "execution_service", "execution_pid", "version",
 )
@@ -121,6 +121,7 @@ def task_row_to_dict(row) -> Dict[str, Any]:
         "created_at": iso(d.get("created_at")),
         "updated_at": iso(d.get("updated_at")),
         "backtest_metric_value": _row_metric_value(d),
+        "metric": d.get("metric") or "sharpe",
     }
 
 

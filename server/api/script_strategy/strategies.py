@@ -11,6 +11,7 @@ REST 端点 (前缀 /api/script-strategy):
   POST   /strategies/{strategy_id}/backtest  单次回测 / 参数扫描 (生成批次, 转发 strategy_exec)
   GET    /strategies/{strategy_id}/batches   批次列表 (GROUP BY batch_no)
   GET    /strategies/{strategy_id}/batches/{batch_no}/tasks  批次内任务表格数据
+  POST   /strategies/{strategy_id}/batches/{batch_no}/retest  重测批次 (新 batch, 原批次废弃)
 
   POST   /strategies/{strategy_id}/live      实盘启动 (best_params 门禁, 转发 strategy_exec)
 
@@ -191,6 +192,75 @@ def batch_tasks_endpoint(
     if out is None:
         raise HTTPException(status_code=404, detail={"code": "STRATEGY_NOT_FOUND"})
     return out
+
+
+@router.post(
+    "/strategies/{strategy_id}/batches/{batch_no}/retest",
+    response_model=BacktestResponse,
+    status_code=202,
+)
+async def retest_batch_endpoint(
+    strategy_id: int, batch_no: int, user: User = Depends(get_current_user),
+):
+    """重测批次 (v124): 按原批次配置重建新批次 (新 batch_no), 原批次 task 全部废弃,
+    转发 strategy_exec 重新执行。运行中的批次返回 409 拒绝。
+    """
+    log.info("[retest] user=%s strategy_id=%d batch_no=%d", user.username, strategy_id, batch_no)
+    try:
+        batch = svc.retest_batch(strategy_id, batch_no, user.id, user.role == "admin")
+    except StrategyError as e:
+        code_map = {
+            "NO_STRATEGY": 404,
+            "BATCH_NOT_FOUND": 404,
+            "BATCH_RUNNING": 409,
+        }
+        raise HTTPException(
+            status_code=code_map.get(e.code, 400),
+            detail={"code": e.code, "msg": e.msg},
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail={"code": "INTERNAL", "msg": str(e)})
+
+    # 转发 strategy_exec (与原 backtest 提交一致)
+    if batch["mode"] == "sweep":
+        await _forward_run_sweep({
+            "user_id": user.id,
+            "strategy_id": strategy_id,
+            "script_id": batch["script_id"],
+            "stock_code": batch["stock_code"],
+            "backtest_start_date": batch["backtest_start_date"],
+            "backtest_end_date": batch["backtest_end_date"],
+            "batch_no": batch["batch_no"],
+            "param_ranges": batch["param_ranges"],
+            "metric": batch["metric"],
+            "concurrency": batch["concurrency"],
+            "period": batch["period"],
+            "task_ids": batch["task_ids"],
+        })
+    else:
+        await _forward_run_task(batch["task_ids"][0], {
+            "task_id": batch["task_ids"][0],
+            "user_id": user.id,
+            "strategy_id": strategy_id,
+            "script_id": batch["script_id"],
+            "stock_code": batch["stock_code"],
+            "mode": "backtest",
+            "params": batch["params"],
+            "backtest_start_date": batch["backtest_start_date"],
+            "backtest_end_date": batch["backtest_end_date"],
+            "period": batch["period"],
+            "fields": batch["fields"],
+        })
+
+    log.info("[retest] strategy_id=%d batch_no=%d→%d total_runs=%d forwarded OK",
+             strategy_id, batch_no, batch["batch_no"], batch["total_runs"])
+    return BacktestResponse(
+        batch_no=batch["batch_no"],
+        total_runs=batch["total_runs"],
+        mode=batch["mode"],
+        metric=batch["metric"],
+        over_soft_limit=batch["over_soft_limit"],
+    )
 
 
 # ─────────────── 实盘门禁 ───────────────
