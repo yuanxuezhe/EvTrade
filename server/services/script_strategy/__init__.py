@@ -3,7 +3,7 @@ server/services/script_strategy — script + strategy + task 业务服务层 (fa
 
 职责: Script/Strategy/Task CRUD (直接读写 strategy_script / strategy / strategy_task /
 strategy_script_audit) + 回测批次生成 (param_ranges 类型驱动)。纯回测 (v125): 实盘门禁已移除。
-运行时 (回测/实盘) 已迁移到独立服务 strategy_exec (2026-08-09 strategy-exec-service),
+运行时 (回测) 已迁移到独立服务 strategy_exec (2026-08-09 strategy-exec-service),
 本模块不启动任何引擎线程。
 
 外部唯一入口: `from server.services import script_strategy as svc`

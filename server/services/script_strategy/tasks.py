@@ -77,8 +77,8 @@ def create_task(
 ) -> Dict[str, Any]:
     """创建任务 (v123: 挂 strategy_id, 可带 batch_no).
 
-    创建不立即执行; 由 backtest/live 端点转发 strategy_exec 后异步运行。
-    批次任务由 strategies.create_backtest_batch / create_live_batch 复用本函数。
+    创建不立即执行; 由 backtest/retest 端点转发 strategy_exec 后异步运行。
+    批次任务由 batches.create_backtest_batch 复用本函数 (v125 纯回测)。
 
     Raises:
         ValueError: 策略不存在 / 权限
@@ -97,7 +97,7 @@ def create_task(
         "batch_no": batch_no,
         "description": description,
         "stock_code": stock_code,
-        "mode": mode,            # 创建时即定 mode (backtest/live 由 batch 语义决定)
+        "mode": mode,            # 创建时即定 mode (v125 纯回测: 仅 backtest)
         "status": status,
         "params": json_dumps(params),
         "period": period or "1d",

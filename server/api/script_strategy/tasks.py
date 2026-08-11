@@ -10,9 +10,9 @@ REST 端点 (前缀 /api/script-strategy):
   GET    /tasks/{id}/signals     信号流 + 进度时间轴
   GET    /tasks/{id}/audit       永久 audit
 
-v123: 任务创建统一走 /strategies/{id}/backtest (single/sweep) 与 /strategies/{id}/live,
+v123: 任务创建统一走 /strategies/{id}/backtest (single/sweep) (v125 纯回测, /live 已删),
 不再有 POST /tasks 与 /tasks/{id}/run(/run-sweep)。
-脚本端点见 scripts.py; 策略/回测/实盘见 strategies.py。
+脚本端点见 scripts.py; 策略/回测见 strategies.py。
 """
 import logging
 from typing import List, Optional
@@ -123,7 +123,7 @@ def get_task_signals_endpoint(
     """返任务的信号流 + 进度时间轴
 
     回测模式: 从 backtest_result.signal_log 返
-    实盘模式: 从 strategy_task.live_signals 返 (LiveRunner 每 5s flush)
+    v125 纯回测后 live_signals 为遗留读路径 (仅存量实盘任务)
     """
     out = svc.get_task_signals(task_id, user.id, user.role == "admin",
                                 type_filter=type_filter, limit=limit)
