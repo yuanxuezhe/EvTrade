@@ -144,6 +144,8 @@ def register_place(router):
             volume=adjusted,
         )
         # v66/v18: 补全 task_id + strategy_type (insert_pending_order 通用, 不含这俩)
+        #   v126 母单路径: signal_consumer 传 req.task_id=strategy_order.task_id,
+        #   req.strategy_type=2 (signal_consumer 已校验 parent_task_id 非空).
         if req.task_id is not None or req.strategy_type:
             order.task_id = req.task_id
             order.strategy_type = req.strategy_type

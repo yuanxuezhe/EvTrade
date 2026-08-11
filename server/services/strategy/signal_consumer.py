@@ -159,6 +159,33 @@ class SignalConsumer:
             payload.get("price", 0), payload.get("volume", 0), trace_id,
         )
 
+        # v126 母单归因: parent_task_id + strategy_name 从 payload 读
+        parent_task_id = payload.get("parent_task_id")
+        strategy_name = payload.get("strategy_name", "") or ""
+
+        # 决策 (D): live signal 缺 parent_task_id → INVALID_PARENT_TASK 业务错, ack 不重试
+        #   母单路径必带 parent_task_id; 缺字段说明 signal 链路被破坏.
+        #   历史 v66/v123 signal (无 mode 字段) 仍走原路径 — 下面条件: mode=='live' 才有此校验.
+        if mode == "live" and parent_task_id is None:
+            log.error(
+                "[signal_consumer] live signal missing parent_task_id: trace=%s task=%d (INVALID_PARENT_TASK, ack no retry)",
+                trace_id, payload.get("task_id"),
+            )
+            self._mark_processed(trace_id)
+            await message.ack()
+            return
+
+        # 归因字段: 母单路径 → orders.task_id=parent_task_id / user_def=strategy_name / strategy_type=2
+        #         旧路径    → task_id=None / user_def='' / strategy_type=1
+        if parent_task_id is not None:
+            order_task_id = int(parent_task_id)
+            order_user_def = strategy_name
+            order_strategy_type = 2  # v126 策略下单
+        else:
+            order_task_id = None
+            order_user_def = ""
+            order_strategy_type = 1  # v66+ 默认
+
         # 转下单参数
         order_type = "23" if signal_type == "BUY" else "24"
         price_type = 44 if payload.get("price_type", "limit") == "market" else 11  # FIX
@@ -172,12 +199,17 @@ class SignalConsumer:
                     "price": payload.get("price"),
                     "volume": payload.get("volume"),
                     "remark": f"strategy-{payload.get('task_id')}-{trace_id[:8]}",
-                    "strategy_type": 1,  # 标记: 策略触发单 (v66+ 字段)
+                    "strategy_type": order_strategy_type,
+                    "task_id": order_task_id,           # v126: 母单 → strategy_order.task_id; 旧 → None
+                    "user_def": order_user_def,         # v126: 母单 → strategy_name; 旧 → ''
                 },
             )
             self._mark_processed(trace_id)
             await message.ack()
-            log.info("[signal_consumer] order placed: trace=%s", trace_id)
+            log.info(
+                "[signal_consumer] order placed: trace=%s task_id=%s strategy_type=%d user_def=%r",
+                trace_id, order_task_id, order_strategy_type, order_user_def,
+            )
         except httpx.HTTPStatusError as e:
             log.error("[signal_consumer] place_order failed (HTTP %d): %s", e.response.status_code, e.response.text)
             # 400/422 业务错 → ack 不重试 (避免无效消息反复跑)

@@ -111,7 +111,7 @@ class Order(Base):
     order_time = Column(String(23), nullable=False, default="")  # v10: "YYYY-MM-DD HH:MM:SS.fff"
     raw_id = Column(String(8), nullable=True)  # v13 NEW: cancel-row 写 = 原 order_no；普通行 NULL
     task_id = Column(Integer, nullable=True)    # v18 NEW: 关联 t0_tasks.id；NULL = 无显式 task
-    strategy_type = Column(Integer, nullable=False, default=0)  # v66 NEW: REQ-TRADE-026; 0=普通单 1=快速做T
+    strategy_type = Column(Integer, nullable=False, default=0)  # v66 NEW: REQ-TRADE-026; 0=普通单 1=快速做T; v126 +2=策略下单 (task_id=strategy_order.task_id)
     created_at = Column(DateTime, nullable=False, default=_utcnow)
     updated_at = Column(
         DateTime, nullable=False, default=_utcnow, onupdate=_utcnow

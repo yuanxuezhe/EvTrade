@@ -25,7 +25,8 @@ class PlaceOrderRequest(BaseModel):
     volume: int
     t0_coefficient: float = 1.0
     task_id: Optional[int] = None  # v18: 关联 t0_tasks.id (None = 游离单)
-    strategy_type: Literal[0, 1] = 0  # v66: REQ-TRADE-026; 0=普通单(Trade.vue) 1=快速做T(T0Trade.vue)
+    # v66 REQ-TRADE-026; v126 扩展 +2=策略下单 (母单 strategy_order 子单)
+    strategy_type: Literal[0, 1, 2] = 0
 
 
 class OrderOut(BaseModel):
@@ -48,7 +49,8 @@ class OrderOut(BaseModel):
     order_time: str
     raw_id: Optional[str] = None  # v13 NEW: cancel-row 写 = 原 order_no；普通行 None
     task_id: Optional[int] = None  # v18 NEW: 关联 t0_tasks.id (None = 游离单)
-    strategy_type: int = 0  # v66 NEW: REQ-TRADE-026; 0=普通单 1=快速做T
+    # v66 NEW: REQ-TRADE-026; 0=普通单 1=快速做T; v126 +2=策略下单 (orders.task_id = 母单 strategy_order.task_id)
+    strategy_type: int = 0
 
 
 class PlaceOrderResponse(BaseModel):
