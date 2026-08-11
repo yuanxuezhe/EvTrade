@@ -82,12 +82,18 @@
             <el-tag size="small" :type="row.mode === 'live' ? 'danger' : 'info'">
               {{ row.mode === 'live' ? '实盘' : '回测' }}
             </el-tag>
+            <el-tag v-if="row.abandoned" size="small" type="info" effect="dark">已废弃</el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="任务" width="110">
+        <el-table-column label="任务" width="120">
           <template #default="{ row }">
-            <span>{{ row.finished_count }}/{{ row.task_count }} 完成</span>
-            <el-tag v-if="row.failed_count" size="small" type="danger">{{ row.failed_count }} 失败</el-tag>
+            <template v-if="row.abandoned">
+              <span class="st-muted">{{ row.abandoned_count }}/{{ row.task_count }} 已废弃</span>
+            </template>
+            <template v-else>
+              <span>{{ row.finished_count }}/{{ row.task_count }} 完成</span>
+              <el-tag v-if="row.failed_count" size="small" type="danger">{{ row.failed_count }} 失败</el-tag>
+            </template>
           </template>
         </el-table-column>
         <el-table-column label="最优指标" width="110" align="right">
@@ -102,6 +108,18 @@
           <template #default="{ row }">
             <code v-if="row.best_params" class="st-best-code">{{ JSON.stringify(row.best_params) }}</code>
             <span v-else class="st-muted">—</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="80" fixed="right">
+          <template #default="{ row }">
+            <el-button
+              size="small"
+              link
+              type="primary"
+              :disabled="!_canRetest(row)"
+              @click.stop="onRetest(row)"
+              data-el="st-retest"
+            >重测</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -371,6 +389,34 @@ async function onStopTask() {
     await loadDetail()
   } catch (e) {
     ElMessage.error('停止失败: ' + _errMsg(e))
+  }
+}
+
+// v124 重测: 仅回测批次 (非 live), 且批次无运行中/排队 task
+function _canRetest(batch) {
+  if (!batch || batch.mode === 'live') return false
+  const running = (batch.task_count || 0) - (batch.finished_count || 0)
+    - (batch.failed_count || 0) - (batch.abandoned_count || 0)
+  return running <= 0
+}
+
+async function onRetest(batch) {
+  const { value } = await ElMessageBox.confirm(
+    `按原配置重测批次 #${batch.batch_no}？将生成新批次重新执行, 原批次任务将废弃。`,
+    '重测批次',
+    { confirmButtonText: '重测', cancelButtonText: '取消', type: 'warning' },
+  ).catch(() => ({}))
+  if (!value) return
+  try {
+    const res = await scriptStrategyApi.retestBatch(strategyId.value, batch.batch_no)
+    ElMessage.success(`重测已提交, 新批次 #${res.batch_no} (${res.total_runs} 个任务)`)
+    await reloadAll()
+    if (res.batch_no != null) {
+      selectedBatchNo.value = res.batch_no
+      await loadBatchTasks()
+    }
+  } catch (e) {
+    ElMessage.error('重测失败: ' + _errMsg(e))
   }
 }
 

@@ -116,6 +116,7 @@ function _statusType(s) {
     finished: 'success',
     failed: 'danger',
     stopped: 'primary',
+    abandoned: 'info',
   }[s] || 'primary'
 }
 function _statusLabel(s) {
@@ -125,6 +126,7 @@ function _statusLabel(s) {
     finished: '完成',
     failed: '失败',
     stopped: '已停',
+    abandoned: '已废弃',
   }[s] || (s || '—')
 }
 

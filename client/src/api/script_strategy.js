@@ -94,6 +94,12 @@ export const scriptStrategyApi = {
     return data
   },
 
+  // v124: 重测批次 (新 batch, 原批次 task 废弃)
+  async retestBatch(id, batchNo) {
+    const { data } = await http.post(`/script-strategy/strategies/${id}/batches/${batchNo}/retest`)
+    return data
+  },
+
   // ─────────────── 实盘门禁 (v123) ───────────────
 
   async startLive(id, payload) {
