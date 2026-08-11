@@ -26,7 +26,7 @@ from server.services import script_strategy as svc  # noqa: E402
 from server.services.script_strategy import scripts as scripts_svc  # noqa: E402
 from server.services.script_strategy.strategies import StrategyError  # noqa: E402
 from server.tables import Strategy, StrategyTask, StrategyScript  # noqa: E402
-from server.services.script_strategy._convert import json_dumps  # noqa: E402
+from server.services.script_strategy._convert import json_dumps, json_loads  # noqa: E402
 
 # 唯一的测试用户/脚本前缀 (避免与真实数据碰撞)
 UID = 990010002
@@ -231,6 +231,133 @@ def test_list_batch_tasks_sorted(strategy_ctx):
     ids = [t["id"] for t in tasks]
     assert ids == sorted(ids)
     assert [t["mode"] for t in tasks] == ["backtest", "backtest"]
+
+
+# ─────────────── 批次重测 (v124) ───────────────
+
+def _finish_task(task_id: int, metric_value: float = 0.5, result: dict = None):
+    StrategyTask.update_one({
+        "status": "finished",
+        "backtest_result": json_dumps(result or {"sharpe": metric_value}),
+        "backtest_metric_value": metric_value,
+    }, id=task_id)
+
+
+def test_retest_single_creates_new_batch_abandons_old(strategy_ctx):
+    b = svc.create_backtest_batch(
+        UID, strategy_ctx["strategy_id"], mode="single",
+        stock_code="600519.SH", backtest_start_date="20260101", backtest_end_date="20260131",
+        params={"fast": 3, "slow": 2},
+    )
+    _finish_task(b["task_ids"][0])
+
+    r = svc.retest_batch(strategy_ctx["strategy_id"], b["batch_no"], UID)
+    assert r["mode"] == "single"
+    assert r["total_runs"] == 1
+    assert r["batch_no"] != b["batch_no"]
+    # 原任务废弃, 新批次 1 个 queued task (同 params)
+    old = StrategyTask.query_one(id=b["task_ids"][0])._data
+    assert old["status"] == "abandoned"
+    new = StrategyTask.query_one(id=r["task_ids"][0])._data
+    assert new["status"] == "queued"
+    assert json_loads(new["params"]) == {"fast": 3, "slow": 2}
+    assert new["batch_no"] == r["batch_no"]
+
+
+def test_retest_sweep_preserves_metric_and_grid(strategy_ctx):
+    b = svc.create_backtest_batch(
+        UID, strategy_ctx["strategy_id"], mode="sweep",
+        stock_code="600519.SH", backtest_start_date="20260101", backtest_end_date="20260131",
+        param_ranges={"fast": {"type": "int", "start": 1, "end": 3, "step": 1}},
+        metric="total_return", concurrency=2,
+    )
+    for tid in b["task_ids"]:
+        _finish_task(tid)
+
+    r = svc.retest_batch(strategy_ctx["strategy_id"], b["batch_no"], UID)
+    assert r["mode"] == "sweep"
+    assert r["total_runs"] == 3
+    assert r["metric"] == "total_return"          # metric 忠实还原
+    # param_ranges 去重重建: 参与扫描的 fast=3 值; 未参与字段走 default (slow/mode)
+    # 与 strategy_exec iter_param_ranges 兼容 → count 精确 = 3
+    assert r["param_ranges"]["fast"] == {"type": "choice", "values": [1, 2, 3]}
+    from server.services.script_strategy.params import expand_param_ranges
+    assert expand_param_ranges(r["param_ranges"], SCHEMA)["total_runs"] == 3
+    # 新 task 也带 metric
+    assert StrategyTask.query_one(id=r["task_ids"][0])._data["metric"] == "total_return"
+    # 原批次全部废弃
+    for tid in b["task_ids"]:
+        assert StrategyTask.query_one(id=tid)._data["status"] == "abandoned"
+
+
+def test_retest_running_batch_blocked(strategy_ctx):
+    b = svc.create_backtest_batch(
+        UID, strategy_ctx["strategy_id"], mode="single",
+        stock_code="600519.SH", backtest_start_date="20260101", backtest_end_date="20260131",
+        params={"fast": 3, "slow": 2},
+    )
+    # 默认 queued → 视为运行中, 禁止重测
+    with pytest.raises(StrategyError) as ei:
+        svc.retest_batch(strategy_ctx["strategy_id"], b["batch_no"], UID)
+    assert ei.value.code == "BATCH_RUNNING"
+    # 不生成新批次, 原任务不废弃
+    assert StrategyTask.query_one(id=b["task_ids"][0])._data["status"] == "queued"
+
+
+def test_retest_live_batch_rejected(strategy_ctx):
+    b = svc.create_backtest_batch(
+        UID, strategy_ctx["strategy_id"], mode="single",
+        stock_code="600519.SH", backtest_start_date="20260101", backtest_end_date="20260131",
+        params={"fast": 3, "slow": 2},
+    )
+    _finish_task(b["task_ids"][0])
+    StrategyTask.update_one({"mode": "live"}, id=b["task_ids"][0])
+    with pytest.raises(StrategyError) as ei:
+        svc.retest_batch(strategy_ctx["strategy_id"], b["batch_no"], UID)
+    assert ei.value.code == "NOT_RETESTABLE"
+
+
+def test_retest_missing_batch_raises(strategy_ctx):
+    with pytest.raises(StrategyError) as ei:
+        svc.retest_batch(strategy_ctx["strategy_id"], 99999999, UID)
+    assert ei.value.code == "BATCH_NOT_FOUND"
+
+
+def test_list_batches_marks_abandoned(strategy_ctx):
+    b = svc.create_backtest_batch(
+        UID, strategy_ctx["strategy_id"], mode="single",
+        stock_code="600519.SH", backtest_start_date="20260101", backtest_end_date="20260131",
+        params={"fast": 3, "slow": 2},
+    )
+    _finish_task(b["task_ids"][0])
+    svc.retest_batch(strategy_ctx["strategy_id"], b["batch_no"], UID)
+
+    batches = svc.list_batches(strategy_ctx["strategy_id"], UID)
+    old = next(x for x in batches if x["batch_no"] == b["batch_no"])
+    new = max(batches, key=lambda x: x["batch_no"])
+    # 原批次: 全废弃, finished=0, best 空
+    assert old["abandoned"] is True
+    assert old["abandoned_count"] == 1
+    assert old["finished_count"] == 0
+    assert old["best_params"] is None
+    # 新批次: 未废弃, 有 metric
+    assert new["abandoned"] is False
+    assert new["metric"] == "sharpe"
+
+
+def test_batch_metric_persisted_at_creation(strategy_ctx):
+    """create_backtest_batch 落库 metric → list_batches / retest 可读."""
+    b = svc.create_backtest_batch(
+        UID, strategy_ctx["strategy_id"], mode="sweep",
+        stock_code="600519.SH", backtest_start_date="20260101", backtest_end_date="20260131",
+        param_ranges={"fast": {"type": "int", "start": 1, "end": 3, "step": 1}},
+        metric="total_return",
+    )
+    for tid in b["task_ids"]:
+        assert StrategyTask.query_one(id=tid)._data["metric"] == "total_return"
+    batches = svc.list_batches(strategy_ctx["strategy_id"], UID)
+    bb = next(x for x in batches if x["batch_no"] == b["batch_no"])
+    assert bb["metric"] == "total_return"
 
 
 # ─────────────── 实盘门禁 ───────────────
