@@ -208,6 +208,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Refresh } from '@element-plus/icons-vue'
 import { scriptStrategyApi } from '../api/script_strategy'
 import { useWsStore } from '../stores/ws'
+import { useAuthStore } from '../stores/auth'
 import BacktestForm from '../components/strategy/BacktestForm.vue'
 import BatchTasksTable from '../components/strategy/BatchTasksTable.vue'
 import TaskDetail from '../components/strategy/TaskDetail.vue'
@@ -228,7 +229,7 @@ const createOpen = ref(false)
 const creating = ref(false)
 const backtestVisible = ref(false)
 const createForm = ref({ name: '', script_id: null, stock_code: '' })
-const currentUserId = ref(null)   // localStorage user.id (owner 判断)
+const currentUserId = ref(null)   // auth store user.id (owner 判断)
 
 const wsStore = useWsStore()
 
@@ -481,12 +482,7 @@ function _scheduleReloadTasks() {
 }
 
 onMounted(async () => {
-  try {
-    const u = JSON.parse(localStorage.getItem('user') || '{}')
-    currentUserId.value = u.id || null
-  } catch (e) {
-    currentUserId.value = null
-  }
+  currentUserId.value = Number(useAuthStore().user?.id) || null
   await loadStrategies()
   if (strategyId.value != null) {
     await loadStrategyDetail()

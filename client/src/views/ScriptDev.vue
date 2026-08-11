@@ -201,11 +201,12 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, nextTick } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Refresh, Delete, Document, VideoPlay } from '@element-plus/icons-vue'
 import { scriptStrategyApi } from '../api/script_strategy'
+import { useAuthStore } from '../stores/auth'
 
 const router = useRouter()
 
@@ -247,13 +248,8 @@ async function loadScripts() {
     // v90+: filterMode 决定 only_mine 参数
     const only_mine = filterMode.value === 'mine' ? 'true' : undefined
     scripts.value = await scriptStrategyApi.listScripts(only_mine)
-    // 记录当前用户 ID (用于显示 owner tag)
-    try {
-      const u = JSON.parse(localStorage.getItem('user') || '{}')
-      currentUserId.value = u.id || null
-    } catch (e) {
-      currentUserId.value = null
-    }
+    // 记录当前用户 ID (单一来源: auth store, 用于显示 owner tag / 只读判定)
+    currentUserId.value = Number(useAuthStore().user?.id) || null
   } catch (e) {
     // 错误已由 axios 拦截器弹出
   } finally {
