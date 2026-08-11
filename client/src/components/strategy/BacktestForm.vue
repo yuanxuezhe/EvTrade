@@ -5,6 +5,7 @@
   Props:
     - schema: Array<{key, type, min, max, step, default, values}>  脚本 params_schema
     - visible: Boolean  抽屉显隐
+    - stockCode: String  策略绑定标的 (v125, 只读展示; 空 → 存量 NULL 策略, 用输入框兜底)
   Emits:
     - update:visible(Boolean)
     - submit({ mode, stock_code, backtest_start_date, backtest_end_date,
@@ -29,7 +30,10 @@
       </el-form-item>
 
       <el-form-item label="标的">
-        <el-input v-model="stock_code" placeholder="如 600519.SH" data-el="bf-stock" />
+        <template v-if="stockCode">
+          <span class="bf-stock-bound" data-el="bf-stock">{{ stockCode }}</span>
+        </template>
+        <el-input v-else v-model="stock_code" placeholder="如 600519.SH" data-el="bf-stock" />
       </el-form-item>
 
       <el-form-item label="回测起止">
@@ -150,6 +154,7 @@ import { ElMessage } from 'element-plus'
 const props = defineProps({
   schema: { type: Array, default: () => [] },
   visible: { type: Boolean, default: false },
+  stockCode: { type: String, default: '' },  // v125 策略绑定标的 (只读展示)
 })
 const emit = defineEmits(['update:visible', 'submit'])
 
@@ -244,21 +249,18 @@ const _comboClass = computed(() => {
 })
 
 function onSubmit() {
-  if (!stock_code.value) {
-    ElMessage.warning('请填写标的代码')
-    return
-  }
   if (!dateRange.value || !dateRange.value[0] || !dateRange.value[1]) {
     ElMessage.warning('请选择回测起止日期')
     return
   }
   const payload = {
     mode: mode.value,
-    stock_code: stock_code.value,
     backtest_start_date: dateRange.value[0],
     backtest_end_date: dateRange.value[1],
     period: period.value,
   }
+  // v125: 标的由策略绑定; 仅存量 NULL 策略用输入兜底
+  if (stock_code.value) payload.stock_code = stock_code.value
   if (mode.value === 'single') {
     payload.params = { ...singleParams.value }
   } else {
@@ -320,4 +322,5 @@ function onSubmit() {
 .bf-combo-warn { color: #e6a23c; }
 .bf-combo-bad { color: #f56c6c; }
 .bf-actions { margin-top: 16px; text-align: right; }
+.bf-stock-bound { font-weight: 600; color: var(--text-secondary); }
 </style>
