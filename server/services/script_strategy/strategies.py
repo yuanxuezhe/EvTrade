@@ -1,8 +1,8 @@
 """
 server/services/script_strategy/strategies.py — 策略 CRUD (v123)
 
-职责单一: Strategy 实体 CRUD + 策略访问辅助 (解析所属脚本 / 派生自公开脚本判定)。
-- 建策略仅 {name, script_id}, 不填参数、不定模式
+职责单一: Strategy 实体 CRUD; 可见性判定委托 access.py (显式 is_public, v125)。
+- 建策略必填 {name, script_id, stock_code} (绑定标的), 不填参数、不定模式
 - 回测批次 / 实盘门禁在 batches.py; param_ranges 展开在 params.py; 错误类型在 errors.py
 
 外部兼容: `from ...strategies import StrategyError` 仍可用 (re-export)。
@@ -15,6 +15,10 @@ from server.services.script_strategy._convert import (
     strategy_row_to_dict,
 )
 from server.services.script_strategy.errors import StrategyError
+from server.services.script_strategy.access import (
+    public_view,
+    strategy_is_public,
+)
 
 
 def _resolve_script(owner_user_id: int, script_id: str) -> Optional[Dict[str, Any]]:
@@ -29,35 +33,19 @@ def _resolve_script(owner_user_id: int, script_id: str) -> Optional[Dict[str, An
     return None
 
 
-def _strategy_public_derived(strat) -> bool:
-    """策略派生自公开脚本 → 对其他用户可见"""
-    from server.tables import StrategyScript
-    d = getattr(strat, "_data", {})
-    script = StrategyScript.query_one(user_id=d.get("user_id"), id=d.get("script_id"))
-    if script is not None:
-        return bool(getattr(script, "_data", {}).get("is_public"))
-    return False
-
-
 def list_strategies(
     user_id: int, is_admin: bool = False,
     status: Optional[str] = None, only_mine: bool = False,
 ) -> List[Dict[str, Any]]:
-    """列策略: 自己的 + 派生自公开脚本的 (admin 看全部)"""
-    from server.tables import Strategy, StrategyScript
+    """列策略: 自己的 (全量) + 他人公开的 (精简视图); admin 看全部 (全量)."""
+    from server.tables import Strategy
     if is_admin:
         rows = Strategy.query_all(order="desc")
     else:
         rows = Strategy.query_by_fields({"user_id": user_id})
         if not only_mine:
-            public_script_ids = {
-                r._data.get("id") for r in StrategyScript.query_by_fields({"is_public": 1})
-            }
-            for r in Strategy.query_all(order="desc"):
-                d = r._data
-                if d.get("user_id") == user_id:
-                    continue  # 已在 rows
-                if d.get("script_id") in public_script_ids:
+            for r in Strategy.query_by_fields({"is_public": 1}):
+                if r._data.get("user_id") != user_id:
                     rows.append(r)
         rows.sort(key=lambda r: getattr(r, "_data", {}).get("strategy_id", 0), reverse=True)
     out = []
@@ -65,29 +53,34 @@ def list_strategies(
         d = strategy_row_to_dict(r)
         if status and d.get("status") != status:
             continue
-        out.append(d)
+        if not is_admin and d.get("user_id") != user_id:
+            out.append(public_view(r))   # 他人公开策略 → 精简
+        else:
+            out.append(d)
     return out
 
 
 def get_strategy(strategy_id: int, user_id: int, is_admin: bool = False) -> Optional[Dict[str, Any]]:
-    """策略详情 (含所属脚本信息)"""
-    from server.tables import Strategy
-    row = Strategy.query_one(strategy_id=strategy_id)
+    """策略详情: owner/admin 返回完整 (含脚本); 他人公开返回精简视图; 他人私有/不存在 → None."""
+    from server.services.script_strategy.access import resolve_strategy
+    row = resolve_strategy(strategy_id, user_id, is_admin=is_admin)
     if row is None:
         return None
     d = strategy_row_to_dict(row)
-    if not is_admin and d.get("user_id") != user_id and not _strategy_public_derived(row):
-        return None
+    if not is_admin and d.get("user_id") != user_id:
+        return public_view(row)   # 他人公开策略 → 精简视图 (无 script/best_params)
     d["script"] = _resolve_script(d.get("user_id"), d.get("script_id"))
     return d
 
 
-def create_strategy(user_id: int, name: str, script_id: str) -> Dict[str, Any]:
-    """创建策略 (仅 {name, script_id}, 不填参数、不定模式)
+def create_strategy(user_id: int, name: str, script_id: str, stock_code: str) -> Dict[str, Any]:
+    """创建策略 (必须绑定标的 stock_code, 只针对此标的回测).
 
     Raises:
-        StrategyError: 脚本不存在/不可用
+        StrategyError: MISSING_STOCK / NO_SCRIPT
     """
+    if not stock_code or not stock_code.strip():
+        raise StrategyError("MISSING_STOCK", "新建策略必须指定标的 stock_code")
     from server.tables import Strategy
     from server.services.script_strategy.scripts import get_script
     script = get_script(script_id, user_id, is_admin=False)
@@ -99,6 +92,8 @@ def create_strategy(user_id: int, name: str, script_id: str) -> Dict[str, Any]:
         "script_id": script_id,
         "name": name,
         "status": "draft",
+        "is_public": 0,
+        "stock_code": stock_code.strip(),
         "best_params": None,
         "created_at": now,
         "updated_at": now,
@@ -121,6 +116,8 @@ def update_strategy(
     for k in ("name", "status"):
         if k in patch and patch[k] is not None:
             update_data[k] = patch[k]
+    if "is_public" in patch and patch["is_public"] is not None:
+        update_data["is_public"] = 1 if patch["is_public"] else 0
     if update_data:
         update_data["updated_at"] = datetime.now()
         Strategy.update_one(update_data, strategy_id=strategy_id)

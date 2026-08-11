@@ -88,7 +88,7 @@ def test_multi_generator_independent():
 def test_single_backtest_one_task_queryable():
     script_id = _new_script_id()
     scripts_svc.create_script(UID, script_id, "def init(self): pass", SCHEMA)
-    strat = svc.create_strategy(UID, "回归策略", script_id)
+    strat = svc.create_strategy(UID, "回归策略", script_id, stock_code="600519.SH")
     sid = strat["strategy_id"]
 
     b = svc.create_backtest_batch(

@@ -30,6 +30,7 @@ from server.services.script_strategy._convert import json_dumps, json_loads  # n
 
 # 唯一的测试用户/脚本前缀 (避免与真实数据碰撞)
 UID = 990010002
+UID2 = 990010003
 
 SCHEMA = [
     {"key": "fast", "type": "int", "min": 1, "max": 5, "step": 1, "default": 3},
@@ -59,8 +60,10 @@ def _cleanup_user(user_id: int) -> None:
 @pytest.fixture(autouse=True)
 def _clean(scope="function"):
     _cleanup_user(UID)
+    _cleanup_user(UID2)
     yield
     _cleanup_user(UID)
+    _cleanup_user(UID2)
 
 
 @pytest.fixture
@@ -68,7 +71,7 @@ def strategy_ctx():
     """脚本 + 策略 (同一测试用户), 返回 dict."""
     script_id = _new_script_id()
     scripts_svc.create_script(UID, script_id, "def init(self): pass", SCHEMA)
-    strat = svc.create_strategy(UID, f"ut策略-{script_id}", script_id)
+    strat = svc.create_strategy(UID, f"ut策略-{script_id}", script_id, stock_code="600519.SH")
     return {"user_id": UID, "script_id": script_id, "strategy_id": strat["strategy_id"]}
 
 
@@ -84,7 +87,7 @@ def test_create_strategy_draft_no_params(strategy_ctx):
 
 def test_create_strategy_no_script_raises():
     with pytest.raises(StrategyError) as ei:
-        svc.create_strategy(UID, "nope", "ut_不存在_脚本")
+        svc.create_strategy(UID, "nope", "ut_不存在_脚本", stock_code="600519.SH")
     assert ei.value.code == "NO_SCRIPT"
 
 
@@ -358,6 +361,78 @@ def test_batch_metric_persisted_at_creation(strategy_ctx):
     batches = svc.list_batches(strategy_ctx["strategy_id"], UID)
     bb = next(x for x in batches if x["batch_no"] == b["batch_no"])
     assert bb["metric"] == "total_return"
+
+
+# ─────────────── 可见性/权限 (v125) ───────────────
+
+def test_create_strategy_requires_stock():
+    with pytest.raises(StrategyError) as ei:
+        svc.create_strategy(UID, "x", "ut_不存在_脚本", stock_code="")
+    assert ei.value.code == "MISSING_STOCK"
+
+
+def test_create_strategy_binds_stock(strategy_ctx):
+    d = svc.get_strategy(strategy_ctx["strategy_id"], UID)
+    assert d["stock_code"] == "600519.SH"
+    assert d["is_public"] is False
+
+
+def test_update_is_public_owner_only(strategy_ctx):
+    # 他人不能改公开开关
+    assert svc.update_strategy(strategy_ctx["strategy_id"], UID2, False, {"is_public": True}) is None
+    assert svc.get_strategy(strategy_ctx["strategy_id"], UID)["is_public"] is False
+    # owner 可改
+    d = svc.update_strategy(strategy_ctx["strategy_id"], UID, False, {"is_public": True})
+    assert d["is_public"] is True
+
+
+def test_list_strategies_others_public_lean(strategy_ctx):
+    svc.update_strategy(strategy_ctx["strategy_id"], UID, False, {"is_public": True})
+    items = svc.list_strategies(UID2)
+    assert len(items) == 1
+    d = items[0]
+    assert d["strategy_id"] == strategy_ctx["strategy_id"]
+    assert "script" not in d
+    assert "best_params" not in d
+    assert d["is_public"] is True
+    assert d["stock_code"] == "600519.SH"
+
+
+def test_list_strategies_others_private_hidden(strategy_ctx):
+    assert svc.list_strategies(UID2) == []
+
+
+def test_get_strategy_others_public_lean(strategy_ctx):
+    svc.update_strategy(strategy_ctx["strategy_id"], UID, False, {"is_public": True})
+    d = svc.get_strategy(strategy_ctx["strategy_id"], UID2)
+    assert d is not None
+    assert "script" not in d
+    assert "best_params" not in d
+
+
+def test_get_strategy_others_private_none(strategy_ctx):
+    assert svc.get_strategy(strategy_ctx["strategy_id"], UID2) is None
+
+
+def test_backtest_others_private_no_strategy(strategy_ctx):
+    with pytest.raises(StrategyError) as ei:
+        svc.create_backtest_batch(
+            UID2, strategy_ctx["strategy_id"], mode="single",
+            stock_code="600519.SH", backtest_start_date="20260101", backtest_end_date="20260131",
+            params={"fast": 3, "slow": 2},
+        )
+    assert ei.value.code == "NO_STRATEGY"
+
+
+def test_backtest_others_public_forbidden(strategy_ctx):
+    svc.update_strategy(strategy_ctx["strategy_id"], UID, False, {"is_public": True})
+    with pytest.raises(StrategyError) as ei:
+        svc.create_backtest_batch(
+            UID2, strategy_ctx["strategy_id"], mode="single",
+            stock_code="600519.SH", backtest_start_date="20260101", backtest_end_date="20260131",
+            params={"fast": 3, "slow": 2},
+        )
+    assert ei.value.code == "BACKTEST_FORBIDDEN"
 
 
 # ─────────────── 实盘门禁 ───────────────

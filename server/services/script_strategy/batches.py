@@ -20,23 +20,9 @@ from server.services.script_strategy._convert import (
 )
 from server.services.script_strategy.errors import StrategyError
 from server.services.script_strategy.params import expand_param_ranges, validate_params_keys
-from server.services.script_strategy.strategies import (
-    _resolve_script,
-    _strategy_public_derived,
-)
+from server.services.script_strategy.access import require_backtest_access
+from server.services.script_strategy.strategies import _resolve_script
 from server.services.script_strategy.tasks import create_task
-
-
-def _require_owned_strategy(strategy_id: int, user_id: int, is_admin: bool = False):
-    """取策略行; 不存在/非本人(且非 admin 派生公开) 返回 None, 否则返回 Strategy row."""
-    from server.tables import Strategy
-    strat = Strategy.query_one(strategy_id=strategy_id)
-    if strat is None:
-        return None
-    if not is_admin and getattr(strat, "_data", {}).get("user_id") != user_id \
-            and not _strategy_public_derived(strat):
-        return None
-    return strat
 
 
 def create_backtest_batch(
@@ -67,9 +53,7 @@ def create_backtest_batch(
     """
     from server.services.script_strategy.scripts import get_script
 
-    strat = _require_owned_strategy(strategy_id, user_id)
-    if strat is None:
-        raise StrategyError("NO_STRATEGY", f"strategy_id {strategy_id} 不存在或无权访问")
+    strat = require_backtest_access(strategy_id, user_id)
     sd = strat._data
     script = get_script(sd.get("script_id"), user_id, is_admin=False)
     if script is None:
@@ -145,9 +129,7 @@ def list_batches(
     finished/failed/best; 批次行标 abandoned=True + abandoned_count。
     """
     from server.tables import StrategyTask
-    strat = _require_owned_strategy(strategy_id, user_id, is_admin=is_admin)
-    if strat is None:
-        return None
+    strat = require_backtest_access(strategy_id, user_id, is_admin=is_admin)
 
     # 轻量列 (TASK_LIST_COLUMNS): 免拖回 backtest_result 大 blob,
     # 否则 SELECT * + ORDER BY 报 MySQL 1038 'Out of sort memory' (500)。
@@ -195,9 +177,7 @@ def list_batch_tasks(
 ) -> Optional[List[Dict[str, Any]]]:
     """批次内任务表格数据 (按 id 升序)"""
     from server.tables import StrategyTask
-    strat = _require_owned_strategy(strategy_id, user_id, is_admin=is_admin)
-    if strat is None:
-        return None
+    strat = require_backtest_access(strategy_id, user_id, is_admin=is_admin)
     rows = StrategyTask.query_by_fields(
         {"strategy_id": strategy_id, "batch_no": batch_no},
         columns=TASK_LIST_COLUMNS,
@@ -240,9 +220,7 @@ def retest_batch(
     """
     from server.tables import StrategyTask
 
-    strat = _require_owned_strategy(strategy_id, user_id, is_admin=is_admin)
-    if strat is None:
-        raise StrategyError("NO_STRATEGY", f"strategy_id {strategy_id} 不存在或无权访问")
+    strat = require_backtest_access(strategy_id, user_id, is_admin=is_admin)
     sd = strat._data
 
     # 1. 读原批次 task (轻量列)
@@ -321,9 +299,7 @@ def create_live_batch(
     """
     from server.services.script_strategy.scripts import get_script
 
-    strat = _require_owned_strategy(strategy_id, user_id)
-    if strat is None:
-        raise StrategyError("NO_STRATEGY", f"strategy_id {strategy_id} 不存在或无权访问")
+    strat = require_backtest_access(strategy_id, user_id)
     sd = strat._data
     best_params = json_loads(sd.get("best_params"))
     if not best_params:
