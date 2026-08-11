@@ -87,7 +87,9 @@ const menuItems = computed(() => {
     { path: '/t0-trade', label: '快速做T', icon: Coin },
     // script-strategy change: 2 个新入口 (前端写脚本 + 跑任务)
     { path: '/script-dev', label: '策略开发', icon: EditPen },
-    { path: '/script-task', label: '策略运行', icon: DataLine }
+    { path: '/script-task', label: '策略运行', icon: DataLine },
+    // v126: 策略下单母单 (实盘下单入口)
+    { path: '/strategy-order', label: '策略下单', icon: DataAnalysis }
   ]
   if (authStore.isAdmin) {
     base.push({ divider: true, label: '系统管理' })

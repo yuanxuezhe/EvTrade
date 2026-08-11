@@ -11,6 +11,8 @@ const Asset = () => import('../views/Asset.vue')
 // script-strategy change: 前端编写 Python 脚本 + 回测 + 实盘
 const ScriptDev = () => import('../views/ScriptDev.vue')
 const ScriptTask = () => import('../views/ScriptTask.vue')
+// v126: 策略下单母单管理 (4 面板, 拆 5 子组件, 由 StrategyOrder.vue 编排)
+const StrategyOrder = () => import('../views/StrategyOrder.vue')
 const Users = () => import('../views/Users.vue')
 const Profile = () => import('../views/Profile.vue')
 const SystemInit = () => import('../views/SystemInit.vue')
@@ -47,6 +49,8 @@ const routes = [
   // script-strategy change: 2 个新页面
   { path: '/script-dev', name: 'ScriptDev', component: ScriptDev, meta: { title: '策略开发', requiresTrader: true } },
   { path: '/script-task', name: 'ScriptTask', component: ScriptTask, meta: { title: '策略运行', requiresTrader: true } },
+  // v126: 策略下单母单 (实盘下单入口, 仿 ScriptTask 路由)
+  { path: '/strategy-order', name: 'StrategyOrder', component: StrategyOrder, meta: { title: '策略下单', requiresTrader: true } },
   {
     path: '/users',
     name: 'Users',

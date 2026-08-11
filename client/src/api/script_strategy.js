@@ -131,4 +131,41 @@ export const scriptStrategyApi = {
     const { data } = await http.get(`/script-strategy/tasks/${id}/signals`, { params })
     return data
   },
+
+  // ─────────────── 策略下单母单 (v126) ───────────────
+
+  async createStrategyOrder(strategyId) {
+    const { data } = await http.post('/script-strategy/strategy-orders', { strategy_id: strategyId })
+    return data
+  },
+
+  async listStrategyOrders() {
+    const { data } = await http.get('/script-strategy/strategy-orders')
+    return data
+  },
+
+  async getStrategyOrder(id) {
+    const { data } = await http.get(`/script-strategy/strategy-orders/${id}`)
+    return data
+  },
+
+  async listStrategyOrderChildren(id) {
+    const { data } = await http.get(`/script-strategy/strategy-orders/${id}/children`)
+    return data
+  },
+
+  async startStrategyOrder(id) {
+    const { data } = await http.post(`/script-strategy/strategy-orders/${id}/start`)
+    return data
+  },
+
+  async stopStrategyOrder(id) {
+    const { data } = await http.post(`/script-strategy/strategy-orders/${id}/stop`)
+    return data
+  },
+
+  async closeStrategyOrder(id) {
+    const { data } = await http.post(`/script-strategy/strategy-orders/${id}/close`)
+    return data
+  },
 }

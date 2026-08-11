@@ -464,10 +464,11 @@ watch(taskRows, (rows) => {
 const { orders: holdingsOrders } = storeToRefs(holdingsStore)
 
 // 下半委托表: 实时按 task_id 过滤 holdings.orders, 按 order_time desc
+//   v126 防御: 排除 strategy_type=2 (策略下单母单子单, 由 StrategyOrder.vue 单独展示)
 const filteredTaskOrders = computed(() => {
   if (!selectedTaskId.value) return []
   return holdingsOrders.value
-    .filter((o) => Number(o.task_id) === Number(selectedTaskId.value))
+    .filter((o) => Number(o.task_id) === Number(selectedTaskId.value) && o.strategy_type !== 2)
     .slice()
     .sort((a, b) => String(b.order_time || '').localeCompare(String(a.order_time || '')))
 })
@@ -481,7 +482,9 @@ function _taskNetDiff(taskId) {
   if (!taskId) return 0
   let buy = 0, sell = 0
   for (const o of holdingsOrders.value) {
+    // v126 防御: 排除 strategy_type=2 (策略下单母单子单)
     if (Number(o.task_id) !== Number(taskId)) continue
+    if (o.strategy_type === 2) continue
     const tv = Number(o.traded_volume) || 0
     if (o.order_type === '23') buy += tv
     else if (o.order_type === '24') sell += tv
@@ -763,6 +766,7 @@ const t0PnlMap = computed(() => {
       o => o.stock_code === code
         && Number(o.task_id) === Number(taskId)
         && o.order_flag !== 1
+        && o.strategy_type !== 2  // v126 防御: 排除策略下单母单子单
     )
     const { total_pnl, diff, last } = _calcT0Pnl(code, taskId, base, tgv, rs)
     // v115: 当日做T盈亏 (trd_date === activeDay)
