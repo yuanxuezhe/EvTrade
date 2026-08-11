@@ -64,20 +64,30 @@
 
       <!-- 右侧: 编辑器 -->
       <section v-if="draft || currentScript" class="sd-pane sd-pane-right">
+        <el-alert
+          v-if="isReadonly"
+          type="warning"
+          :closable="false"
+          show-icon
+          title="他人公开脚本 · 只读"
+          description="可查看源码与参数, 但无权修改。可据此新建自己的策略。"
+          class="sd-ro-banner"
+          data-el="sd-readonly-banner"
+        />
         <!-- 顶部表单 -->
         <div class="sd-form">
           <el-form :inline="true" label-width="80px">
             <el-form-item label="脚本名">
-              <el-input v-model="form.name" placeholder="如: ma_cross_v1" style="width: 220px" data-el="sd-name" />
+              <el-input v-model="form.name" placeholder="如: ma_cross_v1" style="width: 220px" :disabled="isReadonly" data-el="sd-name" />
             </el-form-item>
             <el-form-item label="状态">
-              <el-select v-model="form.status" style="width: 120px">
+              <el-select v-model="form.status" style="width: 120px" :disabled="isReadonly">
                 <el-option label="active" value="active" />
                 <el-option label="paused" value="paused" />
               </el-select>
             </el-form-item>
             <el-form-item label="描述">
-              <el-input v-model="form.description" placeholder="(可选)" style="width: 300px" />
+              <el-input v-model="form.description" placeholder="(可选)" style="width: 300px" :disabled="isReadonly" />
             </el-form-item>
           </el-form>
         </div>
@@ -99,6 +109,7 @@
               v-model="form.code"
               class="sd-textarea"
               spellcheck="false"
+              :disabled="isReadonly"
               data-el="sd-code"
               @scroll="syncScroll"
             />
@@ -109,19 +120,19 @@
         <div class="sd-params">
           <div class="sd-params-head">
             <span>参数 schema ({{ form.params_schema.length }})</span>
-            <el-button :icon="Plus" size="small" plain @click="addParam" data-el="sd-add-param">
+            <el-button :icon="Plus" size="small" plain :disabled="isReadonly" @click="addParam" data-el="sd-add-param">
               新增参数
             </el-button>
           </div>
           <el-table :data="form.params_schema" size="small" border>
             <el-table-column label="key" width="100">
               <template #default="{ row }">
-                <el-input v-model="row.key" size="small" placeholder="key" />
+                <el-input v-model="row.key" size="small" placeholder="key" :disabled="isReadonly" />
               </template>
             </el-table-column>
             <el-table-column label="类型" width="100">
               <template #default="{ row }">
-                <el-select v-model="row.type" size="small">
+                <el-select v-model="row.type" size="small" :disabled="isReadonly">
                   <el-option label="int" value="int" />
                   <el-option label="float" value="float" />
                   <el-option label="choice" value="choice" />
@@ -130,22 +141,22 @@
             </el-table-column>
             <el-table-column label="min" width="90">
               <template #default="{ row }">
-                <el-input-number v-if="row.type !== 'choice'" v-model="row.min" size="small" :step="row.type === 'int' ? 1 : 0.1" />
+                <el-input-number v-if="row.type !== 'choice'" v-model="row.min" size="small" :step="row.type === 'int' ? 1 : 0.1" :disabled="isReadonly" />
               </template>
             </el-table-column>
             <el-table-column label="max" width="90">
               <template #default="{ row }">
-                <el-input-number v-if="row.type !== 'choice'" v-model="row.max" size="small" :step="row.type === 'int' ? 1 : 0.1" />
+                <el-input-number v-if="row.type !== 'choice'" v-model="row.max" size="small" :step="row.type === 'int' ? 1 : 0.1" :disabled="isReadonly" />
               </template>
             </el-table-column>
             <el-table-column label="step" width="80">
               <template #default="{ row }">
-                <el-input-number v-if="row.type !== 'choice'" v-model="row.step" size="small" :step="0.1" :min="0.001" />
+                <el-input-number v-if="row.type !== 'choice'" v-model="row.step" size="small" :step="0.1" :min="0.001" :disabled="isReadonly" />
               </template>
             </el-table-column>
             <el-table-column label="default" width="90">
               <template #default="{ row }">
-                <el-input-number v-if="row.type !== 'choice'" v-model="row.default" size="small" />
+                <el-input-number v-if="row.type !== 'choice'" v-model="row.default" size="small" :disabled="isReadonly" />
                 <span v-else class="sd-hint">values[]</span>
               </template>
             </el-table-column>
@@ -156,13 +167,14 @@
                   v-model="row.valuesStr"
                   size="small"
                   placeholder="逗号分隔, e.g. 1.5,2.0,3.0"
+                  :disabled="isReadonly"
                   @change="onValuesStrChange(row)"
                 />
               </template>
             </el-table-column>
             <el-table-column label="操作" width="60" align="center">
               <template #default="{ $index }">
-                <el-button :icon="Delete" size="small" link type="danger" @click="form.params_schema.splice($index, 1)" />
+                <el-button :icon="Delete" size="small" link type="danger" :disabled="isReadonly" @click="form.params_schema.splice($index, 1)" />
               </template>
             </el-table-column>
           </el-table>
@@ -171,11 +183,11 @@
         <!-- 底部按钮 -->
         <div class="sd-footer">
           <el-button @click="onCancel" data-el="sd-cancel">取消</el-button>
-          <el-button :icon="Delete" v-if="form.id" type="danger" plain @click="onDelete" data-el="sd-delete">删除</el-button>
-          <el-button :icon="Document" type="primary" :loading="saving" @click="onSave" data-el="sd-save">
+          <el-button :icon="Delete" v-if="form.id" type="danger" plain :disabled="isReadonly" @click="onDelete" data-el="sd-delete">删除</el-button>
+          <el-button :icon="Document" type="primary" :loading="saving" :disabled="isReadonly" @click="onSave" data-el="sd-save">
             保存
           </el-button>
-          <el-button :icon="VideoPlay" type="success" :loading="testing" @click="onTestBacktest" data-el="sd-test">
+          <el-button :icon="VideoPlay" type="success" :loading="testing" :disabled="isReadonly" @click="onTestBacktest" data-el="sd-test">
             去测试回测
           </el-button>
         </div>
@@ -213,6 +225,9 @@ const form = ref(_blankForm())
 const editorRef = ref(null)
 
 const lineCount = computed(() => Math.max(20, (form.value.code || '').split('\n').length))
+const isReadonly = computed(() =>
+  currentScript.value != null && currentScript.value.user_id !== currentUserId.value
+)
 
 function _blankForm() {
   return {
@@ -553,6 +568,7 @@ onMounted(async () => {
   border-top: 1px solid var(--border-light);
   padding-top: var(--space-3);
 }
+.sd-ro-banner { margin-bottom: var(--space-3); }
 
 /* 移动端 */
 @media (max-width: 768px) {
