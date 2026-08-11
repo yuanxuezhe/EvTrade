@@ -122,7 +122,9 @@ def require_backtest_access(strategy_id, user_id, is_admin=False) -> Row:
 
 ## 8. 范围外(YAGNI)
 
-- **Part 2「策略下单」另行设计**(2026-08-11 拆分):
+- **Part 2「策略下单」已设计**:见 `docs/superpowers/specs/2026-08-11-strategy-order-design.md`(v126)。
+  - 以下为拆分时(v125 阶段)的原始骨架,以 v126 设计文档为准:
+  - ~~另行设计~~:
   - 策略交易组新增「策略下单」页(4 面板:策略下单 / 行情面板 / 策略母单 / 委托子单)。
   - 新表 `strategy_order`(母单,与 `t0_tasks` 分表);`task_id` 走统一序号生成器(`order_no_seq`,t0 与母单共用一套)。
   - 子单进 `orders`,`task_id` 关联母单;子单 `user_def` = 策略名(非 'T0')。
