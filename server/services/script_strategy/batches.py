@@ -7,7 +7,7 @@ server/services/script_strategy/batches.py — 回测批次 + 聚合查询 (v123
 
 不执行运行时; 由 api 层转发 strategy_exec, 完成后 strategy_exec 回写 best_params。
 
-v125: 策略模块纯回测 (create_live_batch 已删除)。
+v125: 策略模块纯回测, 实盘/黑盒跟随移除 (Part 2 另行设计)。
 """
 from datetime import datetime
 from typing import Any, Dict, List, Optional
