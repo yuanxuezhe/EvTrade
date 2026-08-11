@@ -4,7 +4,7 @@ server/api/script_strategy/strategies.py — 策略 CRUD + 回测批次 端点 (
 REST 端点 (前缀 /api/script-strategy):
   GET    /strategies                         策略列表
   GET    /strategies/{strategy_id}           策略详情 (含脚本)
-  POST   /strategies                         创建 {name, script_id}
+  POST   /strategies                         创建 {name, script_id, stock_code}
   PUT    /strategies/{strategy_id}           更新 (仅 user_id=me)
   DELETE /strategies/{strategy_id}           删除
 
