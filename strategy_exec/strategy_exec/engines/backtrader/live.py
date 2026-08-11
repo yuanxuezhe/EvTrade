@@ -104,6 +104,8 @@ class LiveRunner:
         params: Dict[str, Any],
         code: str,
         params_schema: Optional[List[Dict[str, Any]]] = None,
+        parent_task_id: Optional[int] = None,   # v126 母单归因
+        strategy_name: str = "",                 # v126 子单 user_def
     ) -> None:
         self.task_id = task_id
         self.user_id = user_id
@@ -112,6 +114,8 @@ class LiveRunner:
         self.params = params
         self.code = code
         self.params_schema = params_schema
+        self.parent_task_id = parent_task_id
+        self.strategy_name = strategy_name
 
         self.settings = get_settings()
         self._stop_event = asyncio.Event()
@@ -158,7 +162,10 @@ class LiveRunner:
             cerebro.broker.setcash(100000.0)
             # runonce=False + preload=False + run 1 步 (拿到 strategy instance)
             self._strategy_instance = cerebro.run()[0]
-            self._strategy_instance._set_task_meta(self.task_id, self.user_id, self.script_id, mode="live")
+            self._strategy_instance._set_task_meta(
+                self.task_id, self.user_id, self.script_id, mode="live",
+                parent_task_id=self.parent_task_id, strategy_name=self.strategy_name,
+            )
         except Exception as e:
             log.error("[LiveRunner %d] strategy load failed: %s", self.task_id, e)
             update_task_status(self.task_id, "failed", error_msg=f"strategy load: {e}")
@@ -295,6 +302,8 @@ async def start_live_runner(
     script_id: str,
     stock_code: str,
     params: Dict[str, Any],
+    parent_task_id: Optional[int] = None,   # v126 母单归因
+    strategy_name: str = "",                 # v126 子单 user_def
 ) -> LiveRunner:
     """启动一个 live runner (EvTrade 转发调)"""
     script_row = get_script(user_id, script_id)
@@ -309,6 +318,8 @@ async def start_live_runner(
         params=params,
         code=script_row["code"],
         params_schema=script_row.get("params_schema") or None,
+        parent_task_id=parent_task_id,
+        strategy_name=strategy_name,
     )
     await runner.start()
     _manager.start_runner(runner)

@@ -68,6 +68,9 @@ class RunTaskRequest(BaseModel):
     backtest_end_date: Optional[str] = Field(default=None, pattern=r"^\d{8}$")
     period: Optional[str] = Field(default=None, pattern=r"^(1d|1m|5m|15m|30m|60m)$")
     fields: Optional[str] = Field(default=None)
+    # v126: 策略下单母单归因 (signal_consumer 读 parent_task_id 写 orders.task_id)
+    parent_task_id: Optional[int] = Field(default=None, ge=1)
+    strategy_name: Optional[str] = Field(default=None, max_length=255)
 
     @model_validator(mode="before")
     @classmethod
@@ -270,6 +273,8 @@ async def run_task(req: RunTaskRequest) -> RunTaskResponse:
                 script_id=req.script_id,
                 stock_code=req.stock_code,
                 params=req.params,
+                parent_task_id=req.parent_task_id,    # v126 母单归因
+                strategy_name=req.strategy_name or "",  # v126 子单 user_def
             )
         except Exception as e:
             log.error("[run_task] start live failed: %s", e)
