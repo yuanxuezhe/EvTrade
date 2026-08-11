@@ -12,6 +12,7 @@ strategy_script_audit) + 回测批次生成 (param_ranges 类型驱动)。纯回
   - batches.py    — 回测批次 + 聚合查询 (v123)
   - params.py     — param_ranges 类型驱动展开
   - tasks.py      — Task CRUD (list / get / create / delete / logs / signals / audit)
+  - strategy_orders.py — 策略下单母单 (v126, create/list/get/start/stop/close)
 """
 from server.services.script_strategy.scripts import (
     list_scripts,
@@ -44,6 +45,22 @@ from server.services.script_strategy.tasks import (
     get_task_signals,
     get_task_audit,
 )
+from server.services.script_strategy.strategy_orders import (
+    STATUS_CLOSED,
+    STATUS_RUNNING,
+    STATUS_STOPPED,
+    ALL_STATUSES,
+    list_strategy_orders,
+    get_strategy_order,
+    list_strategy_order_children,
+    create_strategy_order,
+    close_strategy_order,
+)
+from server.services.script_strategy.strategy_order_lifecycle import (
+    start_strategy_order,
+    stop_strategy_order,
+    build_start_forward_payload,
+)
 
 __all__ = [
     "StrategyError",
@@ -55,4 +72,9 @@ __all__ = [
     "retest_batch",
     "list_tasks", "get_task", "create_task", "delete_task",
     "get_task_logs", "get_task_signals", "get_task_audit",
+    "STATUS_STOPPED", "STATUS_RUNNING", "STATUS_CLOSED", "ALL_STATUSES",
+    "list_strategy_orders", "get_strategy_order", "list_strategy_order_children",
+    "create_strategy_order", "start_strategy_order",
+    "stop_strategy_order", "close_strategy_order",
+    "build_start_forward_payload",
 ]

@@ -145,3 +145,41 @@ class BatchOut(BaseModel):
     metric: str = "sharpe"         # v124: 批次排序指标 (sweep top1 选择)
     best_params: Optional[Dict[str, Any]] = None
     best_metric_value: Optional[float] = None
+
+
+# ─────────────── 策略下单母单 (v126) ───────────────
+
+
+class StrategyOrderCreate(BaseModel):
+    strategy_id: int
+
+
+class StrategyOrderOut(BaseModel):
+    id: int
+    task_id: int
+    user_id: int
+    strategy_id: int
+    strategy_name: Optional[str] = None
+    stock_code: str = ""
+    status: str = "stopped"
+    active_task_id: Optional[int] = None
+    run_count: int = 0
+    children_count: int = 0
+    last_started_at: Optional[str] = None
+    last_stopped_at: Optional[str] = None
+    closed_at: Optional[str] = None
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+
+
+class StartStopResponse(BaseModel):
+    """母单 start/stop 响应: task_id + status + 转发提示字段.
+
+    api 层根据 forward_payload / stop_url 转发到 strategy_exec。
+    """
+    task_id: int
+    status: str
+    active_task_id: Optional[int] = None
+    strategy_name: Optional[str] = None
+    forward_payload: Optional[Dict[str, Any]] = None
+    stop_url: Optional[str] = None
