@@ -193,6 +193,8 @@ class MyStrategy(ProjectStrategy):
 
 - stock_code 来自数据源名 `self.data._name`；task 元数据（task_id/user_id/script_id/mode）由 Engine 在 `addstrategy` 前注入 `_set_task_meta()`
 - Backtrader `next()/init()` 等标准方法不受影响
+- v126 母单路径：`Signal` 额外字段 `parent_task_id: Optional[int] = None` + `strategy_name: str = ""`（母单 start 时透传，用于 signal_consumer 归因 `orders.task_id`/`user_def`/`strategy_type=2`）
+- 旧 v122/v123 sweep 路径：`parent_task_id=None` + `strategy_name=""` 默认值兼容，行为不变
 
 #### Scenario: 用户脚本 next() 触发 buy_signal
 
@@ -416,6 +418,50 @@ Response TaskOut 扩展字段：
 - **AND** 用户脚本 `next()` 读 `self.p.fast` 等得到正确值
 
 > **schema 注入机制**（loader 严格模式）：code 声明的 `params` key 集合 MUST = schema key 集合，否则 `ValueError`（不允许代码 + schema 双源）。v121+ 目标：code 不再声明 `params = (...)`，schema 为唯一契约。`params_schema=None` 时走老逻辑（不注入，backward compat）。
+
+### REQ-SE-010: 母单 live metadata 透传（v126）
+
+> **来源 change**：`2026-08-11-strategy-order-design`（v126）
+
+EvTrade 母单路径下，`LiveRunner` MUST 接受并透传母单元数据，使 signal 链路可在 EvTrade `signal_consumer` 端归因到对应母单。
+
+#### API 扩展
+
+`POST /internal/run-task` Request 增加可选字段：
+
+```jsonc
+{
+  "task_id": 42,
+  "user_id": 1,
+  "script_id": "mas_v1",
+  "stock_code": "600519.SH",
+  "mode": "live",
+  "params": {...},
+  "parent_task_id": 5555,    // v126 NEW: 母单 task_id
+  "strategy_name": "双均线"   // v126 NEW: 策略名 (写到 orders.user_def)
+}
+```
+
+- 旧 v122/v123 sweep 路径不传这 2 字段 → 走 `Optional[int] = None` / `str = ""` 默认值，行为完全不变
+- 母单路径必带 `parent_task_id`（v126 decision D）；缺则 EvTrade signal_consumer 报 `INVALID_PARENT_TASK` 业务错 ack 不重试
+
+#### LiveRunner 内部透传链
+
+`start_live_runner(parent_task_id, strategy_name, ...)` → `LiveRunner.__init__` → `_set_task_meta` → `self._parent_task_id` / `self._strategy_name` → `_publish` 构造 `Signal(parent_task_id=..., strategy_name=..., ...)`。
+
+#### Scenario: 母单 start → live runner 启动 + payload 含 metadata
+
+- **WHEN** EvTrade `POST /strategy-orders/1/start` 转发到 `strategy_exec /internal/run-task`
+- **AND** payload 含 `parent_task_id=5555, strategy_name='双均线'`
+- **THEN** LiveRunner 实例化后 `runner._parent_task_id == 5555`
+- **AND** 用户脚本 `next()` 触发 `buy_signal` → publish 到 RabbitMQ 的 payload 含 `parent_task_id=5555, strategy_name='双均线'`
+
+#### Scenario: 旧 sweep live 路径 metadata 默认值
+
+- **WHEN** EvTrade `POST /strategy/tasks` with `mode='live'`（旧 v122 sweep best_params 启 live）
+- **THEN** 不传 `parent_task_id` / `strategy_name`
+- **AND** LiveRunner `_parent_task_id is None` + `_strategy_name == ''`
+- **AND** publish payload 同上，EvTrade signal_consumer 按 v122 旧逻辑处理（task_id=None, strategy_type=1 兼容）
 
 ## Cross References
 

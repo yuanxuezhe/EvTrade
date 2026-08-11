@@ -668,7 +668,7 @@ class T0Task(Base):
 
 | 字段 | 类型 | 可空 | 默认 | 说明 |
 |---|---|---|---|---|
-| `strategy_type` | TINYINT | NO | 0 | 0=普通单(Trade.vue OrderForm 下单) 1=快速做T(T0Trade.vue 智能做T下单) |
+| `strategy_type` | TINYINT | NO | 0 | 0=普通单(Trade.vue OrderForm 下单) 1=快速做T(T0Trade.vue 智能做T下单) 2=策略下单(v126 母单路径signal_consumer归因) |
 
 **迁移策略**:
 - `ALTER TABLE orders ADD COLUMN strategy_type TINYINT NOT NULL DEFAULT 0` 幂等
@@ -679,11 +679,13 @@ class T0Task(Base):
 - Trade.vue OrderForm 下单（普通单）: `user_def = ''` AND `strategy_type = 0`
 - T0Trade.vue 智能做T下单（v66 NEW）: `user_def = 'T0'` AND `strategy_type = 1`
 - 历史 T0 单（无显式 strategy_type）: `user_def = 'T0'` AND `strategy_type = 0`（DEFAULT 兜底）
+- 策略下单母单路径（v126 NEW）: `user_def = <strategy_name>` AND `task_id = <parent_task_id>` AND `strategy_type = 2`
 
 **与 task_id 关系**:
 - task 下单（v18 行为）: `user_def = 'T0'` AND `task_id = <id>` AND `strategy_type = 1`
 - 无 task 的 T0 单: `user_def = 'T0'` AND `task_id = NULL` AND `strategy_type = 1`
 - 普通单: `user_def = ''` AND `task_id = NULL` AND `strategy_type = 0`
+- 策略下单母单（v126 NEW）: `task_id = <母单.task_id>` AND `strategy_type = 2`（母单路径下, task_id 必带, 缺则 INVALID_PARENT_TASK）
 
 #### Scenario: migration 幂等检测列存在
 
