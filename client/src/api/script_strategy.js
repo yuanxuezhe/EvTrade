@@ -7,7 +7,6 @@
  *   Script CRUD:   listScripts / getScript / createScript / updateScript / deleteScript / getDefaultTemplate
  *   Strategy CRUD: listStrategies / getStrategy / createStrategy / updateStrategy / deleteStrategy
  *   回测/批次:     backtestStrategy / listBatches / listBatchTasks
- *   实盘:          startLive
  *   Task 控制:     listTasks / getTask / stopTask / deleteTask / getTaskLogs / getTaskSignals
  */
 import { http } from './index'
@@ -61,7 +60,7 @@ export const scriptStrategyApi = {
   },
 
   async createStrategy(payload) {
-    // payload: { name, script_id } (创建不填参数、不定模式)
+    // payload: { name, script_id, stock_code } (标的必填, 策略只针对此标的回测)
     const { data } = await http.post('/script-strategy/strategies', payload)
     return data
   },
@@ -97,14 +96,6 @@ export const scriptStrategyApi = {
   // v124: 重测批次 (新 batch, 原批次 task 废弃)
   async retestBatch(id, batchNo) {
     const { data } = await http.post(`/script-strategy/strategies/${id}/batches/${batchNo}/retest`)
-    return data
-  },
-
-  // ─────────────── 实盘门禁 (v123) ───────────────
-
-  async startLive(id, payload) {
-    // payload: { stock_code } — best_params 门禁在后端, 400 NO_BEST_PARAMS
-    const { data } = await http.post(`/script-strategy/strategies/${id}/live`, payload)
     return data
   },
 
