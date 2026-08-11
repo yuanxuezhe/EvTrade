@@ -1,5 +1,5 @@
 """
-test_strategy_v123_service.py — 策略/批次/实盘门禁 service 层单测 (v123 change task 6.2)
+test_strategy_v123_service.py — 策略/批次 service 层单测 (v123 change task 6.2)
 
 覆盖:
 - 策略 CRUD: create/get/update/delete; 脚本不存在 → NO_SCRIPT; 非本人无权
@@ -7,8 +7,8 @@ test_strategy_v123_service.py — 策略/批次/实盘门禁 service 层单测 (
   sweep=param_ranges 类型驱动 N 行 (sweep_keys 正确)
 - 参数校验: params 含 schema 外字段 → UNKNOWN_PARAM; 组合数 > 512 → GRID_TOO_LARGE
 - best 覆盖: list_batches 从 finished tasks 按 metric 聚合 top1; best_params 落库可读
-- 实盘门禁: best_params 空/{} → NO_BEST_PARAMS; key 超出 schema → PARAM_MISMATCH;
-  有 best_params → 建 1 行 live task (新 batch_no)
+- v125 绑定标的: 策略绑定 600519.SH → 回测强制用它; 请求不一致 → STOCK_MISMATCH;
+  NULL 回退请求标的 (旧行为); 他人公开 → list_batches 拒绝
 - 删除策略级联删 task
 
 DB-backed (dev MySQL), 唯一 test 数据 + teardown 清理, 不做 drop_all。
@@ -435,42 +435,42 @@ def test_backtest_others_public_forbidden(strategy_ctx):
     assert ei.value.code == "BACKTEST_FORBIDDEN"
 
 
-# ─────────────── 实盘门禁 ───────────────
+# ─────────────── 回测批次 v125: 权限 + 绑定标的 ───────────────
 
-def test_live_gate_no_best_params(strategy_ctx):
+def test_list_batches_others_public_forbidden(strategy_ctx):
+    svc.update_strategy(strategy_ctx["strategy_id"], UID, False, {"is_public": True})
     with pytest.raises(StrategyError) as ei:
-        svc.create_live_batch(UID, strategy_ctx["strategy_id"], stock_code="600519.SH")
-    assert ei.value.code == "NO_BEST_PARAMS"
+        svc.list_batches(strategy_ctx["strategy_id"], UID2)
+    assert ei.value.code == "BACKTEST_FORBIDDEN"
 
 
-def test_live_gate_empty_best_params(strategy_ctx):
-    Strategy.update_one(
-        {"best_params": json_dumps({})}, strategy_id=strategy_ctx["strategy_id"])
-    with pytest.raises(StrategyError) as ei:
-        svc.create_live_batch(UID, strategy_ctx["strategy_id"], stock_code="600519.SH")
-    assert ei.value.code == "NO_BEST_PARAMS"
-
-
-def test_live_gate_param_mismatch(strategy_ctx):
-    """best_params 含 schema 之外字段 → PARAM_MISMATCH."""
-    Strategy.update_one(
-        {"best_params": json_dumps({"fast": 3, "slow": 2, "bogus": 1})},
-        strategy_id=strategy_ctx["strategy_id"],
+def test_backtest_uses_bound_stock(strategy_ctx):
+    # 不传 stock_code → 用绑定标的 600519.SH
+    b = svc.create_backtest_batch(
+        UID, strategy_ctx["strategy_id"], mode="single",
+        backtest_start_date="20260101", backtest_end_date="20260131",
+        params={"fast": 3, "slow": 2},
     )
+    assert b["stock_code"] == "600519.SH"
+    t = StrategyTask.query_one(id=b["task_ids"][0])._data
+    assert t["stock_code"] == "600519.SH"
+
+
+def test_backtest_stock_mismatch(strategy_ctx):
     with pytest.raises(StrategyError) as ei:
-        svc.create_live_batch(UID, strategy_ctx["strategy_id"], stock_code="600519.SH")
-    assert ei.value.code == "PARAM_MISMATCH"
+        svc.create_backtest_batch(
+            UID, strategy_ctx["strategy_id"], mode="single",
+            stock_code="000001.SZ", backtest_start_date="20260101", backtest_end_date="20260131",
+            params={"fast": 3, "slow": 2},
+        )
+    assert ei.value.code == "STOCK_MISMATCH"
 
 
-def test_live_success_creates_live_task(strategy_ctx):
-    Strategy.update_one(
-        {"best_params": json_dumps({"fast": 5, "slow": 2})},
-        strategy_id=strategy_ctx["strategy_id"],
+def test_legacy_null_stock_falls_back_to_request(strategy_ctx):
+    Strategy.update_one({"stock_code": None}, strategy_id=strategy_ctx["strategy_id"])
+    b = svc.create_backtest_batch(
+        UID, strategy_ctx["strategy_id"], mode="single",
+        stock_code="000001.SZ", backtest_start_date="20260101", backtest_end_date="20260131",
+        params={"fast": 3, "slow": 2},
     )
-    live = svc.create_live_batch(UID, strategy_ctx["strategy_id"], stock_code="600519.SH")
-    assert live["mode"] == "live"
-    assert live["params"] == {"fast": 5, "slow": 2}
-    t = StrategyTask.query_one(id=live["task_id"])._data
-    assert t["mode"] == "live"
-    assert t["batch_no"] == live["batch_no"]
-    assert t["strategy_id"] == strategy_ctx["strategy_id"]
+    assert b["stock_code"] == "000001.SZ"

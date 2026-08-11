@@ -1,12 +1,13 @@
 """
-server/services/script_strategy/batches.py — 回测/实盘批次 + 聚合查询 (v123)
+server/services/script_strategy/batches.py — 回测批次 + 聚合查询 (v123)
 
 职责单一: 围绕 `strategy_task` 的批次操作。
 - create_backtest_batch: 单次=1 行 task, 扫描=param_ranges 展开 N 行 task, 统一 task_batch 序号
-- create_live_batch: best_params 门禁, 建 1 行 live task
 - list_batches / list_batch_tasks: 虚拟 GROUP BY batch_no 聚合 (无批头表)
 
 不执行运行时; 由 api 层转发 strategy_exec, 完成后 strategy_exec 回写 best_params。
+
+v125: 策略模块纯回测 (create_live_batch 已删除)。
 """
 from datetime import datetime
 from typing import Any, Dict, List, Optional
@@ -21,7 +22,6 @@ from server.services.script_strategy._convert import (
 from server.services.script_strategy.errors import StrategyError
 from server.services.script_strategy.params import expand_param_ranges, validate_params_keys
 from server.services.script_strategy.access import require_backtest_access
-from server.services.script_strategy.strategies import _resolve_script
 from server.services.script_strategy.tasks import create_task
 
 
@@ -30,7 +30,7 @@ def create_backtest_batch(
     strategy_id: int,
     *,
     mode: str,  # 'single' | 'sweep'
-    stock_code: str,
+    stock_code: Optional[str] = None,
     backtest_start_date: str,
     backtest_end_date: str,
     params: Optional[Dict[str, Any]] = None,
@@ -64,6 +64,17 @@ def create_backtest_batch(
     if not backtest_start_date or not backtest_end_date:
         raise StrategyError("MISSING_DATES", "回测必须指定 backtest_start_date / backtest_end_date")
 
+    # v125 绑定标的: 策略有绑定 → 必须用它 (提供且不一致 → STOCK_MISMATCH);
+    # 存量 NULL 行回退请求的 stock_code (旧行为)
+    bound = sd.get("stock_code")
+    if bound:
+        if stock_code and stock_code != bound:
+            raise StrategyError(
+                "STOCK_MISMATCH", f"策略已绑定标的 {bound}, 与请求标的 {stock_code} 不一致")
+        effective_stock = bound
+    else:
+        effective_stock = stock_code
+
     if mode == "single":
         if not params:
             raise StrategyError("MISSING_PARAM", "单次回测必须提供 params")
@@ -85,7 +96,7 @@ def create_backtest_batch(
     task_ids = []
     for c in combos:
         t = create_task(
-            user_id=user_id, strategy_id=strategy_id, stock_code=stock_code,
+            user_id=user_id, strategy_id=strategy_id, stock_code=effective_stock,
             params=c,
             description=sd.get("name", "") or f"strategy-{strategy_id}",
             backtest_start_date=backtest_start_date,
@@ -105,7 +116,7 @@ def create_backtest_batch(
         "sweep_keys": sweep_keys,
         "strategy_id": strategy_id,
         "script_id": sd.get("script_id"),
-        "stock_code": stock_code,
+        "stock_code": effective_stock,
         "backtest_start_date": backtest_start_date,
         "backtest_end_date": backtest_end_date,
         "period": period,
@@ -117,19 +128,20 @@ def create_backtest_batch(
 
 def list_batches(
     strategy_id: int, user_id: int, is_admin: bool = False,
-) -> Optional[List[Dict[str, Any]]]:
+) -> List[Dict[str, Any]]:
     """批次列表 (GROUP BY batch_no, 元信息从 task 派生).
 
     Returns:
         [{batch_no, created_at, mode, task_count, finished_count, failed_count,
           abandoned_count, abandoned, metric, best_params, best_metric_value}]
-          or None (无权限)
+    Raises:
+        StrategyError: BACKTEST_FORBIDDEN / NO_STRATEGY (非 owner/admin)
 
     v124 批次重测: 被重测替代的批次全部 task status='abandoned' → 不再计入
     finished/failed/best; 批次行标 abandoned=True + abandoned_count。
     """
     from server.tables import StrategyTask
-    strat = require_backtest_access(strategy_id, user_id, is_admin=is_admin)
+    require_backtest_access(strategy_id, user_id, is_admin=is_admin)
 
     # 轻量列 (TASK_LIST_COLUMNS): 免拖回 backtest_result 大 blob,
     # 否则 SELECT * + ORDER BY 报 MySQL 1038 'Out of sort memory' (500)。
@@ -174,10 +186,14 @@ def list_batches(
 
 def list_batch_tasks(
     strategy_id: int, batch_no: int, user_id: int, is_admin: bool = False,
-) -> Optional[List[Dict[str, Any]]]:
-    """批次内任务表格数据 (按 id 升序)"""
+) -> List[Dict[str, Any]]:
+    """批次内任务表格数据 (按 id 升序).
+
+    Raises:
+        StrategyError: BACKTEST_FORBIDDEN / NO_STRATEGY (非 owner/admin)
+    """
     from server.tables import StrategyTask
-    strat = require_backtest_access(strategy_id, user_id, is_admin=is_admin)
+    require_backtest_access(strategy_id, user_id, is_admin=is_admin)
     rows = StrategyTask.query_by_fields(
         {"strategy_id": strategy_id, "batch_no": batch_no},
         columns=TASK_LIST_COLUMNS,
@@ -286,47 +302,4 @@ def retest_batch(
         "param_ranges": _reconstruct_ranges(combos) if is_sweep else None,
         "params": combos[0] if not is_sweep else None,
         "over_soft_limit": len(task_ids) > 64,
-    }
-
-
-def create_live_batch(
-    user_id: int, strategy_id: int, *, stock_code: str, fields: Optional[str] = None,
-) -> Dict[str, Any]:
-    """实盘启动: 校验 best_params 非空 + key ⊆ params_schema, 建 1 行 live task (新 batch_no).
-
-    Raises:
-        StrategyError: NO_STRATEGY / NO_BEST_PARAMS / NO_SCRIPT / PARAM_MISMATCH
-    """
-    from server.services.script_strategy.scripts import get_script
-
-    strat = require_backtest_access(strategy_id, user_id)
-    sd = strat._data
-    best_params = json_loads(sd.get("best_params"))
-    if not best_params:
-        raise StrategyError("NO_BEST_PARAMS", "请先回测生成最优参数")
-    script = get_script(sd.get("script_id"), user_id, is_admin=False)
-    if script is None:
-        raise StrategyError("NO_SCRIPT", "策略所属脚本不存在或已删除")
-    schema_keys = {s.get("key") for s in (script.get("params_schema") or [])}
-    missing = sorted(set(best_params.keys()) - schema_keys)
-    if missing:
-        raise StrategyError("PARAM_MISMATCH", f"best_params 含脚本 schema 之外字段: {missing}")
-
-    batch_no = int(next_seq("task_batch"))
-    t = create_task(
-        user_id=user_id, strategy_id=strategy_id, stock_code=stock_code,
-        params=best_params,
-        description=sd.get("name", "") or f"strategy-{strategy_id}",
-        fields=fields,
-        mode="live", batch_no=batch_no, status="queued",
-    )
-    return {
-        "batch_no": batch_no,
-        "task_id": t["id"],
-        "mode": "live",
-        "strategy_id": strategy_id,
-        "script_id": sd.get("script_id"),
-        "stock_code": stock_code,
-        "fields": fields,
-        "params": best_params,
     }
