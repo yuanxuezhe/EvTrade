@@ -18,7 +18,6 @@ _PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '.
 sys.path.insert(0, _PROJECT_ROOT)
 sys.path.insert(0, os.path.join(_PROJECT_ROOT, "server"))
 
-from server.services import script_strategy as svc  # noqa: E402
 from server.services.script_strategy import scripts as scripts_svc  # noqa: E402
 from server.services.script_strategy import access  # noqa: E402
 from server.services.script_strategy.strategies import StrategyError  # noqa: E402
