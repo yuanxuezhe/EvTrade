@@ -371,12 +371,16 @@ async function onBacktestSubmit(payload) {
 
 async function onTogglePublic(val) {
   if (strategyId.value == null || val == null) return
+  const sid = strategyId.value
   try {
-    const d = await scriptStrategyApi.updateStrategy(strategyId.value, { is_public: val })
-    strategyDetail.value = d
+    const d = await scriptStrategyApi.updateStrategy(sid, { is_public: val })
+    if (strategyId.value !== sid) return  // 过期响应 (期间切了策略) 丢弃
+    // update_strategy 响应不含 script → 保留现有 script, 否则 schema 清空, 回测被挡
+    strategyDetail.value = { ...d, script: strategyDetail.value?.script }
     ElMessage.success(val ? '策略已设为公开' : '策略已设为私有')
     await loadStrategies()  // 刷新列表里的公开/私有标记
   } catch (e) {
+    if (strategyId.value !== sid) return
     strategyDetail.value = { ...strategyDetail.value, is_public: !val }  // 回滚
     ElMessage.error('切换失败: ' + _errMsg(e))
   }
