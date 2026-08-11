@@ -48,8 +48,8 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
-import { scriptStrategyApi } from '@/api/script_strategy'
-import { useAuthStore } from '@/stores/auth'
+import { scriptStrategyApi } from '../../api/script_strategy'
+import { useAuthStore } from '../../stores/auth'
 
 const emit = defineEmits(['created'])
 

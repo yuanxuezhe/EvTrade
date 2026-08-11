@@ -81,7 +81,7 @@
 <script setup>
 import { reactive } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { scriptStrategyApi } from '@/api/script_strategy'
+import { scriptStrategyApi } from '../../api/script_strategy'
 import StrategyOrderStatus from './StrategyOrderStatus.vue'
 
 const props = defineProps({

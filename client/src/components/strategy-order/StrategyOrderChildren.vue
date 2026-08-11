@@ -51,7 +51,7 @@
 <script setup>
 import { computed } from 'vue'
 import { storeToRefs } from 'pinia'
-import { useHoldingsStore } from '@/stores/holdings'
+import { useHoldingsStore } from '../../stores/holdings'
 
 const props = defineProps({
   selectedOrder: { type: Object, default: null },
