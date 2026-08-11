@@ -15,10 +15,7 @@ from server.services.script_strategy._convert import (
     strategy_row_to_dict,
 )
 from server.services.script_strategy.errors import StrategyError
-from server.services.script_strategy.access import (
-    public_view,
-    strategy_is_public,
-)
+from server.services.script_strategy.access import public_view
 
 
 def _resolve_script(owner_user_id: int, script_id: str) -> Optional[Dict[str, Any]]:
