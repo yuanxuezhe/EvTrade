@@ -2,11 +2,11 @@
   ScriptTask.vue — 策略交易页 (v123 三层模型: script → strategy → strategy_task)
 
   两段式 UI:
-    1. 顶部: 策略选择 / 新建 (仅 {name, script_id}, 不再填 params)
+    1. 顶部: 策略选择 / 新建 ({name, script_id, stock_code}, 标的必选)
     2. 批次列表 (batch_no/时间/mode/task_count/best) → 批次内任务表格 (动态参数列)
        → 点击任务行下方下钻详情 (BacktestForm / BatchTasksTable / TaskDetail 子组件)
 
-  实盘门禁: best_params 为空 → 提示"请先回测生成最优参数"并阻止; 有最优参数显示"实盘就绪"徽章。
+  v125: 策略模块纯回测 (无实盘)。他人公开策略只读精简 (无回测/批次入口), 公开/私有开关仅 owner。
   ws: 订阅 task_progress_update 实时刷新当前批次任务进度/状态。
 -->
 <template>
@@ -31,7 +31,11 @@
           >
             <span>{{ s.name }}</span>
             <span class="st-opt-meta">#{{ s.strategy_id }} · {{ scriptNameById(s.script_id) }}</span>
-            <el-tag v-if="hasBestParams(s)" size="small" type="danger" effect="dark">实盘</el-tag>
+            <el-tag v-if="s.is_public" size="small" type="success" effect="plain">公开</el-tag>
+            <el-tag v-else size="small" type="info" effect="plain">私有</el-tag>
+            <el-tag v-if="s.user_id !== currentUserId" size="small" type="warning" effect="plain">
+              u/{{ s.user_id }}
+            </el-tag>
           </el-option>
         </el-select>
         <el-button :icon="Plus" type="primary" @click="openCreate" data-el="st-create">新建策略</el-button>
@@ -39,23 +43,33 @@
       </div>
     </header>
 
-    <!-- 策略工具栏: 回测 / 实盘 + 实盘徽章 -->
+    <!-- 策略工具栏: 标的 / 公开开关 (仅 owner) -->
     <div v-if="strategyDetail" class="st-strategy-bar">
       <div class="st-strategy-info">
         <span class="st-strategy-name">{{ strategyDetail.name }}</span>
         <el-tag size="small" effect="plain">{{ strategyDetail.status }}</el-tag>
-        <el-tag v-if="liveReady" size="small" type="danger" effect="dark" data-el="st-live-badge">实盘就绪</el-tag>
-        <span v-else class="st-live-hint">未回测 · 无最优参数</span>
-        <span v-if="bestParamsText" class="st-best-params" :title="bestParamsText">最佳参数: {{ bestParamsText }}</span>
+        <el-tag size="small" type="info" effect="plain">标的 {{ strategyDetail.stock_code || '未绑定' }}</el-tag>
+        <el-tag v-if="!isOwner" size="small" type="warning" effect="dark">他人公开策略 · 只读</el-tag>
+        <el-tag v-else :type="strategyDetail.is_public ? 'success' : 'info'" effect="dark" data-el="st-public-tag">
+          {{ strategyDetail.is_public ? '公开' : '私有' }}
+        </el-tag>
+        <span v-if="isOwner && bestParamsText" class="st-best-params" :title="bestParamsText">最佳参数: {{ bestParamsText }}</span>
       </div>
       <div class="st-strategy-actions">
-        <el-button type="primary" @click="openBacktest" data-el="st-backtest">回测</el-button>
-        <el-button type="danger" :disabled="!liveReady" @click="onLive" data-el="st-live">实盘</el-button>
+        <el-button v-if="isOwner" type="primary" @click="openBacktest" data-el="st-backtest">回测</el-button>
+        <el-switch
+          v-if="isOwner"
+          v-model="strategyDetail.is_public"
+          active-text="公开"
+          inactive-text="私有"
+          @change="onTogglePublic"
+          data-el="st-public-switch"
+        />
       </div>
     </div>
 
-    <!-- 批次列表 -->
-    <el-card shadow="never" class="st-card" data-el="st-batches-card">
+    <!-- 批次列表 (仅 owner) -->
+    <el-card v-if="isOwner" shadow="never" class="st-card" data-el="st-batches-card">
       <template #header>
         <div class="st-card-head">
           <span>批次列表</span>
@@ -79,9 +93,7 @@
         <el-table-column label="创建时间" prop="created_at" width="170" />
         <el-table-column label="模式" width="90">
           <template #default="{ row }">
-            <el-tag size="small" :type="row.mode === 'live' ? 'danger' : 'info'">
-              {{ row.mode === 'live' ? '实盘' : '回测' }}
-            </el-tag>
+            <el-tag size="small" type="info">回测</el-tag>
             <el-tag v-if="row.abandoned" size="small" type="info" effect="dark">已废弃</el-tag>
           </template>
         </el-table-column>
@@ -124,6 +136,7 @@
         </el-table-column>
       </el-table>
     </el-card>
+    <el-empty v-else-if="strategyDetail && !isOwner" description="他人公开策略只读: 不可查看批次/详情/回测" />
 
     <!-- 批次内任务 -->
     <el-card v-if="selectedBatchNo != null" shadow="never" class="st-card" data-el="st-batch-tasks-card">
@@ -174,6 +187,9 @@
             </el-option>
           </el-select>
         </el-form-item>
+        <el-form-item label="绑定标的" required>
+          <el-input v-model="createForm.stock_code" placeholder="如 600519.SH" data-el="st-create-stock" />
+        </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="createOpen = false">取消</el-button>
@@ -182,7 +198,7 @@
     </el-dialog>
 
     <!-- 回测抽屉 (BacktestForm) -->
-    <BacktestForm :visible="backtestVisible" :schema="schema" @update:visible="(v) => (backtestVisible = v)" @submit="onBacktestSubmit" />
+    <BacktestForm :visible="backtestVisible" :schema="schema" :stock-code="strategyDetail?.stock_code || ''" @update:visible="(v) => (backtestVisible = v)" @submit="onBacktestSubmit" />
   </div>
 </template>
 
@@ -211,13 +227,16 @@ const detail = ref(null)
 const createOpen = ref(false)
 const creating = ref(false)
 const backtestVisible = ref(false)
-const createForm = ref({ name: '', script_id: null })
+const createForm = ref({ name: '', script_id: null, stock_code: '' })
+const currentUserId = ref(null)   // localStorage user.id (owner 判断)
 
 const wsStore = useWsStore()
 
 // ─────────────── computeds ───────────────
 const schema = computed(() => strategyDetail.value?.script?.params_schema || [])
-const liveReady = computed(() => hasBestParams(strategyDetail.value))
+const isOwner = computed(() =>
+  strategyDetail.value != null && strategyDetail.value.user_id === currentUserId.value
+)
 const bestParamsText = computed(() => {
   const bp = strategyDetail.value?.best_params
   if (!bp) return ''
@@ -225,9 +244,6 @@ const bestParamsText = computed(() => {
 })
 const selectedTaskRunning = computed(() => detail.value?.status === 'running')
 
-function hasBestParams(s) {
-  return !!(s?.best_params && Object.keys(s.best_params).length)
-}
 function scriptNameById(id) {
   const s = scripts.value.find((x) => x.id === id)
   return s?.name || id
@@ -265,7 +281,7 @@ async function loadStrategyDetail() {
 }
 
 async function loadBatches() {
-  if (strategyId.value == null) return
+  if (strategyId.value == null || !isOwner.value) return
   batchesLoading.value = true
   try {
     batches.value = (await scriptStrategyApi.listBatches(strategyId.value)) || []
@@ -353,31 +369,16 @@ async function onBacktestSubmit(payload) {
   }
 }
 
-async function onLive() {
-  if (!liveReady.value) {
-    ElMessage.warning('请先回测生成最优参数')
-    return
-  }
-  const { value: stock } = await ElMessageBox.prompt('输入实盘标的代码', '启动实盘', {
-    inputPlaceholder: '如 600519.SH',
-    confirmButtonText: '启动',
-    cancelButtonText: '取消',
-  }).catch(() => ({}))
-  if (!stock) return
+async function onTogglePublic(val) {
+  if (strategyId.value == null || val == null) return
   try {
-    const res = await scriptStrategyApi.startLive(strategyId.value, { stock_code: stock.trim() })
-    ElMessage.success(`实盘已启动, batch #${res.batch_no}`)
-    await reloadAll()
-    if (res.batch_no != null) {
-      selectedBatchNo.value = res.batch_no
-      await loadBatchTasks()
-    }
-    if (res.task_id != null) {
-      selectedTaskId.value = res.task_id
-      await loadDetail()
-    }
+    const d = await scriptStrategyApi.updateStrategy(strategyId.value, { is_public: val })
+    strategyDetail.value = d
+    ElMessage.success(val ? '策略已设为公开' : '策略已设为私有')
+    await loadStrategies()  // 刷新列表里的公开/私有标记
   } catch (e) {
-    ElMessage.error('实盘启动失败: ' + _errMsg(e))
+    strategyDetail.value = { ...strategyDetail.value, is_public: !val }  // 回滚
+    ElMessage.error('切换失败: ' + _errMsg(e))
   }
 }
 
@@ -392,9 +393,8 @@ async function onStopTask() {
   }
 }
 
-// v124 重测: 仅回测批次 (非 live), 且批次无运行中/排队 task
+// v124 重测: 批次无运行中/排队 task
 function _canRetest(batch) {
-  if (!batch || batch.mode === 'live') return false
   const running = (batch.task_count || 0) - (batch.finished_count || 0)
     - (batch.failed_count || 0) - (batch.abandoned_count || 0)
   return running <= 0
@@ -421,7 +421,7 @@ async function onRetest(batch) {
 }
 
 function openCreate() {
-  createForm.value = { name: '', script_id: null }
+  createForm.value = { name: '', script_id: null, stock_code: '' }
   createOpen.value = true
 }
 
@@ -434,11 +434,16 @@ async function onCreateStrategy() {
     ElMessage.warning('请选择脚本')
     return
   }
+  if (!createForm.value.stock_code.trim()) {
+    ElMessage.warning('请填写策略绑定标的')
+    return
+  }
   creating.value = true
   try {
     const s = await scriptStrategyApi.createStrategy({
       name: createForm.value.name.trim(),
       script_id: createForm.value.script_id,
+      stock_code: createForm.value.stock_code.trim(),
     })
     ElMessage.success(`已创建策略 #${s.strategy_id}`)
     createOpen.value = false
@@ -472,6 +477,12 @@ function _scheduleReloadTasks() {
 }
 
 onMounted(async () => {
+  try {
+    const u = JSON.parse(localStorage.getItem('user') || '{}')
+    currentUserId.value = u.id || null
+  } catch (e) {
+    currentUserId.value = null
+  }
   await loadStrategies()
   if (strategyId.value != null) {
     await loadStrategyDetail()
@@ -540,7 +551,6 @@ onBeforeUnmount(() => {
 }
 .st-strategy-info { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; font-size: 13px; }
 .st-strategy-name { font-size: 14px; font-weight: 600; }
-.st-live-hint { color: var(--text-placeholder); font-size: 12px; }
 .st-best-params { color: var(--text-secondary); font-size: 12px; }
 .st-strategy-actions { display: flex; gap: 8px; }
 
