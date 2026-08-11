@@ -49,7 +49,8 @@ class Orders(TableBase):
         'order_time': '',
         'raw_id': '',
         'task_id': '',
-        'strategy_type': '',
+        # v66 NEW; v126 扩展 strategy_type=2 (策略下单) — 子单 orders.task_id 指向 strategy_order.task_id
+        'strategy_type': 'v66: 0=普通单(Trade.vue) 1=快速做T(T0Trade.vue); v126: +2=策略下单(strategy_order 子单, task_id=母单.task_id)',
         'created_at': '',
         'updated_at': '',
         'pushed_at': ''

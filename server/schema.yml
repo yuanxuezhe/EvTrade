@@ -441,6 +441,62 @@ tables:
         default:
     indexes:
       ix_strategy_user_script: ['user_id', 'script_id']
+  strategy_order:
+    pk: ['id']
+    columns:
+      id:
+        type: Integer
+        nullable: false
+        default: 0
+        autoincrement: true
+      task_id:
+        type: Integer
+        nullable: false
+        default: 0
+      user_id:
+        type: Integer
+        nullable: false
+        default: 0
+      strategy_id:
+        type: Integer
+        nullable: false
+        default: 0
+      stock_code:
+        type: String(16)
+        nullable: false
+        default: ''
+      status:
+        type: String(16)
+        nullable: false
+        default: ''stopped''
+      active_task_id:
+        type: Integer
+        nullable: true
+      run_count:
+        type: Integer
+        nullable: false
+        default: 0
+      last_started_at:
+        type: DateTime
+        nullable: true
+      last_stopped_at:
+        type: DateTime
+        nullable: true
+      closed_at:
+        type: DateTime
+        nullable: true
+      created_at:
+        type: DateTime
+        nullable: false
+        default:
+      updated_at:
+        type: DateTime
+        nullable: false
+        default:
+    indexes:
+      uk_strategy_order_task_id: ['task_id']
+      ix_strategy_order_user_id: ['user_id']
+      ix_strategy_order_strategy_id: ['strategy_id']
   strategy_script:
     pk: ['user_id', 'id']
     columns:
