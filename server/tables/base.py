@@ -582,6 +582,36 @@ class TableBase:
         return cls.query_one(**pk_dict)  # type: ignore[return-value]
 
     @classmethod
+    def update_by_fields(cls, data: Dict[str, Any], **filters) -> int:
+        """按任意字段条件批量 UPDATE（非主键 WHERE）, 返回受影响行数。
+
+        update_one 是主键 WHERE 单行; 这里支持多行批量更新 (如批次内全部 task 置状态)。
+
+        Examples:
+            StrategyTask.update_by_fields({'status': 'abandoned'}, strategy_id=1, batch_no=42)
+        """
+        cls._validate_subclass()
+        if not data:
+            raise ValueError(f"{cls.__name__}.update_by_fields: data 不能为空")
+        if not filters:
+            raise ValueError(f"{cls.__name__}.update_by_fields: 至少提供 1 个 WHERE 条件")
+        # 防呆: data 不能含 WHERE 条件字段 (避免覆盖过滤条件)
+        for f in filters:
+            if f in data:
+                raise ValueError(
+                    f"{cls.__name__}.update_by_fields: 字段 {f!r} 不能同时在 data 和 filters"
+                )
+        engine = get_engine()
+        set_list = ", ".join(f"`{c}` = :upd_{c}" for c in data.keys())
+        where_list = " AND ".join(f"`{k}` = :f_{i}" for i, k in enumerate(filters))
+        sql = text(f"UPDATE `{cls.__tablename__}` SET {set_list} WHERE {where_list}")
+        params = {f"upd_{c}": v for c, v in data.items()}
+        params.update({f"f_{i}": v for i, (k, v) in enumerate(filters.items())})
+        with engine.begin() as conn:
+            result = conn.execute(sql, params)
+            return result.rowcount
+
+    @classmethod
     def upsert_one(cls, data: Dict[str, Any], *, return_row: bool = False, **pk) -> Optional[Row]:
         """按主键 UPSERT 一行 (MySQL: INSERT ... ON DUPLICATE KEY UPDATE).
 
