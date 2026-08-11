@@ -1,5 +1,5 @@
 """
-server/api/script_strategy/strategies.py — 策略 CRUD + 回测批次 + 实盘门禁 端点 (v123)
+server/api/script_strategy/strategies.py — 策略 CRUD + 回测批次 端点 (v123)
 
 REST 端点 (前缀 /api/script-strategy):
   GET    /strategies                         策略列表
@@ -13,7 +13,8 @@ REST 端点 (前缀 /api/script-strategy):
   GET    /strategies/{strategy_id}/batches/{batch_no}/tasks  批次内任务表格数据
   POST   /strategies/{strategy_id}/batches/{batch_no}/retest  重测批次 (新 batch, 原批次废弃)
 
-  POST   /strategies/{strategy_id}/live      实盘启动 (best_params 门禁, 转发 strategy_exec)
+v125: 策略模块纯回测, 无实盘。策略绑定标的 (stock_code), 回测/批次/重测仅 owner 可访问
+(他人公开 → 403 BACKTEST_FORBIDDEN, 他人私有/不存在 → 404 NO_STRATEGY)。
 
 批次创建不执行; 运行时转发到独立服务 strategy_exec (8001), 202 Accepted 立即返回。
 请求/响应 schema 在 schemas.py, 转发 helpers 在 forward.py (经本模块命名空间引入以兼容 monkeypatch)。
@@ -32,8 +33,6 @@ from server.api.script_strategy.schemas import (
     BacktestRequest,
     BacktestResponse,
     BatchOut,
-    LiveRequest,
-    LiveResponse,
     StrategyCreate,
     StrategyOut,
     StrategyUpdate,
@@ -50,7 +49,7 @@ router = APIRouter()
 @router.get("/strategies", response_model=List[StrategyOut])
 def list_strategies_endpoint(
     status_filter: Optional[str] = Query(None, alias="status", description="draft/active/archived"),
-    only_mine: bool = Query(False, description="仅列自己的 (默认含派生自公开脚本的策略)"),
+    only_mine: bool = Query(False, description="仅列自己的 (默认含他人公开策略精简卡片)"),
     user: User = Depends(get_current_user),
 ):
     return svc.list_strategies(
@@ -69,7 +68,9 @@ def get_strategy_endpoint(strategy_id: int, user: User = Depends(get_current_use
 @router.post("/strategies", response_model=StrategyOut, status_code=201)
 def create_strategy_endpoint(req: StrategyCreate, user: User = Depends(get_current_user)):
     try:
-        return svc.create_strategy(user.id, name=req.name, script_id=req.script_id)
+        return svc.create_strategy(
+            user.id, name=req.name, script_id=req.script_id, stock_code=req.stock_code,
+        )
     except StrategyError as e:
         raise HTTPException(status_code=400, detail={"code": e.code, "msg": e.msg})
     except Exception as e:
@@ -130,7 +131,14 @@ async def backtest_endpoint(
             concurrency=req.concurrency,
         )
     except StrategyError as e:
-        raise HTTPException(status_code=400, detail={"code": e.code, "msg": e.msg})
+        code_map = {
+            "NO_STRATEGY": 404,
+            "BACKTEST_FORBIDDEN": 403,
+        }
+        raise HTTPException(
+            status_code=code_map.get(e.code, 400),
+            detail={"code": e.code, "msg": e.msg},
+        )
     except Exception as e:
         raise HTTPException(status_code=500, detail={"code": "INTERNAL", "msg": str(e)})
 
@@ -178,9 +186,17 @@ async def backtest_endpoint(
 
 @router.get("/strategies/{strategy_id}/batches", response_model=List[BatchOut])
 def batches_endpoint(strategy_id: int, user: User = Depends(get_current_user)):
-    out = svc.list_batches(strategy_id, user.id, is_admin=(user.role == "admin"))
-    if out is None:
-        raise HTTPException(status_code=404, detail={"code": "STRATEGY_NOT_FOUND"})
+    try:
+        out = svc.list_batches(strategy_id, user.id, is_admin=(user.role == "admin"))
+    except StrategyError as e:
+        code_map = {
+            "NO_STRATEGY": 404,
+            "BACKTEST_FORBIDDEN": 403,
+        }
+        raise HTTPException(
+            status_code=code_map.get(e.code, 400),
+            detail={"code": e.code, "msg": e.msg},
+        )
     return out
 
 
@@ -188,9 +204,18 @@ def batches_endpoint(strategy_id: int, user: User = Depends(get_current_user)):
 def batch_tasks_endpoint(
     strategy_id: int, batch_no: int, user: User = Depends(get_current_user),
 ):
-    out = svc.list_batch_tasks(strategy_id, batch_no, user.id, is_admin=(user.role == "admin"))
-    if out is None:
-        raise HTTPException(status_code=404, detail={"code": "STRATEGY_NOT_FOUND"})
+    try:
+        out = svc.list_batch_tasks(
+            strategy_id, batch_no, user.id, is_admin=(user.role == "admin"))
+    except StrategyError as e:
+        code_map = {
+            "NO_STRATEGY": 404,
+            "BACKTEST_FORBIDDEN": 403,
+        }
+        raise HTTPException(
+            status_code=code_map.get(e.code, 400),
+            detail={"code": e.code, "msg": e.msg},
+        )
     return out
 
 
@@ -211,6 +236,7 @@ async def retest_batch_endpoint(
     except StrategyError as e:
         code_map = {
             "NO_STRATEGY": 404,
+            "BACKTEST_FORBIDDEN": 403,
             "BATCH_NOT_FOUND": 404,
             "BATCH_RUNNING": 409,
         }
@@ -261,41 +287,6 @@ async def retest_batch_endpoint(
         metric=batch["metric"],
         over_soft_limit=batch["over_soft_limit"],
     )
-
-
-# ─────────────── 实盘门禁 ───────────────
-
-
-@router.post("/strategies/{strategy_id}/live", response_model=LiveResponse, status_code=202)
-async def live_endpoint(
-    strategy_id: int, req: LiveRequest, user: User = Depends(get_current_user),
-):
-    """实盘启动: 校验 strategy.best_params 非空 (否则 400 NO_BEST_PARAMS),
-    用 best_params 建 1 行 live task (新 batch_no), 转发 strategy_exec。
-    """
-    try:
-        batch = svc.create_live_batch(
-            user.id, strategy_id, stock_code=req.stock_code, fields=req.fields,
-        )
-    except StrategyError as e:
-        raise HTTPException(status_code=400, detail={"code": e.code, "msg": e.msg})
-    except Exception as e:
-        raise HTTPException(status_code=500, detail={"code": "INTERNAL", "msg": str(e)})
-
-    await _forward_run_task(batch["task_id"], {
-        "task_id": batch["task_id"],
-        "user_id": user.id,
-        "strategy_id": strategy_id,
-        "script_id": batch["script_id"],
-        "stock_code": batch["stock_code"],
-        "mode": "live",
-        "params": batch["params"],
-        "fields": req.fields,
-    })
-
-    log.info("[live] strategy_id=%d task_id=%d batch_no=%d forwarded OK",
-             strategy_id, batch["task_id"], batch["batch_no"])
-    return LiveResponse(batch_no=batch["batch_no"], task_id=batch["task_id"])
 
 
 __all__ = ["router"]

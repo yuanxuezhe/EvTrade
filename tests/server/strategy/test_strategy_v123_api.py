@@ -1,14 +1,13 @@
 """
-test_strategy_v123_api.py — 策略/批次/实盘 API 端点测试 (v123 change task 6.2)
+test_strategy_v123_api.py — 策略/批次 API 端点测试 (v123 change task 6.2)
 
+策略模块纯回测 (v125), 无实盘端点。
 覆盖 (endpoint 层 + 转发 wiring):
 - POST /strategies 建策略 → 201; GET list/detail → 200 (含脚本)
 - POST /strategies/{id}/backtest:
     single → 202 + batch_no/total_runs=1; 转发 strategy_exec payload (task_id/strategy_id/mode=backtest)
     sweep  → 202 + total_runs=N; 转发 payload 含 param_ranges/batch_no
 - GET /strategies/{id}/batches + /batches/{batch_no}/tasks → 200 批次/任务
-- POST /strategies/{id}/live:
-    无 best_params → 400 NO_BEST_PARAMS; 有 → 202 + 转发 mode=live
 - 未认证 → 401
 
 strategy_exec 转发 monkeypatch 为异步记录器, 不连真实 8001。
@@ -104,6 +103,7 @@ def strategy_id(client, user_and_cleanup):
     assert r.status_code == 201, r.text
     r2 = client.post("/api/script-strategy/strategies", json={
         "name": f"api策略-{script_id}", "script_id": script_id,
+        "stock_code": "600519.SH",  # v125 必填: 策略绑定标的
     }, headers=user_and_cleanup)
     assert r2.status_code == 201, r2.text
     return r2.json()["strategy_id"]
@@ -215,37 +215,6 @@ def test_batches_and_batch_tasks_endpoints(client, user_and_cleanup, strategy_id
     tasks = r.json()
     assert len(tasks) == 2
     assert all(t["mode"] == "backtest" for t in tasks)
-
-
-def test_live_gate_400_no_best_params(client, user_and_cleanup, strategy_id):
-    h = user_and_cleanup
-    r = client.post(f"/api/script-strategy/strategies/{strategy_id}/live",
-                    json={"stock_code": "600519.SH"}, headers=h)
-    assert r.status_code == 400
-    assert r.json()["detail"]["code"] == "NO_BEST_PARAMS"
-
-
-def test_live_success_forwards_run_task(client, user_and_cleanup, strategy_id, monkeypatch):
-    h = user_and_cleanup
-    Strategy.update_one(
-        {"best_params": json_dumps({"fast": 5, "slow": 2})}, strategy_id=strategy_id)
-    calls = []
-
-    async def fake_forward(task_id, payload):
-        calls.append((task_id, payload))
-
-    monkeypatch.setattr("server.api.script_strategy.strategies._forward_run_task", fake_forward)
-
-    r = client.post(f"/api/script-strategy/strategies/{strategy_id}/live",
-                    json={"stock_code": "600519.SH"}, headers=h)
-    assert r.status_code == 202, r.text
-    body = r.json()
-    assert body["mode"] == "live"
-    task_id, payload = calls[0]
-    assert payload["strategy_id"] == strategy_id
-    assert payload["mode"] == "live"
-    assert payload["params"] == {"fast": 5, "slow": 2}
-    assert payload["task_id"] == task_id == body["task_id"]
 
 
 def test_default_template_schema_matches_code(client, user_and_cleanup):
