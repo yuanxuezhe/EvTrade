@@ -1,10 +1,11 @@
 /**
- * ScriptTask.test.js — 两段式编排页: 实盘徽章 + 门禁提示 (v123, 6.4)
+ * ScriptTask.test.js — 两段式编排页: 我的/公开区分 + 公开开关 + 标的绑定 (v125)
  *
  * 覆盖:
- * - 策略有 best_params → 显示"实盘就绪"徽章 (st-live-badge), 实盘按钮可点
- * - 策略无 best_params → 无徽章, 实盘按钮 disabled; 点实盘提示"请先回测生成最优参数"且不调 startLive
- * - 有 best_params 且输入标的 → startLive 被调, 批次刷新 + 选中新 batch
+ * - owner: 显示 公开/私有 开关 + 标的; onTogglePublic → updateStrategy({is_public})
+ * - 他人公开策略: 只读 (isOwner=false, 批次不加载)
+ * - 新建策略: 缺标的拒绝; 有标的 → createStrategy 含 stock_code
+ * - 实盘入口已移除 (无 onLive / liveReady)
  */
 // @vitest-environment jsdom
 import { describe, it, expect, beforeEach, vi } from 'vitest'
@@ -21,8 +22,10 @@ const mocks = vi.hoisted(() => ({
   getTask: vi.fn(),
   listScripts: vi.fn(),
   backtestStrategy: vi.fn(),
-  startLive: vi.fn(),
+  updateStrategy: vi.fn(),
+  createStrategy: vi.fn(),
   stopTask: vi.fn(),
+  retestBatch: vi.fn(),
 }))
 
 vi.mock('@/api/script_strategy', () => ({
@@ -34,8 +37,10 @@ vi.mock('@/api/script_strategy', () => ({
     getTask: mocks.getTask,
     listScripts: mocks.listScripts,
     backtestStrategy: mocks.backtestStrategy,
-    startLive: mocks.startLive,
+    updateStrategy: mocks.updateStrategy,
+    createStrategy: mocks.createStrategy,
     stopTask: mocks.stopTask,
+    retestBatch: mocks.retestBatch,
   },
 }))
 
@@ -43,63 +48,83 @@ vi.mock('@/stores/ws', () => ({
   useWsStore: () => ({ lastTaskProgress: ref(null) }),
 }))
 
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage } from 'element-plus'
 import ScriptTask from '@/views/ScriptTask.vue'
 
-function _strategy(best) {
+function _strategy(over = {}) {
   return { strategy_id: 1, user_id: 1, script_id: 's1', name: '双均线',
-           status: 'draft', best_params: best || null, script: { params_schema: [] } }
+           status: 'draft', is_public: false, stock_code: '600519.SH',
+           best_params: null, script: { params_schema: [] }, ...over }
 }
 
-describe('ScriptTask (实盘门禁 + 徽章)', () => {
+function _login(uid) {
+  // v125: auth store 读 localStorage['evtrade-user'], 非旧键 'user'
+  localStorage.setItem('evtrade-user', JSON.stringify({ id: uid }))
+}
+
+describe('ScriptTask (v125 可见性 + 标的)', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     vi.clearAllMocks()
-    mocks.listStrategies.mockResolvedValue([{ strategy_id: 1, script_id: 's1', name: '双均线' }])
+    localStorage.clear()
+    _login(1)
+    mocks.listStrategies.mockResolvedValue([
+      { strategy_id: 1, user_id: 1, script_id: 's1', name: '双均线', is_public: false, stock_code: '600519.SH' },
+    ])
     mocks.listBatches.mockResolvedValue([])
     mocks.listScripts.mockResolvedValue([])
-    mocks.startLive.mockResolvedValue({ batch_no: 2, task_id: 5 })
+    mocks.getTask.mockResolvedValue({})
     ElMessage.warning.mockClear()
   })
 
-  it('有 best_params → 显示"实盘就绪"徽章, liveReady=true', async () => {
-    mocks.getStrategy.mockResolvedValue(_strategy({ fast: 5 }))
+  it('owner: isOwner=true, 显示标的; onTogglePublic → updateStrategy({is_public:true})', async () => {
+    mocks.getStrategy.mockResolvedValue(_strategy())
+    mocks.updateStrategy.mockResolvedValue(_strategy({ is_public: true }))
     const wrapper = mountView(ScriptTask)
     await flushPromises()
-    expect(wrapper.find('[data-el="st-live-badge"]').exists()).toBe(true)
-    expect(wrapper.vm.liveReady).toBe(true)
+    expect(wrapper.vm.isOwner).toBe(true)
+    expect(wrapper.vm.strategyDetail.stock_code).toBe('600519.SH')
+    await wrapper.vm.onTogglePublic(true)
+    expect(mocks.updateStrategy).toHaveBeenCalledWith(1, { is_public: true })
+    expect(wrapper.vm.strategyDetail.is_public).toBe(true)
   })
 
-  it('无 best_params → 无徽章, 实盘按钮 disabled; onLive 提示且不调 startLive', async () => {
-    mocks.getStrategy.mockResolvedValue(_strategy(null))
+  it('他人公开策略 → 只读: isOwner=false, 批次不加载', async () => {
+    mocks.listStrategies.mockResolvedValue([
+      { strategy_id: 2, user_id: 99, script_id: 's1', name: '他人策略', is_public: true, stock_code: '000001.SZ' },
+    ])
+    mocks.getStrategy.mockResolvedValue(
+      _strategy({ strategy_id: 2, user_id: 99, is_public: true, stock_code: '000001.SZ', script: null })
+    )
     const wrapper = mountView(ScriptTask)
     await flushPromises()
-    expect(wrapper.find('[data-el="st-live-badge"]').exists()).toBe(false)
-    expect(wrapper.vm.liveReady).toBe(false)
-    // 门禁: 直接调 onLive → 提示 + 阻断
-    await wrapper.vm.onLive()
-    expect(ElMessage.warning).toHaveBeenCalledWith('请先回测生成最优参数')
-    expect(mocks.startLive).not.toHaveBeenCalled()
+    expect(wrapper.vm.isOwner).toBe(false)
+    expect(mocks.listBatches).not.toHaveBeenCalled()
   })
 
-  it('有 best_params + 输入标的 → startLive 被调', async () => {
-    mocks.getStrategy.mockResolvedValue(_strategy({ fast: 5 }))
-    ElMessageBox.prompt.mockResolvedValue({ value: '600519.SH' })
+  it('新建策略: 缺标的拒绝; 有标的 → createStrategy 含 stock_code', async () => {
+    mocks.getStrategy.mockResolvedValue(_strategy())
+    mocks.createStrategy.mockResolvedValue(_strategy())
     const wrapper = mountView(ScriptTask)
     await flushPromises()
-    await wrapper.vm.onLive()
-    expect(ElMessageBox.prompt).toHaveBeenCalled()
-    expect(mocks.startLive).toHaveBeenCalledWith(1, { stock_code: '600519.SH' })
-    expect(mocks.listBatches).toHaveBeenCalledTimes(2)  // 初始 + 实盘后刷新
+    wrapper.vm.openCreate()
+    wrapper.vm.createForm.name = '新策略'
+    wrapper.vm.createForm.script_id = 's1'
+    await wrapper.vm.onCreateStrategy()
+    expect(ElMessage.warning).toHaveBeenCalledWith('请填写策略绑定标的')
+    expect(mocks.createStrategy).not.toHaveBeenCalled()
+    wrapper.vm.createForm.stock_code = '600519.SH'
+    await wrapper.vm.onCreateStrategy()
+    expect(mocks.createStrategy).toHaveBeenCalledWith({
+      name: '新策略', script_id: 's1', stock_code: '600519.SH',
+    })
   })
 
-  it('无 best_params 但强行有值时门禁优先级: 空 best_params 不 startLive', async () => {
-    mocks.getStrategy.mockResolvedValue(_strategy({}))
-    ElMessageBox.prompt.mockResolvedValue({ value: '600519.SH' })
+  it('实盘入口已移除 (无 onLive / liveReady)', async () => {
+    mocks.getStrategy.mockResolvedValue(_strategy({ best_params: { fast: 5 } }))
     const wrapper = mountView(ScriptTask)
     await flushPromises()
-    await wrapper.vm.onLive()
-    expect(ElMessage.warning).toHaveBeenCalledWith('请先回测生成最优参数')
-    expect(mocks.startLive).not.toHaveBeenCalled()
+    expect(wrapper.vm.onLive).toBeUndefined()
+    expect(wrapper.vm.liveReady).toBeUndefined()
   })
 })
