@@ -9,6 +9,8 @@ push/helpers.py — 4 个 push handler 共用的小工具
 """
 from typing import Any, Optional
 
+from server.repo.stocks import get_stock_scale  # cost_price 按 stock.scale 保留精度
+
 # 时间工具（权威位置在 server/utils/time.py）
 
 
@@ -26,19 +28,22 @@ def _float(v: Any, default: float = 0.0) -> float:
         return default
 
 
-def _round4(v: Any, default: float = 0.0) -> float:
-    """成本价统一 4 位小数 (round half up).
+def _round_scale(v: Any, scale: Any = 2, default: float = 0.0) -> float:
+    """按证券 scale 保留价格小数位 (round).
 
-    v130+ 持仓 cost_price 系统口径: 4 位小数. 之前 broker 推 / trade 推送会带
-    5-6 位小数 (如 1.41914), 前端显示/累加会出现"差 0.02 元"累积误差.
-    所有写入路径 (pos.push / trd.push / reconcile) 落库前 round 4 位;
-    读取路径 (推送 payload / API response) 也 round 4 位, 避免 DB 改了但
-    序列化时又露出原始精度.
-
-    4 位 ≈ 0.0001 元/股 × 10000 股 = 1 元误差上限, 业务可接受.
+    scale 来源: stocks.scale (A股=2 / ETF=3, admin 可配 0-6, 缺省 2).
+    v130+ 持仓 cost_price 口径: 按标的 scale 保留精度, 与 ord/place/trd 现有
+    按 scale round 的写法对齐 (round(x, scale) + scale>6 兜底 2).
+    取代旧 _round4 (固定 4 位, 2026-08-12 cost-price-scale 淘汰).
     """
     try:
-        return float(round(float(v) + 1e-9, 4))  # +1e-9 防 1.4191 - 0.00005 = 1.4190499999 round 成 1.4190
+        s = int(scale or 2)
+    except (TypeError, ValueError):
+        s = 2
+    if s > 6:
+        s = 2
+    try:
+        return float(round(float(v), s))
     except (TypeError, ValueError):
         return default
 
@@ -114,7 +119,7 @@ def _position_to_out_dict(pos) -> Optional[dict]:
         "last_vol": _int(pos.last_vol or 0),
         "avl_vol": _int(pos.avl_vol or 0),
         "vol": _int(pos.vol or 0),
-        "cost_price": _round4(pos.cost_price or 0),  # v130+ 读取口径统一 4 位
+        "cost_price": _round_scale(pos.cost_price or 0, get_stock_scale(None, pos.stock_code)),  # 按 scale 读取口径
         "synced_at": _str(pos.synced_at or ''),
         "synced_from": _str(pos.synced_from or ''),
     }
