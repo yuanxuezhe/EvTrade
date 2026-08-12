@@ -11,9 +11,10 @@ t0.py — T0 一键买卖 + 配平系数 + 费率
 
 费率 (fee) — v7 schema 后 ORM 完整字段：
 - commission_rate  默认 0.0001（万一）
-- stamp_tax_rate   默认 0.001（卖出千 1）
-- min_commission   默认 5.0（A 股规则：佣金 < 5 元按 5 元收）
+- stamp_tax_rate   默认 0（无印花税）
+- min_commission   默认 0（免五，无最低佣金）
 - slippage         默认 0.001（滑点，备用）
+- 手续费 = 佣金（买 + 卖），无印花税；费率从 sysconfig 读，见 sysconfig.get_fee_dict
 - 真实已实现盈亏算法见 services.t0.aggregate_api.calc_realized_pnl
 """
 from typing import Tuple

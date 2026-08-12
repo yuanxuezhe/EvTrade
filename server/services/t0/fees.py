@@ -41,10 +41,12 @@ def calc_commission_and_tax(amount, fee_cfg, direction):
     """
     commission = round(amount * fee_cfg["commission_rate"], 2)
     # 最低佣金兜底（A 股规则：佣金 < 5 元时按 5 元收）
+    # 当前策略免五 → min_commission=0, 该分支自动跳过
     min_c = fee_cfg.get("min_commission", 0.0) or 0.0
     if min_c > 0 and commission < min_c and amount > 0:
         commission = min_c
     stamp_tax = 0.0
     if direction == "SELL":
+        # 当前无印花税 → stamp_tax_rate=0, 恒为 0
         stamp_tax = round(amount * fee_cfg["stamp_tax_rate"], 2)
     return commission, stamp_tax

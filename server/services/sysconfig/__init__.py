@@ -30,9 +30,9 @@ _lock = threading.RLock()
 # user='0' 表示默认, 启动时会 upsert 到 sys_config 表
 DEFAULT_CONFIGS: list[dict] = [
     {"cfg_key": "commission_rate", "cfg_val": "0.0001", "desc": "佣金费率 (万一)"},
-    {"cfg_key": "stamp_tax_rate", "cfg_val": "0.001", "desc": "印花税率 (千一)"},
+    {"cfg_key": "stamp_tax_rate", "cfg_val": "0", "desc": "印花税率 (千一, 0=无)"},
     {"cfg_key": "slippage", "cfg_val": "0.001", "desc": "滑点 (0.1%)"},
-    {"cfg_key": "min_commission", "cfg_val": "5.0", "desc": "最低佣金 (元)"},
+    {"cfg_key": "min_commission", "cfg_val": "0", "desc": "最低佣金 (元, 0=免五)"},
     {"cfg_key": "auto_reconcile", "cfg_val": "0", "desc": "自动对账开关 (0=人工/1=自动)"},
     {"cfg_key": "auto_use_broker_data", "cfg_val": "1", "desc": "自动对账时以柜台为准 (0=本地/1=柜台)"},
     {"cfg_key": "trdtime", "cfg_val": "093000-113000;130000-153000", "desc": "交易时段 (分号分隔多段 HHMMSS-HHMMSS)"},
@@ -224,11 +224,12 @@ def list_all(user: Optional[str] = None) -> list[dict]:
 # ============================================================================
 
 # 旧 fee_config 字段 (系统级, user='0')
+# 2026-08-12 费率规则: 万1免五 (min_commission=0)、无印花税 (stamp_tax_rate=0)
 FEE_KEYS = {
     "commission_rate": 0.0001,
-    "stamp_tax_rate": 0.001,
+    "stamp_tax_rate": 0.0,
     "slippage": 0.001,
-    "min_commission": 5.0,
+    "min_commission": 0.0,
 }
 
 # 旧 reconcile_config 字段
