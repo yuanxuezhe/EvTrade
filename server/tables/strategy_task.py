@@ -52,10 +52,10 @@ class StrategyTask(TableBase):
         'live_signals': '实盘信号流: 用户 script signal() + doorder 自动记录 (限 500 条, LiveRunner 每 5s flush)',
         'fields': '历史行情字段白名单, 默认 open,close,high,low',
         'progress': '实时回测进度 (phase/current/total/bar_idx/total_bars/elapsed_ms)',
+        'description': '策略(任务)描述: 新建策略时填写',
         'execution_service': '执行服务标识 (evtrade / strategy_exec)',
         'execution_pid': 'strategy_exec 进程 pid (用于排查)',
-        'version': '',
-        'description': '策略(任务)描述: 新建策略时填写',
+        'version': '乐观锁 (UPDATE WHERE version 等于当前值)',
         'strategy_id': '→ strategy.strategy_id (v123)',
         'batch_no': '回测/实盘批次号 (v123, 序号表 task_batch)',
         'metric': '批次排序指标 (sweep top1 选择, 重测还原用)',
@@ -84,10 +84,10 @@ class StrategyTask(TableBase):
         'live_signals': 'json',
         'fields': 'varchar(64)',
         'progress': 'json',
+        'description': 'varchar(500)',
         'execution_service': 'varchar(16)',
         'execution_pid': 'int',
         'version': 'int',
-        'description': 'varchar(500)',
         'strategy_id': 'int',
         'batch_no': 'int',
         'metric': 'varchar(16)',
@@ -116,10 +116,10 @@ class StrategyTask(TableBase):
     live_signals: Any
     fields: str
     progress: Any
+    description: str
     execution_service: str
     execution_pid: int
     version: int
-    description: str
     strategy_id: int
     batch_no: int
     metric: str

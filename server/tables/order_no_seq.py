@@ -30,18 +30,18 @@ class OrderNoSeq(TableBase):
     __auto_increment_pk__: ClassVar[str | None] = None
 
     __fields__: ClassVar[dict] = {
+        'seq_name': '',
         'last_value': '',
-        'updated_at': '',
-        'seq_name': ''
+        'updated_at': ''
     }
 
     __field_types__: ClassVar[dict] = {
+        'seq_name': 'varchar(32)',
         'last_value': 'int',
-        'updated_at': 'datetime',
-        'seq_name': 'varchar(32)'
+        'updated_at': 'datetime'
     }
 
     # 字段 type hints (IDE 智能提示用, 运行时不影响行为)
+    seq_name: str
     last_value: int
     updated_at: datetime
-    seq_name: str

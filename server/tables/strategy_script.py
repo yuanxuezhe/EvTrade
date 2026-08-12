@@ -38,9 +38,9 @@ class StrategyScript(TableBase):
         'params_schema': '',
         'description': '',
         'status': '',
+        'is_public': '',
         'created_at': '',
-        'updated_at': '',
-        'is_public': ''
+        'updated_at': ''
     }
 
     __field_types__: ClassVar[dict] = {
@@ -51,9 +51,9 @@ class StrategyScript(TableBase):
         'params_schema': 'json',
         'description': 'varchar(255)',
         'status': 'varchar(16)',
+        'is_public': 'tinyint(1)',
         'created_at': 'datetime',
-        'updated_at': 'datetime',
-        'is_public': 'tinyint'
+        'updated_at': 'datetime'
     }
 
     # 字段 type hints (IDE 智能提示用, 运行时不影响行为)
@@ -64,6 +64,6 @@ class StrategyScript(TableBase):
     params_schema: Any
     description: str
     status: str
+    is_public: bool
     created_at: datetime
     updated_at: datetime
-    is_public: int
