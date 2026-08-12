@@ -37,6 +37,7 @@ target/
 Thumbs.db
 
 node_modules/
+/tests/client/node_modules/   # 历史误提交, 已 untrack; 显式写一次防回潮
 dist/
 .vite-cache/
 .logs/
