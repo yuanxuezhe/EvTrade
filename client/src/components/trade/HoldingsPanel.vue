@@ -66,6 +66,15 @@
           <span v-else class="text-muted">—</span>
         </template>
 
+        <template #column-day_pnl="{ row }">
+          <template v-if="row.day_pnl != null">
+            <span class="text-mono" :class="profitClass(row.day_pnl)">
+              {{ formatMoney(row.day_pnl) }}
+            </span>
+          </template>
+          <span v-else class="text-muted">—</span>
+        </template>
+
         <template #column-profit="{ row }">
           <template v-if="getProfit(row) != null">
             <span class="text-mono" :class="profitClass(getProfit(row))">
@@ -142,6 +151,8 @@ const totalMv = computed(() => {
   return sum
 })
 
+// 当日盈亏 (v114.2): 由 holdings store 行情推送驱动重算写入 positions[].day_pnl,
+// 本面板只读行字段, 不做任何拉取/轮询
 // 行情 trigger
 const quoteTickTrigger = computed(() => quoteStore.size || 0)
 
@@ -207,6 +218,7 @@ const holdingsColumns = [
   { key: 'cost_price', label: '成本', vBind: COL.PRICE },
   { key: 'last_price', label: '最新', vBind: COL.PRICE },
   { key: 'market_value', label: '市值', vBind: COL.MONEY, sortable: false },
+  { key: 'day_pnl', label: '当日盈亏', vBind: COL.MONEY, sortable: false },
   { key: 'profit', label: '浮动盈亏', vBind: COL.MONEY, sortable: false },
   { key: 'return_rate', label: '收益率', fixed: 'right', vBind: COL.NUMBER, sortable: false },
 ]

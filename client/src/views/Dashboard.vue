@@ -29,12 +29,12 @@
       />
       <StatCard
         label="今日盈亏"
-        :value="todayPnL"
+        :value="displayDayPnl"
         prefix="¥"
-        :trend="todayPnLPercent"
+        :trend="dayPnlPercent"
         icon="TrendCharts"
-        :accent="todayPnL > 0 ? 'up' : todayPnL < 0 ? 'down' : 'primary'"
-        sublabel="总资产相对期初变化"
+        :accent="dayPnlTotal > 0 ? 'up' : dayPnlTotal < 0 ? 'down' : 'primary'"
+        sublabel="各持仓当日盈亏汇总"
       />
     </section>
 
@@ -155,7 +155,7 @@
 </template>
 
 <script setup>
-import { computed, onMounted, onBeforeUnmount, watch } from 'vue'
+import { computed, onMounted } from 'vue'
 import { ArrowRight } from '@element-plus/icons-vue'
 import StatCard from '../components/StatCard.vue'
 import EChart from '../components/EChart.vue'
@@ -232,6 +232,31 @@ const todayPnLPercent = computed(() => {
   const last = holdingsStore.cachedAsset.last_asset || 0
   const base = last > 0 ? last : 1
   return (todayPnL.value / base) * 100
+})
+
+// v114.2: 今日盈亏卡片 = 当日盈亏汇总 (Σ positions[].day_pnl)
+//   day_pnl 由 holdings store 行情推送驱动重算写入行字段, 此处只合计 (无行情 → 该行不计入)
+const dayPnlTotal = computed(() => {
+  const ps = holdingsStore.positions || []
+  let sum = 0
+  let has = false
+  for (const p of ps) {
+    if (p.day_pnl == null) continue
+    const v = Number(p.day_pnl)
+    if (!Number.isFinite(v)) continue
+    sum += v
+    has = true
+  }
+  return has ? sum : null
+})
+const displayDayPnl = computed(() => (dayPnlTotal.value ?? 0))
+// 当日盈亏占总资产比例 (期初 last_asset 为基准)
+const dayPnlPercent = computed(() => {
+  const v = dayPnlTotal.value
+  if (v == null) return null
+  const last = holdingsStore.cachedAsset.last_asset || 0
+  const base = last > 0 ? last : 1
+  return (v / base) * 100
 })
 
 const orderStats = computed(() => {
@@ -344,10 +369,7 @@ onMounted(async () => {
   }
   // v32+: 持仓 quote 订阅下沉到 holdings store bootstrap 阶段,
   //   无需 Dashboard 重复 watch (避免幽灵订阅 + 双发)
-})
-
-onBeforeUnmount(() => {
-  // v32: 持仓订阅已下沉 store, 离开 Dashboard 不需要 unsubscribe
+  // v114.2: 当日盈亏 recompute 由 holdings store 行情推送驱动, 仪表盘只读 positions[].day_pnl
 })
 </script>
 

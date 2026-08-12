@@ -23,6 +23,7 @@ import { createLogger } from './holdings_log'
 import { createMarketComputeds } from './holdings_market'
 import { createPushHandlers } from './holdings_push'
 import { createBootstrap } from './holdings_bootstrap'
+import { createDayPnlRecompute } from './holdings_daypnl'
 // 注: 原 IDB write-through 已删除. 当前架构纯 Pinia 内存.
 
 export const useHoldingsStore = defineStore('holdings', () => {
@@ -78,6 +79,11 @@ export const useHoldingsStore = defineStore('holdings', () => {
     positions, orders, trades, cachedAsset, activeTrdDate,
     log, positionCodes, getQuoteStore: () => useQuoteStore(),
   })
+
+  // ---- 当日盈亏 recompute（holdings_daypnl.js, v114.2: 行情推送驱动, 无轮询）----
+  const {
+    start: startDayPnl, stop: stopDayPnl, refreshDayPnl,
+  } = createDayPnlRecompute({ positions, activeTrdDate, trades })
 
   // ---- bootstrap / refresh 流程（holdings_bootstrap.js） ---------------
   const {
@@ -137,8 +143,11 @@ export const useHoldingsStore = defineStore('holdings', () => {
       },
       { flush: 'post' }
     )
+    // v114.2: 当日盈亏 recompute 挂进同一生命周期 (行情推送驱动, 无轮询)
+    startDayPnl()
   }
   function _stopWatchers() {
+    stopDayPnl()
     if (_unwatch) { _unwatch(); _unwatch = null }
   }
 
@@ -157,6 +166,8 @@ export const useHoldingsStore = defineStore('holdings', () => {
     bootstrap, refreshAll, resetForNewDay,
     refreshPositions, refreshAsset,
     getLivePrice, getMarketValue, getProfit, getReturnRate,
+    // v114.2: 当日盈亏 (recompute 已自动, 手动刷新入口给 AppHeader/测试用)
+    refreshDayPnl,
     applyOrderPush, applyTradePush, applyQuote, applyPositionUpdate,
     log, clearHistory,
     _startWatchers, _stopWatchers
