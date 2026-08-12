@@ -27,6 +27,7 @@ from server.models.orm import (
     Position, Asset,  # ORM-only: Position / Asset 保留 v_next 老逻辑 (Position 行 insert/delete via db.add)
 )
 from server.tables import Positions, Assets, SysStatus, ReconcileReport  # v81.11: 修复 /api/admin/sys-status/init 500 (tables API)
+from server.services.push.helpers import _round4  # cost_price 统一 4 位小数 (v130+ 口径)
 import json  # v103: 修复 do_reconcile 抛 NameError: name 'json' is not defined
 import logging
 
@@ -221,7 +222,7 @@ def _apply_broker_data(
             last_vol=int(p.get('last_vol', 0) or 0),
             avl_vol=int(p.get('avl_vol', 0) or 0),
             vol=int(p.get('vol', 0) or 0),
-            cost_price=float(p.get('cost_price', 0) or 0),
+            cost_price=_round4(p.get('cost_price', 0)),  # v130+ 统一 4 位小数
             synced_at=datetime.now(timezone.utc).replace(tzinfo=None),
             synced_from='rpc_reconcile',
         ))
