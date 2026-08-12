@@ -72,6 +72,14 @@ function getDayPnl(position) {
   })
 }
 
+/** 单标的当日费用 day_fee — 后端按当日实际买卖成交金额聚合, 与当日盈亏同一费用值
+ *  (REQ-FE-534: 浮动盈亏扣费用用; 无成交/未拉取 → 0) */
+function getDayFee(position) {
+  if (!position || !position.stock_code) return 0
+  const d = _map[position.stock_code] || EMPTY_TRADE
+  return d.day_fee
+}
+
 /** 测试用: 清空成交 map */
 function _resetCache() {
   for (const k of Object.keys(_map)) delete _map[k]
@@ -81,5 +89,6 @@ function _resetCache() {
 export const useT0DayPnl = {
   refresh,
   getDayPnl,
+  getDayFee,
   _resetCache,
 }

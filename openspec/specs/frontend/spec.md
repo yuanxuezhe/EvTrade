@@ -2008,22 +2008,23 @@ price_type 选择:
 改为**扣费版**，公式对齐「当日盈亏」费用逻辑：
 
 ```
-浮动盈亏 = (现价 − 成本) × 量 − 买佣金（成本×量 按 calc_commission_and_tax 计算）
+浮动盈亏 = (现价 − 成本) × 量 − 当日费用 day_fee
 ```
 
-**只扣买佣金，不预扣卖佣金/印花税**：当日盈亏 `day_fee` 只按**今日实际成交**计费
-（`aggregators.py:123` = 买佣金(今日买入额) + 卖佣金(今日卖出额) + 印花税）。
-对「今日买入、持有未卖」仓位，当日盈亏只含买佣金；浮动盈亏若再扣卖佣金+印花税会
-比当日盈亏多一倍（159530.SZ 实测）。持仓未实现部分不产生卖出费用，故只扣已发生的
-买入佣金 → 浮动盈亏与当日盈亏在「今日买入持有」场景**完全相等**。
+**费用 = 当日盈亏的 day_fee**（后端 t0-exposure 按**当日实际买卖成交金额**聚合：
+`aggregators.py:123` = 买佣金(今日买入额) + 卖佣金(今日卖出额) + 印花税）。
+浮动盈亏与当日盈亏扣**同一 day_fee** → 两者费用完全一致。
+演进：初版按整仓名义额自算买+卖佣金，对「今日买入、持有未卖」仓位比当日盈亏多一倍
+（159530.SZ 实测）→ 改为直接用后端 day_fee。
 
-- **纯函数**：`lib/t0-calc.js` 新增 `calcCommissionAndTax(amount, feeCfg, direction)`（镜像后端
-  `fees.py:calc_commission_and_tax`：佣金 `round(amount×rate, 2)` + `min_commission` 兜底 + 印花仅卖出）
-  与 `calcFloatingPnl({price, cost, vol, fee_cfg})`（无 `fee_cfg` → 退化裸价差；vol=0 → 0；行情缺失 → null）
-- **费率来源**：holdings store 启动时 `feeConfigApi.get()`（GET /fee-config）拉一次存 `feeConfig` ref，
-  注入 `createMarketComputeds`；拉取失败/未返回 → `feeConfig=null` → 浮动盈亏退化裸价差（graceful，不阻断持仓加载）
-- **返回**：浮动盈亏结果 round 2（金额口径）；`getReturnRate = getProfit / (成本×量)` 自动继承扣费口径
-- **不做二次费率逻辑**：费率权威仍为后端 sysconfig；前端只做与当日盈亏一致的镜像计算，**无轮询**
+- **纯函数**：`lib/t0-calc.js` 新增 `calcFloatingPnl({price, cost, vol, day_fee})`
+  （无 day_fee → 0，退化裸价差；vol=0 → 0；行情缺失 → null；结果 round 2）
+- **day_fee 来源**：`useT0DayPnl.getDayFee(position)`（t0-exposure 聚合 map，与 `getDayPnl`
+  同一数据源）；`holdings_daypnl.recomputeAll` 同步写 `positions[].day_fee` 行字段，
+  `getProfit` 读行字段扣费（无 → 0）
+- **不做二次费率逻辑**（REQ-FE-533）：费用权威为后端（sysconfig 费率 + t0-exposure 聚合）；
+  前端不引入 feeConfig / 不自算佣金，**无轮询**（day_fee 随当日盈亏 recompute 一起刷新）
+- **返回**：`getReturnRate = getProfit / (成本×量)` 自动继承扣费口径
 
 **启动时机（2026-08-12 修复追加）**：recompute watcher 随 `_startWatchers`/`_stopWatchers` 启停，`_startWatchers()` **MUST** 在「已登录 mount」时被调用（`App.vue` `onMounted`）。原因：v119 起 token 经 localStorage 持久化，刷新后 auth store 同步恢复 → `isAuthenticated` 初始即 `true` → 非 immediate 的 auth watch 不触发；若只在 auth watch 启动，刷新场景下 recompute 永不启动 → 当日盈亏列恒空。
 

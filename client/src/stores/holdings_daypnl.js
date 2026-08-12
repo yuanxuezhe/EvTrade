@@ -35,10 +35,12 @@ export function createDayPnlRecompute({ positions, activeTrdDate, trades }) {
   let _unwatchTrades = null
   let _debounce = null
 
-  /** 遍历 positions 重算当日盈亏并写回行字段 (无行情/无昨收 → null) */
+  /** 遍历 positions 重算当日盈亏并写回行字段 (无行情/无昨收 → null)
+   *  REQ-FE-534: 同步写 p.day_fee (当日费用, 供浮动盈亏 getProfit 扣费) */
   function recomputeAll() {
     for (const p of positions.value || []) {
       p.day_pnl = useT0DayPnl.getDayPnl(p)
+      p.day_fee = useT0DayPnl.getDayFee(p)
     }
   }
 
