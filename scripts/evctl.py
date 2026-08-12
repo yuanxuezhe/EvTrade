@@ -144,6 +144,7 @@ SERVICES = {
         #   保留探测 (真正死连接 60s 内仍被踢), 仅放宽 pong 容忍窗口。
         [sys.executable, '-u', '-m', 'uvicorn', 'server.main:app',
          '--host', '0.0.0.0', '--port', str(BACKEND_PORT),
+         '--workers', '4',
          '--ws-ping-interval', '20', '--ws-ping-timeout', '60'],
         preflight=['uvicorn'],
     ),
