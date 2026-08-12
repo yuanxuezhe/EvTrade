@@ -28,8 +28,17 @@ import { createMemoryHistory, createRouter } from 'vue-router'
 // 所有 icon 渲染为空 div (测试只关心 click handler, 不关心 icon 渲染)
 vi.mock('@element-plus/icons-vue', () => {
   const makeIcon = (name) => ({ name, template: '<i class="el-icon-stub" />' })
-  // 列出 view 测试用到的 icon (按需扩展)
-  const ICONS = ['Search', 'Refresh', 'Download', 'Plus', 'Delete', 'Edit', 'Close', 'Check', 'ArrowUp', 'ArrowDown']
+  // 列出 view 测试用到的 icon (按需扩展 — 覆盖 client/src 全量 import)
+  const ICONS = [
+    'Search', 'Refresh', 'Download', 'Plus', 'Delete', 'Edit', 'Close', 'Check',
+    'ArrowUp', 'ArrowDown', 'ArrowRight', 'Top', 'Bottom', 'Minus',
+    'List', 'Document', 'Files', 'InfoFilled', 'Warning', 'Setting', 'Operation',
+    'Lock', 'User', 'UserFilled', 'SwitchButton', 'Menu', 'Fold', 'Expand',
+    'Sunny', 'Moon', 'View', 'VideoPlay', 'EditPen',
+    'Money', 'Wallet', 'Coin', 'Box', 'Tickets', 'Cpu', 'Odometer',
+    'DataAnalysis', 'DataBoard', 'DataLine', 'TrendCharts', 'PieChart',
+    'CaretTop', 'CaretBottom',
+  ]
   const stub = {}
   for (const n of ICONS) stub[n] = makeIcon(n)
   return stub
@@ -108,8 +117,15 @@ const ElFormItemStub = {
 const ElInputStub = {
   name: 'ElInput',
   template: `<input class="el-input" :data-el="'ElInput'" :value="modelValue" @input="$emit('update:modelValue', $event.target.value)" />`,
-  props: ['modelValue', 'type', 'placeholder', 'clearable', 'disabled', 'style'],
+  props: ['modelValue', 'type', 'placeholder', 'clearable', 'disabled', 'style', 'size', 'readonly', 'step', 'min', 'max', 'precision', 'controls', 'controlsPosition'],
   emits: ['update:modelValue', 'change', 'input', 'clear'],
+}
+
+const ElInputNumberStub = {
+  name: 'ElInputNumber',
+  template: `<input class="el-input-number" :data-el="'ElInputNumber'" type="number" :value="modelValue" @input="$emit('update:modelValue', Number($event.target.value))" />`,
+  props: ['modelValue', 'min', 'max', 'step', 'precision', 'placeholder', 'disabled', 'style', 'size', 'controls', 'controlsPosition'],
+  emits: ['update:modelValue', 'change', 'input'],
 }
 
 const ElCheckboxStub = {
@@ -195,8 +211,16 @@ vi.mock('element-plus', async () => {
   const ElInputStub = {
     name: 'ElInput',
     template: `<input class="el-input" :data-el="name" :value="modelValue" @input="$emit('update:modelValue', $event.target.value)" />`,
-    props: ['modelValue', 'type', 'placeholder', 'clearable', 'disabled', 'style'],
+    props: ['modelValue', 'type', 'placeholder', 'clearable', 'disabled', 'style', 'size', 'readonly', 'step', 'min', 'max', 'precision', 'controls', 'controlsPosition'],
     emits: ['update:modelValue', 'change', 'input', 'clear'],
+  }
+
+  // el-input-number: 数字输入, emit Number
+  const ElInputNumberStub = {
+    name: 'ElInputNumber',
+    template: `<input class="el-input-number" :data-el="name" type="number" :value="modelValue" @input="$emit('update:modelValue', Number($event.target.value))" />`,
+    props: ['modelValue', 'min', 'max', 'step', 'precision', 'placeholder', 'disabled', 'style', 'size', 'controls', 'controlsPosition'],
+    emits: ['update:modelValue', 'change', 'input'],
   }
 
   // el-checkbox: emit update:modelValue
@@ -237,6 +261,7 @@ vi.mock('element-plus', async () => {
       ElTableColumn: ElTableColumnStub,
       ElPagination: ElPaginationStub,
       ElInput: ElInputStub,
+      ElInputNumber: ElInputNumberStub,
       ElForm: ElFormStub,
       ElFormItem: ElFormItemStub,
       ElDialog: makeStub('ElDialog'),
@@ -328,6 +353,7 @@ const _elStubs = {
   ElTableColumn: ElTableColumnStub,
   ElPagination: ElPaginationStub,
   ElInput: ElInputStub,
+  ElInputNumber: ElInputNumberStub,
   ElForm: ElFormStub,
   ElFormItem: ElFormItemStub,
   ElDialog: makeStub('ElDialog'),

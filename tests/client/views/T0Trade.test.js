@@ -1,15 +1,19 @@
 /**
- * T0Trade.test.js — 快速做T view 单测
+ * T0Trade.test.js — 快速做T view 单测 (v127 重写)
  *
- * 验证:
- *   - 主表渲染 (持仓行 + 操作列 4 按钮)
- *   - sort-change 写入 sortBy/sortOrder → sortedRows 重排
- *   - buyState/sellState disabled 守卫 (vol=0 → buy disabled)
- *   - pct / priceType 设置条双向联动
- *   - 净敞口 / 配平按钮文本 (净额=0 → '配平', ≠0 → '配±N')
+ * 旧版本 (v55 之前) 断言 quotaForRow / PCT_OPTIONS / _moveSelection 等已删除 API,
+ * 全部失效。本文件对齐 v127 现状:
+ *   - 主表 task 视角 (taskRows 来自 t0TasksStore.loadTasks)
+ *   - 选中联动 (onTaskRowClick / selectedTaskId / selectedStockCode / ptRowClass)
+ *   - v127 价格 + 价格类型 (PriceTypeInput): 类型切换自动重填 orderPrice
+ *   - v127 买/卖按钮联动选中 (未选中先选 → 等 watcher → 下单)
+ *   - computeOrderVolume 三模式 (pct / qty / amount)
+ *   - 配平差值 (_taskNetDiff → balanceBtnLabel / computeRowBalanceDiff)
+ *   - 下半委托表过滤 (task_id 匹配 + 排除 strategy_type=2 策略母单子单)
  */
 // @vitest-environment jsdom
 import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { nextTick } from 'vue'
 
 vi.mock('@/api', () => {
   const fn = () => vi.fn()
@@ -20,7 +24,6 @@ vi.mock('@/api', () => {
       placeOrder: fn().mockResolvedValue({ code: 0, list: [{}] }),
       cancelOrder: fn(), adjustAsset: fn(), adjustPosition: fn(),
       adminReconcile: fn(),
-      getT0Stats: fn(), getT0Exposure: fn(), getT0Aggregate: fn(),
     },
     authApi: { login: fn(), logout: fn() },
     userApi: { list: fn(), create: fn(), update: fn(), delete: fn() },
@@ -31,227 +34,291 @@ vi.mock('@/api', () => {
   }
 })
 
-// mock t0_stats API
-vi.mock('@/api/t0_stats', () => ({
-  t0StatsApi: {
-    get: vi.fn().mockResolvedValue(null),
-    getHistory: vi.fn().mockResolvedValue({ points: [] }),
-    getAggregate: vi.fn().mockResolvedValue({ summary: {}, by_stock: [] }),
+vi.mock('@/api/t0_tasks', () => ({
+  t0TasksApi: {
+    // 注意: vi.mock 工厂被 hoist 到文件顶部, 不能引用外层 const → 数据内联
+    list: vi.fn().mockResolvedValue([
+      { id: 1, stock_code: '600030.SH', status: 'active', base_volume: 0, target_volume: 0 },
+      { id: 2, stock_code: '000001.SZ', status: 'active', base_volume: 0, target_volume: 0 },
+      { id: 3, stock_code: '600519.SH', status: 'archived', base_volume: 0, target_volume: 0 },
+    ]),
+    overview: vi.fn().mockResolvedValue({}),
+    create: vi.fn(), update: vi.fn(), remove: vi.fn(),
+    close: vi.fn(), stats: vi.fn(),
   },
 }))
 
 import '../setup-view'
 import { mountView, flushPromises } from '../setup-view'
 import { useHoldingsStore } from '@/stores/holdings'
+import { useQuoteStore } from '@/stores/quote'
+import { useOrderStore } from '@/stores/order'
+import { PriceType } from '@/constants/priceType'
 import T0Trade from '@/views/T0Trade.vue'
 
-const positions = [
-  { stock_code: '600030.SH', stock_name: '中信证券', vol: 1000, avl_vol: 1000, cost_price: 12.0, last_price: 13.0 },
-  { stock_code: '600519.SH', stock_name: '贵州茅台', vol: 0,    avl_vol: 0,    cost_price: 1800, last_price: 1750 },
-  { stock_code: '000001.SZ', stock_name: '平安银行', vol: 500,  avl_vol: 500,  cost_price: 10.0, last_price: 11.5 },
+const POSITIONS = [
+  { stock_code: '600030.SH', stock_name: '中信证券', vol: 1000, avl_vol: 1000, last_vol: 1000 },
+  { stock_code: '000001.SZ', stock_name: '平安银行', vol: 500, avl_vol: 500, last_vol: 500 },
 ]
 
-function seedHoldings(p = positions) {
+function seedStores() {
   const h = useHoldingsStore()
-  h.positions = p
-  h.cachedAsset = { cash: 100000, frozen_cash: 0, market_value: 50000, total_asset: 150000 }
+  h.positions = POSITIONS
+  h.cachedAsset = { cash: 100000, available: 100000, frozen_cash: 0 }
+  h.orders = []
+
+  const q = useQuoteStore()
+  // 上海: 带 5 档 → 市价保护限价可算 (store 解包后 byCode 就是 Map)
+  q.byCode.set('600030.SH', {
+    last_price: 13.0,
+    prev_close: 12.5,
+    ask_prices: [13.01, 13.02, 13.03, 13.04, 13.05],
+    bid_prices: [12.99, 12.98, 12.97, 12.96, 12.95],
+  })
+  // 深圳: 无需保护限价
+  q.byCode.set('000001.SZ', { last_price: 11.5, prev_close: 11.0 })
+  return { h, q }
+}
+
+async function mountReady() {
+  const wrapper = mountView(T0Trade)
+  await flushPromises()
+  return wrapper
 }
 
 describe('T0Trade', () => {
   beforeEach(() => {
-    seedHoldings()
+    seedStores()
   })
 
   it('mounts', async () => {
-    const wrapper = mountView(T0Trade)
-    await flushPromises()
-    expect(wrapper.exists()).toBe(true)
+    const wrapper = await mountReady()
     expect(wrapper.find('.t0-trade').exists()).toBe(true)
   })
 
-  it('渲染主表 + 行数 = positions.length', async () => {
-    const wrapper = mountView(T0Trade)
-    await flushPromises()
-    expect(wrapper.vm.sortedRows.length).toBe(3)
+  it('taskRows 来自 t0TasksStore.loadTasks', async () => {
+    const wrapper = await mountReady()
+    expect(wrapper.vm.taskRows.length).toBe(3)
   })
 
-  it('onSortChange 写入 sortBy / sortOrder', async () => {
-    const wrapper = mountView(T0Trade)
-    await flushPromises()
-    wrapper.vm.onSortChange({ prop: 'vol', order: 'ascending' })
-    expect(wrapper.vm.sortBy).toBe('vol')
-    expect(wrapper.vm.sortOrder).toBe('ascending')
-    // 升序: 0 < 500 < 1000
-    expect(wrapper.vm.sortedRows[0].stock_code).toBe('600519.SH')
-    expect(wrapper.vm.sortedRows[2].stock_code).toBe('600030.SH')
+  it('默认选中第一条 task', async () => {
+    const wrapper = await mountReady()
+    expect(wrapper.vm.selectedTaskId).toBe(1)
+    expect(wrapper.vm.selectedStockCode).toBe('600030.SH')
   })
 
-  it('sortOrder = descending: 倒序', async () => {
-    const wrapper = mountView(T0Trade)
-    await flushPromises()
-    wrapper.vm.onSortChange({ prop: 'vol', order: 'descending' })
-    expect(wrapper.vm.sortedRows[0].stock_code).toBe('600030.SH')
-    expect(wrapper.vm.sortedRows[2].stock_code).toBe('600519.SH')
+  it('onTaskRowClick: 再点已选中行 → 取消选中', async () => {
+    const wrapper = await mountReady()
+    wrapper.vm.onTaskRowClick({ id: 1 })
+    expect(wrapper.vm.selectedTaskId).toBe(null)
+    wrapper.vm.onTaskRowClick({ id: 2 })
+    expect(wrapper.vm.selectedTaskId).toBe(2)
+    expect(wrapper.vm.selectedStockCode).toBe('000001.SZ')
   })
 
-  it('sortOrder=null → 保持原顺序', async () => {
-    const wrapper = mountView(T0Trade)
-    await flushPromises()
-    wrapper.vm.onSortChange({ prop: 'vol', order: 'ascending' })
-    wrapper.vm.onSortChange({ prop: 'vol', order: null })
-    expect(wrapper.vm.sortBy).toBe(null)
-    expect(wrapper.vm.sortedRows[0].stock_code).toBe('600030.SH')
+  it('ptRowClass: 选中行 is-selected', async () => {
+    const wrapper = await mountReady()
+    expect(wrapper.vm.ptRowClass({ row: { id: 1 } })).toContain('is-selected')
+    expect(wrapper.vm.ptRowClass({ row: { id: 2 } })).not.toContain('is-selected')
   })
 
-  it('buyState: vol=0 → disabled=true (持仓为 0 不能按比例买)', () => {
-    const wrapper = mountView(T0Trade)
-    const empty = positions[1]  // 600519.SH vol=0
-    const state = wrapper.vm.buyState(empty)
-    expect(state.disabled).toBe(true)
+  // ─── v127: 价格 + 价格类型联动 ───
+
+  it('默认价格类型 = 市价 (44)', async () => {
+    const wrapper = await mountReady()
+    expect(wrapper.vm.orderPriceTypeCode).toBe(PriceType.MARKET_PEER_PRICE_FIRST)
   })
 
-  it('buyState: vol>0 → disabled=false', () => {
-    const wrapper = mountView(T0Trade)
-    const ok = positions[0]  // 600030.SH vol=1000
-    const state = wrapper.vm.buyState(ok)
-    expect(state.disabled).toBe(false)
+  it('切限价 (11) → orderPrice 自动填最新价', async () => {
+    const wrapper = await mountReady()
+    wrapper.vm.orderPriceTypeCode = PriceType.FIX_PRICE
+    await nextTick()
+    expect(wrapper.vm.orderPrice).toBe(13.0)
   })
 
-  it('netExposure: 缺 t0Stats → 0', () => {
-    const wrapper = mountView(T0Trade)
-    expect(wrapper.vm.netExposure(positions[0])).toBe(0)
+  it('切最新价 (5) → orderPrice = 0', async () => {
+    const wrapper = await mountReady()
+    wrapper.vm.orderPriceTypeCode = PriceType.LATEST_PRICE
+    await nextTick()
+    expect(wrapper.vm.orderPrice).toBe(0)
   })
 
-  it('netExposure: 有 t0Stats → buy - sell', () => {
-    const wrapper = mountView(T0Trade)
-    wrapper.vm.t0StatsMap = { '600030.SH': { today_buy_volume: 800, today_sell_volume: 300 } }
-    expect(wrapper.vm.netExposure(positions[0])).toBe(500)
+  it('市价 (44) + 上交所 → orderPrice = 对手盘第 5 档 (卖五)', async () => {
+    const wrapper = await mountReady()
+    wrapper.vm.orderPriceTypeCode = PriceType.LATEST_PRICE
+    await nextTick()
+    wrapper.vm.orderPriceTypeCode = PriceType.MARKET_PEER_PRICE_FIRST
+    await nextTick()
+    expect(wrapper.vm.orderPrice).toBe(13.05)
   })
 
-  it('getBalanceLabel: 净额=0 → "配平"', () => {
-    const wrapper = mountView(T0Trade)
-    expect(wrapper.vm.getBalanceLabel(positions[0])).toBe('配平')
+  it('市价 (44) + 深交所 → orderPrice = 0', async () => {
+    const wrapper = await mountReady()
+    wrapper.vm.selectedTaskId = 2   // 000001.SZ
+    await nextTick()
+    expect(wrapper.vm.selectedStockCode).toBe('000001.SZ')
+    expect(wrapper.vm.orderPrice).toBe(0)
   })
 
-  it('getBalanceLabel: 净额>0 → "配-N" (卖平)', () => {
-    const wrapper = mountView(T0Trade)
-    wrapper.vm.t0StatsMap = { '600030.SH': { today_buy_volume: 500, today_sell_volume: 0 } }
-    expect(wrapper.vm.getBalanceLabel(positions[0])).toBe('配-500')
+  it('切 task → orderPrice 按新标的重填 (限价)', async () => {
+    const wrapper = await mountReady()
+    wrapper.vm.orderPriceTypeCode = PriceType.FIX_PRICE
+    await nextTick()
+    expect(wrapper.vm.orderPrice).toBe(13.0)
+    wrapper.vm.selectedTaskId = 2
+    await nextTick()
+    expect(wrapper.vm.orderPrice).toBe(11.5)
   })
 
-  it('getBalanceLabel: 净额<0 → "配+N" (买平)', () => {
-    const wrapper = mountView(T0Trade)
-    wrapper.vm.t0StatsMap = { '600030.SH': { today_buy_volume: 0, today_sell_volume: 500 } }
-    expect(wrapper.vm.getBalanceLabel(positions[0])).toBe('配+500')
+  it('未选中标的 → orderPrice 归零', async () => {
+    const wrapper = await mountReady()
+    wrapper.vm.selectedTaskId = null
+    await nextTick()
+    expect(wrapper.vm.orderPrice).toBe(0)
   })
 
-  it('quickPct 默认值', () => {
-    const wrapper = mountView(T0Trade)
-    expect([25, 50, 75, 100]).toContain(wrapper.vm.quickPct)
+  // ─── v127: 买/卖按钮联动选中 ───
+
+  it('onBuyTask: 未选中行 → 隐式选中 + 价格切到该标的', async () => {
+    const wrapper = await mountReady()
+    const orderStore = useOrderStore()
+    orderStore.placeOrder = vi.fn().mockResolvedValue([{}])
+    wrapper.vm.orderPriceTypeCode = PriceType.FIX_PRICE
+    await nextTick()
+
+    await wrapper.vm.onBuyTask({ id: 2, stock_code: '000001.SZ', status: 'active' })
+    expect(wrapper.vm.selectedTaskId).toBe(2)
+    expect(wrapper.vm.orderPrice).toBe(11.5)
+    expect(orderStore.placeOrder).toHaveBeenCalledOnce()
+    expect(orderStore.placeOrder.mock.calls[0][0]).toMatchObject({
+      stock_code: '000001.SZ', order_type: '23', price: 11.5, strategy_type: 1,
+    })
   })
 
-  it('PCT_OPTIONS 包含 25/50/75/100', () => {
-    const wrapper = mountView(T0Trade)
-    expect(wrapper.vm.PCT_OPTIONS).toEqual([25, 50, 75, 100])
+  it('onBuyTask: 已选中行 → 不重置用户手改的价格', async () => {
+    const wrapper = await mountReady()
+    const orderStore = useOrderStore()
+    orderStore.placeOrder = vi.fn().mockResolvedValue([{}])
+    wrapper.vm.orderPriceTypeCode = PriceType.FIX_PRICE
+    await nextTick()
+    wrapper.vm.orderPrice = 12.34   // 用户手改
+
+    await wrapper.vm.onBuyTask({ id: 1, stock_code: '600030.SH', status: 'active' })
+    expect(wrapper.vm.orderPrice).toBe(12.34)
+    expect(orderStore.placeOrder.mock.calls[0][0].price).toBe(12.34)
   })
 
-  it('_moveSelection: 选下一行', () => {
-    const wrapper = mountView(T0Trade)
-    wrapper.vm.selectedRowCode = '600030.SH'
-    wrapper.vm._moveSelection(1)
-    expect(wrapper.vm.selectedRowCode).toBe('600519.SH')
-    wrapper.vm._moveSelection(-1)
-    expect(wrapper.vm.selectedRowCode).toBe('600030.SH')
+  it('onSellTask: order_type = 24', async () => {
+    const wrapper = await mountReady()
+    const orderStore = useOrderStore()
+    orderStore.placeOrder = vi.fn().mockResolvedValue([{}])
+
+    await wrapper.vm.onSellTask({ id: 1, stock_code: '600030.SH', status: 'active' })
+    expect(orderStore.placeOrder.mock.calls[0][0].order_type).toBe('24')
   })
 
-  it('_moveSelection: 越界 clamp', () => {
-    const wrapper = mountView(T0Trade)
-    wrapper.vm.selectedRowCode = '000001.SZ'
-    wrapper.vm._moveSelection(1)  // 越界
-    expect(wrapper.vm.selectedRowCode).toBe('000001.SZ')
-    wrapper.vm.selectedRowCode = '600030.SH'
-    wrapper.vm._moveSelection(-1)  // 越界
-    expect(wrapper.vm.selectedRowCode).toBe('600030.SH')
+  it('canOpRow: archived / 无标的 → 不可下单', async () => {
+    const wrapper = await mountReady()
+    expect(wrapper.vm.canOpRow({ status: 'active', stock_code: '600030.SH' })).toBe(true)
+    expect(wrapper.vm.canOpRow({ status: 'archived', stock_code: '600030.SH' })).toBe(false)
+    expect(wrapper.vm.canOpRow({ status: 'active', stock_code: '' })).toBe(false)
   })
 
-  it('cumHistory: historyData 缺 → 空数组', () => {
-    const wrapper = mountView(T0Trade)
-    expect(wrapper.vm.cumHistory.length).toBe(0)
+  // ─── computeOrderVolume 三模式 ───
+
+  it('computeOrderVolume qty 模式: 直接用股数', async () => {
+    const wrapper = await mountReady()
+    wrapper.vm.globalMode = 'qty'
+    wrapper.vm.globalQtyInput = 300
+    await nextTick()
+    expect(wrapper.vm.computeOrderVolume('600030.SH', '买').volume).toBe(300)
   })
 
-  it('cumHistory: 累加 realized_pnl', () => {
-    const wrapper = mountView(T0Trade)
-    wrapper.vm.historyData = { points: [{ realized_pnl: 100 }, { realized_pnl: -50 }, { realized_pnl: 200 }] }
-    expect(wrapper.vm.cumHistory.length).toBe(3)
-    expect(wrapper.vm.cumHistory[2].cum_pnl).toBe(250)
+  it('computeOrderVolume amount 模式: 金额 / 最新价 取整', async () => {
+    const wrapper = await mountReady()
+    wrapper.vm.globalMode = 'amount'
+    wrapper.vm.globalAmountInput = 13000   // / 13.0 = 1000 股
+    await nextTick()
+    expect(wrapper.vm.computeOrderVolume('600030.SH', '买').volume).toBe(1000)
   })
 
-  it('ptRowClass: 选中行 is-selected', () => {
-    const wrapper = mountView(T0Trade)
-    wrapper.vm.stockCode = '600030.SH'
-    expect(wrapper.vm.ptRowClass({ row: positions[0] })).toContain('is-selected')
-    expect(wrapper.vm.ptRowClass({ row: positions[1] })).not.toContain('is-selected')
+  it('computeOrderVolume pct 模式: 卖按持仓基数', async () => {
+    const wrapper = await mountReady()
+    wrapper.vm.globalMode = 'pct'
+    wrapper.vm.globalPctInput = 25
+    wrapper.vm.globalQtyBase = 'last_vol'
+    await nextTick()
+    // last_vol=1000 × 25% = 250 → floor 到 trade_unit(默认 1) = 250
+    expect(wrapper.vm.computeOrderVolume('600030.SH', '卖').volume).toBe(250)
   })
 
-  // ─── change-quota-frame: quota frame + 行内配额列 ───
-
-  it('quota frame 5 pill 渲染', async () => {
-    const wrapper = mountView(T0Trade)
-    await flushPromises()
-    const pills = wrapper.findAll('.qf-pill')
-    expect(pills.length).toBe(5)
-    expect(pills[0].attributes('data-pill')).toBe('cashAvail')
-    expect(pills[1].attributes('data-pill')).toBe('frozenCash')
-    expect(pills[2].attributes('data-pill')).toBe('t0AvailVol')
-    expect(pills[3].attributes('data-pill')).toBe('todayPnl')
-    expect(pills[4].attributes('data-pill')).toBe('marketValue')
+  it('computeOrderVolume: 无 stock_code → volume 0', async () => {
+    const wrapper = await mountReady()
+    expect(wrapper.vm.computeOrderVolume('', '买').volume).toBe(0)
   })
 
-  it('quotaAggregate.cashAvail = cash - frozen_cash', () => {
-    const wrapper = mountView(T0Trade)
-    expect(wrapper.vm.quotaAggregate.cashAvail).toBe(100000)  // 100000 - 0
+  // ─── 配平差值 ───
+
+  it('balanceBtnLabel: 净差=0 → 已平衡', async () => {
+    const wrapper = await mountReady()
+    expect(wrapper.vm.balanceBtnLabel(1)).toBe('已平衡')
+    expect(wrapper.vm.computeRowBalanceDiff(1)).toBe(0)
   })
 
-  it('quotaAggregate.t0AvailVol = sum(avl_vol)', () => {
-    const wrapper = mountView(T0Trade)
-    expect(wrapper.vm.quotaAggregate.t0AvailVol).toBe(1500)  // 1000 + 500 + 0
+  it('balanceBtnLabel: 多买 → 补卖 N', async () => {
+    const h = useHoldingsStore()
+    h.orders = [{ task_id: 1, order_type: '23', traded_volume: 500, stock_code: '600030.SH' }]
+    const wrapper = await mountReady()
+    expect(wrapper.vm.computeRowBalanceDiff(1)).toBe(500)
+    expect(wrapper.vm.balanceBtnLabel(1)).toBe('补卖 500')
   })
 
-  it('todayPnlText: 正 → "+¥X"', () => {
-    const wrapper = mountView(T0Trade)
-    wrapper.vm.t0StatsMap = { '600030.SH': { realized_pnl: 800 }, '600519.SH': { realized_pnl: -300 } }
-    expect(wrapper.vm.todayPnlText).toMatch(/^\+¥/)
-    expect(wrapper.vm.todayPnlClass).toBe('qf-pill--up')
+  it('balanceBtnLabel: 多卖 → 补买 N', async () => {
+    const h = useHoldingsStore()
+    h.orders = [{ task_id: 1, order_type: '24', traded_volume: 300, stock_code: '600030.SH' }]
+    const wrapper = await mountReady()
+    expect(wrapper.vm.balanceBtnLabel(1)).toBe('补买 300')
   })
 
-  it('todayPnlText: 负 → "-¥X"', () => {
-    const wrapper = mountView(T0Trade)
-    wrapper.vm.t0StatsMap = { '600030.SH': { realized_pnl: -100 } }
-    expect(wrapper.vm.todayPnlText).toMatch(/^-¥/)
-    expect(wrapper.vm.todayPnlClass).toBe('qf-pill--down')
+  it('配平差值排除 strategy_type=2 (策略母单子单)', async () => {
+    const h = useHoldingsStore()
+    h.orders = [
+      { task_id: 1, order_type: '23', traded_volume: 500, strategy_type: 1 },
+      { task_id: 1, order_type: '23', traded_volume: 999, strategy_type: 2 },
+    ]
+    const wrapper = await mountReady()
+    expect(wrapper.vm.computeRowBalanceDiff(1)).toBe(500)
   })
 
-  it('quotaForRow: 可买按 cash + last_price 估算', () => {
-    const wrapper = mountView(T0Trade)
-    const row = { stock_code: '600030.SH', avl_vol: 1000 }
-    const q = wrapper.vm.quotaForRow(row)
-    // cash=100000, 默认 last_price 未设 → mock quoteStore.getLastPrice 返 null → maxBuyable=0
-    expect(q.maxBuyable).toBe(0)
-    expect(q.maxSellable).toBe(1000)  // row.avl_vol = 1000
+  // ─── 下半委托表 ───
+
+  it('filteredTaskOrders: 按 task_id 过滤 + 排除 strategy_type=2 + 时间倒序', async () => {
+    const h = useHoldingsStore()
+    h.orders = [
+      { task_id: 1, order_no: 'A', order_time: '09:30:00' },
+      { task_id: 1, order_no: 'B', order_time: '10:00:00' },
+      { task_id: 2, order_no: 'C', order_time: '09:40:00' },
+      { task_id: 1, order_no: 'D', order_time: '11:00:00', strategy_type: 2 },
+    ]
+    const wrapper = await mountReady()
+    const list = wrapper.vm.filteredTaskOrders
+    expect(list.map(o => o.order_no)).toEqual(['B', 'A'])
   })
 
-  it('quotaForRow: 可卖 = avl_vol', () => {
-    const wrapper = mountView(T0Trade)
-    const row = { stock_code: '600030.SH', avl_vol: 500 }
-    const q = wrapper.vm.quotaForRow(row)
-    expect(q.maxSellable).toBe(500)
+  it('canCancel: 仅 已报(50)/部成(55) 可撤, 撤单行(order_flag=1) 不可再撤', async () => {
+    const wrapper = await mountReady()
+    expect(wrapper.vm.canCancel({ status: '50' })).toBe(true)
+    expect(wrapper.vm.canCancel({ status: '55' })).toBe(true)
+    expect(wrapper.vm.canCancel({ status: '56' })).toBe(false)
+    expect(wrapper.vm.canCancel({ status: '50', order_flag: 1 })).toBe(false)
+    expect(wrapper.vm.canCancel(null)).toBe(false)
   })
 
-  it('quotaLevel: 颜色阈值 (1000/100/1/0)', () => {
-    const wrapper = mountView(T0Trade)
-    expect(wrapper.vm.quotaLevel(5000)).toBe('high')
-    expect(wrapper.vm.quotaLevel(500)).toBe('mid')
-    expect(wrapper.vm.quotaLevel(50)).toBe('low')
-    expect(wrapper.vm.quotaLevel(0)).toBe('none')
+  it('statusLabel / statusTagType', async () => {
+    const wrapper = await mountReady()
+    expect(wrapper.vm.statusLabel('active')).toBe('活跃')
+    expect(wrapper.vm.statusLabel('archived')).toBe('已归档')
+    expect(wrapper.vm.statusTagType('active')).toBe('primary')
+    expect(wrapper.vm.statusTagType('archived')).toBe('danger')
   })
 })
