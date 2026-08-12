@@ -23,6 +23,13 @@ v81 tables-migration (本版本):
 - db.query(Order/Trade/Position/Asset/QuoteSnapshot) → Orders/Trades/Positions/Assets/QuoteSnapshots.query_*
 - 复合过滤 (status + stock_code + days) → query_all() + 内存 Python 过滤 (v80.5 设计)
 - db.query(...).update({...}) 改 orders.task_id → SQL UPDATE 走 transaction()
+
+v127.2 (2026-08-12) 修 68s 阻塞:
+- list_tasks / list_overview / list_overview_by_stock 走批量预取
+  (1 次 Orders IN + 1 次 Trades IN + 1 次 QuoteSnapshots IN + 1 次 Positions IN),
+  替代原来对每个 task 各自 N 次 round-trip (其中 Trades.query_all() 是全表扫描)
+- aggregate_task_stats 接受可选 _prefetched, 单 task 调用时仍走原路径
+- 新增 TableBase.query_by_in (单字段 IN 查询 helper) 替代 .filter(M.field.in_(v))
 """
 from datetime import datetime
 from typing import Any, Dict, List, Optional
@@ -134,10 +141,11 @@ def list_tasks(
     # 3. 倒序按 created_at (字符串 ISO 格式可字典序倒序)
     rows = sorted(rows, key=lambda r: (r.created_at or ""), reverse=True)
 
-    # 4. 拼 summary
+    # 4. 批量预取统计依赖，避免每个 task 重复访问数据库
+    prefetched = _prefetch_task_stats(rows)
     result = []
     for t in rows:
-        summary = _compute_summary(t)
+        summary = _compute_summary(t, prefetched=prefetched)
         d = t.to_dict()
         d.update(summary)
         result.append(d)
@@ -158,7 +166,7 @@ def get_task_detail(
         return None
     if not is_admin and int(t.user_id) != int(user_id):
         return None
-    summary = _compute_summary(t)
+    summary = _compute_summary(t, prefetched=_prefetch_task_stats([t]))
     d = t.to_dict()
     d.update(summary)
     return d
@@ -398,6 +406,7 @@ def close_task(
 
 def aggregate_task_stats(
     task_id: int = 0,
+    _prefetched: Optional[Dict] = None,
 ) -> Dict:
     """task 维度统计: realized + unrealized + win_rate + trading_days + daily[]
 
@@ -417,13 +426,13 @@ def aggregate_task_stats(
         return {}
 
     fee_cfg = get_fee_config()
+    prefetched = _prefetched or _prefetch_task_stats([t])
 
     # v62: 取 task 内所有 Order (跨日累积, 不限 trd_date)
-    orders = Orders.query_by('task_id', task_id)
+    orders = prefetched['orders'].get(t.id, [])
 
     # v62: 取最新 ask1/bid1 (兜底配平价)
-    snaps = QuoteSnapshots.query_by('stock_code', t.stock_code, order='desc')
-    snap = snaps[0] if snaps else None
+    snap = prefetched['snapshots'].get(t.stock_code)
     ask1 = float(snap.ask1_price or 0) if snap and snap.ask1_price else 0.0
     bid1 = float(snap.bid1_price or 0) if snap and snap.bid1_price else 0.0
 
@@ -474,11 +483,7 @@ def aggregate_task_stats(
 
     # v62: 按日分组 (daily) — 保留旧逻辑做时间序列展示
     order_no_set = {o.order_no for o in orders if o.traded_volume and int(o.traded_volume) > 0}
-    trades: List[Any] = []
-    if order_no_set:
-        # Trade 复合 PK (trd_date, order_no, trade_id) → 全表 + 内存过滤
-        all_trades = Trades.query_all()
-        trades = [tr for tr in all_trades if tr.order_no in order_no_set]
+    trades = prefetched['trades'].get(t.id, [])
 
     # 按日分组
     by_day: Dict[str, Dict] = {}
@@ -515,8 +520,7 @@ def aggregate_task_stats(
             cb = buy_amt / buy_vol if buy_vol > 0 else 0.0
         else:
             cb = 0.0
-            pos_rows = Positions.query_by('stock_code', t.stock_code)
-            pos = pos_rows[0] if pos_rows else None
+            pos = prefetched['positions'].get(t.stock_code)
             cb = float(pos.cost_price) if pos else 0.0
 
         if sell_trades_by_day.get(d):
@@ -539,11 +543,10 @@ def aggregate_task_stats(
         d['cum_pnl'] = _q2(cum)
 
     # unrealized (v62 沿用旧逻辑: 净敞口 × 最新价差)
-    task_net_volume = _calc_task_net_volume(task_id)
-    pos_rows = Positions.query_by('stock_code', t.stock_code)
-    pos = pos_rows[0] if pos_rows else None
+    task_net_volume = _calc_task_net_volume_from_orders(orders)
+    pos = prefetched['positions'].get(t.stock_code)
     cost_basis = float(pos.cost_price) if pos else 0.0
-    last_price = _last_price(t.stock_code, fallback=cost_basis)
+    last_price = float(snap.last_price or 0) if snap and float(snap.last_price or 0) > 0 else cost_basis
     unrealized_pnl = (last_price - cost_basis) * task_net_volume
 
     # trade/order count
@@ -611,8 +614,14 @@ def list_overview(
     win_rates = []
     total_trading_days = 0
 
+    prefetched = _prefetch_task_stats(rows)
+    summary_by_id = {
+        t.id: aggregate_task_stats(task_id=t.id, _prefetched=prefetched)
+        for t in rows
+    }
+
     for t in active_tasks + closed_tasks:
-        s = aggregate_task_stats(task_id=t.id)['summary']
+        s = summary_by_id[t.id]['summary']
         if t.status == 'closed':
             total_realized += s['realized_pnl']
             total_commission += s['commission_total']
@@ -651,6 +660,12 @@ def list_overview_by_stock(
 
     tasks = [r for r in rows if r.status in ('active', 'closed')]
 
+    prefetched = _prefetch_task_stats(tasks)
+    summary_by_id = {
+        t.id: aggregate_task_stats(task_id=t.id, _prefetched=prefetched)
+        for t in tasks
+    }
+
     by_stock: Dict[str, Dict] = {}
     for t in tasks:
         if t.stock_code not in by_stock:
@@ -662,7 +677,7 @@ def list_overview_by_stock(
                 'task_count': 0,
                 'trading_days': 0,
             }
-        s = aggregate_task_stats(task_id=t.id)['summary']
+        s = summary_by_id[t.id]['summary']
         by_stock[t.stock_code]['realized_pnl'] += s['realized_pnl']
         by_stock[t.stock_code]['unrealized_pnl'] += s['unrealized_pnl']
         by_stock[t.stock_code]['net_volume'] += s['task_net_volume']
@@ -673,6 +688,64 @@ def list_overview_by_stock(
         {**v, 'realized_pnl': _q2(v['realized_pnl']), 'unrealized_pnl': _q2(v['unrealized_pnl'])}
         for v in by_stock.values()
     ]
+
+
+def _prefetch_task_stats(tasks: List[Any]) -> Dict:
+    """批量读取任务统计所需数据，按 task/证券建立索引。"""
+    if not tasks:
+        return {'orders': {}, 'trades': {}, 'snapshots': {}, 'positions': {}}
+
+    task_ids = [t.id for t in tasks]
+    stocks = {t.stock_code for t in tasks if t.stock_code}
+    orders = Orders.query_by_in('task_id', task_ids)
+    orders_by_task: Dict[int, List[Any]] = {}
+    order_nos_by_task: Dict[int, set] = {}
+    all_order_nos = []
+    for order in orders:
+        orders_by_task.setdefault(order.task_id, []).append(order)
+        if order.traded_volume and int(order.traded_volume) > 0:
+            order_nos_by_task.setdefault(order.task_id, set()).add(order.order_no)
+            all_order_nos.append(order.order_no)
+
+    trades_by_task: Dict[int, List[Any]] = {task_id: [] for task_id in task_ids}
+    if all_order_nos:
+        trades = Trades.query_by_in('order_no', set(all_order_nos))
+        task_by_order_no = {
+            order_no: task_id
+            for task_id, order_nos in order_nos_by_task.items()
+            for order_no in order_nos
+        }
+        for trade in trades:
+            task_id = task_by_order_no.get(trade.order_no)
+            if task_id is not None:
+                trades_by_task[task_id].append(trade)
+
+    snapshots_by_stock = {}
+    if stocks:
+        snapshots = QuoteSnapshots.query_by_in('stock_code', stocks)
+        for snapshot in snapshots:
+            current = snapshots_by_stock.get(snapshot.stock_code)
+            if current is None or (snapshot.ts or '') > (current.ts or ''):
+                snapshots_by_stock[snapshot.stock_code] = snapshot
+
+    positions_by_stock = {}
+    if stocks:
+        positions = Positions.query_by_in('stock_code', stocks)
+        for position in positions:
+            positions_by_stock.setdefault(position.stock_code, position)
+
+    return {
+        'orders': orders_by_task,
+        'trades': trades_by_task,
+        'snapshots': snapshots_by_stock,
+        'positions': positions_by_stock,
+    }
+
+
+def _calc_task_net_volume_from_orders(orders: List[Any]) -> int:
+    buy_vol = sum(int(o.volume or 0) for o in orders if o.order_type == '23')
+    sell_vol = sum(int(o.volume or 0) for o in orders if o.order_type == '24')
+    return buy_vol - sell_vol
 
 
 # ───────────────────── Helpers ─────────────────────
@@ -740,7 +813,7 @@ def _compute_summary(*args, **kwargs) -> Dict:  # noqa: ARG001 — v81 兼容
         task = kwargs['task']
     if task is None:
         raise TypeError("_compute_summary 需要 1 个 task 参数")
-    s = aggregate_task_stats(task_id=task.id)['summary']
+    s = aggregate_task_stats(task_id=task.id, _prefetched=kwargs.get('prefetched'))['summary']
     return {
         'task_net_volume': s['task_net_volume'],
         'position_vol': s['position_vol'],

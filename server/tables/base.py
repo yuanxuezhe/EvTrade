@@ -418,6 +418,40 @@ class TableBase:
     # ──────────────── 字段过滤查询 END ────────────────
 
     @classmethod
+    def query_by_in(cls, field: str, values,
+                    order: str = "asc", limit: Optional[int] = None) -> List[Row]:
+        """按单字段 IN (values) 查询 — 替代 .filter(M.field.in_(values)).
+
+        Args:
+            field: 字段名 (任意字段, 不限主键)
+            values: 值列表 (Iterable); 空列表 → 直接返回 [] (不会拼出 "IN ()" 语法错)
+            order: 'asc' (按主键升序) 或 'desc' (按主键降序). 默认 'asc'.
+            limit: 限制返回行数. None = 全部.
+
+        Examples:
+            Orders.query_by_in('task_id', [1, 2, 3])        # 一次拉多个 task 的订单
+            Positions.query_by_in('stock_code', ['000001.SZ', '600030.SH'])
+
+        Why: 单 task 路径用 query_by 即可; 批查 (list_tasks / overview) 一次性拉
+             几十上百个 task 的 orders, 必须用 IN, 否则 N 次 round-trip → 68s 阻塞.
+        """
+        cls._validate_subclass()
+        if field not in cls.__fields__:
+            raise ValueError(f"{cls.__tablename__} 不存在列: {field}")
+        if order not in ("asc", "desc"):
+            raise ValueError(f"order 必须是 'asc' 或 'desc', 收到 {order!r}")
+        values = list(values)
+        if not values:
+            return []
+        order_clause = ", ".join(f"`{pk}` {order.upper()}" for pk in cls.__pk_fields__)
+        placeholders = ", ".join(f":vin_{i}" for i in range(len(values)))
+        sql = f"SELECT * FROM `{cls.__tablename__}` WHERE `{field}` IN ({placeholders}) ORDER BY {order_clause}"
+        if limit is not None:
+            sql += f" LIMIT {int(limit)}"
+        params = {f"vin_{i}": v for i, v in enumerate(values)}
+        return cls._execute_select(sql, params)
+
+    @classmethod
     def _row_from_mapping(cls, mapping) -> Row:
         """SQLAlchemy RowMapping / dict → Row (v81.11: 自动绑 _owner_class)"""
         d = dict(mapping)
