@@ -2002,6 +2002,12 @@ price_type 选择:
 - `holdingsStore.trades.length` 增长（ws 成交推送）→ 3s 防抖重拉成交 map（`useT0DayPnl.refresh(trdDate, force=true)`）
 - **已移除 30s 轮询**；视图（HoldingsPanel/Dashboard）不管理任何当日盈亏生命周期，只读 store 字段
 
+**启动时机（2026-08-12 修复追加）**：recompute watcher 随 `_startWatchers`/`_stopWatchers` 启停，`_startWatchers()` **MUST** 在「已登录 mount」时被调用（`App.vue` `onMounted`）。原因：v119 起 token 经 localStorage 持久化，刷新后 auth store 同步恢复 → `isAuthenticated` 初始即 `true` → 非 immediate 的 auth watch 不触发；若只在 auth watch 启动，刷新场景下 recompute 永不启动 → 当日盈亏列恒空。
+
+**prev_close 数据链（2026-08-12 修复追加）**：quote store 的 `prev_close` 三来源均须携带——
+- subscribe_ack / REST `/api/quote/snapshots`（`repo_to_dict` 含 `prev_close`）
+- live push：后端 `_parse_tick` 每笔构造 `snapshot`（含 `prev_close`）并广播，前端 `ws_dispatch._onQuote` 与 `holdings_push.applyQuote` **MUST** 把 `snapshot` 一并转发 `quoteStore.update()`（v114.3 前被丢弃 → live-push-only 标的 `prev_close` 缺失 → `calcDayPnl` 返 null）
+
 **API 变更（additive）**：`ExposurePositionOut` 新增 `buy_commission`、`day_fee`；`ExposureTotalsOut` 新增 `buy_commission_total`、`day_fee_total`。
 
 #### Scenario: 无交易持仓的当日盈亏 = 纯持仓涨跌
