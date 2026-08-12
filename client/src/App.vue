@@ -80,6 +80,9 @@ onMounted(async () => {
   }
   if (authStore.isAuthenticated) {
     // App 启动：拉取资金 + 持仓 + 委托 + 成交 缓存，启动 ws，启动实时市值 watcher
+    // v114.3: 刷新后 token 已持久化 → isAuthenticated 初始即 true → 下方 auth watch
+    //   (非 immediate) 不触发 → 必须在此显式启动 watcher, 否则 day_pnl recompute 不跑
+    holdingsStore._startWatchers()
     holdingsStore.bootstrap()
     // v90: stocks cache 改为 IDB 持久化 + Map 索引
     // - initCache() 先从 IDB 秒载 (F5 不再拉后端)
