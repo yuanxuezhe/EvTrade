@@ -123,7 +123,7 @@ class T0AggregateOut(BaseModel):
 
 @router.get("/t0-exposure", response_model=T0ExposureOut)
 async def get_t0_exposure(
-    user_def: str = Query(default="T0", description="T0 标签键，空字符串=全部"),
+    user_def: str = Query(default="", description="T0 标签键，空字符串=全部"),
     trd_date: Optional[str] = Query(
         default=None,
         description="交易日 YYYYMMDD，留空=当前激活日",

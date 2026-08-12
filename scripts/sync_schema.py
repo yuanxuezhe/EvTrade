@@ -223,21 +223,65 @@ def mysql_to_yaml(mysql_type):
     return m.get(base, raw)
 
 def yaml_to_mysql_base(yt):
-    b = yt.split("(")[0]
-    return {"String": "varchar", "Integer": "integer", "BIGINT": "bigint",
-            "SmallInteger": "smallint", "TinyInt": "tinyint", "Float": "float", "Boolean": "tinyint",
-            "Text": "text", "LargeText": "longtext", "JSON": "json",
-            "DateTime": "datetime"}.get(b, b.lower())
+    """YML type -> 基础 mysql 类型名 (无括号), 用于 diff 比较.
+
+    v130.1 fix: 大小写/空格不敏感, 跟 yaml_to_mysql_ddl 一致.
+    """
+    if not isinstance(yt, str):
+        yt = str(yt)
+    b = yt.strip().split("(")[0]
+    lookup = {
+        "string": "varchar", "integer": "integer", "int": "integer",
+        "bigint": "bigint", "smallinteger": "smallint", "smallint": "smallint",
+        "tinyint": "tinyint", "boolean": "tinyint",
+        "float": "float", "double": "float", "decimal": "float",
+        "text": "text", "largetext": "longtext", "mediumtext": "text",
+        "json": "json", "datetime": "datetime", "timestamp": "datetime",
+    }
+    if b.lower() in lookup:
+        return lookup[b.lower()]
+    legacy = {"String": "varchar", "Integer": "integer", "BIGINT": "bigint",
+              "SmallInteger": "smallint", "TinyInt": "tinyint", "Float": "float",
+              "Boolean": "tinyint", "Text": "text", "LargeText": "longtext",
+              "JSON": "json", "DateTime": "datetime"}
+    return legacy.get(b, b.lower())
 
 def yaml_to_mysql_ddl(yt):
-    """YAML type -> MySQL DDL for ALTER TABLE."""
-    m = re.match(r'(\w+)\((\d+)\)', yt)
+    """YAML type -> MySQL DDL for ALTER TABLE.
+
+    v130.1 fix: yml 历史上可能写 `type: TEXT ` (大写 + 尾随空格) 等不规范值,
+    严格匹配 `Text` 会 fallback 到 VARCHAR(255) → MODIFY 大 JSON 列 1406 截断.
+    解决: 先 strip + lower, 再走 lookup table, 找不到再 fallback.
+    """
+    if not isinstance(yt, str):
+        yt = str(yt)
+    yt_clean = yt.strip()
+    # 带括号 (如 String(64)) → VARCHAR
+    m = re.match(r'(\w+)\((\d+)\)', yt_clean)
     if m:
         return f"VARCHAR({m.group(2)})"
-    return {"Integer": "INT", "BIGINT": "BIGINT", "SmallInteger": "SMALLINT",
-            "TinyInt": "TINYINT", "Float": "FLOAT", "Boolean": "TINYINT(1)",
-            "Text": "TEXT", "LargeText": "LONGTEXT", "JSON": "JSON",
-            "DateTime": "DATETIME"}.get(yt, "VARCHAR(255)")
+    # 大小写/空格不敏感 lookup
+    lookup = {
+        "integer": "INT", "int": "INT",
+        "bigint": "BIGINT",
+        "smallinteger": "SMALLINT", "smallint": "SMALLINT",
+        "tinyint": "TINYINT", "boolean": "TINYINT(1)",
+        "float": "FLOAT", "double": "FLOAT", "decimal": "FLOAT",
+        "text": "TEXT", "largetext": "LONGTEXT",
+        "json": "JSON",
+        "datetime": "DATETIME", "timestamp": "DATETIME", "date": "DATE",
+    }
+    key = yt_clean.lower()
+    if key in lookup:
+        return lookup[key]
+    # 旧 lookup (保持向后兼容)
+    legacy = {
+        "Integer": "INT", "BIGINT": "BIGINT", "SmallInteger": "SMALLINT",
+        "TinyInt": "TINYINT", "Float": "FLOAT", "Boolean": "TINYINT(1)",
+        "Text": "TEXT", "LargeText": "LONGTEXT", "JSON": "JSON",
+        "DateTime": "DATETIME",
+    }
+    return legacy.get(yt_clean, "VARCHAR(255)")
 
 def python_default(mysql_type):
     t = mysql_type.lower().split("(")[0]

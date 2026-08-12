@@ -26,6 +26,23 @@ def _float(v: Any, default: float = 0.0) -> float:
         return default
 
 
+def _round4(v: Any, default: float = 0.0) -> float:
+    """成本价统一 4 位小数 (round half up).
+
+    v130+ 持仓 cost_price 系统口径: 4 位小数. 之前 broker 推 / trade 推送会带
+    5-6 位小数 (如 1.41914), 前端显示/累加会出现"差 0.02 元"累积误差.
+    所有写入路径 (pos.push / trd.push / reconcile) 落库前 round 4 位;
+    读取路径 (推送 payload / API response) 也 round 4 位, 避免 DB 改了但
+    序列化时又露出原始精度.
+
+    4 位 ≈ 0.0001 元/股 × 10000 股 = 1 元误差上限, 业务可接受.
+    """
+    try:
+        return float(round(float(v) + 1e-9, 4))  # +1e-9 防 1.4191 - 0.00005 = 1.4190499999 round 成 1.4190
+    except (TypeError, ValueError):
+        return default
+
+
 def _int(v: Any, default: int = 0) -> int:
     try:
         return int(v)

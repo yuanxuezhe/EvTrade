@@ -343,24 +343,24 @@ tables:
         nullable: false
         default: 
       diffs_json:
-        type: TEXT 
-        nullable: false
+        type: LargeText
+        nullable: true
         default: 
       broker_asset_json:
-        type: TEXT 
-        nullable: false
+        type: LargeText
+        nullable: true
         default: 
       local_asset_json:
-        type: TEXT 
-        nullable: false
+        type: LargeText
+        nullable: true
         default: 
       broker_positions_json:
-        type: TEXT 
-        nullable: false
+        type: LargeText
+        nullable: true
         default: 
       local_positions_json:
-        type: TEXT 
-        nullable: false
+        type: LargeText
+        nullable: true
         default: 
       rpc_status:
         type: String(16)

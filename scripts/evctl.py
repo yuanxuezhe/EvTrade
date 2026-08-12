@@ -635,33 +635,57 @@ def start_hqserver():
 
 
 def _pre_schema_check():
-    """启动 backend 前 reconcile DB ↔ yml (只补不删, 失败 exit 1).
+    """启动 backend 前 reconcile DB ↔ yml (v130+ schema 治理).
 
-    v130+ schema 治理: yml 唯一事实源, 启动前自动 apply, 杜绝 DB/yml 脱节导致
-    的 500 错误 (历史: strategy.is_public / strategy_task.metric 等列缺失 → 1054).
+    v130.1 改为 DIFF-ONLY: 只跑 `sync_schema.py diff` 报告 drift, 不自动 apply.
+    历史教训:
+      - apply 会跑 gen_tables.py, 而 gen_tables 读 INFORMATION_SCHEMA.COLUMNS.COLUMN_KEY
+        在某些 MySQL 环境下永远返 '' → 生成的 server/tables/users.py __pk_fields__=() →
+        `NotImplementedError: Users.__pk_fields__ not set` → login 500.
+      - apply 会跑 MODIFY COLUMN, 若 yml 写错 (例如 "type: TEXT " 大写带空格)
+        sync_schema 走 fallback 把 longtext → VARCHAR(255) → 现有长 JSON 数据 1406 截断.
 
-    - 只对 backend 跑 (其他服务不直接吃 schema).
-    - 默认 non-strict: 缺什么 ADD 什么, 不会 DROP, 物理上不可能破坏数据.
-    - EVTRADE_SKIP_SCHEMA_CHECK=1 跳过 (紧急用).
+    正确流程 (见 openspec/specs/data-model/spec.md §Schema Governance):
+      1. dev 库改 → export (写到 yml)
+      2. git commit yml
+      3. (手动) `python scripts/sync_schema.py apply` 推 prod
+      4. (手动) `python scripts/gen_tables.py` 重生 server/tables/*.py (仅 ORM 改动时)
+
+    启动只做 step 0 体检: 有 drift 就 WARN 提醒, 不阻断.
+    EVTRADE_STRICT_SCHEMA=1 改为 STRICT (有 drift 就 exit 1) — 给 CI 用.
+    EVTRADE_SKIP_SCHEMA_CHECK=1 跳过 (紧急逃生).
     """
     if os.environ.get('EVTRADE_SKIP_SCHEMA_CHECK') == '1':
         log_warn('schema check skipped (EVTRADE_SKIP_SCHEMA_CHECK=1)')
         return True
     script = os.path.join(SCRIPT_DIR, 'sync_schema.py')
     r = subprocess.run(
-        [sys.executable, script, 'apply'],
+        [sys.executable, script, 'diff'],
         cwd=PROJECT_ROOT,
-        capture_output=True, text=True, timeout=120,
+        capture_output=True, text=True, timeout=60,
     )
-    if r.returncode != 0:
-        log_err('schema reconciliation FAILED, refusing to start backend:')
+    diff_output = r.stdout.strip()
+    has_drift = bool(diff_output) and 'No differences' not in diff_output
+    if r.returncode not in (0, 1):
+        # diff 自己崩了 (DB 连不上等) — 透传错误
+        log_err('schema diff FAILED (DB unreachable?):')
         for line in (r.stdout + r.stderr).splitlines():
             sys.stderr.write('  ' + line + '\n')
         return False
-    # apply 成功会跑 gen_tables.py, 失败也会写到日志 — 透传给用户
-    if r.stdout.strip():
-        for line in r.stdout.splitlines():
-            log_info('  ' + line)
+    if has_drift:
+        if os.environ.get('EVTRADE_STRICT_SCHEMA') == '1':
+            log_err('schema drift detected, refusing to start (EVTRADE_STRICT_SCHEMA=1):')
+            for line in diff_output.splitlines():
+                sys.stderr.write('  ' + line + '\n')
+            return False
+        # 非 strict: WARN 提醒但不阻断 (启动优先)
+        log_warn('schema drift detected (yml ↔ DB), run `python scripts/sync_schema.py diff` to see details:')
+        for line in diff_output.splitlines()[:5]:
+            log_warn('  ' + line)
+        if len(diff_output.splitlines()) > 5:
+            log_warn('  ... (truncated, see sync_schema.py diff for full)')
+    else:
+        log_info('schema check OK (yml matches DB)')
     return True
 
 

@@ -248,6 +248,17 @@ def apply_user_def_filter(
 ) -> Tuple[List[Order], List[Trade]]:
     """按 user_def 过滤（空字符串 = 全部）
 
+    v130.2: 撤单代行 order (user_def='CANCEL:{orig}') 永远不参与 day_pnl 计算.
+      原因: xtquant 撤单时 broker 会推回"撤单反向 trade" (trade_id 以 CANCEL- 开头),
+      这些 trade 跟真交易无法区分, 但 order_type / price 跟原单反向. 把这些 trade 算入
+      buy/sell 会虚增当日盈亏 (历史 bug: 159992.SZ 撤单 trade 让 day_pnl 虚高 4800).
+
+      filter 逻辑 (line 268):
+        f_orders  = orders 中 user_def 在 allowed 的
+        f_trades  = trades 中 order_no ∈ {f_orders.order_no} AND
+                    trade 对应 order (不论 allowed) 不是 'CANCEL:...' 撤单代行
+                   即: 先排除所有指向撤单代行的 trade, 再按 user_def 二次过滤
+
     Args:
         orders: 全部订单
         trades: 全部成交
@@ -257,15 +268,19 @@ def apply_user_def_filter(
     Returns:
         (filtered_orders, filtered_trades)
     """
+    # v130.2: 收集所有撤单代行 order_no (user_def='CANCEL:...'), 这些 order 对应的 trade 永远不算
+    cancel_order_nos = {o.order_no for o in orders if (o.user_def or '').startswith('CANCEL:')}
     if not user_def:
-        return orders, trades
+        f_orders = orders
+        f_trades = [t for t in trades if t.order_no not in cancel_order_nos]
+        return f_orders, f_trades
     if db is not None:
         allowed = resolve_t0_user_defs(db, user_def)
     else:
         allowed = {user_def}
     f_orders = [o for o in orders if o.user_def in allowed]
     order_nos = {o.order_no for o in f_orders}
-    f_trades = [t for t in trades if t.order_no in order_nos]
+    f_trades = [t for t in trades if t.order_no in order_nos and t.order_no not in cancel_order_nos]
     return f_orders, f_trades
 
 

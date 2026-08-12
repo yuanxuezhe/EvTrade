@@ -19,7 +19,7 @@ from typing import Any, Dict, Optional
 
 from server.tables import Positions
 from server.utils.time import _utcnow
-from server.services.push.helpers import _int, _float, _str, _position_to_out_dict
+from server.services.push.helpers import _int, _float, _round4, _str, _position_to_out_dict
 
 # change init-push-gate: init reconcile 期间抑制 pos_push (DB 写 + 广播)
 #   日初 do_reconcile(init) 全表覆盖 positions 期间, broker 并发 pos_push 会把每条
@@ -65,7 +65,7 @@ def handle_pos_push(db, row: Dict[str, Any], ts: str) -> Optional[Dict[str, Any]
     last_vol = _int(row.get('last_vol', 0))
     vol = _int(row.get('volume', 0))            # broker wire: volume
     avl_vol = _int(row.get('avl_amt', 0))       # broker wire: avl_amt
-    cost_price = _float(row.get('avg_price', 0))  # broker wire: avg_price
+    cost_price = _round4(row.get('avg_price', 0))  # broker wire: avg_price, v130+ 统一 4 位
 
     # 查询现有 Position
     pos_list = Positions.query_by('stock_code', stock_code, limit=1)
