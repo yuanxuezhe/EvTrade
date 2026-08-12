@@ -28,7 +28,7 @@
     - update:priceType  (Number)
 -->
 <template>
-  <div class="pti-wrapper" :style="wrapperStyle">
+  <div class="pti-wrapper" :class="`is-${size}`" :style="wrapperStyle">
     <!-- 左: 价格 input (无 controls, 单 input) -->
     <div class="pti-price-input" :style="priceInputStyle">
       <el-input
@@ -205,38 +205,46 @@ function onPriceBlur() {
     width: 100%;
 }
 
-/* v28-19/20: 强制 .el-input 从 inline-flex 改 flex, 消除 baseline 偏移 1.30px */
-.pti-el-input :deep(.el-input) {
+/* v28-19/20: 强制 .el-input 从 inline-flex 改 flex, 消除 baseline 偏移 1.30px
+   仅 default size — small 下 inline-flex 即可, 不需要这个 hack (el-input 自身会管) */
+.pti-wrapper:not(.is-small) .pti-el-input :deep(.el-input) {
     display: flex !important;
     vertical-align: top !important;
 }
 
-/* 左 input: 清右半圆角 (右 select 接管) */
+/* 左 input: 清右半圆角 (右 select 接管)
+   small 用 Element Plus 的 --el-border-radius-small (4px), default 用 8px — 圆角跟 size 联动 */
 .pti-el-input :deep(.el-input),
 .pti-el-input :deep(.el-input__wrapper),
 .pti-el-input :deep(.el-input__inner) {
     border-top-right-radius: 0 !important;
     border-bottom-right-radius: 0 !important;
 }
+.pti-wrapper.is-small .pti-el-input :deep(.el-input),
+.pti-wrapper.is-small .pti-el-input :deep(.el-input__wrapper),
+.pti-wrapper.is-small .pti-el-input :deep(.el-input__inner) {
+    border-top-left-radius: var(--el-border-radius-small, 4px) !important;
+    border-bottom-left-radius: var(--el-border-radius-small, 4px) !important;
+}
 
 /* 默认 / hover / focus box-shadow 都吃 inset 1px, 与右侧 select 衔接处一致色 */
-.pti-el-input :deep(.el-input__wrapper),
-.pti-el-input :deep(.el-input__wrapper.is-focus),
-.pti-el-input :deep(.el-input__wrapper:hover),
-.pti-el-input :deep(.el-input__wrapper:focus-within) {
+.pti-wrapper:not(.is-small) .pti-el-input :deep(.el-input__wrapper),
+.pti-wrapper:not(.is-small) .pti-el-input :deep(.el-input__wrapper.is-focus),
+.pti-wrapper:not(.is-small) .pti-el-input :deep(.el-input__wrapper:hover),
+.pti-wrapper:not(.is-small) .pti-el-input :deep(.el-input__wrapper:focus-within) {
     box-shadow: 0 0 0 1px rgb(232, 237, 245) inset !important;
     border-top-right-radius: 0 !important;
     border-bottom-right-radius: 0 !important;
 }
 
 /* hover: 浅 primary 边框 */
-.pti-el-input :deep(.el-input__wrapper:hover) {
+.pti-wrapper:not(.is-small) .pti-el-input :deep(.el-input__wrapper:hover) {
     box-shadow: 0 0 0 1px var(--el-color-primary-light-5, #c0d4f7) inset !important;
 }
 
 /* focus: primary 边框 */
-.pti-el-input :deep(.el-input__wrapper:focus-within),
-.pti-el-input :deep(.el-input__wrapper.is-focus) {
+.pti-wrapper:not(.is-small) .pti-el-input :deep(.el-input__wrapper:focus-within),
+.pti-wrapper:not(.is-small) .pti-el-input :deep(.el-input__wrapper.is-focus) {
     box-shadow: 0 0 0 1px var(--el-color-primary, #409eff) inset !important;
 }
 
@@ -254,8 +262,9 @@ function onPriceBlur() {
     -moz-appearance: textfield !important; /* Firefox */
 }
 
-/* v28-17: 强制 inner line-height: 30px 跟 placeholder 对齐 */
-.pti-el-input :deep(.el-input__inner) {
+/* v28-17: 强制 inner line-height: 30px 跟 placeholder 对齐
+   仅 default size — small 让 Element Plus 的小尺寸 token 自己决定 (避免比 el-input-number 高出 9px) */
+.pti-wrapper:not(.is-small) .pti-el-input :deep(.el-input__inner) {
     line-height: 30px !important;
     font-size: 13px !important;
 }
@@ -276,8 +285,9 @@ function onPriceBlur() {
     width: 100%;
 }
 
-/* 右 select: 清左半圆角 (左 input 接管), 与 scp-tag-box 视觉一致: padding 1px 11px + 背景 var(--bg-soft) + min-height 33px */
-.pti-el-select :deep(.el-select__wrapper) {
+/* 右 select: 清左半圆角 (左 input 接管), 与 scp-tag-box 视觉一致: padding 1px 11px + 背景 var(--bg-soft) + min-height 33px
+   仅 default size — small 让 Element Plus 的 --el-component-size-small token 决定高度, padding 也跟着 el-select__wrapper 默认  */
+.pti-wrapper:not(.is-small) .pti-el-select :deep(.el-select__wrapper) {
     border-top-left-radius: 0 !important;
     border-bottom-left-radius: 0 !important;
     border-top-right-radius: var(--el-border-radius-base, 8px) !important;
@@ -293,19 +303,49 @@ function onPriceBlur() {
     align-items: center !important; /* 文字垂直居中 */
 }
 
-.pti-el-select :deep(.el-select__wrapper.is-hovering),
-.pti-el-select :deep(.el-select__wrapper:hover) {
+.pti-wrapper:not(.is-small) .pti-el-select :deep(.el-select__wrapper.is-hovering),
+.pti-wrapper:not(.is-small) .pti-el-select :deep(.el-select__wrapper:hover) {
     box-shadow: 0 0 0 1px var(--el-color-primary-light-5, #c0d4f7) inset !important;
 }
 
-.pti-el-select :deep(.el-select__wrapper.is-focused),
-.pti-el-select :deep(.el-select__wrapper:focus-within) {
+.pti-wrapper:not(.is-small) .pti-el-select :deep(.el-select__wrapper.is-focused),
+.pti-wrapper:not(.is-small) .pti-el-select :deep(.el-select__wrapper:focus-within) {
     box-shadow: 0 0 0 1px var(--el-color-primary, #409eff) inset !important;
 }
 
-/* el-select 下拉框与左 input inner 同字号 (防止 select 字号偏小) */
-.pti-el-select :deep(.el-select__placeholder) {
+/* el-select 下拉框与左 input inner 同字号 (防止 select 字号偏小)
+   仅 default size — small 由 el-select__wrapper 自己用 Element Plus 小尺寸 token */
+.pti-wrapper:not(.is-small) .pti-el-select :deep(.el-select__placeholder) {
     font-size: 13px !important;
     line-height: 30px !important;
+}
+
+/* === small 变体: 跟随 Element Plus --el-component-size-small 高度 ===
+   让 PriceTypeInput 与同行的 el-input-number / el-select / el-radio-group 等高
+   (default 变体的硬编码值仅 :not(.is-small) 内生效, OrderForm.vue 不受影响) */
+.pti-wrapper.is-small .pti-el-select :deep(.el-select__wrapper) {
+    border-top-left-radius: 0 !important;
+    border-bottom-left-radius: 0 !important;
+    border-top-right-radius: var(--el-border-radius-small, 4px) !important;
+    border-bottom-right-radius: var(--el-border-radius-small, 4px) !important;
+    min-height: var(--el-component-size-small, 24px) !important;
+    font-size: var(--el-font-size-small, 12px) !important;
+    padding: 1px 8px !important;
+    box-sizing: border-box !important;
+    align-items: center !important;
+    box-shadow: 0 0 0 1px var(--el-border-color, #dcdfe6) inset !important;
+    background: var(--el-fill-color-blank, #fff) !important;
+}
+.pti-wrapper.is-small .pti-el-select :deep(.el-select__wrapper.is-hovering),
+.pti-wrapper.is-small .pti-el-select :deep(.el-select__wrapper:hover) {
+    box-shadow: 0 0 0 1px var(--el-color-primary-light-5, #c0d4f7) inset !important;
+}
+.pti-wrapper.is-small .pti-el-select :deep(.el-select__wrapper.is-focused),
+.pti-wrapper.is-small .pti-el-select :deep(.el-select__wrapper:focus-within) {
+    box-shadow: 0 0 0 1px var(--el-color-primary, #409eff) inset !important;
+}
+.pti-wrapper.is-small .pti-el-select :deep(.el-select__placeholder) {
+    font-size: var(--el-font-size-small, 12px) !important;
+    line-height: var(--el-component-size-small, 24px) !important;
 }
 </style>
