@@ -228,7 +228,7 @@ The shared component is [client/src/components/CacheTableView.vue](../../client/
   - `client/src/stores/holdings.js` — Pinia store facade（单 store,装配 4 helper）
   - `client/src/stores/holdings_log.js` — `createLogger(loadHistory)` 操作流水（MAX_HISTORY=200）
   - `client/src/stores/holdings_helpers.js` — `parseAsset` / `recomputeStatus` / `nowHMS` / `todayYYYYMMDD` 纯函数
-  - `client/src/stores/holdings_market.js` — `createMarketComputeds(positions, cachedAsset, getQuoteStore)` 实时市值/盈亏 computed 工厂
+  - `client/src/stores/holdings_market.js` — `createMarketComputeds(positions, cachedAsset, getQuoteStore, feeConfig)` 实时市值/盈亏 computed 工厂（REQ-FE-534：第 4 参 feeConfig ref 供 getProfit 扣费）
   - `client/src/stores/holdings_push.js` — `createPushHandlers({...deps})` 5 个 ws 推送入口（v8 trd_date 守门 + v9 cancel-row/trade_type 短路）
 - **R3 reactivity 守门**：**必须保持单 Pinia store facade**（21 view 都 `useHoldingsStore()`），不允许拆成 5 个独立 store 后让 view 各自调。helper 全部是**纯工厂函数**，state 仍由 facade 持有
 - **facade 暴露 surface（21 view 引用安全网）**：
@@ -1993,7 +1993,7 @@ price_type 选择:
 - `vol` / `last_vol` — 持仓行（`holdingsStore.positions`）
 - `最新价` / `昨收价` — `quoteStore`（`getLastPrice` / `q.prev_close`）；任一缺失 → 该行显示 `—`
 - `今日买入额` / `今日卖出额` / `当日费用` — `GET /api/orders/t0-exposure?user_def=''`（全部成交，非 T0 过滤）批量聚合
-- `day_fee`（买佣金 + 卖佣金，**无印花税**）由**后端**按 sysconfig 费率计算（`aggregate_by_stock` 新增字段），前端**不做二次费率逻辑**；费率接口沿用 `get_fee_config()`/`calc_commission_and_tax()`，当前规则**万1免五、无印花税**（commission_rate=0.0001, min_commission=0, stamp_tax_rate=0）
+- `day_fee`（买佣金 + 卖佣金 + **印花税（卖出）**）由**后端**按 sysconfig 费率计算（`aggregate_by_stock` 新增字段，`aggregators.py:123` = `buy_commission + sell_commission + stamp_tax`），前端**不做二次费率逻辑**；费率接口沿用 `get_fee_config()`/`calc_commission_and_tax()`，当前规则**万1免五、无印花税**（commission_rate=0.0001, min_commission=0, stamp_tax_rate=0 → 印花税数值恒 0）
 
 **刷新策略**（无轮询，全部事件/行情驱动，挂载于 `stores/holdings_daypnl.js`，随 `_startWatchers`/`_stopWatchers` 启停）：
 - **行情推送驱动重算**：`quoteStore.tick` 每自增一次 → 遍历 positions 重算并写回 `positions[].day_pnl`（每来一笔行情重算一次）
@@ -2001,6 +2001,26 @@ price_type 选择:
 - `activeTrdDate` 切换 → 重拉 t0-exposure 成交 map（跨日清空旧成交）
 - `holdingsStore.trades.length` 增长（ws 成交推送）→ 3s 防抖重拉成交 map（`useT0DayPnl.refresh(trdDate, force=true)`）
 - **已移除 30s 轮询**；视图（HoldingsPanel/Dashboard）不管理任何当日盈亏生命周期，只读 store 字段
+
+### REQ-FE-534: 浮动盈亏扣除佣金（对齐当日盈亏公式，2026-08-12）
+
+`HoldingsPanel.vue` 浮动盈亏列（`holdingsStore.getProfit`）从裸价差 `(现价 − 成本) × 量`
+改为**扣费版**，公式对齐「当日盈亏」费用构成（买佣金 + 卖佣金 + 印花税(卖出)）：
+
+```
+浮动盈亏 = (现价 − 成本) × 量
+         − 买佣金（成本×量 按 calc_commission_and_tax 计算）
+         − 卖佣金（现价×量 按 calc_commission_and_tax 计算）
+         − 印花税（现价×量 × stamp_tax_rate，round 2，仅卖出）
+```
+
+- **纯函数**：`lib/t0-calc.js` 新增 `calcCommissionAndTax(amount, feeCfg, direction)`（镜像后端
+  `fees.py:calc_commission_and_tax`：佣金 `round(amount×rate, 2)` + `min_commission` 兜底 + 印花仅卖出）
+  与 `calcFloatingPnl({price, cost, vol, fee_cfg})`（无 `fee_cfg` → 退化裸价差；vol=0 → 0；行情缺失 → null）
+- **费率来源**：holdings store 启动时 `feeConfigApi.get()`（GET /fee-config）拉一次存 `feeConfig` ref，
+  注入 `createMarketComputeds`；拉取失败/未返回 → `feeConfig=null` → 浮动盈亏退化裸价差（graceful，不阻断持仓加载）
+- **返回**：浮动盈亏结果 round 2（金额口径）；`getReturnRate = getProfit / (成本×量)` 自动继承扣费口径
+- **不做二次费率逻辑**：费率权威仍为后端 sysconfig；前端只做与当日盈亏一致的镜像计算，**无轮询**
 
 **启动时机（2026-08-12 修复追加）**：recompute watcher 随 `_startWatchers`/`_stopWatchers` 启停，`_startWatchers()` **MUST** 在「已登录 mount」时被调用（`App.vue` `onMounted`）。原因：v119 起 token 经 localStorage 持久化，刷新后 auth store 同步恢复 → `isAuthenticated` 初始即 `true` → 非 immediate 的 auth watch 不触发；若只在 auth watch 启动，刷新场景下 recompute 永不启动 → 当日盈亏列恒空。
 
