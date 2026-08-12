@@ -2057,3 +2057,33 @@ price_type 选择:
 - **GIVEN** admin 在 `GET /api/orders/fee-config` 将 commission_rate 改为 0.0002
 - **WHEN** t0-exposure 返回 day_fee
 - **THEN** day_fee 按新费率计算（后端 `aggregate_by_stock` 读 sysconfig），前端不感知费率值
+
+### REQ-FE-535: 仪表盘 KPI 趋势百分比口径 + last_asset 保留（2026-08-12）
+
+`Dashboard.vue` 两张 KPI 卡的趋势百分比（总资产 `todayPnLPercent` / 今日盈亏 `dayPnlPercent`）
+口径 = **当日盈亏 / 期初总资产**：
+
+```
+趋势百分比 = 今日盈亏 / last_asset × 100
+```
+
+- **last_asset = 期初总资产**（日初 `do_reconcile._update_last_asset` 计算：
+  `可用资金 + Σ(期初持仓 × 昨收)`，当天不变，前端算当日盈亏基准）。
+- **last_asset 必须由后端实时资金同步保留**：`server/services/rpc_health.py` 每 5s
+  `Assets.upsert_one` 同步 cash/market_value/total_asset 时，**必须**读取并携带现有
+  `last_asset`，不得将其冲回 0（`assets.last_asset` 在 MySQL 无 DEFAULT，缺失字段会被
+  `upsert_one` 以 `ON DUPLICATE KEY UPDATE last_asset = 0` 覆盖）。
+- **last_asset 缺失(0) → 趋势百分比隐藏**：前端两 computed 在 `last_asset <= 0` 时返回 `null`
+  （StatCard 不渲染趋势 chip），**不得**退化为除 1 显示天文数字。
+
+#### Scenario: 正常日初后趋势百分比 = 当日盈亏 / 期初总资产
+
+- **GIVEN** last_asset=100000，今日盈亏=1000
+- **WHEN** 渲染仪表盘总资产 / 今日盈亏卡趋势
+- **THEN** 显示 `+1.00%`（`1000/100000×100`）
+
+#### Scenario: last_asset 缺失(0) → 隐藏趋势
+
+- **GIVEN** last_asset=0（日初 reconcile 未跑 / rpc_health 冲回）
+- **WHEN** 渲染仪表盘趋势
+- **THEN** 趋势 chip 不显示（computed 返回 null），今日盈亏金额仍正常展示
