@@ -2058,32 +2058,41 @@ price_type 选择:
 - **WHEN** t0-exposure 返回 day_fee
 - **THEN** day_fee 按新费率计算（后端 `aggregate_by_stock` 读 sysconfig），前端不感知费率值
 
-### REQ-FE-535: 仪表盘 KPI 趋势百分比口径 + last_asset 保留（2026-08-12）
+### REQ-FE-535: 仪表盘 KPI 趋势百分比口径（2026-08-12 / 08-13 修正）
 
 `Dashboard.vue` 两张 KPI 卡的趋势百分比（总资产 `todayPnLPercent` / 今日盈亏 `dayPnlPercent`）
-口径 = **当日盈亏 / 期初总资产**：
+为**同一今日收益率**：
 
 ```
-趋势百分比 = 今日盈亏 / last_asset × 100
+趋势百分比 = 当日盈亏 / 前一日总资产 × 100
+           = 当日盈亏 / (总资产 − 当日盈亏) × 100
 ```
 
-- **last_asset = 期初总资产**（日初 `do_reconcile._update_last_asset` 计算：
-  `可用资金 + Σ(期初持仓 × 昨收)`，当天不变，前端算当日盈亏基准）。
-- **last_asset 必须由后端实时资金同步保留**：`server/services/rpc_health.py` 每 5s
-  `Assets.upsert_one` 同步 cash/market_value/total_asset 时，**必须**读取并携带现有
-  `last_asset`，不得将其冲回 0（`assets.last_asset` 在 MySQL 无 DEFAULT，缺失字段会被
-  `upsert_one` 以 `ON DUPLICATE KEY UPDATE last_asset = 0` 覆盖）。
-- **last_asset 缺失(0) → 趋势百分比隐藏**：前端两 computed 在 `last_asset <= 0` 时返回 `null`
-  （StatCard 不渲染趋势 chip），**不得**退化为除 1 显示天文数字。
+- **前一日总资产 = 总资产 − 当日盈亏**（用户 2026-08-13 口径：「总资产-当日盈亏就是前一日的
+  总资产，用这个值算比例」）。总资产 = `holdings.liveTotalAsset`（实时，兜底后端
+  `total_asset`）；当日盈亏 = `Σ positions[].day_pnl`（`dayPnlTotal`）。
+- **不依赖 `last_asset`**：此前口径用 `last_asset`（日初 reconcile 期初总资产）作分母，但
+  `server/services/rpc_health.py` 每 5s `Assets.upsert_one` 同步资金时缺失 `last_asset`
+  （MySQL 无 DEFAULT）会把它冲回 0 → 前端除 1 显示天文数字。新口径完全移除该依赖。
+  （`rpc_health` 保留 `last_asset` 的修复仍生效，`last_asset` 继续作为数据模型字段供
+  CacheAsset 等展示，但不再参与仪表盘趋势计算。）
+- **当日盈亏缺失或分母 ≤ 0 → 隐藏趋势**：computed 返回 `null`（StatCard 不渲染趋势 chip），
+  今日盈亏金额仍正常展示。
 
-#### Scenario: 正常日初后趋势百分比 = 当日盈亏 / 期初总资产
+#### Scenario: 正常趋势百分比 = 当日盈亏 / (总资产 − 当日盈亏)
 
-- **GIVEN** last_asset=100000，今日盈亏=1000
+- **GIVEN** 总资产=110000，当日盈亏=1000
 - **WHEN** 渲染仪表盘总资产 / 今日盈亏卡趋势
-- **THEN** 显示 `+1.00%`（`1000/100000×100`）
+- **THEN** 前一日总资产=109000，显示 `+0.92%`（`1000/109000×100`）
 
-#### Scenario: last_asset 缺失(0) → 隐藏趋势
+#### Scenario: 当日盈亏缺失 → 隐藏趋势
 
-- **GIVEN** last_asset=0（日初 reconcile 未跑 / rpc_health 冲回）
+- **GIVEN** 全部持仓缺行情，`dayPnlTotal` 为 null
 - **WHEN** 渲染仪表盘趋势
-- **THEN** 趋势 chip 不显示（computed 返回 null），今日盈亏金额仍正常展示
+- **THEN** 趋势 chip 不显示（computed 返回 null），今日盈亏金额显示兜底 0
+
+#### Scenario: 分母 ≤ 0 → 隐藏趋势
+
+- **GIVEN** 总资产=100，当日盈亏=500（分母=−400）
+- **WHEN** 渲染仪表盘趋势
+- **THEN** 趋势 chip 不显示（避免负基数误导）
