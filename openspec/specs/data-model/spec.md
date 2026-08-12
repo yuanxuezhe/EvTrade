@@ -338,6 +338,9 @@ ORM 注释（`server/tables/<表名>.py` 自动生成）必须与本 spec 保持
 
 ### 7. `fee_config` — 费率配置
 
+> ⚠️ **已迁移**：费率现由 `sys_config` 表（user='0'）承载，读 `sysconfig.get_fee_dict()`，不再访问本表。
+> **当前规则（2026-08-12）**：万1免五、无印花税 → `commission_rate=0.0001, stamp_tax_rate=0, min_commission=0`。下表为旧表 schema，默认值仅供参考。
+
 **PK**: `id=1`（`CheckConstraint("id = 1")` 强制单行）
 
 | 字段 | 类型 | 可空 | 默认 | 说明 |

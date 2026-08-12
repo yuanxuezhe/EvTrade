@@ -1975,3 +1975,55 @@ price_type 选择:
 
 - **WHEN** initializing=true
 - **THEN** `quote` 推送 MUST 照常写入（不 gate）
+
+### REQ-FE-533: 持仓「当日盈亏」列 + 仪表盘「今日盈亏」汇总（2026-08-12）
+
+`HoldingsPanel.vue` 在「市值」与「浮动盈亏」之间新增「当日盈亏」列（个股口径）；**当日盈亏汇总**（Σ 各持仓当日盈亏）由仪表盘 `Dashboard.vue` 的「今日盈亏」卡片展示（v114.2 迁移：持仓面板 header 不再显示总盈亏）。口径为**昨收基准的当日全量盈亏**（含已实现 + 未实现 + 当日费用），与「浮动盈亏」（成本基准）并列展示。
+
+当日盈亏权威在 **holdings store**：行情推送（`quoteStore.tick`）驱动重算，写入 `positions[].day_pnl` 行字段；`HoldingsPanel` 只读该行字段，`Dashboard` 汇总 Σ。数据源与公式唯一（`composables/useT0DayPnl.js` 只做 t0-exposure 拉取 + 单标的计算，不持有 store 依赖、无轮询），避免重复拉取/重复逻辑。
+
+**公式**（纯函数 `lib/t0-calc.js:calcDayPnl`）：
+```
+当日盈亏 = (当前持仓 vol × 最新价 + 今日卖出额)
+          − (期初持仓 last_vol × 昨收价 + 今日买入额)
+          − 当日费用 day_fee
+```
+
+**数据映射**：
+- `vol` / `last_vol` — 持仓行（`holdingsStore.positions`）
+- `最新价` / `昨收价` — `quoteStore`（`getLastPrice` / `q.prev_close`）；任一缺失 → 该行显示 `—`
+- `今日买入额` / `今日卖出额` / `当日费用` — `GET /api/orders/t0-exposure?user_def=''`（全部成交，非 T0 过滤）批量聚合
+- `day_fee`（买佣金 + 卖佣金，**无印花税**）由**后端**按 sysconfig 费率计算（`aggregate_by_stock` 新增字段），前端**不做二次费率逻辑**；费率接口沿用 `get_fee_config()`/`calc_commission_and_tax()`，当前规则**万1免五、无印花税**（commission_rate=0.0001, min_commission=0, stamp_tax_rate=0）
+
+**刷新策略**（无轮询，全部事件/行情驱动，挂载于 `stores/holdings_daypnl.js`，随 `_startWatchers`/`_stopWatchers` 启停）：
+- **行情推送驱动重算**：`quoteStore.tick` 每自增一次 → 遍历 positions 重算并写回 `positions[].day_pnl`（每来一笔行情重算一次）
+- `positions` 引用变化（bootstrap 加载 / 换日重置）→ 立即算一版，不等行情
+- `activeTrdDate` 切换 → 重拉 t0-exposure 成交 map（跨日清空旧成交）
+- `holdingsStore.trades.length` 增长（ws 成交推送）→ 3s 防抖重拉成交 map（`useT0DayPnl.refresh(trdDate, force=true)`）
+- **已移除 30s 轮询**；视图（HoldingsPanel/Dashboard）不管理任何当日盈亏生命周期，只读 store 字段
+
+**API 变更（additive）**：`ExposurePositionOut` 新增 `buy_commission`、`day_fee`；`ExposureTotalsOut` 新增 `buy_commission_total`、`day_fee_total`。
+
+#### Scenario: 无交易持仓的当日盈亏 = 纯持仓涨跌
+
+- **GIVEN** 持仓 vol=last_vol=1000，昨收 10，最新 11，今日无买卖
+- **WHEN** 渲染当日盈亏列
+- **THEN** 显示 `+1000`（`1000×11 − 1000×10 − 0`）
+
+#### Scenario: 有买卖 + 费用的当日盈亏
+
+- **GIVEN** 期初 1000@昨收10，今日卖 500@11 得 5500，买 500@10 花 5000，day_fee=12
+- **WHEN** 计算当日盈亏
+- **THEN** = `(500×11 + 5500) − (1000×10 + 5000) − 12 = -4012`
+
+#### Scenario: 缺行情显示 — 且不计入仪表盘汇总
+
+- **GIVEN** 某持仓无行情（最新价或昨收缺失）
+- **WHEN** 渲染持仓当日盈亏列与仪表盘「今日盈亏」汇总
+- **THEN** 该行显示 `—`；若全部持仓均缺行情，仪表盘「今日盈亏」显示兜底 0 且无趋势百分比
+
+#### Scenario: 当日费用来自系统费率而非前端硬编码
+
+- **GIVEN** admin 在 `GET /api/orders/fee-config` 将 commission_rate 改为 0.0002
+- **WHEN** t0-exposure 返回 day_fee
+- **THEN** day_fee 按新费率计算（后端 `aggregate_by_stock` 读 sysconfig），前端不感知费率值
