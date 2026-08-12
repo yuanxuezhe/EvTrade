@@ -142,9 +142,10 @@ SERVICES = {
         #   渲染 backpressure 使 native pong 延迟 ~20-30s, 探测误断 1011 keepalive ping timeout,
         #   前端每 ~2.3min 重连。对齐 hq/hqserver.py 既有 ping_timeout=60 先例。
         #   保留探测 (真正死连接 60s 内仍被踢), 仅放宽 pong 容忍窗口。
+        # v128.4 单进程: 删 --workers 4, dict + RLock 跨线程共享 (见 server/auth/session.py),
+        #   WS event loop 统一, DB 池单进程承担 (见 server/infra/db.py 默认值上调).
         [sys.executable, '-u', '-m', 'uvicorn', 'server.main:app',
          '--host', '0.0.0.0', '--port', str(BACKEND_PORT),
-         '--workers', '4',
          '--ws-ping-interval', '20', '--ws-ping-timeout', '60'],
         preflight=['uvicorn'],
     ),

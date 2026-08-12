@@ -79,8 +79,11 @@ def _pool_kwargs(url: str) -> dict:
     而不是让主进程卡 30s + 僵死。
     """
     assert url.startswith("mysql"), f"_pool_kwargs called with non-MySQL URL: {url[:80]}"
-    size = int(os.environ.get("EVTRADE_DB_POOL_SIZE", "5"))
-    ofl = int(os.environ.get("EVTRADE_DB_MAX_OVERFLOW", "10"))
+    # v128.4 单进程: 进程内只有 1 个 pool, 需承担原 4 worker × (5+10)=15 的并发.
+    # 默认上调: pool_size=20 + max_overflow=30 = 50 (远低于 MySQL 默认 151 max_connections).
+    # 仍可被环境变量覆盖 (e.g. MySQL max_connections 受限的小机器).
+    size = int(os.environ.get("EVTRADE_DB_POOL_SIZE", "20"))
+    ofl = int(os.environ.get("EVTRADE_DB_MAX_OVERFLOW", "30"))
     rec = int(os.environ.get("EVTRADE_DB_POOL_RECYCLE", "1800"))
     pre_ping = os.environ.get("EVTRADE_DB_POOL_PRE_PING", "true").lower() == "true"
     timeout = int(os.environ.get("EVTRADE_DB_POOL_TIMEOUT", "10"))
