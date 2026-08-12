@@ -1,6 +1,11 @@
 """
 test_session.py — REQ-AUTH-IDLE-001 token session cache 单元测试
 
+v128.2 (2026-08-12): cache 落 MySQL (ENGINE=MEMORY)
+  - 原测试直接清模块级 dict (_TOKEN_CACHE.clear) → 现改为清表 (session._clear_all_for_test)
+  - time.time() monkeypatch 仍生效: 内部所有"now"均派生自 time.time()
+  - 需在测试 setup 跑一次 migration 建表 (autouse session fixture)
+
 覆盖场景:
 - register_token 后 is_valid 立即返 True
 - revoke 后 is_valid 返 False
@@ -8,23 +13,29 @@ test_session.py — REQ-AUTH-IDLE-001 token session cache 单元测试
 - 模拟 idle 超时: monkeypatch time.time → is_valid 返 False
 - sweep_expired 清理过期条目
 - sweep_loop 协程可被 CancelledError 优雅退出
-
-测试策略:
-- 直接调 server.auth.session 模块级函数, 不依赖 DB / FastAPI
-- 用 monkeypatch 注入 time.time 返回值, 不真的 sleep 600s
 """
 import asyncio
+import importlib
+
 import pytest
 
 from server.auth import session
 
 
+@pytest.fixture(scope="session", autouse=True)
+def _ensure_token_sessions_table():
+    """绕过 FastAPI startup, 直接调 migration 跑建表 (幂等)."""
+    from server.infra.db import engine
+    mod = importlib.import_module("server.migrations.2026-08-12-add-token-sessions")
+    mod.migrate(engine)
+
+
 @pytest.fixture(autouse=True)
 def _reset_cache():
-    """每个 case 前清空模块级 cache, 避免 test 间污染。"""
-    session._TOKEN_CACHE.clear()
+    """每个 case 前清空 token_sessions 表, 避免 test 间污染."""
+    session._clear_all_for_test()
     yield
-    session._TOKEN_CACHE.clear()
+    session._clear_all_for_test()
 
 
 def test_register_then_is_valid():
@@ -59,12 +70,11 @@ def test_touch_keeps_valid():
 def test_touch_nonexistent_is_noop():
     """touch 不存在的 token 不抛错, 也无副作用。"""
     session.touch("ghost")
-    assert session._TOKEN_CACHE == {}
+    assert session.stats()["size"] == 0
 
 
 def test_idle_expires_after_timeout(monkeypatch):
     """模拟 idle 超时: 注入 time.time 返回值, 让 last_seen_at 看起来"过期"。"""
-    # 注入受控的 time.time
     fake_now = [1000.0]
     monkeypatch.setattr(session.time, "time", lambda: fake_now[0])
 
@@ -115,9 +125,9 @@ def test_sweep_expired_removes_only_expired(monkeypatch):
 
     removed = session.sweep_expired()
     assert removed == 2
-    assert "old1" not in session._TOKEN_CACHE
-    assert "old2" not in session._TOKEN_CACHE
-    assert "fresh" in session._TOKEN_CACHE
+    assert session.is_valid("old1") is False
+    assert session.is_valid("old2") is False
+    assert session.is_valid("fresh") is True
 
 
 def test_sweep_expired_returns_zero_when_nothing_expired():
@@ -125,7 +135,7 @@ def test_sweep_expired_returns_zero_when_nothing_expired():
     session.register_token("a", user_id=1, role="admin")
     session.register_token("b", user_id=2, role="admin")
     assert session.sweep_expired() == 0
-    assert len(session._TOKEN_CACHE) == 2
+    assert session.stats()["size"] == 2
 
 
 def test_stats_reflects_cache_size():
@@ -157,3 +167,22 @@ def test_sweep_loop_exits_on_cancel(monkeypatch):
             await task
 
     real_asyncio.run(_runner())
+
+
+def test_token_hash_is_sha256():
+    """v128.2: PK = SHA256(token) hex (64 字符), 不存原文."""
+    h = session._hash_token("abc")
+    assert len(h) == 64
+    assert session._hash_token("abc") == h  # 确定性
+    assert session._hash_token("abd") != h
+
+
+def test_cross_session_isolation_via_token():
+    """v128.2 regression: 不同 token 视为不同 session (与原 dict 语义一致)."""
+    session.register_token("alpha", user_id=1, role="admin")
+    session.register_token("beta", user_id=2, role="trader")
+    assert session.is_valid("alpha") is True
+    assert session.is_valid("beta") is True
+    session.revoke("alpha")
+    assert session.is_valid("alpha") is False
+    assert session.is_valid("beta") is True
