@@ -267,17 +267,17 @@ ORM 注释（`server/tables/<表名>.py` 自动生成）必须与本 spec 保持
 | `last_vol` | Integer | NO | 0 | **期初持仓**（仅 do_reconcile 写入） |
 | `avl_vol` | Integer | NO | 0 | **可用**持仓（do_reconcile 写入 + manual 调平） |
 | `vol` | Integer | NO | 0 | **总持仓**（do_reconcile 写入 + trd_cfm 增量 + manual 调平） |
-| `cost_price` | Float | NO | 0.0 | 持仓成本价（do_reconcile init + pos_push 盘中写入；统一 4 位小数） |
+| `cost_price` | Float | NO | 0.0 | 持仓成本价（do_reconcile init + pos_push 盘中写入 + trd 买入建仓；按 stocks.scale 保留精度） |
 | `synced_at` | DateTime | NO | utcnow | 最近同步时间 |
 | `synced_from` | String(16) | NO | "" | `rpc_full` (do_reconcile) / `push_partial` (trd_cfm 增量) / `manual` (admin 调平) |
 
 **业务规则**:
 - `vol` 的数据源：
   - do_reconcile（day-init 全表覆盖）→ 写入 `avl_vol` + `vol` + `cost_price` + `last_vol`
-  - trd_cfm push handler（intra-day 增量）→ 仅 `vol ±= volume`（不影响 avl_vol / last_vol / cost_price）
+  - trd_cfm push handler（intra-day 增量）→ 已存在持仓仅 `vol ±= volume`（不动 avl_vol / cost_price）；股票不存在且买入时自动建仓（写 `vol` + `cost_price`）
   - manual adjust API（admin 调平）→ 直接对 `vol` 和/或 `avl_vol` 做原子 +=
-- `last_vol` / `cost_price` 写源：do_reconcile（init 全表覆盖）+ pos_push（盘中覆盖，`synced_from='pos_push'`）均可写入
-- `cost_price` **精度口径**：统一 4 位小数。写路径（reconcile 落库 / pos_push 落库）与读取序列化（`_position_to_out_dict`）均在边界 `_round4`（`server/services/push/helpers.py`），前端计算（getProfit / getReturnRate / market_value）直接用该 4 位值
+- `last_vol` / `cost_price` 写源：do_reconcile（init 全表覆盖）+ pos_push（盘中覆盖，`synced_from='pos_push'`）+ trd 买入自动建仓（`synced_from='push_partial'`）均可写入
+- `cost_price` **精度口径**：按 `stocks.scale` 保留小数（A股=2 / ETF=3，admin 可配 0-6，`get_stock_scale` 缺行兜底 2）。写路径（reconcile / pos_push / trd 建仓）与读取序列化（`_position_to_out_dict`）均在边界 `_round_scale(v, scale)`（`server/services/push/helpers.py`），前端计算（getProfit / getReturnRate / market_value）直接用该 scale 精度值
 - **已删字段**（v12）：`today_buy` / `today_sell` 在 v5 schema 引入以来从未被消费（`do_reconcile` 写入但前端从未读、push handler 不增量），变死字段后删除。**当日买卖累计语义**改由 `Trade` 表 `order_type` + `trd_date` SUM 聚合代替（见 `t0_stats.py` 接口）。
 - `market_value` 不存；前端用 `quote.last_price * vol` 实时算
 - `synced_from` 含义：`rpc_full` 表示对账权威值，`push_partial` 表示 push 增量后的中间态，`manual` 表示 admin 在盘中手工调平（再次 do_reconcile 会重置为 `rpc_full`）
