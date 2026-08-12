@@ -7,7 +7,9 @@
  * 入参:
  *   refs:
  *     - stockCode: Ref<string>
- *     - priceType: Ref<'market'|'oppose'|'latest'|'limit'>
+ *     - priceType: Ref<number|'market'|'oppose'|'latest'|'limit'>
+ *       - number: PriceType 常量码 (11/5/44), 推荐 (T0Trade.vue v127 改造)
+ *       - string: 历史 'market'/'oppose'/'latest'/'limit', 向后兼容
  *     - balanceCoeff: Ref<number>
  *     - submitting: Ref<boolean>  (双向, 用于 UI loading)
  *   stores:
@@ -21,15 +23,21 @@
 import { ElMessage } from 'element-plus'
 import { formatPrice } from '../utils/format'
 
+// 价格类型 → 柜台协议码 (numeric 11/5/44). 同时接受 string (历史) 与 number (新)。
+function _toPriceTypeCode(pt) {
+  if (typeof pt === 'number') return pt
+  // string 兼容 (历史 'market'/'oppose'/'latest'/'limit')
+  if (pt === 'market' || pt === 'oppose') return 44
+  if (pt === 'latest') return 5
+  return 11  // 'limit' 或未知
+}
+
 export function useT0OrderSubmit({ stockCode, priceType, balanceCoeff, submitting, orderStore, onAfterSuccess }) {
   async function submitOrder({ orderType, volume, price, taskId = null, stockCodeOverride = null }) {
     submitting.value = true
     try {
-      // v83: 价格类型协议 11=限价 5=最新价 44=市价 (与 xtconstant 一致)
-      const priceTypeCode = priceType.value === 'market' ? 44
-        : priceType.value === 'oppose' ? 44  // v83: oppose → 市价 (对手方最优价 ≈ 市价)
-        : priceType.value === 'latest' ? 5
-        : 11  // 'limit'
+      // v127: priceType 直接接受 numeric PriceType 常量 (11/5/44); string 兼容保留
+      const priceTypeCode = _toPriceTypeCode(priceType.value)
       // change 2026-07-21-t0-balance-stock-code-guard: 优先用 stockCodeOverride 兜底,
       //   防止 balanceStockCode 为空时 (selectedTaskId 失效) 后端 place.py:84 校验失败.
       //   T0Trade.vue onBalanceTask 在 selectedTaskId/tasksById 失效时, 从 taskRows 直接取 row.stock_code 传入.

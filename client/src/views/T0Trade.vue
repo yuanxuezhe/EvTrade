@@ -96,10 +96,14 @@
         />
         <span class="t0-unit-hint">元</span>
       </template>
-      <!-- 价格类型 + 持仓基数 (保留不动) -->
-      <el-select v-model="globalPriceType" size="small" style="width: 100px">
-        <el-option v-for="o in priceTypeOptions" :key="o.value" :value="o.value" :label="o.label" />
-      </el-select>
+      <!-- v127: 价格 + 价格类型 → 复用 Trade.vue 同款 PriceTypeInput 组件 (左 50% 价格, 右 50% 类型) -->
+      <PriceTypeInput
+        v-model:price="orderPrice"
+        v-model:price-type="orderPriceTypeCode"
+        :stock-code="selectedStockCode"
+        :width="220"
+        size="small"
+      />
       <el-select
         v-model="globalQtyBase"
         size="small"
@@ -327,7 +331,7 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, onMounted } from 'vue'
+import { ref, computed, watch, onMounted, nextTick } from 'vue'
 import { List, Document, Plus, InfoFilled } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { storeToRefs } from 'pinia'
@@ -340,6 +344,8 @@ import DataTableView from '../components/DataTableView.vue'
 import T0TaskDetail from '../components/trade/T0TaskDetail.vue'
 import T0TaskCreateDialog from '../components/trade/T0TaskCreateDialog.vue'
 import HoldingsPanel from '../components/trade/HoldingsPanel.vue'
+import PriceTypeInput from '../components/PriceTypeInput.vue'
+import { PriceType } from '../constants/priceType.js'
 import { useT0OrderSubmit } from '../composables/useT0OrderSubmit'
 import { formatNumber, formatAmount, formatMoney } from '../utils/format'
 import { formatPrice } from '../composables/usePricePrecision'
@@ -410,16 +416,26 @@ const globalMode = ref('pct')              // 模式 'pct' (按比例) | 'qty' (
 const globalPctInput = ref(25)             // 百分数 (用户视角 25 = 25%, 支持小数 0.001-100)
 const globalQtyInput = ref(100)            // 股数 (整数 ≥ 1)
 const globalAmountInput = ref(10000)       // 金额 (元)
-const globalPriceType = ref('market')      // change 2026-07-27-v109-default-market: 价格 'latest' (最新价 11) | 'market' (市价 44), 默认改为市价
+// v127: 价格类型从 string 'latest'/'market' → numeric PriceType (11/5/44), 与 PriceTypeInput 配套
+//   默认市价 (44), 沿用 v109 决策
+const orderPriceTypeCode = ref(PriceType.MARKET_PEER_PRICE_FIRST)
+const orderPrice = ref(0)                 // 实际下单价格 (FIX_PRICE 用户可改; 最新价/市价 由 watcher 自动填)
 const globalQtyBase = ref('last_vol')      // 数量基数 'vol'/'avl_vol'/'last_vol' (pct 模式下的基数)
+
+// 选中 row 的 stock_code (驱动 PriceTypeInput 的 stockCode + watcher 自动填价)
+const selectedStockCode = computed(() => {
+  if (!selectedTaskId.value) return ''
+  const t = t0TasksStore.tasksById[selectedTaskId.value]
+  return t?.stock_code || ''
+})
 
 // 添加任务 dialog
 const createDialogVisible = ref(false)
 const createDialogLoading = ref(false)
 const externalStockCode = ref('')  // HoldingsPanel 选中 → 驱动 dialog 表单
 
-// v55.1 配平: useT0OrderSubmit 实例化（价格类型跟随做T配置 globalPriceType）
-const balancePriceType = computed(() => globalPriceType.value)  // 跟随做T配置，不再硬编码市价
+// v55.1 配平: useT0OrderSubmit 实例化（价格类型跟随做T配置 orderPriceTypeCode, numeric）
+const balancePriceType = orderPriceTypeCode  // 直接共享 numeric ref, useT0OrderSubmit 已支持
 const balanceCoeff = ref(1)               // 配平系数（固定 1）
 const balanceSubmitting = ref(false)
 const balanceStockCode = computed(() => {
@@ -537,11 +553,7 @@ async function handleCancel(row) {
   }
 }
 
-// change 2026-07-27-v109-mode-toggle: 选项列表 (清理 v109.1 的 9 档 pct + count 项)
-const priceTypeOptions = [
-  { value: 'latest', label: '最新价' },
-  { value: 'market', label: '市价' },
-]
+// v127: 价格类型选项改用 PriceTypeInput 内置 + PriceType.label(code); 删除旧 priceTypeOptions
 const qtyBaseOptions = [
   { value: 'vol',       label: '当前持仓' },
   { value: 'avl_vol',   label: '可用数量' },   // v116: '可用持仓' → '可用数量' (更精准)
@@ -608,11 +620,7 @@ function computeOrderVolume(stockCode, direction = '买') {
   return { volume, raw, trade_unit, min_buy_qty, base, pct, mode: 'pct', direction }
 }
 
-// v57: 价格获取 — 'latest' → quoteStore.getLastPrice, 'market' → 后端实际是柜台撮合价 (前端展示为最新价作参考)
-function computeOrderPrice(stockCode) {
-  const p = quoteStore.getLastPrice(stockCode)
-  return Number(p) || 0
-}
+// v127: computeOrderPrice 已删除 — 取最新价的职责移入 _recomputeOrderPrice (按价格类型分发)
 
 // 市价下单保护限价（上交所要求：对手盘第五档价格）
 // 买入时对手盘 = 卖盘 → ask_prices[4]（卖五）
@@ -640,11 +648,36 @@ function _marketOrderProtectPrice(stockCode, orderType) {
 
 // 配平下单价格：跟随做T配置价格类型
 function _balancePrice(stockCode, orderType) {
-  const pt = globalPriceType.value
-  if (pt === 'market') return _marketOrderProtectPrice(stockCode, orderType)
+  const pt = orderPriceTypeCode.value
+  if (pt === PriceType.MARKET_PEER_PRICE_FIRST) return _marketOrderProtectPrice(stockCode, orderType)
   const p = quoteStore.getLastPrice(stockCode)
   return Number(p) || 0
 }
+
+// v127: 根据价格类型 + 当前选中 stock_code, 自动填 orderPrice
+//   11 (限价) → 选中 row 时自动填 last_price, 用户可手动改
+//   5 (最新价) → 0 (UI + 下单 price 都传 0, 柜台撮合)
+//   44 (市价) → SSE 取 5 档对手价; 非 SSE = 0
+function _recomputeOrderPrice() {
+  const code = orderPriceTypeCode.value
+  const codeText = selectedStockCode.value
+  if (!codeText) {
+    orderPrice.value = 0  // 未选标的, 价格归零
+    return
+  }
+  if (code === PriceType.FIX_PRICE) {
+    orderPrice.value = Number(quoteStore.getLastPrice(codeText)) || 0
+  } else if (code === PriceType.LATEST_PRICE) {
+    orderPrice.value = 0
+  } else if (code === PriceType.MARKET_PEER_PRICE_FIRST) {
+    const p = _marketOrderProtectPrice(codeText, '23')  // 买入方向取保护价
+    orderPrice.value = (p > 0) ? p : 0
+  }
+}
+
+// v127: 监听价格类型切换 + 选中 task 变化 → 重填 orderPrice
+watch(orderPriceTypeCode, () => _recomputeOrderPrice())
+watch(selectedTaskId, () => _recomputeOrderPrice())
 
 // 主表行单击 → 选中/取消选中 task (联动下半表)
 function onTaskRowClick(row) {
@@ -876,7 +909,7 @@ async function onBalanceTask(taskId) {
   const volume = Math.abs(diff)
   try {
     await ElMessageBox.confirm(
-      `task #${taskId} 实时差 ${diff} 股，将下 ${priceTypeOptions.find(o => o.value === globalPriceType.value)?.label || globalPriceType.value} ${orderType === '23' ? '买' : '卖'} ${volume} 股`,
+      `task #${taskId} 实时差 ${diff} 股，将下 ${PriceType.label(orderPriceTypeCode.value)} ${orderType === '23' ? '买' : '卖'} ${volume} 股`,
       '一键配平', { confirmButtonText: '确认', cancelButtonText: '取消', type: 'warning' }
     )
   } catch (e) { return }
@@ -895,6 +928,7 @@ function canOpRow(row) {
 }
 
 // v57: 买/卖按钮 (走全局配置: pct × qtyBase → vol, latest/market → price)
+// v127: 价格直接用 orderPrice.value (FIX_PRICE 由 watcher 自动填 + 用户可改; 最新价/市价 由 watcher 预填 0/5 档)
 function _prepareOrderPayload(row, direction) {
   const stockCode = row.stock_code
   // v116: computeOrderVolume 现在接受 direction 参数 — 买入 base=可用金额/最新价
@@ -903,14 +937,9 @@ function _prepareOrderPayload(row, direction) {
     ElMessage.warning(`${row.stock_code} 按当前配置算不出可下单数量（可能持仓为空或 0%）`)
     return null
   }
-  const price = computeOrderPrice(stockCode)
-  if (globalPriceType.value === 'latest' && (!price || price <= 0)) {
-    ElMessage.warning(`未取得 ${row.stock_code} 最新价，请等待行情推送`)
-    return null
-  }
   const orderType = direction === '买' ? '23' : '24'
   return {
-    direction, stockCode, price, volume: volInfo.volume,
+    direction, stockCode, price: orderPrice.value, volume: volInfo.volume,
     orderType,                                       // v58 commit.5 fix: 后端 Pydantic 必填, 之前漏掉 → 422
     taskId: row.id,
     mode: globalMode.value,                          // 'pct' | 'qty' | 'amount'
@@ -918,7 +947,7 @@ function _prepareOrderPayload(row, direction) {
     pct: globalPctInput.value,                       // pct 模式: 百分数
     qty: globalQtyInput.value,                       // qty 模式: 股数
     amount: globalAmountInput.value,                 // amount 模式: 金额
-    priceType: globalPriceType.value,
+    priceType: orderPriceTypeCode.value,             // numeric PriceType (11/5/44)
     // v57 commit.4: 取整提示信息 (供 dialog 显示)
     base: volInfo.base,
     raw: volInfo.raw,
@@ -926,15 +955,32 @@ function _prepareOrderPayload(row, direction) {
     minBuyQty: volInfo.min_buy_qty,
   }
 }
+// v127: 买/卖 row 按钮联动选中
+//   - 未选中 → 触发 onTaskRowClick (隐式取消其他选中) → nextTick 等 watcher 同步价格 → 下单
+//   - 已选中 → 不重置价格 (用户可能手动改过)
 async function onBuyTask(row) {
-  if (!canOpRow(row)) return
+  if (!canOpRow(row)) {
+    ElMessage.warning('该任务不可下单（无标的或已归档）')
+    return
+  }
+  if (selectedTaskId.value !== row.id) {
+    onTaskRowClick(row)
+    await nextTick()  // 等 watcher 跑完, orderPrice 已是新 stock 的最新价
+  }
   const payload = _prepareOrderPayload(row, '买')
   if (!payload) return
   // v93: 二次确认由 order.js 统一拦截, 这里直接下单
   await _submitOrder(payload)
 }
 async function onSellTask(row) {
-  if (!canOpRow(row)) return
+  if (!canOpRow(row)) {
+    ElMessage.warning('该任务不可下单（无标的或已归档）')
+    return
+  }
+  if (selectedTaskId.value !== row.id) {
+    onTaskRowClick(row)
+    await nextTick()
+  }
   const payload = _prepareOrderPayload(row, '卖')
   if (!payload) return
   // v93: 二次确认由 order.js 统一拦截, 这里直接下单
@@ -944,24 +990,28 @@ async function onSellTask(row) {
 // 二次确认 dialog 用户点"确认下单" 才真正下单
 async function _submitOrder(p) {
   try {
-    // v83: 11=限价 5=最新价 44=市价 (与 xtconstant 一致)
-    const priceTypeCode = p.priceType === 'market' ? 44
-      : p.priceType === 'oppose' ? 44
-      : p.priceType === 'latest' ? 5
-      : 11  // 'limit'
-    // 市价下单时的保护限价（上交所要求）：对手盘第五档价格
-    const sendPrice = priceTypeCode === 44 ? _marketOrderProtectPrice(p.stockCode, p.orderType) : p.price
+    // v127: priceType 已是 numeric (11/5/44); watcher 已预填 orderPrice, 不需要再重算保护限价
+    const priceTypeCode = p.priceType
+    // v127: SSE 市价保护限价守卫 — 上交所需对手盘 5 档 (或涨跌停兜底), 未就绪时拒单
+    if (
+      priceTypeCode === PriceType.MARKET_PEER_PRICE_FIRST
+      && (!p.price || p.price <= 0)
+      && p.stockCode.startsWith('6')
+    ) {
+      ElMessage.warning(`市价保护限价未就绪（上交所需对手盘第 5 档或涨跌停价），请稍候再试`)
+      return null
+    }
     const res = await orderStore.placeOrder({
       stock_code: p.stockCode,
       order_type: p.orderType,
       price_type: priceTypeCode,
-      price: sendPrice,
+      price: p.price,
       volume: p.volume,
       user_def: 'T0',
       strategy_type: 1,  // v66: REQ-TRADE-026; T0Trade.vue 下单 = 快速做T
       ...(p.taskId ? { task_id: p.taskId } : {}),
     })
-    ElMessage.success(`${p.direction}单已报：${p.stockCode} ${p.volume} 股 @ ${p.priceType === 'market' ? '市价' : '¥' + formatPrice(p.price, p.stockCode)}`)
+    ElMessage.success(`${p.direction}单已报：${p.stockCode} ${p.volume} 股 @ ${priceTypeCode === PriceType.MARKET_PEER_PRICE_FIRST ? '市价' : '¥' + formatPrice(p.price, p.stockCode)}`)
     return res
   } catch (e) {
     const detail = e?.response?.data?.detail
