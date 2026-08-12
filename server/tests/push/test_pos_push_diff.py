@@ -29,6 +29,8 @@ class _FakeRow:
 @pytest.fixture
 def fake_positions(monkeypatch):
     """替换 Positions 静态方法, 记录调用 + 用 _store 模拟 DB 行"""
+    # cost-price-scale: cost_price 按 scale 保留精度, 测试环境不触真实 DB
+    monkeypatch.setattr(pos_module, "get_stock_scale", lambda db=None, stock_code="": 2)
     state = {
         "store": {},                # stock_code -> _FakeRow
         "add_one_calls": [],

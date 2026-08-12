@@ -30,7 +30,7 @@ from typing import Any, Dict, Optional
 
 from server.tables import Orders, Trades, Positions  # v81: tables API
 from server.repo.orders import _get_active_trd_date
-from server.services.push.helpers import _float, _int, _str, _order_to_out_dict, _trade_to_out_dict, _position_to_out_dict  # v95: position 推送
+from server.services.push.helpers import _float, _int, _str, _round_scale, _order_to_out_dict, _trade_to_out_dict, _position_to_out_dict  # v95: position 推送
 from server.utils.time import _utcnow, parse_broker_ts
 from server.repo.stocks import get_stock_scale
 
@@ -144,7 +144,7 @@ def _update_position_vol(
                 'last_vol': 0,
                 'vol': volume,
                 'avl_vol': volume if is_t0 else 0,
-                'cost_price': trade_price,
+                'cost_price': _round_scale(trade_price, get_stock_scale(db, stock_code)),  # 建仓成本按 scale 保留精度
                 'synced_at': _utcnow(),
                 'synced_from': "push_partial",
             })

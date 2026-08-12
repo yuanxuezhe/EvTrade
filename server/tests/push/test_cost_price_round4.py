@@ -1,13 +1,15 @@
 """
-test_cost_price_round4.py — cost_price 统一 4 位小数口径 (cost-price-round4)
+test_cost_price_round4.py — cost_price 按证券 scale 保留精度 (cost-price-scale)
 
 覆盖 2 条边界 (写路径 + 读路径):
-- reconcile 落库: broker avg_price 带 5-6 位小数 → 入库前 _round4
-- _position_to_out_dict: WS position_update 序列化 cost_price 也 round 4 位
+- reconcile 落库: broker avg_price 带 5-6 位小数 → 入库前按 stock.scale round
+  (scale=2 → 1.41914→1.42; scale=3 → 0.763661→0.764)
+- _position_to_out_dict: WS position_update 序列化 cost_price 也按 scale round
 
 测试策略:
-- reconcile 用 fake Session 记录 db.add(Position) 入参, monkeypatch _update_last_asset
-  为 no-op (只测 positions 写路径, 不触碰资产表/quote 表)
+- monkeypatch get_stock_scale (写路径在 reconcile 命名空间, 读路径在 helpers 命名空间),
+  避免触真实 DB — 与 test_pos_push_diff 的 hermetic 约定一致
+- reconcile 用 fake Session 记录 db.add(Position) 入参, monkeypatch _update_last_asset no-op
 - _position_to_out_dict 是纯函数, 直接构造 _FakeRow
 """
 import pytest
@@ -45,15 +47,24 @@ class _FakeRow:
             setattr(self, k, v)
 
 
+# scale 映射: 600000(A股)=2 / 000001(ETF)=3
+_SCALE_MAP = {"600000": 2, "000001": 3}
+
+
+def _fake_scale(db=None, stock_code=""):
+    return _SCALE_MAP.get(stock_code, 2)
+
+
 # ─────────────── 写路径: reconcile 落库 ───────────────
 
 
-def test_reconcile_write_rounds_cost_price_to_4(monkeypatch):
-    """Given: broker avg_price=1.41914 (5 位)
+def test_reconcile_write_rounds_cost_price_by_scale_2(monkeypatch):
+    """Given: broker avg_price=1.41914 (5 位), stock 600000 scale=2 (A股)
     When:  _apply_broker_data 落库
-    Then:  Position.cost_price == 1.4191 (4 位)
+    Then:  Position.cost_price == 1.42
     """
     monkeypatch.setattr(reconcile_module, "_update_last_asset", lambda db: None)
+    monkeypatch.setattr(reconcile_module, "get_stock_scale", _fake_scale)
     db = _FakeSession()
 
     positions = [{
@@ -67,12 +78,15 @@ def test_reconcile_write_rounds_cost_price_to_4(monkeypatch):
     _apply_broker_data(db, "20260812", positions, [])
 
     assert len(db.added) == 1
-    assert db.added[0].cost_price == 1.4191
+    assert db.added[0].cost_price == 1.42
 
 
-def test_reconcile_write_rounds_6_decimals_to_4(monkeypatch):
-    """真实案例: 0.763661 (6 位) → 0.7637"""
+def test_reconcile_write_rounds_cost_price_by_scale_3(monkeypatch):
+    """Given: broker avg_price=0.763661 (6 位), stock 000001 scale=3 (ETF)
+    Then:  Position.cost_price == 0.764
+    """
     monkeypatch.setattr(reconcile_module, "_update_last_asset", lambda db: None)
+    monkeypatch.setattr(reconcile_module, "get_stock_scale", _fake_scale)
     db = _FakeSession()
 
     positions = [{
@@ -85,17 +99,18 @@ def test_reconcile_write_rounds_6_decimals_to_4(monkeypatch):
     }]
     _apply_broker_data(db, "20260812", positions, [])
 
-    assert db.added[0].cost_price == 0.7637
+    assert db.added[0].cost_price == 0.764
 
 
 # ─────────────── 读路径: WS 序列化 ───────────────
 
 
-def test_position_to_out_dict_rounds_cost_price():
-    """Given: DB cost_price=1.41914 (若未 round 的中间态)
+def test_position_to_out_dict_rounds_cost_price_by_scale_2(monkeypatch):
+    """Given: DB cost_price=1.41914 (若未 round 的中间态), scale=2
     When:  _position_to_out_dict 序列化 (WS position_update)
-    Then:  cost_price == 1.4191
+    Then:  cost_price == 1.42
     """
+    monkeypatch.setattr("server.services.push.helpers.get_stock_scale", _fake_scale)
     row = _FakeRow(
         stock_code="600000",
         stock_name="",
@@ -107,4 +122,23 @@ def test_position_to_out_dict_rounds_cost_price():
         synced_from="pos_push",
     )
     out = _position_to_out_dict(row)
-    assert out["cost_price"] == 1.4191
+    assert out["cost_price"] == 1.42
+
+
+def test_position_to_out_dict_rounds_cost_price_by_scale_3(monkeypatch):
+    """Given: DB cost_price=0.763661 (6 位), scale=3 (ETF)
+    Then:  cost_price == 0.764
+    """
+    monkeypatch.setattr("server.services.push.helpers.get_stock_scale", _fake_scale)
+    row = _FakeRow(
+        stock_code="000001",
+        stock_name="",
+        last_vol=100,
+        avl_vol=100,
+        vol=100,
+        cost_price=0.763661,
+        synced_at="2026-08-12 10:00:00",
+        synced_from="pos_push",
+    )
+    out = _position_to_out_dict(row)
+    assert out["cost_price"] == 0.764
