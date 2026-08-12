@@ -217,23 +217,9 @@ const recentOrders = computed(() =>
     .slice(0, 6)
 )
 
-// v114: 当日盈亏 = 总资产(now) - last_asset (早上 init 锁定)
-//   总资产 = 可用资金 + 实时持仓市值
-//   last_asset = 可用资金 + sum(昨收 × 持仓)  — do_reconcile 计算后写库, 当天不变
-//   因此 todayPnL 等价于实时市值变化 (持仓 × (现价 - 昨收))
-const todayPnL = computed(() => {
-  const cur = (holdingsStore.liveTotalAsset || holdingsStore.cachedAsset.total_asset
-    || assetStore.asset.total_asset || 0)
-  const last = holdingsStore.cachedAsset.last_asset || 0
-  return cur - last
-})
-
-const todayPnLPercent = computed(() => {
-  const last = holdingsStore.cachedAsset.last_asset || 0
-  // REQ-FE-535: last_asset 缺失(0) → null 隐藏趋势, 不除 1 显示天文数字
-  if (last <= 0) return null
-  return (todayPnL.value / last) * 100
-})
+// v114: 当日盈亏 = 总资产(now) - last_asset — 已废弃 (2026-08-13 用户口径改分母)
+// REQ-FE-535 (2026-08-13 修正): 趋势百分比分母 = 前一日总资产 = 总资产 − 当日盈亏,
+//   不再依赖 last_asset (rpc_health 曾把它冲回 0 导致除 1 天文数字)
 
 // v114.2: 今日盈亏卡片 = 当日盈亏汇总 (Σ positions[].day_pnl)
 //   day_pnl 由 holdings store 行情推送驱动重算写入行字段, 此处只合计 (无行情 → 该行不计入)
@@ -251,15 +237,21 @@ const dayPnlTotal = computed(() => {
   return has ? sum : null
 })
 const displayDayPnl = computed(() => (dayPnlTotal.value ?? 0))
-// 当日盈亏占总资产比例 (期初 last_asset 为基准)
+// 前一日总资产 = 总资产 − 当日盈亏 (用户口径: 总资产-当日盈亏就是前一日的总资产)
+const prevDayTotalAsset = computed(() => {
+  const total = displayTotalAsset.value
+  return total - (dayPnlTotal.value ?? 0)
+})
+// 今日收益率 = 当日盈亏 / 前一日总资产 × 100 (当日盈亏缺失或分母<=0 → null 隐藏趋势)
 const dayPnlPercent = computed(() => {
   const v = dayPnlTotal.value
   if (v == null) return null
-  const last = holdingsStore.cachedAsset.last_asset || 0
-  // REQ-FE-535: last_asset 缺失(0) → null 隐藏趋势, 不除 1 显示天文数字
-  if (last <= 0) return null
-  return (v / last) * 100
+  const base = prevDayTotalAsset.value
+  if (base <= 0) return null
+  return (v / base) * 100
 })
+// 总资产卡趋势 = 同一今日收益率 (2026-08-13 口径)
+const todayPnLPercent = computed(() => dayPnlPercent.value)
 
 const orderStats = computed(() => {
   const orders = holdingsStore.orders
