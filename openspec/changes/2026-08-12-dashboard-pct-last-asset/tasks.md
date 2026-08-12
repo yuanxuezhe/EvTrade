@@ -8,9 +8,9 @@
 ## 0 — 最终口径修正（2026-08-13）
 
 - [x] 0.1 用户口径：趋势百分比分母 = 前一日总资产 = 总资产 − 当日盈亏，不依赖 last_asset
-- [x] 0.2 spec REQ-FE-535 修正（前一日总资产口径 + 缺失/分母≤0 隐藏）；proposal 同步
-- [ ] 0.3 commit: `fix(client): 仪表盘趋势百分比改前一日总资产口径 (总资产−当日盈亏), 不依赖 last_asset`
-- [ ] 0.4 测试复验
+- [x] 0.2 spec REQ-FE-535 修正（前一日总资产口径 + 缺失/分母≤0 隐藏）；proposal 同步（c0aba9b）
+- [x] 0.3 commit: `fix(client): 仪表盘趋势百分比改前一日总资产口径 (总资产−当日盈亏), 不依赖 last_asset`（f42da03）
+- [x] 0.4 测试复验：t0-calc + daypnl_livepush 45/45 通过；Dashboard.vue SFC parse OK
 
 ## 1 — 知识库
 
@@ -38,4 +38,4 @@
 
 - [x] 4.1 后端：`test_cost_price_round4.py` 4/4 通过（无 regression）
 - [x] 4.2 前端：t0-calc 43/43 + daypnl_livepush 2/2 通过（Dashboard 无单测, 逻辑为纯 computed）
-- [ ] 4.3 最终口径复验（Dashboard.vue 改动后重跑相关 vitest）
+- [x] 4.3 最终口径复验：Dashboard.vue 改动后 t0-calc + daypnl_livepush 45/45 通过
