@@ -335,10 +335,11 @@ export function calcDayPnl({
 // ============== 交易费用 + 浮动盈亏 (扣费, 对齐当日盈亏口径) ==============
 //
 // change floating-pnl-fee (2026-08-12): 浮动盈亏从裸价差 (现价−成本)×量 改为扣费版,
-// 费用构成对齐「当日盈亏」day_fee = 买佣金 + 卖佣金 + 印花税(卖出)。
-// 公式镜像后端 server/services/t0/fees.py:calc_commission_and_tax:
+// 只扣买佣金 (成本×量)。当日盈亏 day_fee 只按今日实际成交计费 (买+卖+印花),
+// 未卖出持仓不产生卖佣金/印花税 — 若浮动盈亏预扣卖佣金会比当日盈亏多一倍 (159530 实测)。
+// 佣金公式镜像后端 server/services/t0/fees.py:calc_commission_and_tax:
 //   佣金 = round(amount × commission_rate, 2), min_commission 兜底
-//   印花税 = round(amount × stamp_tax_rate, 2), 仅卖出方向
+//   印花税 = round(amount × stamp_tax_rate, 2), 仅卖出方向 (calcFloatingPnl 不用)
 // 费率来源: GET /fee-config (FeeConfigOut), 前端启动拉一次存 store.
 
 /**
@@ -367,7 +368,14 @@ export function calcCommissionAndTax(amount, feeCfg = {}, direction = '') {
  * 浮动盈亏（扣费版, 对齐当日盈亏公式）
  *
  * 公式:
- *   浮动盈亏 = (现价 − 成本) × 量 − 买佣金(成本×量) − 卖佣金(现价×量) − 印花税(现价×量, 卖出)
+ *   浮动盈亏 = (现价 − 成本) × 量 − 买佣金(成本 × 量)
+ *
+ * 只扣买佣金, 不预扣卖佣金/印花税:
+ *   当日盈亏 day_fee (aggregators.py:123) 只按**今日实际成交**计费 (买佣金(今日买入额)
+ *   + 卖佣金(今日卖出额) + 印花税)。对「今日买入、持有未卖」仓位, 当日盈亏只含买佣金;
+ *   浮动盈亏若再扣卖佣金+印花税会**比当日盈亏多一倍** (159530.SZ 实测)。
+ *   持仓未实现部分不产生卖出费用 → 只扣已发生的买入佣金,
+ *   使浮动盈亏与当日盈亏在「今日买入持有」场景完全相等。
  *
  * @param {Object} params
  * @param {number|null} params.price — 最新现价 (null → 返 null, UI 显示 '—')
@@ -385,7 +393,5 @@ export function calcFloatingPnl({ price, cost, vol, fee_cfg } = {}) {
   const gross = (p - c) * v
   if (!fee_cfg) return Math.round(gross * 100) / 100
   const buy = calcCommissionAndTax(c * v, fee_cfg, ORDER_TYPE_BUY)
-  const sell = calcCommissionAndTax(p * v, fee_cfg, ORDER_TYPE_SELL)
-  const totalFee = buy.commission + sell.commission + sell.stamp_tax
-  return Math.round((gross - totalFee) * 100) / 100
+  return Math.round((gross - buy.commission) * 100) / 100
 }

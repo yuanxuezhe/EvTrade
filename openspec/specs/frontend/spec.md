@@ -2005,14 +2005,17 @@ price_type 选择:
 ### REQ-FE-534: 浮动盈亏扣除佣金（对齐当日盈亏公式，2026-08-12）
 
 `HoldingsPanel.vue` 浮动盈亏列（`holdingsStore.getProfit`）从裸价差 `(现价 − 成本) × 量`
-改为**扣费版**，公式对齐「当日盈亏」费用构成（买佣金 + 卖佣金 + 印花税(卖出)）：
+改为**扣费版**，公式对齐「当日盈亏」费用逻辑：
 
 ```
-浮动盈亏 = (现价 − 成本) × 量
-         − 买佣金（成本×量 按 calc_commission_and_tax 计算）
-         − 卖佣金（现价×量 按 calc_commission_and_tax 计算）
-         − 印花税（现价×量 × stamp_tax_rate，round 2，仅卖出）
+浮动盈亏 = (现价 − 成本) × 量 − 买佣金（成本×量 按 calc_commission_and_tax 计算）
 ```
+
+**只扣买佣金，不预扣卖佣金/印花税**：当日盈亏 `day_fee` 只按**今日实际成交**计费
+（`aggregators.py:123` = 买佣金(今日买入额) + 卖佣金(今日卖出额) + 印花税）。
+对「今日买入、持有未卖」仓位，当日盈亏只含买佣金；浮动盈亏若再扣卖佣金+印花税会
+比当日盈亏多一倍（159530.SZ 实测）。持仓未实现部分不产生卖出费用，故只扣已发生的
+买入佣金 → 浮动盈亏与当日盈亏在「今日买入持有」场景**完全相等**。
 
 - **纯函数**：`lib/t0-calc.js` 新增 `calcCommissionAndTax(amount, feeCfg, direction)`（镜像后端
   `fees.py:calc_commission_and_tax`：佣金 `round(amount×rate, 2)` + `min_commission` 兜底 + 印花仅卖出）

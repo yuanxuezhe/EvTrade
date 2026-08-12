@@ -295,7 +295,7 @@ describe('calcCommissionAndTax (floating-pnl-fee, 镜像 fees.py)', () => {
   })
 })
 
-describe('calcFloatingPnl (floating-pnl-fee, 对齐当日盈亏公式)', () => {
+describe('calcFloatingPnl (floating-pnl-fee, 只扣买佣金对齐当日盈亏)', () => {
   const feeCfg = { commission_rate: 0.0001, min_commission: 0, stamp_tax_rate: 0 }
 
   it('无费率 → 裸价差 (10 → 12, 1000 股 = 2000)', () => {
@@ -303,30 +303,29 @@ describe('calcFloatingPnl (floating-pnl-fee, 对齐当日盈亏公式)', () => {
       .toBeCloseTo(2000, 6)
   })
 
-  it('扣费: (现价−成本)×量 − 买佣金 − 卖佣金 − 印花税', () => {
+  it('扣买佣金: (现价−成本)×量 − 买佣金(成本×量)', () => {
     // cost=10, price=12, vol=1000 → 毛利 2000
-    // 买佣金 = round(10000×万1)=1.00; 卖佣金 = round(12000×万1)=1.20; 印花税=0
-    // 净 = 2000 − 1.00 − 1.20 = 1997.80
+    // 买佣金 = round(10000×万1)=1.00 → 净 = 2000 − 1.00 = 1999.00
+    // 与当日盈亏 (今日买入持有) 完全相等: (price−cost)×vol − comm(cost×vol)
     const r = calcFloatingPnl({ price: 12, cost: 10, vol: 1000, fee_cfg: feeCfg })
-    expect(r).toBeCloseTo(1997.8, 6)
+    expect(r).toBeCloseTo(1999.0, 6)
   })
 
-  it('亏损也扣费 (毛利 < 0 仍减费用)', () => {
-    // cost=12, price=10, vol=1000 → 毛利 −2000
-    // 买佣金=round(12000×万1)=1.20; 卖佣金=round(10000×万1)=1.00
-    // 净 = −2000 − 2.20 = −2002.20
-    const r = calcFloatingPnl({ price: 10, cost: 12, vol: 1000, fee_cfg: feeCfg })
-    expect(r).toBeCloseTo(-2002.2, 6)
-  })
-
-  it('印花税 (卖出) 计入: price×vol×stamp_tax_rate', () => {
-    // stamp_tax_rate=0.001 (千一), price=12 → 12000×0.001 = 12.00
+  it('不扣卖佣金/印花税: 未卖出持仓不预扣卖出费用 (回归 159530 多扣一倍)', () => {
+    // stamp_tax_rate=0.001 高印花税率场景: 只扣买佣金, 卖佣金+印花税一律不扣
+    // 若错误扣卖佣金+印花税会得 2000 −1.00 −1.20 −12.00 = 1985.80, 明显更小
     const r = calcFloatingPnl({
       price: 12, cost: 10, vol: 1000,
       fee_cfg: { ...feeCfg, stamp_tax_rate: 0.001 },
     })
-    // 2000 − 1.00 − 1.20 − 12.00 = 1985.80
-    expect(r).toBeCloseTo(1985.8, 6)
+    expect(r).toBeCloseTo(1999.0, 6)
+  })
+
+  it('亏损也扣买佣金 (毛利 < 0 仍减费用)', () => {
+    // cost=12, price=10, vol=1000 → 毛利 −2000
+    // 买佣金=round(12000×万1)=1.20 → 净 = −2000 − 1.20 = −2001.20
+    const r = calcFloatingPnl({ price: 10, cost: 12, vol: 1000, fee_cfg: feeCfg })
+    expect(r).toBeCloseTo(-2001.2, 6)
   })
 
   it('缺行情 → null', () => {
