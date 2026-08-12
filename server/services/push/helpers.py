@@ -114,7 +114,7 @@ def _position_to_out_dict(pos) -> Optional[dict]:
         "last_vol": _int(pos.last_vol or 0),
         "avl_vol": _int(pos.avl_vol or 0),
         "vol": _int(pos.vol or 0),
-        "cost_price": _float(pos.cost_price or 0),
+        "cost_price": _round4(pos.cost_price or 0),  # v130+ 读取口径统一 4 位
         "synced_at": _str(pos.synced_at or ''),
         "synced_from": _str(pos.synced_from or ''),
     }
