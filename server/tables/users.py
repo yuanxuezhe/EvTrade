@@ -1,7 +1,7 @@
 """
 server/tables/users.py — 自动生成 (tables-codegen skill)
 
-表: `users`  (11 字段, 主键: [])
+表: `users`  (11 字段, 主键: ['id'])
 描述: MySQL table `users`
 
 ⚠️ 不要手动修改本文件 — 任何字段/主键变更请重新跑 tables-codegen
@@ -22,12 +22,12 @@ class Users(TableBase):
       - query_by(field, value)       单字段过滤
       - query_by_fields(filters)     多字段 AND 过滤
 
-    主键: []
+    主键: ['id']
     """
 
     __tablename__: ClassVar[str] = 'users'
-    __pk_fields__: ClassVar[Tuple[str, ...]] = ()
-    __auto_increment_pk__: ClassVar[str | None] = None
+    __pk_fields__: ClassVar[Tuple[str, ...]] = ('id',)
+    __auto_increment_pk__: ClassVar[str | None] = 'id'
 
     __fields__: ClassVar[dict] = {
         'id': '',
