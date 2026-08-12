@@ -19,6 +19,7 @@ import {
   calcInsufficientCash,
   calcInsufficientPosition,
   resolvePriceTypeCode,
+  calcDayPnl,
 } from '@/lib/t0-calc'
 
 
@@ -206,5 +207,43 @@ describe('resolvePriceTypeCode', () => {
     expect(resolvePriceTypeCode('')).toBe(11)
     expect(resolvePriceTypeCode(undefined)).toBe(11)
     expect(resolvePriceTypeCode(null)).toBe(11)
+  })
+})
+
+describe('calcDayPnl', () => {
+  const base = {
+    vol: 1000, last_price: 11.0,
+    last_vol: 1000, prev_close: 10.0,
+    buy_amount: 0, sell_amount: 0, day_fee: 0,
+  }
+
+  it('无交易: 仅持仓随行情涨跌 (1000*11 − 1000*10 = 1000)', () => {
+    expect(calcDayPnl(base)).toBeCloseTo(1000, 6)
+  })
+
+  it('有买卖+费用: (vol*last + sell) − (last_vol*prev + buy) − fee', () => {
+    const p = calcDayPnl({
+      ...base,
+      vol: 500,          // 卖了 500 股
+      sell_amount: 5500, // 卖 500@11
+      buy_amount: 5000,  // 买了 500@10
+      day_fee: 12.0,
+    })
+    // (500*11 + 5500) − (1000*10 + 5000) − 12 = 11000 − 15000 − 12 = -4012
+    expect(p).toBeCloseTo(-4012, 6)
+  })
+
+  it('缺最新价 → null (UI 显示 —)', () => {
+    expect(calcDayPnl({ ...base, last_price: null })).toBeNull()
+  })
+  it('缺昨收价 → null', () => {
+    expect(calcDayPnl({ ...base, prev_close: null })).toBeNull()
+  })
+  it('非有限数防御: 任意字段 NaN → 按 0 处理, 不抛', () => {
+    const p = calcDayPnl({ ...base, buy_amount: NaN, day_fee: NaN })
+    expect(p).toBeCloseTo(1000, 6)
+  })
+  it('空参数 → null (无行情)', () => {
+    expect(calcDayPnl()).toBeNull()
   })
 })

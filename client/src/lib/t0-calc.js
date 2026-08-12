@@ -284,3 +284,49 @@ export function resolveBalancePrice(row, side, quote) {
 
   return { price: lastPrice, fallback: false }
 }
+
+
+// ============== 当日盈亏 (昨收基准, broker 口径) ==============
+//
+// 公式:
+//   当日盈亏 = (当前持仓 × 最新价 + 今日卖出额)
+//             − (期初持仓 × 昨收价 + 今日买入额)
+//             − 当日费用
+//
+// 含义: 对比"期初持仓按昨收定价"的基准市值, 当前持仓市值 + 今日卖出回笼现金,
+// 减去今日买入投入现金与当日费用, 得到该标的当日真实盈亏 (含已实现 + 未实现).
+// 与 calcT0Pnl (纯流量差, 不含成本基准/费用) 语义不同, 与后端 realized_pnl
+// (成本基准已实现) 也不同 — 三者并存, 各自服务于不同展示口径.
+
+/**
+ * 当日盈亏 (昨收基准, 含当日费用)
+ *
+ * @param {Object} params
+ * @param {number} params.vol          — 当前持仓股数
+ * @param {number} [params.last_price] — 最新价 (缺 → 返 null, 让 UI 显示 '—')
+ * @param {number} params.last_vol     — 期初持仓股数
+ * @param {number} [params.prev_close] — 昨收价 (缺 → 返 null)
+ * @param {number} params.buy_amount   — 今日买入成交额 (后端 t0-exposure 聚合)
+ * @param {number} params.sell_amount  — 今日卖出成交额
+ * @param {number} params.day_fee      — 当日费用 (买佣金+卖佣金+印花税, 后端按费率算)
+ * @returns {number|null} 当日盈亏; 行情缺失 (last_price/prev_close 任一无效) → null
+ */
+export function calcDayPnl({
+  vol = 0,
+  last_price = null,
+  last_vol = 0,
+  prev_close = null,
+  buy_amount = 0,
+  sell_amount = 0,
+  day_fee = 0,
+} = {}) {
+  const lp = Number(last_price)
+  const pc = Number(prev_close)
+  if (last_price == null || prev_close == null || !Number.isFinite(lp) || !Number.isFinite(pc)) return null
+  const cur = Number(vol) || 0
+  const lv = Number(last_vol) || 0
+  const buy = Number(buy_amount) || 0
+  const sell = Number(sell_amount) || 0
+  const fee = Number(day_fee) || 0
+  return (cur * lp + sell) - (lv * pc + buy) - fee
+}
