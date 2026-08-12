@@ -230,8 +230,9 @@ const todayPnL = computed(() => {
 
 const todayPnLPercent = computed(() => {
   const last = holdingsStore.cachedAsset.last_asset || 0
-  const base = last > 0 ? last : 1
-  return (todayPnL.value / base) * 100
+  // REQ-FE-535: last_asset 缺失(0) → null 隐藏趋势, 不除 1 显示天文数字
+  if (last <= 0) return null
+  return (todayPnL.value / last) * 100
 })
 
 // v114.2: 今日盈亏卡片 = 当日盈亏汇总 (Σ positions[].day_pnl)
@@ -255,8 +256,9 @@ const dayPnlPercent = computed(() => {
   const v = dayPnlTotal.value
   if (v == null) return null
   const last = holdingsStore.cachedAsset.last_asset || 0
-  const base = last > 0 ? last : 1
-  return (v / base) * 100
+  // REQ-FE-535: last_asset 缺失(0) → null 隐藏趋势, 不除 1 显示天文数字
+  if (last <= 0) return null
+  return (v / last) * 100
 })
 
 const orderStats = computed(() => {
