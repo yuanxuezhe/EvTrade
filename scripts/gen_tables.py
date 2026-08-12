@@ -237,7 +237,14 @@ class {cls}(TableBase):
 
 # ────────────────────────── 生成 __init__.py ──────────────────────────
 def render_init(schemas: List[Dict]) -> str:
-    """生成 server/tables/__init__.py 导出所有表类"""
+    """生成 server/tables/__init__.py 导出所有表类 + base 公共 helper.
+
+    v130 修复: 之前只导出 TableBase, Row, get_conn, 漏了 get_engine, transaction,
+    aggregate, scalar_query, exec_sql — 导致 gen_tables 后 server/api/users.py 等
+    `from server.tables import aggregate` 报 ImportError → backend 起不来.
+
+    base helper 列表跟 server/tables/base.py 实际定义保持一致, 缺一个加一个.
+    """
     lines = [
         '"""',
         'server/tables/__init__.py — 统一导出所有表类 (v80.2 自动生成)',
@@ -245,7 +252,12 @@ def render_init(schemas: List[Dict]) -> str:
         '⚠️ 不要手动修改本文件 — 重新跑 scripts/gen_tables.py 自动更新',
         '"""',
         '',
-        'from server.tables.base import TableBase, Row, get_conn  # noqa: F401',
+        # 公共 helper: 改这里时同步改 server/tables/base.py, 双向对账
+        'from server.tables.base import (  # noqa: F401',
+        '    TableBase, Row,',
+        '    get_engine, get_conn,',
+        '    transaction, aggregate, scalar_query, exec_sql,',
+        ')',
         '',
     ]
     for s in schemas:

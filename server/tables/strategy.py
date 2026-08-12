@@ -1,7 +1,7 @@
 """
 server/tables/strategy.py — 自动生成 (tables-codegen skill)
 
-表: `strategy`  (10 字段, 主键: ['strategy_id'])
+表: `strategy`  (11 字段, 主键: ['strategy_id'])
 描述: MySQL table `strategy`
 
 ⚠️ 不要手动修改本文件 — 任何字段/主键变更请重新跑 tables-codegen
@@ -9,7 +9,7 @@ server/tables/strategy.py — 自动生成 (tables-codegen skill)
 from datetime import datetime
 from server.tables.base import TableBase, Row
 from typing import Any
-from typing import Any, ClassVar, Optional, Tuple
+from typing import Any, ClassVar, Tuple
 
 
 class Strategy(TableBase):
@@ -36,11 +36,12 @@ class Strategy(TableBase):
         'script_id': '',
         'name': '',
         'status': '',
-        'is_public': '策略是否公开: 0=私有 1=公开',
-        'stock_code': '策略绑定标的 (新建时必填)',
+        'is_public': '是否公开: 0=私有(默认) 1=公开(列表可见, 供策略下单选择)',
+        'stock_code': '策略绑定标的 (新建时必填, 只针对此标的回测)',
         'best_params': '',
         'created_at': '',
-        'updated_at': ''
+        'updated_at': '',
+        't0_params': 'T0策略参数JSON'
     }
 
     __field_types__: ClassVar[dict] = {
@@ -53,7 +54,8 @@ class Strategy(TableBase):
         'stock_code': 'varchar(16)',
         'best_params': 'json',
         'created_at': 'datetime',
-        'updated_at': 'datetime'
+        'updated_at': 'datetime',
+        't0_params': 'json'
     }
 
     # 字段 type hints (IDE 智能提示用, 运行时不影响行为)
@@ -63,7 +65,8 @@ class Strategy(TableBase):
     name: str
     status: str
     is_public: int
-    stock_code: Optional[str]
+    stock_code: str
     best_params: Any
     created_at: datetime
     updated_at: datetime
+    t0_params: Any

@@ -712,3 +712,73 @@ class T0Task(Base):
 - **THEN** `PlaceOrderRequest.strategy_type` 必须 = 0 或 1
 - **AND** 传 2 / -1 / "1"（字符串）→ 422 ValidationError
 - **AND** 不传 → 默认 0（与 ORM DEFAULT 0 对齐）
+
+---
+
+## Schema Governance (v130+, 防止 dev/prod 脱节)
+
+### 三个事实源 + 各自角色
+
+| 角色 | 路径 | 谁改 | 同步方向 |
+|---|---|---|---|
+| **dev 库** `evtrade_dev` | MySQL `192.168.10.2:33066/evtrade_dev` | 开发者日常改 | → yml (export) |
+| **`server/schema.yml`** | 仓库内, 18 张表 + 索引 + 注释 | PR review 改 | → DB (apply) |
+| **prod 库** `evtrade` | MySQL `192.168.10.2:33066/evtrade` | **永远不直接改** | ← yml (apply) |
+
+### 日常流程
+
+```bash
+# 1. dev 库改了表结构 (手 ALTER 或跑 migration)
+mysql -h ... -e "ALTER TABLE strategy ADD COLUMN foo INT"
+
+# 2. 拉一份最新到 yml (这是 dev 库 → 仓库的"提交")
+python scripts/sync_schema.py export --source-url "$EVTRADE_DEV_URL"
+# 或: source .env.dev && python scripts/sync_schema.py export
+
+# 3. 提交 yml 改到 git
+git diff server/schema.yml   # 审查
+git add server/schema.yml && git commit -m "schema: add strategy.foo"
+
+# 4. (其他人 / CI) prod 库自动跟上
+python scripts/sync_schema_to_target.py   # dev → prod 一次到位
+# 或: 在每台跑 backend 的机器上, backend 启动前会自动 apply (见 evctl.py:_pre_schema_check)
+```
+
+### 三套工具, 各司其职
+
+| 工具 | 何时用 | 行为 |
+|---|---|---|
+| `sync_schema.py export` | dev 库改了 → 把表结构写进 yml 提交 | DB → yml |
+| `sync_schema.py diff` | 任何时候检查 yml ↔ 实际库 drift | 只读 |
+| `sync_schema.py apply` | yml 改了 → 推 DB (启动 backend 时自动跑) | yml → DB (只 ADD / CREATE / MODIFY, **绝不 DROP**) |
+| `sync_schema.py apply --strict` | CI / 验收, 任何 drift 拒绝 | apply 失败 = 拒绝 |
+| `sync_schema_to_target.py` | 一次性把 dev 库全量同步到 prod 库 | export(diff→yml) → apply |
+| `server/migrations/*.py` | **历史包袱**, 33 个手写 ad-hoc 迁移, 各自幂等 | 一次性, 跑过的就 skip (但 `_applied_migrations` 表只供人看, 实际靠幂等) |
+
+### 自动启动预检 (v130+)
+
+`scripts/evctl.py` 启动 backend 时, **在 spawn uvicorn 之前**自动跑 `sync_schema.py apply`:
+- apply 失败 → 启动失败, 打印完整 stderr
+- 逃生口: `EVTRADE_SKIP_SCHEMA_CHECK=1 python scripts/evctl.py start backend`
+
+### 推荐 cron (可选)
+
+```bash
+# 每天凌晨跑一次 dev→prod 同步, 任何 drift 一票否决
+0 3 * * *  cd /root/workspcae/codespace/EvTrade && \
+  /root/workspcae/codespace/EvTrade/.venv/bin/python \
+  scripts/sync_schema_to_target.py --strict \
+  >> /var/log/evtrade_schema_sync.log 2>&1
+```
+
+### 反模式 (禁止)
+
+- ❌ 直接 ALTER prod 库 (`mysql -h prod ... -e "ALTER ..."`) — 绕过 yml, 必脱节
+- ❌ 只改 yml 不跑 export (yml 会跟 dev 库脱节)
+- ❌ 跑 `sync_schema.py apply` 加 DROP / TRUNCATE — 当前 apply 不支持, 是 feature 不是 bug (防呆)
+- ❌ 删了 yml 里的表 / 列但 prod 库还有 — 这是"真脱节", 需要手写 migration 配合
+
+### 已知遗留 (后续可优化)
+
+- 33 个 ad-hoc migration 跟 sync_schema 体系并存, 偶尔会有 `_applied_migrations` 记录"跑过"但实际未生效 (幂等 bug). 直接重跑 migration 通常能补.
+- 长期可考虑: 把 ad-hoc migration 整合成 alembic autogenerate baseline (见方案 3, 待评估).

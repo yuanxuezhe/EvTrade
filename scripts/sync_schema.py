@@ -511,7 +511,69 @@ def diff_schema():
 def main():
     ap = argparse.ArgumentParser(description="Unified Schema Manager")
     ap.add_argument("command", choices=["export", "diff", "apply"])
-    {"export": export_schema, "diff": diff_schema, "apply": apply_schema}[ap.parse_args().command]()
+    ap.add_argument(
+        "--strict",
+        action="store_true",
+        help=(
+            "apply 模式下: apply 前先 diff, 有任何 drift (DB↔yml 不一致) "
+            "就 exit 1 (拒绝自动 reconcile). 用于「必须完全一致」场景, "
+            "避免 apply 静悄悄吞掉破坏性变更."
+        ),
+    )
+    ap.add_argument(
+        "--source-url",
+        default=None,
+        help=(
+            "export 模式下: 源库 URL. 默认用 EVTRADE_DB_URL. "
+            "典型用法: --source-url=$EVTRADE_DEV_URL 把 dev 库导到当前 yml."
+        ),
+    )
+    args = ap.parse_args()
+
+    if args.command == "export" and args.source_url:
+        # 临时覆盖 DATABASE_URL 供 export_schema 用
+        import os as _os
+        global DATABASE_URL
+        _os.environ["EVTRADE_DB_URL"] = args.source_url
+        DATABASE_URL = args.source_url
+
+    if args.command == "apply" and args.strict:
+        # 严格模式: apply 前先 diff, 有 drift 就拒绝
+        print("[strict] checking schema drift before apply...")
+        # 复用 diff_schema 的逻辑但捕获输出
+        with open(SCHEMA_YML, "r", encoding="utf-8") as f:
+            schema = parse_yaml(f.read())
+        engine = create_engine(DATABASE_URL, pool_size=1, pool_pre_ping=True)
+        insp = inspect(engine)
+        db_tables = set(insp.get_table_names()) - {"alembic_version"}
+        yml_tables = set(schema.get("tables", {}).keys())
+        drifts = []
+        if yml_tables - db_tables:
+            drifts.append(f"  tables in yml but missing in DB: {sorted(yml_tables - db_tables)}")
+        if db_tables - yml_tables:
+            drifts.append(f"  tables in DB but missing in yml: {sorted(db_tables - yml_tables)}")
+        for tn in sorted(yml_tables & db_tables):
+            yc = set(schema["tables"][tn].get("columns", {}).keys())
+            dc = {c["name"] for c in insp.get_columns(tn)}
+            if yc - dc:
+                drifts.append(f"  {tn}: yml has columns missing in DB: {sorted(yc - dc)}")
+            if dc - yc:
+                drifts.append(f"  {tn}: DB has columns missing in yml: {sorted(dc - yc)}")
+        engine.dispose()
+        if drifts:
+            print("[strict] DRIFT DETECTED, refusing to apply:", file=sys.stderr)
+            for d in drifts:
+                print(d, file=sys.stderr)
+            print(
+                "\n[strict] fix drift first (export --source-url=... then commit yml), "
+                "or run without --strict to auto-reconcile.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        print("[strict] no drift, proceeding with apply.")
+
+    {"export": export_schema, "diff": diff_schema, "apply": apply_schema}[args.command]()
+
 
 if __name__ == "__main__":
     main()

@@ -1,19 +1,18 @@
 """
-server/tables/strategy_order.py — v126 母单 (tables-codegen 风格手工)
+server/tables/strategy_order.py — 自动生成 (tables-codegen skill)
 
-表: `strategy_order`  (12 字段, 主键: ['id'])
-描述: MySQL table `strategy_order` — 策略下单母单
+表: `strategy_order`  (13 字段, 主键: ['id'])
+描述: v126 策略下单母单: 可重复启停, 子单按 parent_task_id 归因
 
 ⚠️ 不要手动修改本文件 — 任何字段/主键变更请重新跑 tables-codegen
 """
 from datetime import datetime
-from typing import Any, ClassVar, Optional, Tuple
-
-from server.tables.base import Row, TableBase
+from server.tables.base import TableBase, Row
+from typing import Any, ClassVar, Tuple
 
 
 class StrategyOrder(TableBase):
-    """MySQL table `strategy_order` (v126 策略下单母单)
+    """v126 策略下单母单: 可重复启停, 子单按 parent_task_id 归因
 
     自动生成，继承 TableBase 获得标准方法:
       - query_one(**pk)              按主键查单行 → Row | None
@@ -69,10 +68,10 @@ class StrategyOrder(TableBase):
     strategy_id: int
     stock_code: str
     status: str
-    active_task_id: Optional[int]
+    active_task_id: int
     run_count: int
-    last_started_at: Optional[datetime]
-    last_stopped_at: Optional[datetime]
-    closed_at: Optional[datetime]
+    last_started_at: datetime
+    last_stopped_at: datetime
+    closed_at: datetime
     created_at: datetime
     updated_at: datetime

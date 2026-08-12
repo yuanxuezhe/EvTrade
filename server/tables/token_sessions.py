@@ -1,8 +1,8 @@
 """
-server/tables/users.py — 自动生成 (tables-codegen skill)
+server/tables/token_sessions.py — 自动生成 (tables-codegen skill)
 
-表: `users`  (11 字段, 主键: [])
-描述: MySQL table `users`
+表: `token_sessions`  (5 字段, 主键: ['token_hash'])
+描述: REQ-AUTH-IDLE-001 token session cache (跨 worker 共享, 重启即清空)
 
 ⚠️ 不要手动修改本文件 — 任何字段/主键变更请重新跑 tables-codegen
 """
@@ -11,8 +11,8 @@ from server.tables.base import TableBase, Row
 from typing import Any, ClassVar, Tuple
 
 
-class Users(TableBase):
-    """MySQL table `users`
+class TokenSessions(TableBase):
+    """REQ-AUTH-IDLE-001 token session cache (跨 worker 共享, 重启即清空)
 
     自动生成，继承 TableBase 获得标准方法:
       - query_one(**pk)              按主键查单行 → Row | None
@@ -22,50 +22,32 @@ class Users(TableBase):
       - query_by(field, value)       单字段过滤
       - query_by_fields(filters)     多字段 AND 过滤
 
-    主键: []
+    主键: ['token_hash']
     """
 
-    __tablename__: ClassVar[str] = 'users'
-    __pk_fields__: ClassVar[Tuple[str, ...]] = ()
+    __tablename__: ClassVar[str] = 'token_sessions'
+    __pk_fields__: ClassVar[Tuple[str, ...]] = ('token_hash',)
     __auto_increment_pk__: ClassVar[str | None] = None
 
     __fields__: ClassVar[dict] = {
-        'id': '',
-        'username': '',
-        'password_hash': '',
-        'email': '',
-        'full_name': '',
+        'token_hash': '',
+        'user_id': '',
         'role': '',
-        'is_active': '',
-        'must_change_password': '',
         'created_at': '',
-        'updated_at': '',
-        'last_login_at': ''
+        'last_seen_at': ''
     }
 
     __field_types__: ClassVar[dict] = {
-        'id': 'int',
-        'username': 'varchar(64)',
-        'password_hash': 'varchar(255)',
-        'email': 'varchar(128)',
-        'full_name': 'varchar(64)',
+        'token_hash': 'varchar(64)',
+        'user_id': 'int',
         'role': 'varchar(16)',
-        'is_active': 'tinyint(1)',
-        'must_change_password': 'tinyint(1)',
         'created_at': 'datetime',
-        'updated_at': 'datetime',
-        'last_login_at': 'datetime'
+        'last_seen_at': 'datetime'
     }
 
     # 字段 type hints (IDE 智能提示用, 运行时不影响行为)
-    id: int
-    username: str
-    password_hash: str
-    email: str
-    full_name: str
+    token_hash: str
+    user_id: int
     role: str
-    is_active: bool
-    must_change_password: bool
     created_at: datetime
-    updated_at: datetime
-    last_login_at: datetime
+    last_seen_at: datetime

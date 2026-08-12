@@ -634,9 +634,44 @@ def start_hqserver():
     return start_service(SERVICES['hqserver'])
 
 
+def _pre_schema_check():
+    """启动 backend 前 reconcile DB ↔ yml (只补不删, 失败 exit 1).
+
+    v130+ schema 治理: yml 唯一事实源, 启动前自动 apply, 杜绝 DB/yml 脱节导致
+    的 500 错误 (历史: strategy.is_public / strategy_task.metric 等列缺失 → 1054).
+
+    - 只对 backend 跑 (其他服务不直接吃 schema).
+    - 默认 non-strict: 缺什么 ADD 什么, 不会 DROP, 物理上不可能破坏数据.
+    - EVTRADE_SKIP_SCHEMA_CHECK=1 跳过 (紧急用).
+    """
+    if os.environ.get('EVTRADE_SKIP_SCHEMA_CHECK') == '1':
+        log_warn('schema check skipped (EVTRADE_SKIP_SCHEMA_CHECK=1)')
+        return True
+    script = os.path.join(SCRIPT_DIR, 'sync_schema.py')
+    r = subprocess.run(
+        [sys.executable, script, 'apply'],
+        cwd=PROJECT_ROOT,
+        capture_output=True, text=True, timeout=120,
+    )
+    if r.returncode != 0:
+        log_err('schema reconciliation FAILED, refusing to start backend:')
+        for line in (r.stdout + r.stderr).splitlines():
+            sys.stderr.write('  ' + line + '\n')
+        return False
+    # apply 成功会跑 gen_tables.py, 失败也会写到日志 — 透传给用户
+    if r.stdout.strip():
+        for line in r.stdout.splitlines():
+            log_info('  ' + line)
+    return True
+
+
 def start_all(services=None):
     if services is None:
         services = list(DEFAULT_SERVICES)
+    # backend 启动前先 reconcile schema (一次性, 多个服务同时启时省时间)
+    if 'backend' in services:
+        if not _pre_schema_check():
+            return False
     fails = 0
     for name in services:
         if name not in SERVICES:
