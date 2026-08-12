@@ -268,6 +268,9 @@ export function createPushHandlers(deps) {
     q.update({
       stock_code: row.stock_code,
       last_price: row.last_price,
+      // v114.3: 转发 snapshot (含 prev_close), 与 ws_dispatch._onQuote 一致 —
+      //   当日盈亏 calcDayPnl 依赖 prev_close, 缺则 null
+      snapshot: row.snapshot,
       fields: row.fields,
       body: row.body,
       ts: row.ts || Date.now()

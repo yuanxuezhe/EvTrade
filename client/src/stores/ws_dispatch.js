@@ -180,7 +180,11 @@ function _onUnsubscribeAck(data) {
 }
 
 function _onQuote(row) {
-  // row: { stock_code, last_price, fields, body, ts? }
+  // row: { stock_code, last_price, snapshot, fields, body, ts? }
+  //   snapshot (23 字段 dict, 含 prev_close) 由后端 _parse_tick 每笔都构造并广播;
+  //   v114.3: 必须一并转发, 否则 quote store 只有 last_price、prev_close 缺失,
+  //   当日盈亏 calcDayPnl (last_price+prev_close 任一缺 → null) 算不出来.
+  //   无 DB 快照行的标的(如低频新代码)只走 live push, 不转发 snapshot 就永远没 prev_close.
   if (!row || !row.stock_code) return
   // 直接写入 quote store（hqserver 推所有 *.SH / *.SZ，无需白名单）
   // 下单页输入任意标的即可显示行情
@@ -188,6 +192,7 @@ function _onQuote(row) {
   quoteStore.update({
     stock_code: row.stock_code,
     last_price: row.last_price,
+    snapshot: row.snapshot,
     fields: row.fields,
     body: row.body,
     ts: row.ts || Date.now()
