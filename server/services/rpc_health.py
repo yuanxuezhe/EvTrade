@@ -91,18 +91,29 @@ def _set_status(status: int, err_msg: str = "", status_msg: str = "") -> None:
 # ─── 后台定时同步 ──────────────────────────────────────────────────────
 
 async def _get_pending_count() -> int:
-    """获取 RPClient 当前在途（未应答）的 RPC 请求数量。"""
+    """获取 RPClient 当前在途（未应答）的 RPC 请求数量。
+
+    v128.3: 包 5s timeout — RabbitMQ channel 关闭 / 重连时, 内部属性读取
+    偶发挂起, 防止 probe iteration 被拖死.
+    """
     try:
-        rpc = await get_rpc_client()
+        rpc = await asyncio.wait_for(get_rpc_client(), timeout=5.0)
         return len(getattr(rpc, "pending", {}))
+    except asyncio.TimeoutError:
+        log.warning("rpc_health _get_pending_count timeout (5s)")
+        return 0
     except Exception:
         return 0
 
 
 async def _get_request_queue_depth() -> int:
-    """取请求队列当前 message_count。失败时返回 0。"""
+    """取请求队列当前 message_count。失败时返回 0。
+
+    v128.3: get_rpc_client() + queue.declare() 各包 5s timeout,
+    防 RabbitMQ 重连窗口 / channel 关闭时挂死 probe iteration.
+    """
     try:
-        rpc = await get_rpc_client()
+        rpc = await asyncio.wait_for(get_rpc_client(), timeout=5.0)
         queue = getattr(rpc, "request_queue", None) or getattr(rpc, "req_queue", None)
         if queue is None:
             # base class 没有暴露 request_queue — 通过 channel 重新声明拿消息数
@@ -110,47 +121,71 @@ async def _get_request_queue_depth() -> int:
             ch = rpc.channel
             if ch is None:
                 return 0
-            ok = await ch.declare_queue(QUEUE_REQ, durable=True, passive=True)
+            ok = await asyncio.wait_for(
+                ch.declare_queue(QUEUE_REQ, durable=True, passive=True),
+                timeout=5.0,
+            )
             return int(getattr(ok, "message_count", 0) or 0)
-        ok = await queue.declare(passive=True) if False else await queue.declare()  # 走默认 declare 拿 message_count
+        ok = await asyncio.wait_for(queue.declare(), timeout=5.0)
         return int(getattr(ok, "message_count", 0) or 0)
+    except asyncio.TimeoutError:
+        log.warning("rpc_health _get_request_queue_depth timeout (5s)")
+        return 0
     except Exception as e:
         log.debug("rpc_health queue depth probe failed: %s", e)
         return 0
 
 
 async def _broadcast_rpc_status() -> None:
-    """通过 system_update 通道推送当前 RPC 状态到前端。"""
+    """通过 system_update 通道推送当前 RPC 状态到前端。
+
+    v128.3: 包 2s timeout — 慢 WS 消费者 / 死连接未清理时, broadcast 可阻塞
+    event loop 数秒; 超时仅记 WARN, 不打断 probe 循环.
+    """
     payload = {
         "type": "rpc_status",
         "data": get_status(),
     }
     try:
-        await ws_manager.broadcast("system_update", payload, trace_id="rpc_status")
+        await asyncio.wait_for(
+            ws_manager.broadcast("system_update", payload, trace_id="rpc_status"),
+            timeout=2.0,
+        )
+    except asyncio.TimeoutError:
+        log.warning("rpc_health _broadcast_rpc_status timeout (2s) — 慢 WS 客户端或死连接未清理")
     except Exception as e:
         log.debug("rpc_health broadcast failed: %s", e)
 
 
 async def _broadcast_asset() -> None:
-    """推送最新资产数据到前端（仅在探测成功时调用）。"""
+    """推送最新资产数据到前端（仅在探测成功时调用）。
+
+    v128.3: Assets.query_one 是同步 SQL, 原在 async 循环里直接调会阻塞 event loop;
+    改走 asyncio.to_thread + 包 2s broadcast timeout, 防止 probe iteration 拖死.
+    """
     try:
-        row = Assets.query_one(id=1)
+        row = await asyncio.wait_for(
+            asyncio.to_thread(Assets.query_one, id=1),
+            timeout=2.0,
+        )
         if row is not None:
-            await ws_manager.broadcast(
-                "system_update",
-                {
-                    "type": "asset_update",
-                    "data": {
-                        "cash": float(row.cash or 0),
-                        "available": float(row.available if hasattr(row, 'available') and row.available is not None else (row.cash or 0)),
-                        "frozen_cash": float(row.frozen_cash or 0),
-                        "market_value": float(row.market_value or 0),
-                        "total_asset": float(row.total_asset or 0),
-                        "synced_at": row.synced_at.isoformat() if row.synced_at else None,
-                    },
+            payload = {
+                "type": "asset_update",
+                "data": {
+                    "cash": float(row.cash or 0),
+                    "available": float(row.available if hasattr(row, 'available') and row.available is not None else (row.cash or 0)),
+                    "frozen_cash": float(row.frozen_cash or 0),
+                    "market_value": float(row.market_value or 0),
+                    "total_asset": float(row.total_asset or 0),
+                    "synced_at": row.synced_at.isoformat() if row.synced_at else None,
                 },
-                trace_id="asset_sync",
+            }
+            await asyncio.wait_for(
+                ws_manager.broadcast("system_update", payload, trace_id="asset_sync"),
+                timeout=2.0,
             )
+    except asyncio.TimeoutError:
+        log.warning("rpc_health _broadcast_asset timeout (2s)")
     except Exception:
         pass
 
