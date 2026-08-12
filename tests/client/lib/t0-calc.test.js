@@ -20,6 +20,8 @@ import {
   calcInsufficientPosition,
   resolvePriceTypeCode,
   calcDayPnl,
+  calcCommissionAndTax,
+  calcFloatingPnl,
 } from '@/lib/t0-calc'
 
 
@@ -245,5 +247,98 @@ describe('calcDayPnl', () => {
   })
   it('空参数 → null (无行情)', () => {
     expect(calcDayPnl()).toBeNull()
+  })
+})
+
+describe('calcCommissionAndTax (floating-pnl-fee, 镜像 fees.py)', () => {
+  // 默认费率 (对齐 sysconfig 当前规则: 万1免五、无印花税)
+  const feeCfg = { commission_rate: 0.0001, min_commission: 0, stamp_tax_rate: 0 }
+
+  it('买入: 只收佣金, 无印花税 (10000 × 万1 = 1.00)', () => {
+    const r = calcCommissionAndTax(10000, feeCfg, ORDER_TYPE_BUY)
+    expect(r.commission).toBeCloseTo(1.0, 6)
+    expect(r.stamp_tax).toBe(0)
+  })
+
+  it('卖出: 佣金 + 印花税 (万5 印花税示例)', () => {
+    const r = calcCommissionAndTax(10000, { ...feeCfg, stamp_tax_rate: 0.0005 }, ORDER_TYPE_SELL)
+    // 佣金 1.00 + 印花税 5.00
+    expect(r.commission).toBeCloseTo(1.0, 6)
+    expect(r.stamp_tax).toBeCloseTo(5.0, 6)
+  })
+
+  it('佣金 round 2 (金额 × 费率后进位)', () => {
+    // 0.33333 万元 × 万3 = 1.00 (0.99999 → round 1.00)
+    const r = calcCommissionAndTax(33333, { ...feeCfg, commission_rate: 0.0003 }, ORDER_TYPE_BUY)
+    expect(r.commission).toBeCloseTo(10.0, 6)
+  })
+
+  it('min_commission 兜底 (免五未开时 < 5 → 5)', () => {
+    const r = calcCommissionAndTax(1000, { ...feeCfg, min_commission: 5 }, ORDER_TYPE_BUY)
+    // 1000×万1=0.1 < 5 → 兜底 5
+    expect(r.commission).toBe(5)
+  })
+
+  it('min_commission=0 (免五): 不兜底, 按实算', () => {
+    const r = calcCommissionAndTax(1000, feeCfg, ORDER_TYPE_BUY)
+    expect(r.commission).toBeCloseTo(0.1, 6)
+  })
+
+  it('amount <= 0 → 全 0', () => {
+    expect(calcCommissionAndTax(0, feeCfg, ORDER_TYPE_SELL)).toEqual({ commission: 0, stamp_tax: 0 })
+    expect(calcCommissionAndTax(-5, feeCfg, ORDER_TYPE_SELL)).toEqual({ commission: 0, stamp_tax: 0 })
+  })
+
+  it('空费率/空参 → 不抛, 全 0', () => {
+    expect(calcCommissionAndTax(10000, {}, ORDER_TYPE_BUY)).toEqual({ commission: 0, stamp_tax: 0 })
+    expect(calcCommissionAndTax(10000, undefined, ORDER_TYPE_BUY)).toEqual({ commission: 0, stamp_tax: 0 })
+  })
+})
+
+describe('calcFloatingPnl (floating-pnl-fee, 对齐当日盈亏公式)', () => {
+  const feeCfg = { commission_rate: 0.0001, min_commission: 0, stamp_tax_rate: 0 }
+
+  it('无费率 → 裸价差 (10 → 12, 1000 股 = 2000)', () => {
+    expect(calcFloatingPnl({ price: 12, cost: 10, vol: 1000, fee_cfg: null }))
+      .toBeCloseTo(2000, 6)
+  })
+
+  it('扣费: (现价−成本)×量 − 买佣金 − 卖佣金 − 印花税', () => {
+    // cost=10, price=12, vol=1000 → 毛利 2000
+    // 买佣金 = round(10000×万1)=1.00; 卖佣金 = round(12000×万1)=1.20; 印花税=0
+    // 净 = 2000 − 1.00 − 1.20 = 1997.80
+    const r = calcFloatingPnl({ price: 12, cost: 10, vol: 1000, fee_cfg: feeCfg })
+    expect(r).toBeCloseTo(1997.8, 6)
+  })
+
+  it('亏损也扣费 (毛利 < 0 仍减费用)', () => {
+    // cost=12, price=10, vol=1000 → 毛利 −2000
+    // 买佣金=round(12000×万1)=1.20; 卖佣金=round(10000×万1)=1.00
+    // 净 = −2000 − 2.20 = −2002.20
+    const r = calcFloatingPnl({ price: 10, cost: 12, vol: 1000, fee_cfg: feeCfg })
+    expect(r).toBeCloseTo(-2002.2, 6)
+  })
+
+  it('印花税 (卖出) 计入: price×vol×stamp_tax_rate', () => {
+    // stamp_tax_rate=0.001 (千一), price=12 → 12000×0.001 = 12.00
+    const r = calcFloatingPnl({
+      price: 12, cost: 10, vol: 1000,
+      fee_cfg: { ...feeCfg, stamp_tax_rate: 0.001 },
+    })
+    // 2000 − 1.00 − 1.20 − 12.00 = 1985.80
+    expect(r).toBeCloseTo(1985.8, 6)
+  })
+
+  it('缺行情 → null', () => {
+    expect(calcFloatingPnl({ price: null, cost: 10, vol: 1000, fee_cfg: feeCfg })).toBeNull()
+    expect(calcFloatingPnl({ price: undefined, cost: 10, vol: 1000, fee_cfg: feeCfg })).toBeNull()
+  })
+
+  it('vol=0 → 0 (空仓不扣费)', () => {
+    expect(calcFloatingPnl({ price: 12, cost: 10, vol: 0, fee_cfg: feeCfg })).toBe(0)
+  })
+
+  it('空参 → null (无行情)', () => {
+    expect(calcFloatingPnl()).toBeNull()
   })
 })
