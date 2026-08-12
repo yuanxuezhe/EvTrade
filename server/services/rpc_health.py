@@ -227,6 +227,16 @@ async def _probe_once() -> tuple:
         a = list_data[0]
         now = datetime.now(timezone.utc).replace(tzinfo=None)
         try:
+            # v129: last_asset (期初总资产, 日初 do_reconcile 写入, 当天不变) 必须保留。
+            #   assets.last_asset 在 MySQL 为 NOT NULL 且无默认值 (ORM default 仅 Python 侧) →
+            #   upsert_one 缺该字段会补 0 并写进 ON DUPLICATE KEY UPDATE, 把 reconcile 写的值冲回 0,
+            #   导致仪表盘趋势百分比 = 盈亏/1 显示天文数字。读现有值携带进 upsert。
+            #   (v128.3 起 Assets.query_one 走 to_thread, 避免阻塞 event loop)
+            existing = await asyncio.wait_for(
+                asyncio.to_thread(Assets.query_one, id=1),
+                timeout=2.0,
+            )
+            last_asset = float(getattr(existing, 'last_asset', 0) or 0) if existing else 0.0
             Assets.upsert_one({
                 "id": 1,
                 "cash": float(a.get("cash", 0) or 0),
@@ -234,6 +244,7 @@ async def _probe_once() -> tuple:
                 "frozen_cash": float(a.get("frozen_cash", 0) or 0),
                 "market_value": float(a.get("market_value", 0) or 0),
                 "total_asset": float(a.get("total_asset", 0) or 0),
+                "last_asset": last_asset,
                 "synced_at": now,
                 "synced_from": "rpc_sync",
             })
