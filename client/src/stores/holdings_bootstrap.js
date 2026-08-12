@@ -177,9 +177,8 @@ export function createBootstrap({
         await applyOrdersResult(rOrd, refs, 'bootstrap')
         await applyTradesResult(rTrd, refs, 'bootstrap')
       } else {
-        // IDB hit: orders/trades 已由 _tryIDBFirst 写入，设 ready
-        idbSyncStatus.value.orders = 'ready'
-        idbSyncStatus.value.trades = 'ready'
+        // IDB hit: orders/trades 已由 _tryIDBFirst 写入 + status 一致翻牌,
+        // 此处只留日志 (旧版此处冗余设 idbSyncStatus, 现统一下沉到 _tryIDBFirst)
         log('info', '缓存', 'bootstrap', 'IDB hit, 跳过 RPC orders/trades')
       }
 
@@ -225,22 +224,22 @@ export function createBootstrap({
         return false
       }
 
-      // 有命中: 直接写 Pinia
-      if (Array.isArray(cachedOrders) && cachedOrders.length > 0) {
-        orders.value = cachedOrders
-        refCounts.value.orders = 'ok'
-        idbSyncStatus.value.orders = 'ready'
-      }
-      if (Array.isArray(cachedTrades) && cachedTrades.length > 0) {
-        trades.value = cachedTrades
-        refCounts.value.trades = 'ok'
-        idbSyncStatus.value.trades = 'ready'
-      }
-      if (Array.isArray(cachedPositions) && cachedPositions.length > 0) {
-        positions.value = cachedPositions
-        refCounts.value.positions = 'ok'
-        idbSyncStatus.value.positions = 'ready'
-      }
+      // 有任一命中: 写 Pinia + 统一翻 status (orders / trades / positions 三 store 一致处理)
+      //   - IDB 有数据 → 用 IDB 数据; 无数据 (loadXxxAll 返 null) → 设空数组
+      //   - refCounts / idbSyncStatus 一律 'ok' / 'ready' (IDB 已成功读, 不论该 store 是否空, 都视为有效结果)
+      //   - 修复 (fix-trades-loading-status-stuck): 旧版只在 length>0 时翻牌, 部分命中场景
+      //     (trades 表空 + orders/positions 有) 会让 trades 卡 'loading' 永不翻牌 → UI "成交 加载中" 永远不消失.
+      orders.value = cachedOrders || []
+      refCounts.value.orders = 'ok'
+      idbSyncStatus.value.orders = 'ready'
+
+      trades.value = cachedTrades || []
+      refCounts.value.trades = 'ok'
+      idbSyncStatus.value.trades = 'ready'
+
+      positions.value = cachedPositions || []
+      refCounts.value.positions = 'ok'
+      idbSyncStatus.value.positions = 'ready'
 
       const oLen = cachedOrders?.length ?? 0
       const tLen = cachedTrades?.length ?? 0
