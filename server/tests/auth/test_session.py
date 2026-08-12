@@ -1,10 +1,11 @@
 """
 test_session.py — REQ-AUTH-IDLE-001 token session cache 单元测试
 
-v128.2 (2026-08-12): cache 落 MySQL (ENGINE=MEMORY)
-  - 原测试直接清模块级 dict (_TOKEN_CACHE.clear) → 现改为清表 (session._clear_all_for_test)
-  - time.time() monkeypatch 仍生效: 内部所有"now"均派生自 time.time()
-  - 需在测试 setup 跑一次 migration 建表 (autouse session fixture)
+v128.4 (2026-08-12): cache 回归 dict (单进程 + threads)
+  - 原测试直接清模块级 dict (_TOKEN_CACHE.clear) → 继续生效
+  - v128.2 期间改为 _clear_all_for_test (SQL 表) → 撤销该改动
+  - 时间 mock 仍生效: 内部"now"派生自 time.time()
+  - 不需要 migration 建表 (无 token_sessions 表)
 
 覆盖场景:
 - register_token 后 is_valid 立即返 True
@@ -15,27 +16,18 @@ v128.2 (2026-08-12): cache 落 MySQL (ENGINE=MEMORY)
 - sweep_loop 协程可被 CancelledError 优雅退出
 """
 import asyncio
-import importlib
 
 import pytest
 
 from server.auth import session
 
 
-@pytest.fixture(scope="session", autouse=True)
-def _ensure_token_sessions_table():
-    """绕过 FastAPI startup, 直接调 migration 跑建表 (幂等)."""
-    from server.infra.db import engine
-    mod = importlib.import_module("server.migrations.2026-08-12-add-token-sessions")
-    mod.migrate(engine)
-
-
 @pytest.fixture(autouse=True)
 def _reset_cache():
-    """每个 case 前清空 token_sessions 表, 避免 test 间污染."""
-    session._clear_all_for_test()
+    """每个 case 前清空 cache, 避免 test 间污染."""
+    session._TOKEN_CACHE.clear()
     yield
-    session._clear_all_for_test()
+    session._TOKEN_CACHE.clear()
 
 
 def test_register_then_is_valid():
@@ -170,7 +162,7 @@ def test_sweep_loop_exits_on_cancel(monkeypatch):
 
 
 def test_token_hash_is_sha256():
-    """v128.2: PK = SHA256(token) hex (64 字符), 不存原文."""
+    """v118: PK = SHA256(token) hex (64 字符), 不存原文."""
     h = session._hash_token("abc")
     assert len(h) == 64
     assert session._hash_token("abc") == h  # 确定性
@@ -178,7 +170,7 @@ def test_token_hash_is_sha256():
 
 
 def test_cross_session_isolation_via_token():
-    """v128.2 regression: 不同 token 视为不同 session (与原 dict 语义一致)."""
+    """v118 regression: 不同 token 视为不同 session."""
     session.register_token("alpha", user_id=1, role="admin")
     session.register_token("beta", user_id=2, role="trader")
     assert session.is_valid("alpha") is True
@@ -186,3 +178,35 @@ def test_cross_session_isolation_via_token():
     session.revoke("alpha")
     assert session.is_valid("alpha") is False
     assert session.is_valid("beta") is True
+
+
+def test_concurrent_access_thread_safe():
+    """v128.4 regression: 多线程并发 register/touch/is_valid/revoke 不抛错、不死锁。
+
+    启动 4 线程 × 100 次 register/touch/is_valid 混合操作, 断言最终状态正确
+    (size == 400, 所有 token 仍可 is_valid=True), 验证 RLock 保护有效.
+    """
+    import threading
+
+    errors = []
+    def worker(start_idx: int):
+        try:
+            for i in range(100):
+                token = f"thread{start_idx}-tok{i}"
+                session.register_token(token, user_id=start_idx * 100 + i, role="admin")
+                session.touch(token)
+                session.is_valid(token)
+                session.revoke(token)  # revoke 后 register 会重建
+                session.register_token(token, user_id=start_idx * 100 + i, role="admin")
+        except Exception as e:
+            errors.append(e)
+
+    threads = [threading.Thread(target=worker, args=(i,)) for i in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert not errors, f"concurrent access raised: {errors}"
+    # 每个 token 最终都是 register_token 的状态, size 应等于 4*100=400
+    assert session.stats()["size"] == 400

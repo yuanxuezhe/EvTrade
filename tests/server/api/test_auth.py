@@ -27,11 +27,6 @@ def fresh_db():
     """drop_all + create_all；不触发 startup（TestClient 默认不跑 startup）"""
     Base.metadata.drop_all(bind=engine)
     init_db()
-    # v128.2: token_sessions 表是 TableBase (不在 Base.metadata), init_db 不创建
-    # 这里手动跑 migration 建表, 保证 session.register_token 能写
-    import importlib
-    mod = importlib.import_module("server.migrations.2026-08-12-add-token-sessions")
-    mod.migrate(engine)
     yield
 
 

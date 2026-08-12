@@ -23,6 +23,5 @@ from server.tables.strategy_task import StrategyTask  # noqa: F401
 from server.tables.sys_config import SysConfig  # noqa: F401
 from server.tables.sys_status import SysStatus  # noqa: F401
 from server.tables.t0_tasks import T0Tasks  # noqa: F401
-from server.tables.token_sessions import TokenSessions  # noqa: F401
 from server.tables.trades import Trades  # noqa: F401
 from server.tables.users import Users  # noqa: F401
