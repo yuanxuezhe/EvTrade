@@ -22,6 +22,7 @@ from server.services.t0.fees import (
     _SELL_TYPE,
     _q2,
     _q4,
+    calc_commission_and_tax,
 )
 from server.services.t0.pnl import calc_realized_pnl
 
@@ -91,9 +92,11 @@ def aggregate_by_stock(
 
     Returns:
         List[{stock_code, buy_vol, sell_vol, net_volume, buy_amt, sell_amt,
-              net_amount, realized_pnl, commission, stamp_tax, order_count,
-              trade_count, open_order_count, position_volume, cost_basis}]
+              net_amount, realized_pnl, commission, stamp_tax, buy_commission,
+              day_fee, order_count, trade_count, open_order_count,
+              position_volume, cost_basis}]
         按 abs(net_amount) 降序
+        buy_commission = 当日买入佣金; day_fee = 买佣金 + 卖佣金 + 印花税 (当日全量费用)
     """
     by_stock: Dict[str, List[Trade]] = defaultdict(list)
     for t in trades:
@@ -114,6 +117,10 @@ def aggregate_by_stock(
         realized, commission, stamp_tax = calc_realized_pnl(
             sell_trades, cost_basis, fee_cfg
         )
+        # 买入佣金 (卖出佣金+印花税已含在 commission/stamp_tax)
+        # day_fee = 当日全量费用 (买佣金 + 卖佣金 + 印花税), 供持仓面板"当日盈亏"用
+        buy_commission, _ = calc_commission_and_tax(buy_amt, fee_cfg, "BUY")
+        day_fee = _q2(buy_commission + commission + stamp_tax)
         order_count, open_order_count = _order_count_stats(stock_orders)
         rows.append({
             "stock_code": code,
@@ -126,6 +133,8 @@ def aggregate_by_stock(
             "realized_pnl": realized,
             "commission": commission,
             "stamp_tax": stamp_tax,
+            "buy_commission": _q2(buy_commission),
+            "day_fee": day_fee,
             "order_count": order_count,
             "trade_count": len(stock_trades),
             "open_order_count": open_order_count,

@@ -46,6 +46,8 @@ class ExposurePositionOut(BaseModel):
     realized_pnl: float
     commission: float
     stamp_tax: float
+    buy_commission: float
+    day_fee: float
     order_count: int
     trade_count: int
     open_order_count: int
@@ -63,6 +65,8 @@ class ExposureTotalsOut(BaseModel):
     realized_pnl: float
     commission_total: float
     stamp_tax_total: float
+    buy_commission_total: float
+    day_fee_total: float
 
 
 class T0ExposureOut(BaseModel):
@@ -154,6 +158,8 @@ async def get_t0_exposure(
     realized_total = sum(r["realized_pnl"] for r in rows)
     commission_total = sum(r["commission"] for r in rows)
     stamp_tax_total = sum(r["stamp_tax"] for r in rows)
+    buy_commission_total = sum(r["buy_commission"] for r in rows)
+    day_fee_total = sum(r["day_fee"] for r in rows)
     buy_amt = sum(r["buy_amount"] for r in rows)
     sell_amt = sum(r["sell_amount"] for r in rows)
 
@@ -171,6 +177,8 @@ async def get_t0_exposure(
             realized_pnl=round(realized_total, 2),
             commission_total=round(commission_total, 2),
             stamp_tax_total=round(stamp_tax_total, 2),
+            buy_commission_total=round(buy_commission_total, 2),
+            day_fee_total=round(day_fee_total, 2),
         ),
     )
 
