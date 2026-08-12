@@ -5,13 +5,17 @@
   pymysql.err.DataError: (1406, "Data too long for column 'local_positions_json' at row 1")
 
 do_reconcile(reconcile_kind='init') 把本地全量持仓快照 (2197 只 ≈ 数百 KB JSON) 写入
-reconcile_report.local_positions_json。历史 DB 列误建为 TEXT (上限 64KB) → 溢出。
-orm.py / schema.yml / tables 代码早已声明 LONGTEXT, 本迁移仅对齐 DB 实际列。
+reconcile_report.local_positions_json。历史 DB 列容量不足 → 溢出。
+orm.py / schema.yml 已声明 LONGTEXT, 本迁移仅对齐 DB 实际列。
+
+实际 DB 前态存在两处漂移 (2026-08-12 排查):
+  evtrade_dev: varchar(255)  (比 TEXT 更小, 之前守卫 REFUSE 拒绝处理 → init 仍 500)
+  evtrade:     text          (上限 64KB, 亦不足)
 
 涉及 5 列:
   diffs_json / broker_asset_json / local_asset_json / broker_positions_json / local_positions_json
 
-幂等: 仅当列当前为 text/mediumtext (非 longtext) 时 MODIFY; 已是 longtext 则跳过。
+幂等: 仅当列当前为 varchar/char/text/mediumtext (非 longtext) 时 MODIFY; 已是 longtext 则跳过。
 
 执行:
     python3 server/migrations/2026-08-10-reconcile-report-json-longtext.py
@@ -87,8 +91,8 @@ def main() -> None:
             if cur == "longtext":
                 print(f"  [skip] '{col}' already longtext")
                 continue
-            if cur not in ("text", "mediumtext"):
-                print(f"  [REFUSE] '{col}' current type '{cur}', expected text/mediumtext. 请人工确认后再改!")
+            if cur not in ("text", "mediumtext", "varchar", "char"):
+                print(f"  [REFUSE] '{col}' current type '{cur}', expected varchar/char/text/mediumtext. 请人工确认后再改!")
                 continue
             conn.execute(text(
                 f"ALTER TABLE `{TABLE}` MODIFY `{col}` LONGTEXT"
