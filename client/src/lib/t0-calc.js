@@ -330,3 +330,62 @@ export function calcDayPnl({
   const fee = Number(day_fee) || 0
   return (cur * lp + sell) - (lv * pc + buy) - fee
 }
+
+
+// ============== 交易费用 + 浮动盈亏 (扣费, 对齐当日盈亏口径) ==============
+//
+// change floating-pnl-fee (2026-08-12): 浮动盈亏从裸价差 (现价−成本)×量 改为扣费版,
+// 费用构成对齐「当日盈亏」day_fee = 买佣金 + 卖佣金 + 印花税(卖出)。
+// 公式镜像后端 server/services/t0/fees.py:calc_commission_and_tax:
+//   佣金 = round(amount × commission_rate, 2), min_commission 兜底
+//   印花税 = round(amount × stamp_tax_rate, 2), 仅卖出方向
+// 费率来源: GET /fee-config (FeeConfigOut), 前端启动拉一次存 store.
+
+/**
+ * 手续费 + 印花税（卖出）— 镜像后端 calc_commission_and_tax (fees.py)
+ *
+ * @param {number} amount — 成交金额（价格 × 数量，正数）
+ * @param {Object} [feeCfg] — 费率配置 {commission_rate, min_commission, stamp_tax_rate}
+ * @param {string} [direction] — ORDER_TYPE_BUY('23') / ORDER_TYPE_SELL('24')
+ * @returns {{commission: number, stamp_tax: number}} 佣金 + 印花税（金额, round 2）
+ */
+export function calcCommissionAndTax(amount, feeCfg = {}, direction = '') {
+  const amt = Number(amount) || 0
+  if (amt <= 0) return { commission: 0, stamp_tax: 0 }
+  const rate = Number(feeCfg?.commission_rate) || 0
+  let commission = Math.round(amt * rate * 100) / 100
+  const minC = Number(feeCfg?.min_commission) || 0
+  if (minC > 0 && commission < minC) commission = minC
+  let stamp_tax = 0
+  if (direction === ORDER_TYPE_SELL) {
+    stamp_tax = Math.round(amt * (Number(feeCfg?.stamp_tax_rate) || 0) * 100) / 100
+  }
+  return { commission, stamp_tax }
+}
+
+/**
+ * 浮动盈亏（扣费版, 对齐当日盈亏公式）
+ *
+ * 公式:
+ *   浮动盈亏 = (现价 − 成本) × 量 − 买佣金(成本×量) − 卖佣金(现价×量) − 印花税(现价×量, 卖出)
+ *
+ * @param {Object} params
+ * @param {number|null} params.price — 最新现价 (null → 返 null, UI 显示 '—')
+ * @param {number} params.cost       — 持仓成本价 (cost_price, scale 精度)
+ * @param {number} params.vol        — 持仓量 (vol)
+ * @param {Object|null} [params.fee_cfg] — 费率配置 (null → 退化裸价差, 不扣费)
+ * @returns {number|null} 扣费后浮动盈亏 (round 2); 行情缺失 → null; vol=0 → 0
+ */
+export function calcFloatingPnl({ price, cost, vol, fee_cfg } = {}) {
+  const p = Number(price)
+  const c = Number(cost) || 0
+  const v = Number(vol) || 0
+  if (price == null || !Number.isFinite(p)) return null
+  if (v === 0) return 0
+  const gross = (p - c) * v
+  if (!fee_cfg) return Math.round(gross * 100) / 100
+  const buy = calcCommissionAndTax(c * v, fee_cfg, ORDER_TYPE_BUY)
+  const sell = calcCommissionAndTax(p * v, fee_cfg, ORDER_TYPE_SELL)
+  const totalFee = buy.commission + sell.commission + sell.stamp_tax
+  return Math.round((gross - totalFee) * 100) / 100
+}

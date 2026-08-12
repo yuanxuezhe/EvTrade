@@ -9,6 +9,7 @@
  * 不使用全局 useQuoteStore - 调用方注入 quoteStore getter（避免循环依赖）
  */
 import { computed } from 'vue'
+import { calcFloatingPnl } from '../lib/t0-calc'
 
 /**
  * 创建实时市值 / 盈亏 / 收益率 computed + getters
@@ -16,9 +17,10 @@ import { computed } from 'vue'
  * @param {Ref<Array>} positions    持仓列表 ref
  * @param {Ref<Object>} cachedAsset 资金 ref
  * @param {Function} getQuoteStore  () => useQuoteStore() 工厂（延迟取 store, 避免循环依赖）
+ * @param {Ref<Object|null>} [feeConfig] 费率配置 ref (REQ-FE-534, 供 getProfit 扣费; null → 不扣费)
  * @returns liveMarketValue / liveTotalAsset / positionCodes / getLivePrice / getMarketValue / getProfit / getReturnRate
  */
-export function createMarketComputeds(positions, cachedAsset, getQuoteStore) {
+export function createMarketComputeds(positions, cachedAsset, getQuoteStore, feeConfig) {
   /**
    * 实时持仓市值 = sum(quote.last_price * volume) for all positions
    * 行情未到的标的，按 0 计入（不假装有值）
@@ -72,10 +74,14 @@ export function createMarketComputeds(positions, cachedAsset, getQuoteStore) {
   function getProfit(p) {
     const price = getLivePrice(p.stock_code)
     if (price == null) return null
-    const cost = Number(p.cost_price) || 0
-    const vol = Number(p.vol) || 0
-    if (vol === 0) return 0
-    return (price - cost) * vol
+    // REQ-FE-534: 扣费浮动盈亏 (对齐当日盈亏公式: 买佣金+卖佣金+印花税卖出)
+    // feeConfig 未加载/拉取失败 → calcFloatingPnl 内部退化裸价差 (不扣费, graceful)
+    return calcFloatingPnl({
+      price,
+      cost: p.cost_price,
+      vol: p.vol,
+      fee_cfg: feeConfig?.value ?? null,
+    })
   }
 
   function getReturnRate(p) {

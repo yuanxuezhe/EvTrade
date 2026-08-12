@@ -18,6 +18,7 @@ import { defineStore } from 'pinia'
 import { ref, watch } from 'vue'
 import { useQuoteStore } from './quote'
 import { useWsStore } from './ws'
+import { feeConfigApi } from '../api/admin'
 
 import { createLogger } from './holdings_log'
 import { createMarketComputeds } from './holdings_market'
@@ -34,6 +35,17 @@ export const useHoldingsStore = defineStore('holdings', () => {
   const cachedAsset = ref({         // 后端 asset 接口初值
     cash: 0, frozen_cash: 0, market_value: 0, total_asset: 0, last_asset: 0  // v114: last_asset
   })
+  // ---- REQ-FE-534: 费率配置 (浮动盈亏扣费用) ----------------------------------
+  //   启动时 feeConfigApi.get() 拉一次; 失败/未返回 → null (getProfit 退化裸价差)
+  const feeConfig = ref(null)
+  async function loadFeeConfig() {
+    try {
+      const cfg = await feeConfigApi.get()
+      feeConfig.value = cfg || null
+    } catch (e) {
+      feeConfig.value = null
+    }
+  }
 
   // ---- v8: 激活交易日权威源 -----------------------------------------
   const activeTrdDate = ref(null)   // 8 位 YYYYMMDD 或 null
@@ -68,7 +80,7 @@ export const useHoldingsStore = defineStore('holdings', () => {
   const {
     liveMarketValue, liveTotalAsset, positionCodes,
     getLivePrice, getMarketValue, getProfit, getReturnRate,
-  } = createMarketComputeds(positions, cachedAsset, () => useQuoteStore())
+  } = createMarketComputeds(positions, cachedAsset, () => useQuoteStore(), feeConfig)
 
   // ---- ws 推送入口（ws.js 调） ----------------------------------------
   // change consolidate-position-data-flow: applyPositionPush / applyAssetPush 已删除
@@ -111,6 +123,8 @@ export const useHoldingsStore = defineStore('holdings', () => {
     ws.connect()
   }
   async function bootstrap() {
+    // REQ-FE-534: 费率配置 fire-and-forget (不阻塞持仓加载; 失败 → feeConfig=null 降级)
+    loadFeeConfig()
     const r = await _bootstrap(_startWs)
     // v32: bootstrap 完成后启动 watch (后续 positions 增量同步)
     _autoSubStart()
