@@ -121,6 +121,21 @@ EvTrade 是多用户交易平台，必须区分：
   - 不需要任何现有 JWT（grant 端点本身是绕过登录的）
 - 实现位置：`server/api/auth.py::grant`（line 179）
 
+### REQ-AUTH-013: WS 直连 token=hermesagent — 无条件接受（v129, 2026-08-13）
+
+**v129 立（2026-08-13）**：hermes agent 用 `wss://…/ws/{channel}?token=hermesagent` 直连
+WS，不再走 grant 换 JWT 的仪式。**用户决策：无条件接受，不做 env 门控**。
+
+- 行为：WS 鉴权 `decode_token(token)` 返回 None 时，若 `token == "hermesagent"`
+  （常量 `server.auth.security.HERMES_AGENT_TOKEN`）→ 视为 admin 身份
+  `{sub:"6", id:6, role:"admin", username:"admin"}`；否则 close 4001 "Invalid token"
+- 身份与 REQ-AUTH-011 grant 一致（user_id=6 admin），共享同一常量
+- 不做 `EVTRADE_ALLOW_GRANT_TOKEN` 门控（区别于 REQ-AUTH-011）
+- 影响面：所有 WS channel 鉴权入口；`sync_update` 的 DB admin 校验对 user 6 通过 → 也可进
+- 安全风险（已知情登记）：`hermesagent` 成为 WS 上**无法用配置关闭的硬编码 admin 凭证**；
+  回收需改代码或补门控
+- 实现位置：`server/ws/endpoint.py::_resolve_ws_user`
+
 ### REQ-AUTH-012: POST /heartbeat — Token 保活（idle 防过期）
 
 **REQ-AUTH-IDLE-001**（2026-08-04 立）：idle 超 10min token 失效（session cache LRU + TTL）。
