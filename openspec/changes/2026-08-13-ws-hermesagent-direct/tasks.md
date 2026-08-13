@@ -12,15 +12,15 @@
 
 ## 2 — 代码
 
-- [ ] 2.1 `server/auth/security.py`：新增 `HERMES_AGENT_TOKEN = "hermesagent"`（单一事实源）
-- [ ] 2.2 `server/api/auth.py`：grant 校验改用常量（行为不变）
-- [ ] 2.3 `server/ws/endpoint.py`：提取 `_resolve_ws_user`；decode 失败时 `token==HERMES_AGENT_TOKEN`
+- [x] 2.1 `server/auth/security.py`：新增 `HERMES_AGENT_TOKEN = "hermesagent"`（单一事实源）
+- [x] 2.2 `server/api/auth.py`：grant 校验改用常量（行为不变）
+- [x] 2.3 `server/ws/endpoint.py`：提取 `_resolve_ws_user`；decode 失败时 `token==HERMES_AGENT_TOKEN`
       → admin(id=6)；None → close 4001
-- [ ] 2.4 commit
+- [x] 2.4 commit（4c45ecd）
 
 ## 3 — 测试
 
-- [ ] 3.1 `server/tests/auth/test_ws_hermes_token.py`：hermesagent→admin；合法 JWT→claims；
+- [x] 3.1 `server/tests/auth/test_ws_hermes_token.py`：hermesagent→admin；合法 JWT→claims；
       垃圾 token→None
-- [ ] 3.2 运行 `uv run python -m pytest server/tests/auth/ -q` 全绿
-- [ ] 3.3 commit
+- [x] 3.2 运行 `uv run python -m pytest server/tests/auth/ -q` 全绿（19 passed）
+- [x] 3.3 commit（70ed245）
