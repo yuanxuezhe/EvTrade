@@ -244,8 +244,11 @@ EvTrade 当前缺股票基础信息(行业/市值/PE/PB/公司简介)。本 capa
 **算法**（`to_short_name` 实现，v46+）：
 1. `name.strip()` 去两端空白
 2. 检测前缀（4 种大小写组合）：`*ST` / `*st` / `*St` / `*sT` → 归一为 `*ST`；`ST` / `st` / `St` / `sT` → 归一为 `ST`；剥离前缀
-3. 主体用 `pypinyin.lazy_pinyin` 取每个汉字拼音首字母 → 大写拼接
-4. 输出 = `prefix + body`（如 `STHW` / `*STKJ`）
+3. 主体用 `re.split(r"([A-Za-z0-9]+)", name)` 分离 ASCII 字母/数字连续串：
+   - **汉字段** → `pypinyin.lazy_pinyin` 取每个汉字拼音首字母
+   - **ASCII run 段**（`ETF` / `50ETF` / `A` / `300`…）→ **整串保留**并大写
+   - 拼接后整体大写（如 `创业板ETF → CYBETF`、`华夏上证50ETF → HXSZ50ETF`）
+4. 输出 = `prefix + body`（如 `STHW` / `*STKJ` / `CYBETF`）
 5. 截断到 16 字符
 6. 输入空或全空白字符串 → 返回 `""`
 7. pypinyin 异常（如编码错）→ 返回 `""`（try/except 兜底）
