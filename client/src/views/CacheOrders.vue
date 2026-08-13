@@ -57,7 +57,7 @@
         :default-sort="{ prop: 'order_time', order: 'descending' }"
         :default-page-size="50"
         :empty-description="'无委托记录'"
-        @row-dblclick="(row) => { if (row.stock_code) stockCode.value = row.stock_code }"
+        @row-dblclick="(row) => { if (row.stock_code) stockCode = row.stock_code }"
       >
         <template #column-trd_date="{ row }">
           <span class="text-mono text-secondary">{{ row.trd_date }}</span>

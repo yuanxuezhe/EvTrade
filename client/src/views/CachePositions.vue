@@ -27,7 +27,7 @@
         :default-sort="{ prop: 'vol', order: 'descending' }"
         :default-page-size="50"
         :empty-description="'无持仓数据'"
-        @row-dblclick="(row) => { if (row.stock_code) stockCode.value = row.stock_code }"
+        @row-dblclick="(row) => { if (row.stock_code) stockCode = row.stock_code }"
       >
         <template #column-stock_code="{ row }">
           <span class="text-mono tp-stock-code">{{ row.stock_code }}</span>

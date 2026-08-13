@@ -150,7 +150,7 @@
           :size="'default'"
           :empty-description="'暂无 T0 任务，点击「添加任务」按钮创建'"
           @row-click="onTaskRowClick"
-          @row-dblclick="(row) => { if (row.stock_code) stockCode.value = row.stock_code }"
+          @row-dblclick="(row) => { if (row.stock_code) stockCode = row.stock_code }"
         >
           <template #column-status="{ row }">
             <el-tag :type="statusTagType(row.status)" size="small">{{ statusLabel(row.status) }}</el-tag>
@@ -227,7 +227,7 @@
           :size="'default'"
           :default-sort="{ prop: 'order_time', order: 'descending' }"
           :empty-description="'该 task 暂无委托'"
-          @row-dblclick="(row) => { if (row.stock_code) stockCode.value = row.stock_code }"
+          @row-dblclick="(row) => { if (row.stock_code) stockCode = row.stock_code }"
         >
           <template #column-trd_date="{ row }">
             <span class="text-mono text-secondary">{{ row.trd_date }}</span>
