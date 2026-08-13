@@ -187,7 +187,8 @@ async def grant(payload: dict):
     if os.environ.get("EVTRADE_ALLOW_GRANT_TOKEN", "0") != "1":
         raise HTTPException(status_code=403, detail="grant endpoint disabled (set EVTRADE_ALLOW_GRANT_TOKEN=1)")
     token_str = payload.get("token", "")
-    if token_str != "hermesagent":
+    from server.auth.security import HERMES_AGENT_TOKEN
+    if token_str != HERMES_AGENT_TOKEN:
         raise HTTPException(status_code=401, detail="invalid grant token")
     data = {"sub": "6", "id": 6, "role": "admin", "username": "admin"}
     now = datetime.now(timezone.utc).replace(tzinfo=None)
