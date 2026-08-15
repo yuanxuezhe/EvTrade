@@ -47,9 +47,9 @@
 
         <!-- v33: 可用行 — 在价格组合行下, 委托数量行上; 根据买入/卖出 + 价格类型实时计算 -->
         <el-form-item label="可交易" class="row-tight">
-          <div class="order-available-row">
+          <div class="order-available-row" @dblclick="applyAvailableToVolume">
             <span class="order-available-label">{{ availableLabel }}</span>
-            <span class="order-available-value">{{ availableText }}</span>
+            <span class="order-available-value" :title="'双击带入到委托数量'">{{ availableText }}</span>
           </div>
         </el-form-item>
 
@@ -358,6 +358,16 @@ async function handleSubmit() {
     handleReset()
   } finally {
     submitting.value = false
+  }
+}
+
+/** 双击可交易数量 → 带入委托数量 */
+function applyAvailableToVolume() {
+  const raw = availableText.value.replace(/,/g, '')
+  const vol = parseInt(raw, 10)
+  if (!isNaN(vol) && vol >= 100) {
+    form.volume = vol
+    ElMessage.success(`已带入 ${vol.toLocaleString()} 股`)
   }
 }
 

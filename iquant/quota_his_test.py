@@ -43,8 +43,8 @@ REQ_QUEUE = "EvTrade.ReqHisHq"
 #   FIELDS : comma-separated column names; empty string = service default "close"
 #   PERIOD : tick / 1m / 5m / 15m / 30m / 1h / 1d  (must match xtquant valid set)
 # ---------------------------------------------------------------------------
-FIELDS = "open,close,high,low"
-PERIOD = "1m"
+FIELDS = "open,close,high,low,volume"
+PERIOD = "1d"
 
 STOCK_CODE = "159992.SZ"
 START_DATE = "20260701"

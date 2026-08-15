@@ -81,6 +81,9 @@
         <template #column-volume="{ row }">
           <span class="text-mono">{{ formatNumber(row.volume) }}</span>
         </template>
+        <template #column-price_type="{ row }">
+          <span class="text-secondary">{{ priceTypeLabel(row.price_type) || '—' }}</span>
+        </template>
         <template #column-price="{ row }">
           <span class="text-mono">{{ formatPrice(row.price, row.stock_code) }}</span>
         </template>
@@ -114,7 +117,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { Refresh } from '@element-plus/icons-vue'
 import DataTableView from '../components/DataTableView.vue'
-import { formatMoney, formatNumber } from '../utils/format'
+import { formatMoney, formatNumber, priceTypeLabel } from '../utils/format'
 import { formatPrice } from '../composables/usePricePrecision'
 import { stockName } from '../utils/stockNames'
 import { COL } from '../utils/tableColumns'
@@ -195,6 +198,7 @@ const orderColumns = [
   { key: 'stock_code', label: '标的', vBind: COL.STOCK_TARGET },
   { key: 'direction', label: '方向', vBind: COL.DIRECTION, sortable: false },
   { key: 'volume', label: '委托量', vBind: COL.NUMBER },
+  { key: 'price_type', label: '价格类型', vBind: COL.PRICE_TYPE },
   { key: 'price', label: '委托价', vBind: COL.PRICE },
   { key: 'traded_volume', label: '成交量', vBind: COL.NUMBER },
   { key: 'avg_price', label: '成交均价', vBind: COL.PRICE },
