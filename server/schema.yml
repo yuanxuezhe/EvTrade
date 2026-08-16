@@ -55,16 +55,16 @@ tables:
   order_no_seq:
     pk: ['seq_name']
     columns:
+      seq_name:
+        type: String(32)
+        nullable: false
+        default: 
       last_value:
         type: Integer
         nullable: false
         default: 0
       updated_at:
         type: DateTime
-        nullable: false
-        default: 
-      seq_name:
-        type: String(32)
         nullable: false
         default: 
   orders:
@@ -159,12 +159,12 @@ tables:
         type: DateTime
         nullable: true
     indexes:
-      ix_orders_trd_status: ['trd_date', 'status']
-      ix_orders_task_id: ['task_id']
       ix_orders_stock: ['stock_code']
       ix_orders_order_id: ['order_id']
-      ix_orders_user_def: ['user_def']
       ix_orders_strategy_type: ['strategy_type']
+      ix_orders_task_id: ['task_id']
+      ix_orders_trd_status: ['trd_date', 'status']
+      ix_orders_user_def: ['user_def']
   positions:
     pk: ['stock_code']
     columns:
@@ -345,23 +345,18 @@ tables:
       diffs_json:
         type: LargeText
         nullable: true
-        default: 
       broker_asset_json:
         type: LargeText
         nullable: true
-        default: 
       local_asset_json:
         type: LargeText
         nullable: true
-        default: 
       broker_positions_json:
         type: LargeText
         nullable: true
-        default: 
       local_positions_json:
         type: LargeText
         nullable: true
-        default: 
       rpc_status:
         type: String(16)
         nullable: false
@@ -375,6 +370,36 @@ tables:
         nullable: true
     indexes:
       ix_reconcile_report_trd: ['trd_date']
+  stkpool:
+    pk: []
+    columns:
+      id:
+        type: Integer
+        nullable: false
+        server_default: ''0''
+      name:
+        type: String(64)
+        nullable: false
+        default: 
+      remark:
+        type: String(255)
+        nullable: false
+        server_default: ''''
+      created_at:
+        type: DateTime
+        nullable: false
+        server_default: CURRENT_TIMESTAMP
+  stkpooldetail:
+    pk: []
+    columns:
+      id:
+        type: Integer
+        nullable: false
+        default: 0
+      stock_code:
+        type: String(16)
+        nullable: false
+        default: 
   stocks:
     pk: ['stock_code']
     columns:
@@ -524,7 +549,7 @@ tables:
       ix_strategy_order_strategy_id: ['strategy_id']
     comment: 'v126 策略下单母单: 可重复启停, 子单按 parent_task_id 归因'
   strategy_script:
-    pk: ['user_id', 'id']
+    pk: ['id', 'user_id']
     columns:
       id:
         type: String(64)
@@ -547,24 +572,19 @@ tables:
         nullable: true
       description:
         type: String(255)
-        nullable: false
-        server_default: ''''
+        nullable: true
       status:
         type: String(16)
-        nullable: false
-        server_default: ''active''
-      created_at:
-        type: DateTime
-        nullable: false
-        default: 
-      updated_at:
-        type: DateTime
-        nullable: false
-        default: 
+        nullable: true
       is_public:
         type: TinyInt
-        nullable: false
-        server_default: ''0''
+        nullable: true
+      created_at:
+        type: DateTime
+        nullable: true
+      updated_at:
+        type: DateTime
+        nullable: true
     indexes:
       ix_strategy_script_user: ['user_id', 'status']
     comment: 脚本策略：用户编写的 Python 源码 + 参数 schema
@@ -578,28 +598,22 @@ tables:
         autoincrement: true
       task_id:
         type: Integer
-        nullable: false
-        default: 0
+        nullable: true
       stime:
         type: String(20)
-        nullable: false
-        default: 
+        nullable: true
       trd_date:
         type: String(8)
-        nullable: false
-        default: 
+        nullable: true
       phase:
         type: String(16)
-        nullable: false
-        default: 
+        nullable: true
       trigger_type:
         type: String(16)
-        nullable: false
-        default: 
+        nullable: true
       stock_code:
         type: String(16)
-        nullable: false
-        default: 
+        nullable: true
       price:
         type: Float
         nullable: true
@@ -623,8 +637,7 @@ tables:
         nullable: true
       created_at:
         type: DateTime
-        nullable: false
-        server_default: CURRENT_TIMESTAMP
+        nullable: true
     indexes:
       ix_audit_task_time: ['task_id', 'created_at']
       ix_audit_task_date: ['task_id', 'trd_date']
@@ -638,19 +651,16 @@ tables:
         autoincrement: true
       user_id:
         type: Integer
-        nullable: false
-        default: 0
+        nullable: true
       stock_code:
         type: String(16)
-        nullable: false
-        default: 
+        nullable: true
       mode:
         type: String(8)
         nullable: true
       status:
         type: String(16)
-        nullable: false
-        server_default: ''pending''
+        nullable: true
       params:
         type: JSON
         nullable: true
@@ -668,15 +678,13 @@ tables:
         nullable: true
       pnl:
         type: Float
-        nullable: false
-        server_default: ''0''
+        nullable: true
       positions:
         type: JSON
         nullable: true
       trades_count:
         type: Integer
-        nullable: false
-        server_default: ''0''
+        nullable: true
       started_at:
         type: DateTime
         nullable: true
@@ -688,12 +696,10 @@ tables:
         nullable: true
       created_at:
         type: DateTime
-        nullable: false
-        default: 
+        nullable: true
       updated_at:
         type: DateTime
-        nullable: false
-        default: 
+        nullable: true
       live_signals:
         type: JSON
         nullable: true
@@ -703,6 +709,10 @@ tables:
       progress:
         type: JSON
         nullable: true
+      description:
+        type: String(500)
+        nullable: false
+        server_default: ''''
       execution_service:
         type: String(16)
         nullable: false
@@ -714,10 +724,6 @@ tables:
         type: Integer
         nullable: false
         server_default: ''0''
-      description:
-        type: String(500)
-        nullable: false
-        server_default: ''''
       strategy_id:
         type: Integer
         nullable: true
@@ -731,9 +737,9 @@ tables:
         type: Float
         nullable: true
     indexes:
+      ix_strategy_task_batch: ['strategy_id', 'batch_no', 'status']
       ix_strategy_task_user_status: ['user_id', 'status']
       ix_strategy_task_script_mode: ['mode']
-      ix_strategy_task_batch: ['strategy_id', 'batch_no', 'status']
     comment: 脚本策略任务：回测 / 实盘运行态 + 结果
   sys_config:
     pk: ['user', 'cfg_key']
@@ -858,8 +864,8 @@ tables:
         nullable: true
     indexes:
       ix_t0_tasks_user_status: ['user_id', 'status']
-      ix_t0_tasks_status_created: ['status', 'created_at']
       ix_t0_tasks_stock_code: ['stock_code']
+      ix_t0_tasks_status_created: ['status', 'created_at']
   token_sessions:
     pk: ['token_hash']
     columns:
@@ -935,15 +941,16 @@ tables:
         nullable: false
         default: 
     indexes:
-      ix_trades_order_no: ['order_no']
       ix_trades_trd_stock: ['trd_date', 'stock_code']
+      ix_trades_order_no: ['order_no']
   users:
-    pk: []
+    pk: ['id']
     columns:
       id:
         type: Integer
         nullable: false
-        server_default: ''0''
+        default: 0
+        autoincrement: true
       username:
         type: String(64)
         nullable: false
@@ -981,3 +988,5 @@ tables:
       last_login_at:
         type: DateTime
         nullable: true
+    indexes:
+      ix_users_id: ['id']
