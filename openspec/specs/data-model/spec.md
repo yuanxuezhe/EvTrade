@@ -24,7 +24,7 @@ ORM 注释（`server/tables/<表名>.py` 自动生成）必须与本 spec 保持
 
 ## Tables Overview
 
-按业务域分组（共 14 张业务表 + 1 张 `order_no_seq` 序列表）：
+按业务域分组（共 16 张业务表 + 1 张 `order_no_seq` 序列表）：
 
 ### 📊 业务核心（v4 数据本地优先：本地 DB 是展示源）
 
@@ -36,36 +36,39 @@ ORM 注释（`server/tables/<表名>.py` 自动生成）必须与本 spec 保持
 | 4 | `assets` | 业务 | `id=1` 约束 | ✅ 单行 | `server/api/asset.py` |
 | 5 | `t0_tasks` | 业务 | `id` | 否 | `server/api/t0_tasks.py` |
 | 6 | `quote_snapshots` | 行情 | `id` 自增 | 否 | `server/api/quote.py` |
+| 7 | `stkpool` | 业务 | `id` 自增 | 否 | `server/api/stkpool.py` |
+| 8 | `stkpooldetail` | 业务 | `(id, stock_code)` 复合 | 否 | `server/api/stkpool.py` |
 
 ### 🎯 策略体系（v90 script-strategy change 起；v66 网格引擎 2026-08-10 已删）
 
 | # | 表 | 分类 | 主键 | 单行？ | 业务入口 |
 |---|---|---|---|---|---|
-| 7 | `strategy_task` | 策略 | `id` 自增 | 否 | `server/api/script_strategy/endpoints.py` |
-| 8 | `strategy_script` | 脚本 | `(user_id, id)` 复合 | 否 | `server/api/script_strategy/endpoints.py` |
-| 9 | `strategy_script_audit` | 脚本 | `id` 自增 | 否 | `server/api/script_strategy/endpoints.py` |
+| 9 | `strategy_task` | 策略 | `id` 自增 | 否 | `server/api/script_strategy/endpoints.py` |
+| 10 | `strategy_script` | 脚本 | `(user_id, id)` 复合 | 否 | `server/api/script_strategy/endpoints.py` |
+| 11 | `strategy_script_audit` | 脚本 | `id` 自增 | 否 | `server/api/script_strategy/endpoints.py` |
 
 ### 🔐 系统/用户
 
 | # | 表 | 分类 | 主键 | 单行？ | 业务入口 |
 |---|---|---|---|---|---|
-| 10 | `users` | 系统 | `id` 自增 | 否 | `server/api/users.py` |
-| 11 | `sys_status` | 系统 | `trd_date` | 否（多日） | `server/services/trading_day.py` |
-| 12 | `sys_config` | 系统 | `(user, cfg_key)` 复合 | 否 | `server/api/sysconfig.py` |
-| 13 | `stocks` | 系统 | `stock_code` | 否（多股） | `server/api/stocks.py` |
+| 12 | `users` | 系统 | `id` 自增 | 否 | `server/api/users.py` |
+| 13 | `sys_status` | 系统 | `trd_date` | 否（多日） | `server/services/trading_day.py` |
+| 14 | `sys_config` | 系统 | `(user, cfg_key)` 复合 | 否 | `server/api/sysconfig.py` |
+| 15 | `stocks` | 系统 | `stock_code` | 否（多股） | `server/api/stocks.py` |
 
 ### 📋 日初对账 / 序列表
 
 | # | 表 | 分类 | 主键 | 单行？ | 业务入口 |
 |---|---|---|---|---|---|
-| 14 | `reconcile_report` | 历史 | `(trd_date, mode, created_at)` | 否 | `server/services/reconcile.py` |
-| 15 | `order_no_seq` | 序列 | `id` 约束 | ✅ 单行 | `server/services/order_no.py` |
+| 16 | `reconcile_report` | 历史 | `(trd_date, mode, created_at)` | 否 | `server/services/reconcile.py` |
+| 17 | `order_no_seq` | 序列 | `id` 约束 | ✅ 单行 | `server/services/order_no.py` |
 
 > **变更说明**：
 > - v14 起从 SQLite 迁到 MySQL（v20 强制 MySQL-only）；本 spec 早期版本描述 SQLite 时代
 > - v66 strategy_trade change：新增 `strategy` / `strategy_task` / `strategy_grid` / `strategy_regime` / `strategy_audit` 5 张策略表（**其中 4 张网格引擎表已随 v120.5 删除**）
 > - v90 script-strategy change（2026-08-01）：新增 `strategy_script` / `strategy_script_audit` 2 张脚本策略表 + 扩展 `strategy_task` 字段
 > - **v120.5 grid-engine-removal（2026-08-10）**：DROP `strategy` / `strategy_regime` / `strategy_grid` / `strategy_audit` / `stocks_legacy` 5 张表（migration `server/migrations/2026-08-10-drop-legacy-strategy-tables.py`，commit `aa70dae`）。网格引擎被脚本策略取代；schema.yml 同步移除 4 张表定义（19 → 15 张）
+> - **v129 add-stkpool-module（2026-08-16）**：新增 `stkpool`（主表，id 自增 / name UK）和 `stkpooldetail`（明细表，复合 PK `(id, stock_code)` + FK ON DELETE CASCADE）2 张表（migration `server/migrations/2026-08-16-add-stkpool.py`）。share-id 模式：明细表 `id` 不自增，与主表 id 共享，物理聚簇 + CASCADE 自动清。Tables Overview 总表数 15 → 17。详细字段定义见 §16-17
 > - v120 strategy-exec-service change（2026-08-09）：`strategy_task` 加 3 字段 `execution_service`（'evtrade'/'strategy_exec'）/ `execution_pid` / `version`（乐观锁，migration `2026-08-09-strategy-task-exec-fields.py`）。运行引擎迁到独立服务 `strategy_exec/`；其 `progress` / `live_signals` / `status` 由 strategy_exec 写（`WHERE version=:v` 乐观锁，见 [`strategy-exec/spec.md`](../strategy-exec/spec.md) REQ-SE-007），EvTrade 侧 `strategy_script` / `strategy_script_audit` 只读、`strategy_task` 仅 `signal_consumer` 消费侧写 `status`/`order_no`
 > - **v122 strategy-params-sweep-best-live（2026-08-10）**：`strategy_task` 加 3 sweep 列 `sweep_id VARCHAR(32) NULL` / `sweep_metric VARCHAR(32) NULL` / `sweep_total INT NULL`（migration `2026-08-11-add-strategy-sweep-fields.py`，commit `6808e8b`）。同 sweep 多 task 共享 `sweep_id`；summary task 也带 `sweep_id`（用 `sweep_total=1` 区分自身）。前端按 `sweep_id IS NULL` 判断单 run。详见 [`strategy-exec/spec.md`](../strategy-exec/spec.md) REQ-SE-008 / [`strategy/spec.md`](../strategy/spec.md) REQ-STRAT-016 扩展
 > - v18 t0_tasks change：新增 `t0_tasks` 表（v18）+ `orders.task_id` 列
@@ -420,6 +423,113 @@ ORM 注释（`server/tables/<表名>.py` 自动生成）必须与本 spec 保持
 **业务规则**:
 - `next_order_no(db)` 原子 UPSERT + 返回 `last_value + 1`
 - 8 位数字，超过 99999999 后溢出（实务不会发生）
+
+### 12. `stkpool` — 证券池主表（v129 add-stkpool-module）
+
+**PK**: `id`（自增）
+
+| 字段 | 类型 | 可空 | 默认 | 说明 |
+|---|---|---|---|---|
+| `id` | INT | NO | AUTO_INCREMENT | 行主键 |
+| `name` | VARCHAR(64) | NO | — | 池名（**唯一**） |
+| `remark` | VARCHAR(255) | NO | `''` | 备注 |
+| `created_at` | DATETIME | NO | `CURRENT_TIMESTAMP` | 创建时间 |
+
+**约束**：
+
+- `PRIMARY KEY (id)`
+- `UNIQUE KEY uk_stkpool_name (name)` — 池名唯一
+- `ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='证券池主表'`
+
+**业务规则**：
+
+- 主表**无** `user_id` 字段（决策：全局共享，不分用户；走统一 `auth` 鉴权）
+- `name` 字段不得为空（Pydantic `min_length=1`）
+- `name` 重复插入 → 409 `POOL_NAME_DUPLICATE`（应用层校验 + UK 兜底）
+- `created_at` 保留（用于审计 / 列表排序）
+
+#### Scenario: 主表创建（name 唯一）
+
+- **WHEN** `POST /api/stkpool {"name": "白马组合", "remark": "高股息大盘"}` 收到
+- **THEN** MySQL `INSERT INTO stkpool (name, remark) VALUES ('白马组合', '高股息大盘')` 成功
+- **AND** 返回 201 + Row `{id: 1, name: '白马组合', remark: '高股息大盘', created_at: '2026-08-16 10:00:00'}`
+
+#### Scenario: name 重复返回 409
+
+- **WHEN** `POST /api/stkpool {"name": "白马组合"}` 收到，但 `stkpool` 已存在 `name='白马组合'`
+- **THEN** MySQL `INSERT` 触发 `uk_stkpool_name` 唯一约束冲突
+- **AND** API 捕获并返回 409 `{detail: "POOL_NAME_DUPLICATE: '白马组合'"}`
+
+#### Scenario: 列表按 id ASC
+
+- **WHEN** `GET /api/stkpool` 收到
+- **THEN** 返回 `stkpool` 全表，按 `id ASC` 排序（`TableBase.query_all` 默认）
+
+#### Scenario: 删池 CASCADE 自动清明细
+
+- **WHEN** `DELETE /api/stkpool/5` 收到
+- **THEN** MySQL `DELETE FROM stkpool WHERE id=5` 成功
+- **AND** `stkpooldetail` 中所有 `id=5` 的行被 MySQL `ON DELETE CASCADE` 机制自动删除
+- **AND** 业务代码 MUST NOT 显式 DELETE 明细表（CASCADE 已涵盖）
+
+### 13. `stkpooldetail` — 证券池明细（v129 add-stkpool-module，复合 PK + share-id）
+
+> **关键设计**：明细表 `id` 字段**不自增**，与主表 `stkpool.id` 共享（物理聚簇）。复合 PK `(id, stock_code)` 天然去重。删除主表行通过 MySQL `ON DELETE CASCADE` 自动清明细。
+
+**PK**: `(id, stock_code)`（复合）
+
+| 字段 | 类型 | 可空 | 默认 | 说明 |
+|---|---|---|---|---|
+| `id` | INT | NO | — | **共享主表 id（不自增）** |
+| `stock_code` | VARCHAR(16) | NO | — | 股票代码（`^\d{6}\.(SH|SZ|BJ)$`） |
+
+**约束**：
+
+- `PRIMARY KEY (id, stock_code)` — 复合 PK
+- `KEY ix_stkpooldetail_id (id)` — id 单字段索引
+- `FOREIGN KEY (id) REFERENCES stkpool(id) ON DELETE CASCADE` — 删池自动清
+- `ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='证券池明细: share PK id + stock_code'`
+
+**业务规则**：
+
+- `id` 字段 MUST NOT 设 `AUTO_INCREMENT`（share-id 模式）
+- `id` 写入时由应用层显式指定 = `stkpool.id`
+- `stock_code` MUST 匹配 `^\d{6}\.(SH|SZ|BJ)$`（与 `stocks` 表对齐）
+- 明细表 MUST NOT 含 `stock_name` 字段（名称从 `useStocksStore.cache` 前端读）
+- 同 `(id, stock_code)` 重复插入走 `upsert_one` 幂等（MySQL `ON DUPLICATE KEY UPDATE` 不报错）
+
+#### Scenario: 复合 PK 写入
+
+- **WHEN** 池 5 加入 600519.SH
+- **THEN** MySQL `INSERT INTO stkpooldetail (id, stock_code) VALUES (5, '600519.SH')` 成功
+- **AND** `(5, '600519.SH')` 成为复合 PK 唯一记录
+
+#### Scenario: 重复明细 idempotent
+
+- **WHEN** `(5, '600519.SH')` 已存在，再次 `POST /api/stkpool/5/detail {"stock_codes": "600519.SH"}`
+- **THEN** MySQL `INSERT ... ON DUPLICATE KEY UPDATE` 走 UPDATE 分支
+- **AND** 业务上无副作用（`stock_code` 字段值未变）
+
+#### Scenario: 同 id 多 stock_code 物理聚簇
+
+- **WHEN** 池 5 加入 50 只股票
+- **THEN** `stkpooldetail` 中有 50 行 `id=5`（不同 `stock_code`）
+- **AND** 物理存储聚簇（同 InnoDB 区段）
+- **AND** `SELECT * FROM stkpooldetail WHERE id=5` 走 PK 范围扫，无次索引
+
+#### Scenario: 删池级联删明细
+
+- **WHEN** `DELETE FROM stkpool WHERE id=5` 成功
+- **THEN** MySQL FK 约束触发 `DELETE FROM stkpooldetail WHERE id=5`
+- **AND** 50 行明细全部自动清除
+- **AND** 业务代码 MUST NOT 显式查/清明细
+
+#### Scenario: 池不存在 → 404
+
+- **WHEN** `POST /api/stkpool/999/detail {...}` 收到，但 `stkpool.id=999` 不存在
+- **THEN** API 业务校验先查 `Stkpool.query_one(id=999)` 返 None
+- **AND** 返回 404 `{detail: "POOL_NOT_FOUND: id=999"}`
+- **AND** **不会** INSERT `stkpooldetail`（避免孤儿行）
 
 ## Modification Workflow
 
