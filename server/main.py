@@ -29,6 +29,7 @@ from server.api import t0_tasks  # v18 change t0-task-management
 from server.api import script_strategy as script_strategy_api  # script-strategy change (新模块)
 from server.api import quote as quote_api  # 2026-07-09 quote-snapshot-subscribe
 from server.api import stocks as stocks_api  # v21 stock-info-crawler
+from server.api import stkpool as stkpool_api  # add-stkpool-module (v128)
 from server.api import sync as sync_api  # v21 stock-info-crawler
 from server.api.admin import sys_status as admin_sys_status, reconcile as admin_reconcile, session as admin_session
 from server.middleware.request_logging import RequestLoggingMiddleware
@@ -297,6 +298,7 @@ app.include_router(script_strategy_api.router, prefix="/api/script-strategy", ta
 app.include_router(quote_api.router, prefix="/api/quote", tags=["quote"], dependencies=_AUTH)  # 2026-07-09
 # 2026-07-10 v21 stock-info-crawler: stocks 查询 + sync 管理
 app.include_router(stocks_api.router, prefix="/api/stocks", tags=["stocks"], dependencies=_AUTH)
+app.include_router(stkpool_api.router, prefix="/api/stkpool", tags=["stkpool"], dependencies=_AUTH)  # add-stkpool-module
 # 2026-07-10 v21 stock-info-crawler: sync 管理 (admin only,内联守卫避免 _AUTH_ADMIN 未定义)
 app.include_router(sync_api.router, prefix="/api/sync", tags=["sync"], dependencies=[Depends(get_current_user)])
 

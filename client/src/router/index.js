@@ -27,6 +27,8 @@ const CacheTrades = () => import('../views/CacheTrades.vue')
 // const AdminSync = () => import('../views/AdminSync.vue')
 // v21 stock-info-crawler: 证券信息设置页面 (admin-only 占位)
 const AdminStockConfig = () => import('../views/AdminStockConfig.vue')
+// add-stkpool-module: 证券池 (auth 通用鉴权, 不分 RBAC)
+const StkPool = () => import('../views/StkPool.vue')
 
 const routes = [
   {
@@ -71,6 +73,8 @@ const routes = [
   // { path: '/admin/sync', name: 'AdminSync', component: AdminSync, meta: { title: '证券同步', requiresAdmin: true } },
   // v21 stock-info-crawler: 证券信息设置 (admin-only, sync_config 占位)
   { path: '/admin/stock-config', name: 'AdminStockConfig', component: AdminStockConfig, meta: { title: '证券信息设置', requiresAdmin: true } },
+  // add-stkpool-module: 证券池 (auth 通用鉴权, 不分 RBAC)
+  { path: '/stkpool', name: 'StkPool', component: StkPool, meta: { title: '证券池' } },
   { path: '/:pathMatch(.*)*', redirect: '/' }
 ]
 

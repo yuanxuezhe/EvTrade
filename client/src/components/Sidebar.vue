@@ -66,7 +66,7 @@ import {
   Odometer, Wallet, Money, DataAnalysis, Tickets,
   Fold, Expand, TrendCharts, UserFilled, Files,
   Coin, Cpu, Setting, Operation, Box, Document, Refresh, DataBoard,
-  EditPen, DataLine,
+  EditPen, DataLine, Collection,
 } from '@element-plus/icons-vue'
 import { useAuthStore } from '../stores/auth'
 
@@ -89,16 +89,18 @@ const menuItems = computed(() => {
     { path: '/script-dev', label: '策略开发', icon: EditPen },
     { path: '/script-task', label: '策略运行', icon: DataLine },
     // v126: 策略下单母单 (实盘下单入口)
-    { path: '/strategy-order', label: '策略下单', icon: DataAnalysis }
+    { path: '/strategy-order', label: '策略下单', icon: DataAnalysis },
+    // v21 stock-info-crawler: 基础信息分类 (admin-trader 共享入口)
+    { divider: true, label: '基础信息' },
+    { path: '/admin/stock-config', label: '证券信息', icon: DataBoard },
+    // add-stkpool-module: 证券池 (与"证券信息"同级别顶级项, 紧跟其后, auth 通用鉴权)
+    { path: '/stkpool', label: '证券池', icon: Collection }
   ]
   if (authStore.isAdmin) {
     base.push({ divider: true, label: '系统管理' })
     base.push({ path: '/system-init', label: '系统初始化', icon: Setting })
     base.push({ path: '/system-config', label: '系统配置', icon: Operation })
     base.push({ path: '/users', label: '用户管理', icon: UserFilled })
-    // v21 stock-info-crawler: 基础信息分类 → 证券信息设置（占位）
-    base.push({ divider: true, label: '基础信息' })
-    base.push({ path: '/admin/stock-config', label: '证券信息', icon: DataBoard })
     base.push({ divider: true, label: '交易查询' })
     base.push({ path: '/admin/cache/asset', label: '资金查询', icon: Wallet })
     base.push({ path: '/admin/cache/positions', label: '持仓查询', icon: Box })
