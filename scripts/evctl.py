@@ -105,6 +105,10 @@ def _strategy_exec_cmd():
 
     v120+: strategy_exec 复用 EvTrade 根 .venv (dependencies 在根 pyproject.toml)
     sys.executable = 根 .venv/bin/python
+
+    注意: 必须用 dict(os.environ) 拷贝, 不能用 copy.copy (Windows 上 _Environ
+    拷贝仍写回原对象, 会污染当前进程的 os.environ — 历史上曾导致
+    sync_schema diff 误读 prod DB URL).
     """
     env_file = os.path.join(PROJECT_ROOT, 'strategy_exec', '.env')
     env = {}
@@ -117,8 +121,7 @@ def _strategy_exec_cmd():
                     env[k.strip()] = v.strip()
 
     # 合并当前进程环境变量（保留 PYTHONPATH 等）
-    import copy
-    full_env = copy.copy(os.environ)
+    full_env = dict(os.environ)
     full_env.update(env)
 
     return {
