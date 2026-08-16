@@ -71,7 +71,7 @@
         </template>
         <template #column-stock_code="{ row }">
           <span class="text-mono tp-stock-code">{{ row.stock_code }}</span>
-          <span class="text-secondary" style="margin-left: 6px">{{ stockName(row.stock_code) || '—' }}</span>
+          <span class="text-secondary" style="margin-left: 6px" v-t0-badge="row.stock_code">{{ stockName(row.stock_code) || '—' }}</span>
         </template>
         <template #column-direction="{ row }">
           <span class="dir-chip" :class="row.order_type === '23' ? 'buy' : 'sell'">

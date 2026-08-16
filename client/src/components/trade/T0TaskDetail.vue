@@ -116,7 +116,7 @@
         <el-table-column prop="stock_code" label="股票代码" width="100" />
         <el-table-column label="名称" width="100" show-overflow-tooltip>
           <template #default="{ row }">
-            <span class="text-secondary">{{ stockName(row.stock_code) || '—' }}</span>
+            <span class="text-secondary" v-t0-badge="row.stock_code">{{ stockName(row.stock_code) || '—' }}</span>
           </template>
         </el-table-column>
         <el-table-column prop="realized_pnl" label="已实现" width="100">

@@ -22,7 +22,7 @@
     >
       <template #column-stock_code="{ row }">
         <span class="text-mono tp-stock-code">{{ row.stock_code }}</span>
-        <span class="text-secondary" style="margin-left: 6px">{{ row.stock_name || '—' }}</span>
+        <span class="text-secondary" style="margin-left: 6px" v-t0-badge="row.stock_code">{{ row.stock_name || '—' }}</span>
       </template>
 
       <template #column-last_vol="{ row }">

@@ -401,6 +401,26 @@ h1, h2, h3, h4, h5, h6 {
   border: none !important;
 }
 
+/* T+0 支持标识 (v-t0-badge) — 闪电图标胶囊, 紧贴股票名右侧 */
+.t0-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  margin-left: 4px;
+  border-radius: 50%;
+  background: var(--color-down-gradient);
+  box-shadow: 0 1px 4px rgba(22, 181, 114, 0.35);
+  flex-shrink: 0;
+  vertical-align: middle;
+}
+.t0-badge-icon {
+  width: 10px;
+  height: 10px;
+  fill: #fff;
+}
+
 /* 菜单 */
 .el-menu {
   background: transparent !important;

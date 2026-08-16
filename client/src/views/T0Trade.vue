@@ -160,7 +160,7 @@
           </template>
           <template #column-stock_code="{ row }">
             <span class="text-mono tp-stock-code">{{ row.stock_code }}</span>
-            <span class="text-secondary" style="margin-left: 6px">{{ stockName(row.stock_code) || '—' }}</span>
+            <span class="text-secondary" style="margin-left: 6px" v-t0-badge="row.stock_code">{{ stockName(row.stock_code) || '—' }}</span>
           </template>
           <template #column-initial_position="{ row }">
             <span class="text-mono">{{ formatNumber(holdingsStore.positions?.find(p=>p.stock_code===row.stock_code)?.last_vol ?? 0) }}</span>
@@ -241,7 +241,7 @@
           </template>
           <template #column-stock_code="{ row }">
             <span class="text-mono tp-stock-code">{{ row.stock_code }}</span>
-            <span class="text-secondary" style="margin-left: 6px">{{ stockName(row.stock_code) || '—' }}</span>
+            <span class="text-secondary" style="margin-left: 6px" v-t0-badge="row.stock_code">{{ stockName(row.stock_code) || '—' }}</span>
           </template>
           <template #column-order_type="{ row }">
             <el-tag :type="row.order_type === '23' ? 'danger' : 'success'" size="small">

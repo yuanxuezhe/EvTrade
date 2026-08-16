@@ -25,7 +25,7 @@
     <!-- ① 头部: Symbol + 名 + 码 -->
     <div class="qp-header">
       <span class="qp-symbol" :class="heroClass">{{ statusSymbol }}</span>
-      <span class="qp-name">{{ stockName }}</span>
+      <span class="qp-name" v-t0-badge="code">{{ stockName }}</span>
       <span class="qp-code">{{ code }}</span>
     </div>
 

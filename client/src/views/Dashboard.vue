@@ -97,7 +97,7 @@
           <el-table-column prop="stock_code" label="标的" show-overflow-tooltip v-bind="COL.STOCK_TARGET">
             <template #default="{ row }">
               <span class="text-mono tp-stock-code">{{ row.stock_code }}</span>
-              <span class="text-secondary" style="margin-left: 6px">{{ stockName(row.stock_code) || '—' }}</span>
+              <span class="text-secondary" style="margin-left: 6px" v-t0-badge="row.stock_code">{{ stockName(row.stock_code) || '—' }}</span>
             </template>
           </el-table-column>
           <el-table-column prop="vol" label="持仓量" align="right" width="100">

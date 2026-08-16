@@ -18,6 +18,11 @@
    - 必须严格遵循项目现有的架构特征。
    - 采用**按业务/领域分组（Group by Feature/Domain）**的原则，而非按技术类型分组（例如：与订单 `Order` 相关的控制器、服务、模型应统一放在 `modules/order/` 目录下，严禁分散放入全局的 `services/` 或 `models/` 中）。
 
+5. **表格一律用通用模板（DataTableView）**：
+   - 所有表格（含弹窗内表格）一律使用 `client/src/components/DataTableView.vue` 通用表格模板：列用 `columns` 配置数组（`{ key, label, width, ... }`），自定义单元格用 `column-{key}` 命名 slot，禁止直接用裸 `<el-table>` 堆列。
+   - 列样式统一走 `client/src/utils/tableColumns.js` 的 `COL.*` 常量（如 `COL.STOCK_TARGET`），不要在业务文件里手写零散宽度/对齐。
+   - 需要加载态用 `:loading`，需要勾选列在列定义里写 `{ type: 'selection' }`，需要行标识传 `row-key`。
+
 # 编码前置思考协议（极端重要）
 在修改或编写任何代码之前，你必须先进行分步思考，并**严格按照以下格式**输出你的架构评估（不要漏掉任何一项）：
 

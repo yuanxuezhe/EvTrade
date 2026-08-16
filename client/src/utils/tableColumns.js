@@ -40,10 +40,10 @@ export const STOCK_CODE = {
  * 2. STOCK_TARGET — 标的 (代码+名称合并)
  *    适用: 单列显示 stock_code + 名称 (仿 T0Trade.vue 标的列)
  *    模板: <span class="text-mono tp-stock-code">{{ code }}</span> + 6px + <span class="text-secondary">{{ name }}</span>
- *    固定 width=160 + show-overflow-tooltip (防名称过长撑爆列)
+ *    固定 width=270 + show-overflow-tooltip (防名称过长撑爆列)
  */
 export const STOCK_TARGET = {
-  width: 208,
+  width: 270,
   align: 'left',
   headerAlign: 'left',
 }

@@ -54,7 +54,7 @@
                 <template #default="{ item }">
                     <div class="scp-row">
                         <span class="scp-code text-mono">{{ item.stock_code }}</span>
-                        <span class="scp-name">{{ item.stock_name }}</span>
+                        <span class="scp-name" v-t0-badge="item.stock_code">{{ item.stock_name }}</span>
                         <span v-if="item.short_name" class="scp-short">
                             [{{ item.short_name }}]
                         </span>
@@ -70,7 +70,7 @@
                 disable-transitions
                 class="scp-tag"
             >
-                {{ selectedStock.stock_name }}
+                <span v-t0-badge="selectedStock.stock_code">{{ selectedStock.stock_name }}</span>
             </el-tag>
             <span v-else class="scp-tag-placeholder">请选择股票</span>
         </div>

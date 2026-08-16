@@ -19,6 +19,10 @@ for (const [key, component] of Object.entries(ElementPlusIconsVue)) {
   app.component(key, component)
 }
 
+// 全局指令: v-t0-badge="stock_code" — 在元素内追加绿色 T0 胶囊 (如支持 T+0)
+import { t0BadgeDirective } from './directives/t0Badge'
+app.directive('t0-badge', t0BadgeDirective)
+
 app.use(createPinia())
 
 // v119: 启动屏障 — 在 router 安装前 await IDB token 恢复
