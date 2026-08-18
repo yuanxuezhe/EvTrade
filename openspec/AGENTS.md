@@ -45,10 +45,10 @@ Vue3 + FastAPI 量化交易 Web 平台。**业务数据本地 DB 优先**（v4 �
 | `auth` | 登录/JWT/RBAC | `server/auth/`, `server/api/auth.py`, `client/src/stores/auth.js` |
 | `trading` | 下单/撤单/委托/成交/资金/T0 | `server/api/{orders,trades,asset,fee_config}.py`, `server/services/t0.py` |
 | `positioning` | 持仓查询 | `server/api/positions.py`, `client/src/views/Position.vue` |
-| `quotes` | 行情推送 | `hq/hqserver.py`, `client/src/stores/quote.js`, `client/src/stores/ws.js` |
+| `quotes` | 行情推送 | `hq/hqserverd/` (Rust, 2026-08-18 取代旧 `hq/hqserver.py`), `client/src/stores/quote.js`, `client/src/stores/ws.js` |
 | `push` | 柜台 push → DB 落库 + WebSocket 路由 | `server/services/push_handlers.py`, `server/rpc/client.py:121-180` |
 | `frontend` | Vue 路由/角色守卫/WS | `client/src/router/`, `client/src/api/` |
-| `configuration` | .env / 配置分层 | `server/config.py`, `hq/hqserver.py:26-62` |
+| `configuration` | .env / 配置分层 | `server/config.py`, `hq/hqserverd/src/config.rs` |
 | `rpc-protocol` | msgpacket 客户端契约 | `server/rpc/client.py` |
 
 ## 改东西的流程

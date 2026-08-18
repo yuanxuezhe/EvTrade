@@ -23,8 +23,8 @@ Mock ticker — 独立行情模拟工具
                                                                         ↓ 严格按订阅过滤
                                                                       frontend WS
 
-数据格式（与 hq/hqserver.py:165-208 一致）：
-  - RabbitMQ body: bytes（GBK 编码的 pipe-delimited 字符串）
+数据格式（与 `quant/quota.py:format_quote` 一致，2026-08-18 起经 UDP 直推 `hq/hqserverd`，不再走 RabbitMQ）：
+  - UDP datagram body: bytes（GBK 编码的 pipe-delimited 字符串）
   - 31 字段索引对应 server/services/strategy/quote_consumer.py:166-176
   - 每条 tick 可以是单行，也可以多条 tick 用 \\n 合并成一条消息
     （2026-07-09 quote-batch-split: QMT publisher 现在用 \\n 合并）

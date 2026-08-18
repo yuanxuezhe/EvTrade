@@ -1,0 +1,20 @@
+[package]
+name = "hqserverd"
+version = "0.2.0"
+edition = "2021"
+description = "EvTrade 行情收/转服务端：UDP 收 QMT 行情、并发解析、WS 推前端（取代旧 Python hqserver.py）"
+
+[dependencies]
+# Windows 也需要 signal feature 以支持 ctrl_c
+tokio = { version = "1", features = ["full", "signal"] }
+tokio-tungstenite = "0.24"
+futures-util = "0.3"
+bytes = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+
+[profile.release]
+opt-level = 3
+lto = "thin"

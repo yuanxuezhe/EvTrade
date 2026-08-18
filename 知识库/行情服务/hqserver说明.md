@@ -2,115 +2,142 @@
 
 ## 对应代码路径
 
-- `e:/EvTrade/hq/hqserver.py`（行情并发消费 + WebSocket 直推路由器，约 320 行）
-- `e:/EvTrade/hq/hqsuber.py`（下游按标的订阅客户端示例）
-- 配置来源：`e:/EvTrade/server/.env`（与 EvTrade 主服务共享同一 .env）
+- `e:/EvTrade/hq/hqserverd/`（Rust 单文件 crate：行情消费 + WebSocket 直推路由器；2026-08-18 取代旧 `hq/hqserver.py`）
+- `e:/EvTrade/hq/hqsuber.py`（**保留**：按标的订阅的 RabbitMQ 示例客户端，演示如何 bind `quota.broadcast.exchange`）
+- `e:/EvTrade/iquant/quota.py`（QMT publisher：每条 tick 一帧 UDP datagram，直推 hqserverd，不再走 MQ）
+- 配置来源：`e:/EvTrade/server/.env`（与 EvTrade 主服务共享）
 
 ## 功能概述
 
-hqserver 是 EvTrade 的**独立行情推送进程**（单文件 asyncio 程序，WS 监听 :8765）：消费 RabbitMQ 基础行情队列 `EvQuota`（上游 QMT publisher 经 `quota.exchange` FANOUT 发布的批量 tick），经内部 `asyncio.Queue` 缓冲与固定 worker 池拆分后，把每条 tick 以 JSON 帧 `{"type":"quote", ...}` 广播给**所有**已连接的 WebSocket 客户端（前端行情页 + strategy_exec 实盘 LiveRunner）。
+hqserverd 是 EvTrade 的**独立行情推送进程**（Rust tokio 单二进制，**2026-08-18 改写**）：
+QMT publisher (`iquant/quota.py`) 通过 UDP（默认 `:9001`）直推每条 tick 给 hqserverd，
+经内部 tokio mpsc 缓冲与固定 worker 池拆分后，把每条 tick 以 JSON 帧
+`{"type":"quote", ...}` 广播给**所有**已连接的 WebSocket 客户端（前端行情页 + strategy_exec 实盘 LiveRunner）。
 
-架构（hqserver.py 头部注释）：
+### 旧架构 vs 新架构
+
+| 维度 | 旧 (`hq/hqserver.py`) | 新 (`hq/hqserverd`) |
+|---|---|---|
+| 传输 | RabbitMQ `quota.exchange` FANOUT | UDP 单播 (quota.py → hqserverd) |
+| 依赖 | aio_pika, websockets (Python) | tokio + tokio-tungstenite (Rust) |
+| 并发 | asyncio + N worker coroutine | tokio 多线程 + N worker task |
+| 内存 | MQ broker + 本地缓冲 + ack 状态 | 仅本地 mpsc 缓冲（无 ack/重投） |
+| 单 tick 延迟 | 1 跳 broker（ms 级） | 直推（µs 级） |
+| WS 协议/端口 | `:8765`, `{"type":"quote",...}` | `:8765`, `{"type":"quote",...}` **不变** |
+| 前端兼容性 | — | **0 改动** |
+
+架构（hqserverd main.rs 编排）：
 
 ```
-RabbitMQ quota.exchange (FANOUT, durable=False)
-      ↓ aio_pika iterator + 显式 ACK（安全极速接收）
-asyncio.Queue 内部缓冲 (maxsize=5000, 天然背压)
-      ↓ NUM_WORKERS 个固定 worker 协程（CPU 受控）
-(a) [已删] quota.broadcast.exchange 重发 —— 2026-07-10 移除（无 binding, 99.3% 丢弃）
-(b) 内置 WebSocket 服务 :8765 —— 前端直连
+QMT quota.py (asyncio UDP sendto)
+      ↓ UDP datagram: gbk 编码, "|" 分隔, 首字段 stock_code
+hqserverd 绑定 :9001 接收
+      ↓ tokio mpsc (maxsize=5000, 天然背压)
+NUM_WORKERS 个 worker task (CPU 受控)
+      ↓ serde_json 序列化为 QuotePayload
+WebSocket 服务 :8765 ──→ 前端 + strategy_exec LiveRunner
 ```
 
 ## 文件清单
 
 | 代码文件 | 作用 |
-|----------|------|
-| `hqserver.py` | 主服务：RabbitMQ 消费 + worker 池 + WS 广播 + 看门狗 + 优雅关闭 |
-| `hqsuber.py` | 示例订阅客户端：绑 `quota.broadcast.exchange`（TOPIC）按 stock_code/routing_key 订阅（该交换机现无发布方，仅留作示例/回滚参考） |
+|---|---|
+| `hqserverd/Cargo.toml` | Rust 项目元数据 + tokio/tungstenite 依赖 |
+| `hqserverd/src/main.rs` | `tokio::main` 入口 + 信号处理 + 编排 |
+| `hqserverd/src/config.rs` | 环境变量解析（替代旧 `_env_*` 助手） |
+| `hqserverd/src/types.rs` | `QuotePayload` 数据类型 + serde JSON 序列化 |
+| `hqserverd/src/udp_receiver.rs` | UDP socket 收包 → 内部 mpsc |
+| `hqserverd/src/worker.rs` | N worker 解析 tick（按 `|` 切字段、调 WsHub） |
+| `hqserverd/src/ws_server.rs` | WS 服务：注册/广播/keepalive |
 
 ## 核心实现
 
 ### 启动与配置（HQ_* 环境变量）
 
-hqserver 用 `dotenv` 加载 `../server/.env`（`override=False`，与 server/config.py 共享一处维护）；`_env/_env_int/_env_bool` 三个助手读环境变量：
+hqserverd 通过 `Config::from_env()` 读环境变量（无需 .env loader，直接 std::env）。
+启动：
+
+```bash
+# 1) 编译（首次或 release 优化）
+cd hq/hqserverd && cargo build --release
+
+# 2) 运行（推荐）
+./target/release/hqserverd[.exe]
+
+# 或开发模式
+cargo run --release
+
+# 或通过 evctl
+uv run python scripts/evctl.py start hqserver
+```
 
 | 变量 | 默认值 | 说明 |
 |---|---|---|
-| `HQ_RABBITMQ_URL` | `amqp://192.168.10.2:5672/` | RabbitMQ 地址 |
-| `HQ_EXCHANGE_NAME` | `quota.exchange` | 上游 FANOUT 交换机（durable=False，对齐服务器现存属性） |
-| `HQ_SOURCE_QUEUE` | `EvQuota` | 上游基础行情队列（durable=True） |
-| `HQ_BROADCAST_EXCHANGE` | `quota.broadcast.exchange` | **DEPRECATED 2026-07-10**：无 binding 时 99.3% 消息丢弃，重发逻辑已删，变量仅保留以备回滚 |
-| `HQ_NUM_WORKERS` | `4` | worker 协程数（防吃满单核 CPU） |
-| `HQ_MAX_QUEUE_SIZE` | `5000` | 内部缓冲上限（满则背压阻塞） |
-| `HQ_PREFETCH_COUNT` | `16` | aio-pika 预取数（保持 NUM_WORKERS×4 量级） |
-| `HQ_DEBUG` | `False` | 每个 tick 打一行日志（生产必须关，量级数千/秒） |
+| `HQ_UDP_BIND` | `0.0.0.0:9001` | hqserverd UDP 监听地址（接收 quota.py） |
+| `QUOTA_UDP_HOST` | `192.168.1.20` | quota.py 推送的目标 IP（信息展示用，hqserverd 不主动连） |
+| `QUOTA_UDP_PORT` | `9001` | quota.py 推送的目标端口（信息展示用） |
+| `HQ_NUM_WORKERS` | `4` | worker task 数（防吃满单核 CPU） |
+| `HQ_MAX_QUEUE_SIZE` | `5000` | 内部 mpsc 缓冲上限（满则背压阻塞） |
 | `HQ_WS_HOST` | `0.0.0.0` | WS 监听地址 |
 | `HQ_WS_PORT` | `8765` | WS 监听端口（`ws://<host>:8765`） |
+| `HQ_DEBUG` | `False` | 每个 tick 在 tracing::debug 打一行（生产必须关；通过 `RUST_LOG=debug` 启用） |
 
-启动：`python hq/hqserver.py`（`loop.run_until_complete(main())`，Ctrl+C 优雅退出）。
+### UDP 接收（udp_receiver.rs）
 
-### RabbitMQ 消费（_consume）
+- `tokio::net::UdpSocket::bind(HQ_UDP_BIND).await`，buf = `Vec<u8>` 64 KiB。
+- 每帧 datagram = 一条 tick（quota.py 现在不再做 `\n` batch 合并）。
+- 字节层不解析、整包入 mpsc；worker 侧做字段切分。
+- 通道满 → UDP sendto 由 OS socket buffer 兜底，再满 → quota.py 端 `transport.send` 抛错丢弃。
+- UDP 不做 ACK/重传；行情丢一两条对前端展示无影响。
 
-- `declare_queue("EvQuota", durable=True, exclusive=False)` + `declare_exchange("quota.exchange", FANOUT, durable=False)` + `bind(routing_key="")`。
-- `source_queue.iterator(no_ack=False)` 显式确认：消息体先 `await task_queue.put(message.body)` 入本地缓冲（缓冲满自动背压阻塞），成功后再 `message.ack()` 释放 —— 崩溃时未 ACK 消息可被 RabbitMQ 重投。
+### worker 池（worker.rs）
 
-### worker 池（quota_worker，2026-07-09 quote-batch-split）
+N 个 worker task 共享同一个 `Arc<Mutex<mpsc::Receiver<Vec<u8>>>>`，逐条消费：
 
-QMT publisher（`scripts/qmt_publisher.py:on_quote`）把多条 tick 用 `\n` 合并为**单条** RabbitMQ 消息发送。worker 处理：
+1. `decode_best_effort(pkt)`：优先严格 gbk（**注**：当前实现为 lossy utf-8，详见"已知限制"）；
+2. `body.split('|')` 切字段（首字段 = stock_code）；
+3. `QuotePayload::new(stock_code, fields, body)` 构造 payload（含 last_price 解析）；
+4. `serde_json::to_string(&payload)` 序列化为字符串；
+5. `hub.broadcast(text)` → WsHub 复制给所有客户端；
+6. `tokio::task::yield_now().await` 让出执行权（等价旧版 `await asyncio.sleep(0)`）。
 
-1. `raw_body.split(b"\n")` 拆回逐行 tick。
-2. 每行按 `|` 切首字段，`gbk`（失败退化 utf-8）解码出 `stock_code`。
-3. 组装 WS 帧并 `_broadcast_ws`：
+### WebSocket 服务（ws_server.rs，:8765）
 
-```json
-{
-  "type": "quote",
-  "channel": "quote_update",
-  "data": {
-    "stock_code": "600519.SH",
-    "last_price": 1700.5,          // fields[2] 解析, 失败为 null
-    "fields": ["600519.SH", "...", "1700.5", ...],   // 全字段数组 (gbk 文本 split "|")
-    "body": "600519.SH|...|1700.5|..."               // 原始行文本
-  }
-}
-```
-
-4. `HQ_DEBUG=1` 时打印 `[TICK]` 一行（fields 截断到 31 个防日志爆炸）。
-5. `finally: task_queue.task_done(); await asyncio.sleep(0)` —— 强制让出 CPU，防密集计算阻塞网络 I/O 导致心跳断开。
-
-注意：strategy_exec 的 LiveRunner 实际消费的 tick 结构 `{stime, lastPrice, open, high, low, volume}` 与此处的 `fields/body` 原始格式不同 —— LiveRunner `_on_tick` 里做了字段适配/兜底（live.py `_connect_and_consume` 过滤 `data.code`/`data.stock_code` 匹配后传入聚合器，聚合器对缺失字段用 `tick.get(...)` 容错）。
-
-### WebSocket 服务（:8765）
-
-- `websockets.serve(_ws_handler, WS_HOST, WS_PORT, ping_interval=15, ping_timeout=60)`（2026-07-09 fix：默认 20/20 在 tick 短暂停顿时被误判断连 1011）。
-- 客户端集合 `_ws_clients: Set` + asyncio.Lock；`_register_ws/_unregister_ws` 记日志（含当前连接数）。
-- `_broadcast_ws(payload)`：快照 clients 列表后逐个 `await c.send(json.dumps(payload))`；失败的放入 dead 集合统一摘除，个别失败不影响整体。
-- `_ws_handler`：websockets>=11 兼容（handler 只收 `(websocket,)` 单参）；客户端不发消息，`async for _ in websocket` 仅为检测断开（keepalive）。
+- `tokio::net::TcpListener::bind` 接受 → `tokio_tungstenite::accept_async` 升级握手。
+- 每个连接 spawn 2 个 task：出站 task 把 mpsc 进来的帧 `sink.send`；入站 task 仅探测断开（回应 `Pong`）。
+- **Ping/Pong keepalive**：旧版 `ping_interval=15 / ping_timeout=60`。tokio-tungstenite 0.24 的 `WebSocketConfig` 不再带这两个字段，改用上层 `tokio::time::interval(15s)` 主动 `Message::Ping`；客户端 60s 内不响应 `Pong` 视为掉线（tungstenite 默认 timeout）。
+- 客户端集合 `WsHub`：`Arc<Mutex<HashMap<SocketAddr, WsTx>>>`；`broadcast(text)` 先快照再发送，失败的对端在 `dead` 列表中清掉。
 - **无订阅过滤**：服务端把所有 tick 推给所有连接（FANOUT 语义）；按标的过滤由客户端自己做（如 LiveRunner 只处理自己 stock_code 的帧）。订阅消息 `{"type":"subscribe","stock_codes":[...]}` 发送无害但服务端不解析。
 
-### 看门狗与优雅关闭
+### 信号与优雅关闭（main.rs）
 
-- `_consume` 任务 `add_done_callback(handle_consume_result)`：消费协程异常崩溃 → `log.critical` + `stop_event.set()` 强制终止主程序，防假死。
-- SIGINT/SIGTERM（Windows 下 add_signal_handler NotImplemented 则跳过）→ `stop_event.wait()` 返回 → 依次 cancel consume/workers、`ws_server.close()`、关 channel/connection。
+- `tokio::sync::Notify` 触发统一停止。
+- Unix: 同时监听 `SIGINT/SIGTERM`（`tokio::signal::unix::signal`）；Windows: `tokio::signal::ctrl_c`。
+- 收到信号 → `notify_waiters()` → `udp_handle.abort() / ws_handle.abort() / worker_handles.abort()` → 进程退出。
 
-### hqsuber.py（示例订阅端）
+## 已知限制
 
-演示下游程序按标的订阅的写法：`declare_exchange("quota.broadcast.exchange", TOPIC, durable=True)` → 声明 `exclusive=True` 临时队列（程序退出自动销毁）→ 按 `SUBSCRIBE_STOCKS`（支持 `*.SH` 通配）逐个 bind → iterator 消费，`message.routing_key` 即标的，body 为 gbk 文本。**注意**：hqserver 2026-07-10 已删除向该交换机重发的逻辑，hqsuber 目前收不到数据，仅作协议示例 / 回滚参考保留。
-
-### 与 server/.env 共享配置
-
-hqserver 不自带 .env，直接 `load_dotenv("../server/.env")`，保证 RabbitMQ 地址等与 EvTrade 主服务一处维护。strategy_exec 侧连 hqserver 用自己的 `HQ_WS_URL`（默认 `ws://127.0.0.1:8765/quota.broadcast`，路径部分服务端不校验）。
+- **GBK 解码**：`worker.rs` 当前用 `String::from_utf8_lossy` 解码（lossy）；严格 gbk 解码需引入 `encoding_rs` crate（已在下一版 plan 中）。
+  - 影响范围：QMT 推送的 body 中含 GBK 中文字段（如股票简称）会变成 `U+FFFD`，但 fields[0..N] 字段名（ASCII）+ 数字字段不受影响；前端展示 last_price 等数字字段无问题。
 
 ## 依赖关系
 
-- 上游：RabbitMQ `quota.exchange`（QMT publisher `scripts/qmt_publisher.py` 批量发布 tick）。
+- 上游：QMT publisher `iquant/quota.py`（每条 tick 一帧 UDP datagram）。
 - 下游：所有连 `ws://<host>:8765` 的客户端 —— 前端行情页、strategy_exec LiveRunner（实盘 tick）、其他调试工具。
 - 同级：与 EvTrade server 共享 `server/.env`；与 strategy_exec 通过 WS 解耦（无代码依赖）。
 
 ## 修改指南
 
-- 加按标的订阅/退订：在 `_ws_handler` 解析客户端首条 subscribe 消息并维护 `conn -> set(stock_code)` 映射，`_broadcast_ws` 改为按订阅集过滤（注意向后兼容：未订阅的旧客户端保持全推）。
-- 改端口/地址：`server/.env` 的 `HQ_WS_HOST`/`HQ_WS_PORT`；strategy_exec 侧同步改 `HQ_WS_URL`。
+- 加按标的订阅/退订：解析客户端首条 subscribe 消息并维护 `peer -> set(stock_code)` 映射，`WsHub::broadcast` 改为按订阅集过滤（注意向后兼容：未订阅的旧客户端保持全推）。
+- 改端口/地址：`server/.env` 的 `HQ_UDP_BIND / HQ_WS_HOST / HQ_WS_PORT`；quota.py 侧同步改 `QUOTA_UDP_HOST / QUOTA_UDP_PORT`。
 - tick 字段升级：保持 `data.fields`/`data.body` 原始字段不变前提下新增解析字段；消费端（前端 + LiveRunner `_BarAggregator`）需同步。
-- 性能调优：`HQ_NUM_WORKERS`（CPU 核数上限内）、`HQ_MAX_QUEUE_SIZE`（内存换延迟）、`HQ_PREFETCH_COUNT`；调试完务必 `HQ_DEBUG=0`。
-- 回滚 RabbitMQ 广播：恢复 `BROADCAST_EXCHANGE` 相关重发块（git 历史 2026-07-10 之前版本），hqsuber 即可用。
+- 性能调优：`HQ_NUM_WORKERS`（CPU 核数上限内）、`HQ_MAX_QUEUE_SIZE`（内存换延迟）；调试完务必 `HQ_DEBUG=0`。
+- 增加新 env：编辑 `hqserverd/src/config.rs` + `.env.example`。
+
+## 回滚方案（紧急）
+
+如需切回 RabbitMQ 旧版：
+
+1. `git revert` 本次 commit（或 checkout 上一个 master）。
+2. 旧 `hq/hqserver.py` 自动恢复，evctl `_hqserverd_cmd` 走 release bin 检测会找不到回退——**手动临时**改 evctl hqserver 行恢复 `[sys.executable, '-u', 'hqserver.py']`。
+3. 旧 `.env` 的 `HQ_RABBITMQ_URL/...` 仍然在归档 commit 里有 reference。

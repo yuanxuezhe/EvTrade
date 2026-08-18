@@ -33,7 +33,7 @@ python3 scripts/evctl.py start
 |---|---|---|
 | backend (FastAPI/uvicorn) | **8000** | `--reload` 模式, 改代码自动重启 |
 | frontend (Vite) | **50998** | `--strictPort` 模式, 端口被占直接退出 (不静默 fallback) |
-| hqserver (WebSocket quotes) | **8765** | hqserver.py 内部写死 |
+| hqserver (WebSocket quotes) | **8765** | hq/hqserverd/target/release/hqserverd[.exe] 内部写死 (Rust 二进制) |
 
 端口在 `scripts/evctl.py` 顶部硬编码, **不读环境变量**。改端口要同时改 `client/vite.config.js` 的 `proxy.target` (现指向 `http://localhost:8000`)。
 

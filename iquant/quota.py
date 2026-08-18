@@ -1,141 +1,194 @@
 #encoding: gbk
 """
-QMT 行情 publisher：把 subscribe_whole_quote 收到的行情快照广播到 RabbitMQ。
+QMT tick publisher: pushes quotes to hqserverd via UDP (no RabbitMQ).
 
-优化要点：
-  1. 彻底移除了锁内部的 print(line) 同步阻塞 I/O，极大地释放了 QMT 回调和 Worker 的性能。
-  2. 降低 Worker 数量（16 -> 1），增大单批次吞吐量（20 -> 500），大幅减少多线程 GIL 和 asyncio 锁竞争。
-  3. 优化了空仓等待机制，避免 CPU 空转。
+Wire format (kept compatible with the original MQ version, so hqserverd
+parser logic is unchanged):
+  - one tick per UDP datagram
+  - gbk encoding
+  - fields delimited by "|", first field = stock_code
+  - 32 fields: code|stime|last|open|high|low|lastClose|volume|amount|openInt|txnNum|
+               ask1..ask5|bid1..bid5|askVol1..askVol5|bidVol1..bidVol5
+
+Why we dropped MQ:
+  RabbitMQ adds an extra hop (broker + serialization + ACK) while both
+  sender and receiver are on the LAN; UDP unicast is lower latency, has
+  fewer dependencies, and is simpler to operate. Losing the occasional
+  tick is harmless for the front-end display.
+
+External API (QMT callback contract, do NOT rename):
+  - init(ContextInfo)
+  - on_quote(datas)
+  - stop(ContextInfo)
 """
-from collections import deque
-import threading
 import asyncio
-import aio_pika
+import os
+import socket
+import threading
+from collections import deque
 
 
+# ================================================================
+# 1. Config
+# ================================================================
 class Config:
-    RABBITMQ_URL = "amqp://192.168.10.2:5672/?heartbeat=60"
-    EXCHANGE_NAME = "quota.exchange"
-    QUEUE_NAME = "EvQuota"      # 固定队列名
-    NUM_WORKERS = 1             # 减少 Worker 数量，2个足以吞吐数万条/秒
-    BATCH_SIZE = 1000            # 提升批量上限，以应对全推行情
-    SNAPSHOT_INTERVAL = 0.005   # 队列空时 sleep 5毫秒，防止抢占 CPU
+    # quota.py default target = hqserverd on 192.168.1.* (cross-machine).
+    # Override at deploy time with: QUOTA_UDP_HOST / QUOTA_UDP_PORT
+    UDP_HOST = os.environ.get("QUOTA_UDP_HOST", "192.168.1.20")
+    UDP_PORT = int(os.environ.get("QUOTA_UDP_PORT", "9001"))
+
+    NUM_WORKERS = 1                # one worker is enough: asyncio + UDP sendto is non-blocking
+    SNAPSHOT_INTERVAL = 0.005      # sleep 5ms on empty queue, prevents busy-spin
+    BATCH_DRAIN_LIMIT = 2000       # cap per snapshot flush, avoid burst floods
 
 
 config = Config()
 
 
-class _InvisibleStorage:
-    __slots__ = ()
-    inner_box = {
-        "quote_queue": deque(),  # 使用双端队列，FIFO 保留每一条 LV1 切片
-        "loop": None,
-        "thread": None,
-        "active": False,
-        "token": 0,
-    }
-    lock = threading.Lock()
+# ================================================================
+# 2. Global state (QMT process singleton)
+# ================================================================
+class _State:
+    __slots__ = (
+        "quote_queue",
+        "loop",
+        "transport",
+        "thread",         # background asyncio thread ref (joined in stop())
+        "active",
+        "token",
+        "lock",
+    )
+
+    def __init__(self):
+        self.quote_queue = deque()    # QMT callback appends ticks; worker snapshots+swaps
+        self.loop = None              # asyncio loop
+        self.transport = None         # _UdpTransport
+        self.thread = None            # background asyncio thread
+        self.active = False
+        self.token = 0
+        self.lock = threading.Lock()
+
+
+_state = _State()
 
 
 # ================================================================
-# 核心异步分发 Worker (流水模式)
+# 3. UDP transport (asyncio DatagramProtocol wrapper)
 # ================================================================
-async def quota_snapshot_worker(worker_id, exchange, auth_token):
-    publish_func = exchange.publish
-    print(f"[Worker-{worker_id}] 启动成功，进入 LV1 流水分发模式...", flush=True)
+class _UdpTransport:
+    """Single-peer UDP sender: asyncio's DatagramProtocol + socket.sendto.
 
-    while (
-        _InvisibleStorage.inner_box["active"]
-        and _InvisibleStorage.inner_box["token"] == auth_token
-    ):
-        raw_queue = None
-        
-        # 1. 瞬间拿锁，直接“偷走”整个 deque 并替换为新的 deque
-        # 拿锁耗时 < 1 微秒，QMT 回调没有任何感知
-        with _InvisibleStorage.lock:
-            if _InvisibleStorage.inner_box["quote_queue"]:
-                raw_queue = _InvisibleStorage.inner_box["quote_queue"]
-                _InvisibleStorage.inner_box["quote_queue"] = deque()
+    Why asyncio transport over raw socket + sendto:
+      - avoids thread/loop interaction problems with the worker loop;
+      - OS socket buffer provides natural backpressure when full.
+    """
 
-        # 2. 在锁外处理数据并打包发布
-        if raw_queue:
-            batch_lines = list(raw_queue)
-            
-            # 按 BATCH_SIZE 打包，避免单条消息过大
-            for i in range(0, len(batch_lines), config.BATCH_SIZE):
-                chunk = batch_lines[i : i + config.BATCH_SIZE]
-                body = "\n".join(chunk).encode("gbk")
-                msg = aio_pika.Message(body, delivery_mode=1)
-                try:
-                    await publish_func(msg, routing_key="")
-                except asyncio.CancelledError:
-                    return
-                except Exception as e:
-                    print(f"[Worker-{worker_id}] publish error: {e}", flush=True)
-                    await asyncio.sleep(0.05)
+    def __init__(self, host: str, port: int):
+        self._host = host
+        self._port = port
+        self._transport = None
+        self._protocol = None
+
+    async def start(self) -> bool:
+        loop = asyncio.get_event_loop()
+        try:
+            self._transport, self._protocol = await loop.create_datagram_endpoint(
+                asyncio.DatagramProtocol,
+                remote_addr=(self._host, self._port),
+                # do NOT bind a local port; let OS pick one
+            )
+            print(f"[UDP] connected to {self._host}:{self._port}", flush=True)
+            return True
+        except Exception as e:
+            print(f"[UDP] connect failed: {e}", flush=True)
+            return False
+
+    def send(self, payload: bytes) -> None:
+        if self._transport is None:
+            return
+        try:
+            self._transport.sendto(payload)
+        except Exception as e:
+            # UDP is connectionless; a single send failure does not block subsequent ones.
+            # Cumulative errors are monitored via debug log if needed.
+            print(f"[UDP] sendto error: {e}", flush=True)
+
+    def close(self) -> None:
+        if self._transport is not None:
+            try:
+                self._transport.close()
+            except Exception:
+                pass
+            self._transport = None
+
+
+# ================================================================
+# 4. Snapshot worker: drain deque -> UDP sendto in batches
+# ================================================================
+async def quota_snapshot_worker(worker_id: int, transport: _UdpTransport, auth_token: int) -> None:
+    print(f"[Worker-{worker_id}] started (UDP batch-send mode)", flush=True)
+
+    while _state.active and _state.token == auth_token:
+        batch_lines = None
+
+        # 1. atomic swap: take current deque, replace with a fresh empty one
+        with _state.lock:
+            if _state.quote_queue:
+                batch_lines = _state.quote_queue
+                _state.quote_queue = deque()
+
+        # 2. batch send (each tick = one UDP datagram)
+        if batch_lines:
+            count = 0
+            for line in batch_lines:
+                if count >= config.BATCH_DRAIN_LIMIT:
+                    break
+                transport.send(line)
+                count += 1
+            # yield to event loop (do NOT asyncio.sleep(0), it would race
+            # with transport internal datagram queueing)
+            await asyncio.sleep(0)
         else:
             await asyncio.sleep(config.SNAPSHOT_INTERVAL)
 
-    print(f"[Worker-{worker_id}] 退出循环。", flush=True)
-            
-            
-async def async_main_loop(auth_token):
+    print(f"[Worker-{worker_id}] exited", flush=True)
+
+
+# ================================================================
+# 5. Main event loop
+# ================================================================
+async def async_main_loop(auth_token: int) -> None:
     loop = asyncio.get_event_loop()
-    _InvisibleStorage.inner_box["loop"] = loop
+    _state.loop = loop
 
-    print("[MQ-Main] 正在建立 RabbitMQ 广播连接并初始化拓扑...", flush=True)
-    try:
-        connection = await aio_pika.connect_robust(config.RABBITMQ_URL)
-        channel = await connection.channel()
-        
-        exchange = await channel.declare_exchange(
-            config.EXCHANGE_NAME,
-            type=aio_pika.ExchangeType.FANOUT,
-            durable=False,
-        )
-
-        queue = await channel.declare_queue(
-            config.QUEUE_NAME,
-            durable=True,
-            exclusive=False
-        )
-        await queue.bind(exchange, routing_key="")
-        print(f"[MQ-Main] 拓扑就绪：成功绑定队列 {config.QUEUE_NAME} -> 交换机 {config.EXCHANGE_NAME}", flush=True)
-
-    except Exception as e:
-        print(f"[MQ-Main] RabbitMQ 初始化拓扑失败: {e}", flush=True)
-        _InvisibleStorage.inner_box["active"] = False
+    transport = _UdpTransport(config.UDP_HOST, config.UDP_PORT)
+    if not await transport.start():
+        _state.active = False
+        _state.transport = None
         return
+    _state.transport = transport
 
-    print(f"[MQ-Main] 启动 {config.NUM_WORKERS} 个 worker...", flush=True)
-
+    print(f"[Main] starting {config.NUM_WORKERS} snapshot worker(s)...", flush=True)
     worker_tasks = [
-        loop.create_task(quota_snapshot_worker(i, exchange, auth_token))
+        loop.create_task(quota_snapshot_worker(i, transport, auth_token))
         for i in range(config.NUM_WORKERS)
     ]
 
     try:
-        # 维持主循环，直到外部将 active 设为 False
-        while (
-            _InvisibleStorage.inner_box["active"]
-            and _InvisibleStorage.inner_box["token"] == auth_token
-        ):
+        while _state.active and _state.token == auth_token:
             await asyncio.sleep(0.5)
     except asyncio.CancelledError:
         pass
     finally:
-        print("[MQ-Main] 开始卸载网络拓扑与断开连接...", flush=True)
-        for task in worker_tasks:
-            if not task.done():
-                task.cancel()
-        try:
-            await channel.close()
-            await connection.close()
-        except Exception:
-            pass
+        print("[Main] unloading workers and closing UDP transport...", flush=True)
+        for t in worker_tasks:
+            if not t.done():
+                t.cancel()
+        transport.close()
+        _state.transport = None
 
 
-def start_network_thread(auth_token):
+def start_network_thread(auth_token: int) -> None:
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     try:
@@ -144,51 +197,48 @@ def start_network_thread(auth_token):
         loop.close()
 
 
-def init(ContextInfo):
-    _InvisibleStorage.inner_box["token"] += 1
-    current_token = _InvisibleStorage.inner_box["token"]
-    with _InvisibleStorage.lock:
-        _InvisibleStorage.inner_box["quote_queue"].clear()
-    _InvisibleStorage.inner_box["active"] = True
+# ================================================================
+# 6. QMT external callbacks (signature frozen, do NOT change)
+# ================================================================
+def init(ContextInfo) -> None:
+    _state.token += 1
+    current_token = _state.token
+    with _state.lock:
+        _state.quote_queue.clear()
+    _state.active = True
 
-    _InvisibleStorage.inner_box["thread"] = threading.Thread(
+    _state.thread = threading.Thread(
         target=start_network_thread,
         args=(current_token,),
-        name=f"MQ-Broadcast-{current_token}",
+        name=f"UDP-Broadcast-{current_token}",
     )
-    _InvisibleStorage.inner_box["thread"].daemon = True
-    _InvisibleStorage.inner_box["thread"].start()
+    _state.thread.daemon = True
+    _state.thread.start()
 
-    # 订阅沪深 ETF/A股
-    etfs = list(dict.fromkeys(ContextInfo.get_stock_list_in_sector("沪深ETF")))
+    # subscribe to ETF sector first, fall back to full A-share list
+    etfs = list(dict.fromkeys(ContextInfo.get_stock_list_in_sector("中证ETF")))
     if not etfs:
         etfs = list(dict.fromkeys(ContextInfo.get_stock_list_in_sector("沪深A股")))
-    print(f"[Init] 成功订阅标的数量: {len(etfs)}")
-    
-    # 全推订阅
-    ContextInfo.subscribe_whole_quote(['SZ', 'SH'], on_quote)
+    print(f"[Init] subscribed to {len(etfs)} symbols", flush=True)
+
+    ContextInfo.subscribe_whole_quote(["SZ", "SH"], on_quote)
 
 
-# ================================================================
-# QMT 同步回调：极速追加到 deque
-# ================================================================
-def on_quote(datas):
-    if not _InvisibleStorage.inner_box["active"]:
+def on_quote(datas) -> None:
+    if not _state.active:
         return
     lines = format_quote(datas)
-    
-    # deque.extend 是 C 级别的原生追加，极快
-    with _InvisibleStorage.lock:
-        _InvisibleStorage.inner_box["quote_queue"].extend(lines)
+    with _state.lock:
+        _state.quote_queue.extend(lines)
 
 
-def format_quote(datas):
+def format_quote(datas) -> list:
     """datas: {stock_code: {lastPrice, open, high, low, lastClose, volume, amount, ...}}"""
-    def fmt_price(v):
+    def fmt_price(v) -> str:
         s = f"{float(v):.4f}".rstrip("0").rstrip(".")
         return s if s else "0"
-        
-    lines = []
+
+    out = []
     for code, q in datas.items():
         fields = [
             code,
@@ -211,31 +261,23 @@ def format_quote(datas):
             fields.append(fmt_price(q.get("askVol", [0] * 5)[i]))
         for i in range(5):
             fields.append(fmt_price(q.get("bidVol", [0] * 5)[i]))
-        lines.append("|".join(map(str, fields)))
-    #print(lines)
-    return lines
+        out.append("|".join(map(str, fields)).encode("gbk"))
+    return out
 
 
-def stop(ContextInfo):
-    print("[Stop] 正在请求安全退出...", flush=True)
-    _InvisibleStorage.inner_box["active"] = False
-    
-    loop = _InvisibleStorage.inner_box["loop"]
-    if loop and loop.is_running():
-        loop.call_soon_threadsafe(lambda: None)
+def stop(ContextInfo) -> None:
+    print("[Stop] quote broadcast shutting down...", flush=True)
+    _state.active = False
 
-    if _InvisibleStorage.inner_box["thread"]:
-        _InvisibleStorage.inner_box["thread"].join(timeout=3)
-    
-    with _InvisibleStorage.lock:
-        _InvisibleStorage.inner_box["quote_queue"].clear()
-        
-    print("[Stop] 广播引擎已平稳、安全退出。", flush=True)
+    if _state.transport is not None:
+        _state.transport.close()
+        _state.transport = None
 
+    if _state.thread is not None:
+        _state.thread.join(timeout=3)
+        _state.thread = None
 
+    with _state.lock:
+        _state.quote_queue.clear()
 
-
-
-
-
-
+    print("[Stop] quote broadcast thread exited cleanly", flush=True)

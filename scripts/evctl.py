@@ -100,6 +100,36 @@ def _vite_cmd():
         '--strictPort',
     ]
 
+
+def _hqserverd_cmd():
+    """构造 hqserverd (Rust 二进制) 启动命令。
+
+    2026-08-18: 取代旧的 `python -u hq/hqserver.py` (aio_pika + websockets)。
+    新链路: QMT quota.py (UDP 推送) -> hqserverd (UDP 收 + WS 推前端)。
+
+    选择顺序:
+      1. 若 HQSERVERD_BIN 环境变量指向具体二进制, 优先使用 (生产部署常用)
+      2. 否则找 hq/hqserverd/target/release/hqserverd[.exe]
+      3. 找不到则走 `cargo run --release` (开发机首次启动会编译)
+
+    cwd 切到 hq/hqserverd/, 让未来若加 .env 文件相对路径生效。
+    """
+    binary_name = 'hqserverd.exe' if IS_WINDOWS else 'hqserverd'
+
+    explicit = os.environ.get('HQSERVERD_BIN')
+    if explicit and os.path.exists(explicit):
+        return [explicit]
+
+    release_bin = os.path.join(
+        PROJECT_ROOT, 'hq', 'hqserverd', 'target', 'release', binary_name
+    )
+    if os.path.exists(release_bin):
+        return [release_bin]
+
+    # 退化为开发模式: cargo run。需用户本机有 rust toolchain。
+    return ['cargo', 'run', '--release', '--manifest-path',
+            os.path.join(PROJECT_ROOT, 'hq', 'hqserverd', 'Cargo.toml')]
+
 def _strategy_exec_cmd():
     """构造 strategy_exec 的启动命令 (从 .env 加载环境变量).
 
@@ -160,8 +190,11 @@ SERVICES = {
     'hqserver': Service(
         'hqserver', HQSERVER_PORT,
         os.path.join(PROJECT_ROOT, 'hq'),
-        [sys.executable, '-u', 'hqserver.py'],
-        preflight=['aio_pika', 'websockets'],
+        # 2026-08-18: hqserver 改写为 Rust 二进制 (hq/hqserverd), 不再依赖 Python
+        #   + aio_pika + websockets, 而是 UDP 收 QMT 推送 + WS 推前端。
+        #   cwd 切到 hq/hqserverd/, 让 .env 等相对路径生效 (本服务目前只用 env)。
+        #   dev: cargo run; release: 直接执行 target/release/hqserverd[.exe]
+        _hqserverd_cmd(),
     ),
     'strategy_exec': Service(
         'strategy_exec', STRATEGY_EXEC_PORT,
