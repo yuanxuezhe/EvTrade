@@ -683,16 +683,16 @@ function _recomputeOrderPrice() {
 watch(orderPriceTypeCode, () => _recomputeOrderPrice())
 watch(selectedTaskId, () => _recomputeOrderPrice())
 
-// 主表行单击 → 选中/取消选中 task (联动下半表)
+// 主表行单击 → 选中/切换 task (联动下半表)
+// v2026-08-17: 行为变更 — 再点同一行 **保留** 焦点 (不清空 selectedTaskId, 交易明细不重置);
+//   只有换不同行才切换焦点. 原 toggle 行为让用户误失焦, 下半交易明细被清空体验差.
 function onTaskRowClick(row) {
-  // 单击 row: 若已选中则取消；否则选中
-  if (selectedTaskId.value === row.id) {
-    selectedTaskId.value = null
-  } else {
-    selectedTaskId.value = row.id
-    const t = t0TasksStore.tasksById[row.id]
-    if (t && t.stock_code) stockCode.value = t.stock_code
-  }
+  // 同 row: 直接返回, 保持 selectedTaskId + 联动状态不变
+  if (selectedTaskId.value === row.id) return
+  // 切换到不同 row
+  selectedTaskId.value = row.id
+  const t = t0TasksStore.tasksById[row.id]
+  if (t && t.stock_code) stockCode.value = t.stock_code
 }
 
 // ---- 主表数据源 (v55 task 视角) ----
@@ -960,7 +960,8 @@ function _prepareOrderPayload(row, direction) {
   }
 }
 // v127: 买/卖 row 按钮联动选中
-//   - 未选中 → 触发 onTaskRowClick (隐式取消其他选中) → nextTick 等 watcher 同步价格 → 下单
+// v2026-08-17: row-click 只在换不同行时才同步 selectedTaskId;
+//   同 row 二次点击保留焦点 (clear 下半交易明细的旧 toggle 行为已废)
 //   - 已选中 → 不重置价格 (用户可能手动改过)
 async function onBuyTask(row) {
   if (!canOpRow(row)) {

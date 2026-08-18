@@ -21,7 +21,9 @@
  *   params: { orderType: '23'|'24', volume: number, price: number }
  */
 import { ElMessage } from 'element-plus'
-import { formatPrice } from '../utils/format'
+// v2026-08-17: 删除 utils/format.js 的假 formatPrice (硬截 2 位), 改用 composables/usePricePrecision
+//   的按 stockScale(code) 精度补 0 版本. 配合 stockCode 传入才能正确显示 9.000 / 10.85 等.
+import { formatPrice } from '../composables/usePricePrecision'
 
 // 价格类型 → 柜台协议码 (numeric 11/5/44). 同时接受 string (历史) 与 number (新)。
 function _toPriceTypeCode(pt) {
@@ -61,7 +63,7 @@ export function useT0OrderSubmit({ stockCode, priceType, balanceCoeff, submittin
       })
       if (res) {
         const dir = orderType === '23' ? '买' : '卖'
-        ElMessage.success(`${dir}单已报：${volume} 股 @ ¥${formatPrice(price)}`)
+        ElMessage.success(`${dir}单已报：${volume} 股 @ ¥${formatPrice(price, finalStockCode)}`)
         if (onAfterSuccess) onAfterSuccess()
       } else {
         ElMessage.error('下单失败')

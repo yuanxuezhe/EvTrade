@@ -255,7 +255,8 @@
           </template>
         </el-table-column>
         <el-table-column label="价格" prop="price" width="80">
-          <template #default="{ row }"><span v-if="row.price !== undefined">{{ Number(row.price).toFixed(4) }}</span></template>
+          <!-- v2026-08-17: 改用 formatPrice 按 task.stock_code 精度补 0 (替代硬编码 toFixed(4)) -->
+          <template #default="{ row }"><span v-if="row.price !== undefined">{{ formatPrice(row.price, props.task?.stock_code) }}</span></template>
         </el-table-column>
         <el-table-column label="详情" prop="msg" min-width="300" />
         <el-table-column label="单号" prop="order_no" width="120">
