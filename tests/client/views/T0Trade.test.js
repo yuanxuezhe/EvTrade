@@ -107,13 +107,21 @@ describe('T0Trade', () => {
     expect(wrapper.vm.selectedStockCode).toBe('600030.SH')
   })
 
-  it('onTaskRowClick: 再点已选中行 → 取消选中', async () => {
+  it('onTaskRowClick: 再点已选中行 → 保留焦点 (不取消), 换行才切换', async () => {
     const wrapper = await mountReady()
+    // 已默认选中 1; 再点 1 → 保留
+    expect(wrapper.vm.selectedTaskId).toBe(1)
     wrapper.vm.onTaskRowClick({ id: 1 })
-    expect(wrapper.vm.selectedTaskId).toBe(null)
+    expect(wrapper.vm.selectedTaskId).toBe(1)
+    wrapper.vm.onTaskRowClick({ id: 1 })
+    expect(wrapper.vm.selectedTaskId).toBe(1)
+    // 换不同行 → 切换
     wrapper.vm.onTaskRowClick({ id: 2 })
     expect(wrapper.vm.selectedTaskId).toBe(2)
     expect(wrapper.vm.selectedStockCode).toBe('000001.SZ')
+    // 换回 1 → 切换
+    wrapper.vm.onTaskRowClick({ id: 1 })
+    expect(wrapper.vm.selectedTaskId).toBe(1)
   })
 
   it('ptRowClass: 选中行 is-selected', async () => {

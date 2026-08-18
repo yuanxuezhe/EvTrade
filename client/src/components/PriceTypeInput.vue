@@ -131,49 +131,68 @@ const selectBoxStyle = computed(() => ({
 
 // el-input type=number 输入处理
 //
-// v107: 输入过程实时按 scale 截断小数位 (truncate, 不四舍五入).
-//   关键 UX 修复: emit 原 Number, 不 emit toFixed 字符串.
-//   v106 emit "1.00" 字符串 → el-input v-model 转 Number 后变 1 → 输入流被锁死,
-//   用户输 1.2 时变成 1.002 → truncate 回 1 → 光标卡住, "只能是 1.00".
-//   v107 emit 原 truncated 数字 (1.23 / 1.2 / 1) → el-input 正常显示, 不锁光标.
+// v107.2 (2026-08-17): 统一价格输入 UX 契约
+//   1. input 时: 按 stockScale 截断小数位 (超位即切尾, 输不进去)
+//   2. input 时: 不补 0 / 不 toFixed (避免光标跳转)
+//   3. blur 时:  按 stockScale toFixed 补 0 留盘 (与 formatPrice 显示口径一致)
+//   与 v82 el-input-number + :precision 组件语义一致, 适用于 type="number" 这种无内置 precision 的场景.
+//
+// 历史踩坑:
+//   v106: emit "1.00" 字符串 → el-input v-model 转 Number 后变 1 → 输入流被锁死, "输 1.2 变 1.002"
+//   v107: emit 原 Number → emit 0.7 → el-input 强写 "0.7" → 中间态 "0.70" 被吞, "0 打不出来"
+//   v107.1: emit 原字符串 → 解除光标锁定, 但出现 "0.7018" 不规范值也会保留
+//   v107.2 (当前): emit 原字符串 + 按 scale 截断小数 → 输 "0.70" 截到 3 位仍是 "0.70" (合法),
+//     输 "0.7018" → 截到 "0.701" (超 3 位即切), 输 "0.7" 原样保留, blur 时再补 0.
 //
 // scale 来源: stocksStore.stockScale(props.stockCode)
 //   股票 (000001.SZ): scale=2
 //   ETF (513050.SH): scale=3
-//   cache miss → 兜底 2 (v105 已落)
+//   cache miss → 兜底 2
 function onPriceInput(v) {
+  // el-input type=number 在中间态 (".", "0.", "") 时 v 可能是 "" / "." / "0." — 都原样 emit
   if (v === '' || v === null || v === undefined) {
     emit('update:price', v)
     return
   }
-  const n = Number(v)
-  if (!Number.isFinite(n)) {
-    // 非数字 (含 "." "." 等中间态) → 保留原值让 el-input 处理, 不强制清空
-    emit('update:price', v)
-    return
-  }
+  // 仅处理 string (element-plus v-model 走 input 事件传 string); 兜底也接受 number
+  const s = String(v)
+  // 按 scale 截断小数位 (Math.trunc 不四舍五入) — 超过 scale 的位直接截掉, 用户输不进去
+  //   scale=3, 输 "0.70"  → s="0.70"  → 截断后 "0.70"  → emit "0.70"
+  //   scale=3, 输 "0.701" → s="0.701" → 截断后 "0.701" → emit "0.701"
+  //   scale=3, 输 "0.7018" → s="0.7018" → 截断后 "0.701" → emit "0.701" (第 4 位被切)
+  //   scale=3, 输 "0.7"   → s="0.7"   → 截断后 "0.7"   → emit "0.7" (不足 3 位不补, blur 时补)
+  //   scale=3, 输 "0."    → s="0."    → 截断后 "0."    → emit "0." (中间态不动)
   const p = priceScale.value
-  // 截断小数位 (Math.trunc 不四舍五入) — 避免 11.126 被预先 round 成 11.13
-  const truncated = Math.trunc(n * Math.pow(10, p)) / Math.pow(10, p)
-  // emit Number (不是 toFixed 字符串) — 让 el-input 自然显示
-  // 例: scale=2, 输 "1.23" → n=1.23 → truncated=1.23 → emit 1.23 → 显示 "1.23"
-  //     scale=2, 输 "1.236" → n=1.236 → truncated=1.23 → emit 1.23 → 显示 "1.23"
-  //     scale=2, 输 "1" → n=1 → truncated=1 → emit 1 → 显示 "1" (不会变 "1.00")
-  if (n !== truncated) {
-    emit('update:price', truncated)
-  } else {
-    emit('update:price', n)
+  const dotIdx = s.indexOf('.')
+  if (dotIdx >= 0 && p >= 0) {
+    const intPart = s.slice(0, dotIdx)
+    const fracPart = s.slice(dotIdx + 1)
+    if (fracPart.length > p) {
+      const truncated = intPart + '.' + fracPart.slice(0, p)
+      emit('update:price', truncated)
+      return
+    }
   }
+  // 不超位 / 无小数点 / 非数字 — 原样 emit, 不补 0 不 toFixed
+  emit('update:price', s)
 }
 
-// v107: 失焦不再做任何处理 — 输入过程已 truncate + 已 emit 原数字,
-//   失焦时再操作只会引起光标跳动. 仅防御: 非数字 → 清空.
+// v107.2: 失焦统一按 scale 落盘 + 非数字清空
+//   输入过程中已 emit 原字符串 + 超位截断, 不再干预; 失焦时一次性按 scale toFixed 补 0 留盘
+//   例: scale=3, "0.7"  → 0.700 (toFixed 补 0); "0.70" → 0.700; "0.701" → 0.701
 function onPriceBlur() {
   const v = localPrice.value
   if (v === '' || v === null || v === undefined) return
   const n = Number(v)
   if (!Number.isFinite(n)) {
     emit('update:price', '')
+    return
+  }
+  const p = priceScale.value
+  // toFixed 补 0 (按 scale 精度补 0, 与显示 formatPrice 一致)
+  const fixed = n.toFixed(p)
+  if (String(n) !== fixed && String(v) !== fixed) {
+    emit('update:price', fixed)
   }
 }
 </script>

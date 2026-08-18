@@ -21,9 +21,10 @@ export function formatNumber(val) {
   return n.toLocaleString('zh-CN')
 }
 
-export function formatPrice(val, decimals = 2) {
-  return formatMoney(val, decimals)
-}
+// v2026-08-17: 删除旧的 formatPrice(val, decimals=2) — 它硬截 2 位, 会把 9.000 显示成 9.00,
+//   跟 "证券代码 3 位精度按精度补 0" 需求相反.
+//   价格统一走 `composables/usePricePrecision.js` 的 formatPrice(price, stockCode),
+//   按 stockScale(code) 精度补 0. 这里只保留金额/最新价工具 (formatMoney / formatPriceAuto).
 
 // v33.1.2: 价格智能格式化 — 保留最多 4 位有效小数, 去尾 0 (0.0039 → "0.0039", 12.5 → "12.5", 12.00 → "12")
 // 用于最新价/卖一价/买一价 sub 标签, 避免 0.0039 被 formatMoney 截成 "0.00"
