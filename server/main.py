@@ -31,6 +31,7 @@ from server.api import quote as quote_api  # 2026-07-09 quote-snapshot-subscribe
 from server.api import stocks as stocks_api  # v21 stock-info-crawler
 from server.api import stkpool as stkpool_api  # add-stkpool-module (v128)
 from server.api import sync as sync_api  # v21 stock-info-crawler
+from server.api import ai_analysis as ai_analysis_api  # AI 分析 (invest-analyst skill 集成, 同步 PoC)
 from server.api.admin import sys_status as admin_sys_status, reconcile as admin_reconcile, session as admin_session
 from server.middleware.request_logging import RequestLoggingMiddleware
 from server.rpc.client import get_rpc_client, close_rpc_client
@@ -301,6 +302,9 @@ app.include_router(stocks_api.router, prefix="/api/stocks", tags=["stocks"], dep
 app.include_router(stkpool_api.router, prefix="/api/stkpool", tags=["stkpool"], dependencies=_AUTH)  # add-stkpool-module
 # 2026-07-10 v21 stock-info-crawler: sync 管理 (admin only,内联守卫避免 _AUTH_ADMIN 未定义)
 app.include_router(sync_api.router, prefix="/api/sync", tags=["sync"], dependencies=[Depends(get_current_user)])
+# AI 分析 (PoC: 同步调用 invest-analyst demo 脚本, 单次 60-180s)
+#   前端 axios 调用: POST /api/ai/ai-analysis (baseURL=/api + router prefix=/ai + endpoint=/ai-analysis)
+app.include_router(ai_analysis_api.router, prefix="/api/ai", tags=["ai-analysis"], dependencies=_AUTH)
 
 
 # ---- Admin routes (login required, role checked by handler) ----------------

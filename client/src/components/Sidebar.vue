@@ -94,7 +94,9 @@ const menuItems = computed(() => {
     { divider: true, label: '基础信息' },
     { path: '/admin/stock-config', label: '证券信息', icon: DataBoard },
     // add-stkpool-module: 证券池 (与"证券信息"同级别顶级项, 紧跟其后, auth 通用鉴权)
-    { path: '/stkpool', label: '证券池', icon: Collection }
+    { path: '/stkpool', label: '证券池', icon: Collection },
+    // AI 分析 (invest-analyst skill 集成, 同步 PoC, 单次 60-180s)
+    { path: '/ai-analysis', label: 'AI 分析', icon: DataAnalysis }
   ]
   if (authStore.isAdmin) {
     base.push({ divider: true, label: '系统管理' })
