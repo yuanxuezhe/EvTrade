@@ -29,6 +29,8 @@ const CacheTrades = () => import('../views/CacheTrades.vue')
 const AdminStockConfig = () => import('../views/AdminStockConfig.vue')
 // add-stkpool-module: 证券池 (auth 通用鉴权, 不分 RBAC)
 const StkPool = () => import('../views/StkPool.vue')
+// stkpool-view-feature: 证券池只读视图 (仪表盘和交易下单之间, 自选用)
+const StkPoolView = () => import('../views/StkPoolView.vue')
 // AI 分析 (invest-analyst skill 集成, 同步 PoC)
 const AiAnalysis = () => import('../views/AiAnalysis.vue')
 
@@ -40,6 +42,8 @@ const routes = [
     meta: { title: '登录', layout: 'blank', public: true }
   },
   { path: '/', name: 'Dashboard', component: Dashboard, meta: { title: '仪表盘' } },
+  // stkpool-view-feature: 仪表盘和交易下单之间插入的只读证券池视图
+  { path: '/stkpool-view', name: 'StkPoolView', component: StkPoolView, meta: { title: '自选池' } },
   { path: '/positions', redirect: '/t0-trade' },
   { path: '/trade', name: 'Trade', component: Trade, meta: { title: '交易下单', requiresTrader: true } },
   { path: '/asset', name: 'Asset', component: Asset, meta: { title: '账户资金' } },

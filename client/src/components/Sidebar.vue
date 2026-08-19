@@ -66,7 +66,7 @@ import {
   Odometer, Wallet, Money, DataAnalysis, Tickets,
   Fold, Expand, TrendCharts, UserFilled, Files,
   Coin, Cpu, Setting, Operation, Box, Document, Refresh, DataBoard,
-  EditPen, DataLine, Collection,
+  EditPen, DataLine, Collection, Star,
 } from '@element-plus/icons-vue'
 import { useAuthStore } from '../stores/auth'
 
@@ -80,6 +80,8 @@ const authStore = useAuthStore()
 const menuItems = computed(() => {
   const base = [
     { path: '/', label: '仪表盘', icon: Odometer },
+    // stkpool-view-feature: 仪表盘和交易下单之间插入的只读证券池视图 (自选用)
+    { path: '/stkpool-view', label: '自选池', icon: Star },
     { path: '/trade', label: '交易下单', icon: TrendCharts },
     { divider: true, label: '策略交易' },
     // Sidebar 入口: 真正指向 /t0-trade (T0Trade.vue)
