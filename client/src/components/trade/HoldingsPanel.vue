@@ -54,7 +54,7 @@
 
         <template #column-last_price="{ row }">
           <span v-if="getLastPrice(row.stock_code) != null" class="text-mono" :class="priceClass(row)">
-            {{ formatMoneyExact(getLastPrice(row.stock_code)) }}
+            {{ formatPrice(getLastPrice(row.stock_code), row.stock_code) }}
           </span>
           <span v-else class="text-muted">—</span>
         </template>
@@ -196,11 +196,8 @@ function priceClass(row) {
   return 'text-flat'
 }
 
-function formatMoneyExact(v) {
-  const n = Number(v)
-  if (!Number.isFinite(n)) return '—'
-  return String(n)
-}
+// formatMoneyExact 已废弃 (v82.6): 用 formatPrice(price, stock_code) 替代
+//   原 formatMoneyExact = String(Number(v)), 0.900 -> "0.9" 不补 0
 
 function formatPercent(v) {
   const n = Number(v)

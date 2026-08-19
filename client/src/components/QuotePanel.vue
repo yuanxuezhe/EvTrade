@@ -54,7 +54,7 @@
           @click="emitApply(getAskPrice(i))"
         >
           <span class="qp-rank">卖{{ i }}</span>
-          <span class="qp-price" :class="heroClass">{{ formatNum(getAskPrice(i)) }}</span>
+          <span class="qp-price" :class="heroClass">{{ formatPricePanel(getAskPrice(i), props.stockCode) }}</span>
           <span class="qp-vol">{{ formatBigNum(getAskVol(i)) }}</span>
         </div>
       </div>
@@ -69,7 +69,7 @@
           @click="emitApply(getBidPrice(i))"
         >
           <span class="qp-rank">买{{ i }}</span>
-          <span class="qp-price" :class="heroClass">{{ formatNum(getBidPrice(i)) }}</span>
+          <span class="qp-price" :class="heroClass">{{ formatPricePanel(getBidPrice(i), props.stockCode) }}</span>
           <span class="qp-vol">{{ formatBigNum(getBidVol(i)) }}</span>
         </div>
       </div>
@@ -82,24 +82,24 @@
         class="qp-stats-cell is-clickable"
         :title="prevClose != null ? '点击带入委托价' : ''"
         @click="emitApply(prevClose)"
-      ><span class="qp-cell-label">昨收</span><span class="qp-cell-value" :class="heroClass">{{ formatNum(prevClose) }}</span></div>
+      ><span class="qp-cell-label">昨收</span><span class="qp-cell-value" :class="heroClass">{{ formatPricePanel(prevClose, props.stockCode) }}</span></div>
       <div
         class="qp-stats-cell is-clickable"
         :title="(quote?.fields?.[F.OPEN] != null && Number(quote?.fields?.[F.OPEN]) > 0) ? '点击带入委托价' : ''"
         @click="emitApply(quote?.fields?.[F.OPEN])"
-      ><span class="qp-cell-label">开盘</span><span class="qp-cell-value" :class="heroClass">{{ formatNum(quote?.fields?.[F.OPEN]) }}</span></div>
+      ><span class="qp-cell-label">开盘</span><span class="qp-cell-value" :class="heroClass">{{ formatPricePanel(quote?.fields?.[F.OPEN], props.stockCode) }}</span></div>
 
       <!-- Row 2 (原涨跌位置): 最高 / 最低 — v33 从原第 2/3 行移到这里 -->
       <div
         class="qp-stats-cell is-clickable"
         :title="(quote?.fields?.[F.HIGH] != null && Number(quote?.fields?.[F.HIGH]) > 0) ? '点击带入委托价' : ''"
         @click="emitApply(quote?.fields?.[F.HIGH])"
-      ><span class="qp-cell-label">最高</span><span class="qp-cell-value" :class="heroClass">{{ formatNum(quote?.fields?.[F.HIGH]) }}</span></div>
+      ><span class="qp-cell-label">最高</span><span class="qp-cell-value" :class="heroClass">{{ formatPricePanel(quote?.fields?.[F.HIGH], props.stockCode) }}</span></div>
       <div
         class="qp-stats-cell is-clickable"
         :title="(quote?.fields?.[F.LOW] != null && Number(quote?.fields?.[F.LOW]) > 0) ? '点击带入委托价' : ''"
         @click="emitApply(quote?.fields?.[F.LOW])"
-      ><span class="qp-cell-label">最低</span><span class="qp-cell-value" :class="heroClass">{{ formatNum(quote?.fields?.[F.LOW]) }}</span></div>
+      ><span class="qp-cell-label">最低</span><span class="qp-cell-value" :class="heroClass">{{ formatPricePanel(quote?.fields?.[F.LOW], props.stockCode) }}</span></div>
 
       <!-- Row 3: 振幅 / 均价 -->
       <div class="qp-stats-cell"><span class="qp-cell-label">振幅</span><span class="qp-cell-value">{{ amplitudeText }}</span></div>
@@ -133,6 +133,16 @@ import { computed, watch } from 'vue'
 import { useQuoteStore, FIELD } from '../stores/quote'
 import { useStocksStore } from '../stores/stocks'
 import { usePricePrecision } from '../composables/usePricePrecision'
+import { formatPrice as formatPriceByCode } from '../composables/usePricePrecision'
+
+/**
+ * 本地包装: 在 composable 的 formatPrice 基础上, 把空值返 '—' (保留面板友好性),
+ * 0 走 scale (e.g. 0.900 显示 '0.900', 与 T0Trade 快速做T 一致)
+ */
+function formatPricePanel(v, stockCode) {
+  if (v == null || v === '' || Number.isNaN(Number(v))) return '—'
+  return formatPriceByCode(v, stockCode)
+}
 
 const props = defineProps({
   stockCode: { type: String, default: '' }
@@ -188,7 +198,7 @@ const lastPrice = computed(() => {
   if (!q) return null
   return q.last_price ?? Number(q.fields?.[F.LAST]) ?? null
 })
-const lastPriceText = computed(() => formatNum(lastPrice.value))
+const lastPriceText = computed(() => formatPricePanel(lastPrice.value, props.stockCode))
 
 const prevClose = computed(() => Number(quote.value?.fields?.[F.PREV_CLOSE]) || null)
 
@@ -201,7 +211,7 @@ const changeNum = computed(() => {
 const changeText = computed(() => {
   const v = changeNum.value
   if (v == null) return '—'
-  return `${v >= 0 ? '+' : ''}${v.toFixed(2)}`
+  return `${v >= 0 ? '+' : ''}${formatPricePanel(v, props.stockCode)}`
 })
 
 const changePct = computed(() => {
@@ -286,13 +296,8 @@ function hasBid(level) {
 }
 
 // ─── 格式化 ───
-function formatNum(v) {
-  if (v == null || v === '') return '—'
-  const n = Number(v)
-  if (!Number.isFinite(n)) return '—'
-  if (n === 0) return '0'
-  return String(n)
-}
+// (formatNum 已废弃, 改用 composables/usePricePrecision.formatPrice (v82.6))
+//   通过本地包装 formatPricePanel(v, stockCode) 调用, 空值返 '—' 保留面板友好性
 function formatBigNum(v) {
   if (v == null || v === '') return '—'
   const n = Number(v)
