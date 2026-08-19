@@ -54,7 +54,7 @@
         v-if="selectedPoolId"
         :loading="loadingDetail"
         :columns="columns"
-        :data="detail"
+        :data="mergedData"
         row-key="stock_code"
         :empty-description="'该池暂无标的'"
         :highlight-current-row="false"
@@ -67,42 +67,31 @@
         </template>
 
         <template #column-last_price="{ row }">
-          <span :class="priceClass(row.stock_code)">
-            {{ formatPrice(row.stock_code) }}
-          </span>
+            <span :class="formatPriceClass(row)">{{ formatPrice(row) }}</span>
         </template>
-
         <template #column-change_pct="{ row }">
-          <span :class="changeClass(row.stock_code)">
-            {{ formatChangePct(row.stock_code) }}
-          </span>
+            <span :class="formatChangeClass(row)">{{ formatChangePct(row) }}</span>
         </template>
-
         <template #column-change_amt="{ row }">
-          <span :class="changeClass(row.stock_code)">
-            {{ formatChangeAmt(row.stock_code) }}
-          </span>
+            <span :class="formatChangeClass(row)">{{ formatChangeAmt(row) }}</span>
         </template>
-
-        <template #column-open="{ row }">
-          {{ formatField(row.stock_code, 'open_price') }}
+        <template #column-open_price="{ row }">
+            {{ formatField(row, 'open_price') }}
         </template>
-        <template #column-high="{ row }">
-          {{ formatField(row.stock_code, 'high_price') }}
+        <template #column-high_price="{ row }">
+            {{ formatField(row, 'high_price') }}
         </template>
-        <template #column-low="{ row }">
-          {{ formatField(row.stock_code, 'low_price') }}
+        <template #column-low_price="{ row }">
+            {{ formatField(row, 'low_price') }}
         </template>
         <template #column-prev_close="{ row }">
-          {{ formatField(row.stock_code, 'prev_close') }}
+            {{ formatField(row, 'prev_close') }}
         </template>
-
         <template #column-volume="{ row }">
-          {{ formatVolume(row.stock_code) }}
+            {{ formatVolume(row) }}
         </template>
-
         <template #column-amount="{ row }">
-          {{ formatAmount(row.stock_code) }}
+            {{ formatAmount(row) }}
         </template>
       </DataTableView>
 
@@ -124,14 +113,17 @@ import { useStocksStore } from '../stores/stocks'
 import DataTableView from '../components/DataTableView.vue'
 
 // ============ 列定义 ============
+// 列定义用 prop=字段名 (不是 slot), 让 DataTableView 的 sortedData 能直接 sort(row[field])
+// 行情字段通过 watch tick 的 mergedData 派生进 detail 行
+// 自展示走 #column-${key} inline slot — 支持 A股红涨绿跌 (formatter 只能返字符串, 无法加 class)
 const columns = [
   { key: 'stock_code', label: '标的', minWidth: 180, sortable: false },
   { key: 'last_price', label: '最新价', width: 100, align: 'right' },
   { key: 'change_pct', label: '涨跌幅', width: 100, align: 'right' },
   { key: 'change_amt', label: '涨跌额', width: 100, align: 'right' },
-  { key: 'open', label: '开盘', width: 100, align: 'right' },
-  { key: 'high', label: '最高', width: 100, align: 'right' },
-  { key: 'low', label: '最低', width: 100, align: 'right' },
+  { key: 'open_price', label: '开盘', width: 100, align: 'right' },
+  { key: 'high_price', label: '最高', width: 100, align: 'right' },
+  { key: 'low_price', label: '最低', width: 100, align: 'right' },
   { key: 'prev_close', label: '昨收', width: 100, align: 'right' },
   { key: 'volume', label: '成交量', width: 120, align: 'right' },
   { key: 'amount', label: '成交额', width: 140, align: 'right' },
@@ -155,6 +147,33 @@ const selectedPool = computed(
 
 // 当前池 codes (订阅用)
 const detailCodes = computed(() => detail.value.map(d => d.stock_code))
+
+// 合并行情字段进 detail 行 — 让 DataTableView 能 sort(row[field])
+// 监听 quoteStore.tick 每次 ws push 后重算
+// null 字段统一转为 undefined 保持 sort 行为一致 (null/undefined 排在最后)
+const mergedData = computed(() => {
+  const _ = quoteStore.tick  // 触发依赖
+  return detail.value.map(d => {
+    const q = quoteStore.get(d.stock_code) || {}
+    const last = q.last_price ?? null
+    const prev = q.prev_close ?? null
+    const change_amt = (last != null && prev != null) ? (last - prev) : null
+    const change_pct = (last != null && prev != null && prev !== 0)
+      ? ((last - prev) / prev) * 100 : null
+    return {
+      ...d,
+      last_price: last,
+      change_pct,
+      change_amt,
+      open_price: q.open_price ?? null,
+      high_price: q.high_price ?? null,
+      low_price: q.low_price ?? null,
+      prev_close: prev,
+      volume: q.volume ?? null,
+      amount: q.amount ?? null,
+    }
+  })
+})
 
 // race-condition guard
 let unmounted = false
@@ -226,11 +245,9 @@ async function refresh() {
   if (selectedPoolId.value) await loadDetail(selectedPoolId.value)
 }
 
-// ============ 行情格式化 ============
-// watch tick → 触发表格内模板重新求值 (quote.byCode Map 变化不自动响应)
-watch(() => quoteStore.tick, () => {
-  // no-op, 仅触发依赖 .get(code).xxx 的模板重渲染
-})
+// ============ 行情格式化 (slot inline) ============
+// 展示走 #column-${key} inline slot — 支持 A股红涨绿跌 (formatter 只能返字符串, 无法加 class)
+// 行 row = mergedData 行, 字段已包含 last_price / change_pct / change_amt / .../ null/undefined
 
 // 按标的 scale 决定小数位 (复用 stocksStore)
 function getScale(code) {
@@ -238,66 +255,72 @@ function getScale(code) {
   return stock?.scale ?? 2
 }
 
-function formatPrice(code) {
-  const p = quoteStore.getLastPrice(code)
-  if (p == null) return '--'
-  return p.toFixed(getScale(code))
+// 涨跌色 class (红涨绿跌, A股) — null/undefined 返空
+function priceColorClass(change) {
+  if (change == null) return ''
+  if (change > 0) return 'price-up'
+  if (change < 0) return 'price-down'
+  return ''
 }
 
-function formatChangePct(code) {
-  const pct = quoteStore.getChangePct(code)
-  if (pct == null) return '--'
-  const sign = pct > 0 ? '+' : ''
-  return `${sign}${pct.toFixed(2)}%`
+// 最新价 class — 跟随涨跌额染色
+function formatPriceClass(row) {
+  return priceColorClass(row.change_amt)
 }
 
-function formatChangeAmt(code) {
-  const q = quoteStore.get(code)
-  if (!q || q.last_price == null || q.prev_close == null) return '--'
-  const amt = q.last_price - q.prev_close
-  const sign = amt > 0 ? '+' : ''
-  return `${sign}${amt.toFixed(getScale(code))}`
+// 涨跌幅/涨跌额 class
+function formatChangeClass(row) {
+  return priceColorClass(row.change_pct)
 }
 
-function formatField(code, key) {
-  const q = quoteStore.get(code)
-  if (!q || q[key] == null) return '--'
-  return Number(q[key]).toFixed(getScale(code))
+// 最新价
+function formatPrice(row) {
+  const code = row.stock_code
+  const v = row.last_price
+  if (v == null) return '--'
+  return v.toFixed(getScale(code))
 }
 
-function formatVolume(code) {
-  const q = quoteStore.get(code)
-  if (!q || q.volume == null) return '--'
-  // 成交量 = 手, 1 手 = 100 股
-  return (q.volume / 100).toLocaleString('zh-CN', { maximumFractionDigits: 0 })
+// 涨跌幅
+function formatChangePct(row) {
+  const v = row.change_pct
+  if (v == null) return '--'
+  const sign = v > 0 ? '+' : ''
+  return `${sign}${v.toFixed(2)}%`
 }
 
-function formatAmount(code) {
-  const q = quoteStore.get(code)
-  if (!q || q.amount == null) return '--'
-  // 元 → 万元
-  return (q.amount / 10000).toLocaleString('zh-CN', {
+// 涨跌额
+function formatChangeAmt(row) {
+  const code = row.stock_code
+  const v = row.change_amt
+  if (v == null) return '--'
+  const sign = v > 0 ? '+' : ''
+  return `${sign}${v.toFixed(getScale(code))}`
+}
+
+// 通用字段 (open_price / high_price / low_price / prev_close)
+function formatField(row, key) {
+  const code = row.stock_code
+  const v = row[key]
+  if (v == null) return '--'
+  return Number(v).toFixed(getScale(code))
+}
+
+// 成交量 (手)
+function formatVolume(row) {
+  const v = row.volume
+  if (v == null) return '--'
+  return (v / 100).toLocaleString('zh-CN', { maximumFractionDigits: 0 })
+}
+
+// 成交额 (元 → 万元)
+function formatAmount(row) {
+  const v = row.amount
+  if (v == null) return '--'
+  return (v / 10000).toLocaleString('zh-CN', {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   })
-}
-
-function priceClass(code) {
-  const q = quoteStore.get(code)
-  if (!q || q.last_price == null || q.prev_close == null) return ''
-  const amt = q.last_price - q.prev_close
-  if (amt > 0) return 'price-up'
-  if (amt < 0) return 'price-down'
-  return 'price-flat'
-}
-
-function changeClass(code) {
-  const q = quoteStore.get(code)
-  if (!q || q.last_price == null || q.prev_close == null) return ''
-  const amt = q.last_price - q.prev_close
-  if (amt > 0) return 'price-up'
-  if (amt < 0) return 'price-down'
-  return ''
 }
 
 // ============ 错误处理 ============
@@ -406,5 +429,8 @@ watch(selectedPoolId, (newId, oldId) => {
 }
 .price-flat {
   color: var(--text-primary, #303133);
+}
+.cell-na {
+  color: var(--text-placeholder, #c0c4cc);
 }
 </style>
