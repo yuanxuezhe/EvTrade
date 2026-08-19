@@ -57,7 +57,7 @@
                   <span class="tl-time text-mono text-secondary">{{ item.time }}</span>
                 </div>
                 <div class="tl-body text-mono">
-                  {{ item.volume }} 股 @ ¥{{ formatPrice(item.price) }}
+                  {{ item.volume }} 股 @ ¥{{ formatPrice(item.price, item.stock_code) }}
                   <span class="tl-status" v-if="item.status !== '-'">
                     · <OrderStatusBadge :status="item.statusKey" size="sm" :remark="item.remark" :status_msg="item.status_msg" />
                   </span>
@@ -88,7 +88,7 @@
             <el-table-column prop="volume" label="数量" v-bind="COL.NUMBER" />
             <el-table-column prop="price" label="价格" v-bind="COL.MONEY">
               <template #default="{ row }">
-                <span class="text-mono">{{ formatPrice(row.price) }}</span>
+                <span class="text-mono">{{ formatPrice(row.price, row.stock_code) }}</span>
               </template>
             </el-table-column>
             <el-table-column prop="statusLabel" label="状态" v-bind="COL.STATUS">
@@ -128,6 +128,7 @@ const orderTradeList = computed(() => {
       time: order.order_time,
       type: '委托',
       order_type: order.order_type,
+      stock_code: order.stock_code,  // v82: 用于 formatPrice 按 scale 补 0
       volume: order.volume,
       price: order.price,
       status: STATUS_LABEL[order.status] || order.status,
@@ -142,6 +143,7 @@ const orderTradeList = computed(() => {
       time: trade.trade_time,
       type: '成交',
       order_type: trade.order_type,
+      stock_code: trade.stock_code,  // v82: 用于 formatPrice 按 scale 补 0
       volume: trade.volume,
       price: trade.price,
       status: '-',

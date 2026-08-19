@@ -109,9 +109,9 @@ import { Refresh } from '@element-plus/icons-vue'
 import { stkpoolApi } from '../api/stkpool'
 import { useQuoteStore } from '../stores/quote'
 import { useStocksStore } from '../stores/stocks'
+import { formatPrice as formatPriceByCode } from '../composables/usePricePrecision'
 
 import DataTableView from '../components/DataTableView.vue'
-
 // ============ 列定义 ============
 // 列定义用 prop=字段名 (不是 slot), 让 DataTableView 的 sortedData 能直接 sort(row[field])
 // 行情字段通过 watch tick 的 mergedData 派生进 detail 行
@@ -248,12 +248,7 @@ async function refresh() {
 // ============ 行情格式化 (slot inline) ============
 // 展示走 #column-${key} inline slot — 支持 A股红涨绿跌 (formatter 只能返字符串, 无法加 class)
 // 行 row = mergedData 行, 字段已包含 last_price / change_pct / change_amt / .../ null/undefined
-
-// 按标的 scale 决定小数位 (复用 stocksStore)
-function getScale(code) {
-  const stock = stocksStore.cache?.find?.(s => s.stock_code === code)
-  return stock?.scale ?? 2
-}
+// 价格统一走 composables/usePricePrecision.formatPrice(price, stockCode), scale 自动按 stocksStore.scale
 
 // 涨跌色 class (红涨绿跌, A股) — null/undefined 返空
 function priceColorClass(change) {
@@ -273,15 +268,12 @@ function formatChangeClass(row) {
   return priceColorClass(row.change_pct)
 }
 
-// 最新价
+// 最新价 — 按 stockScale(code) 补 0
 function formatPrice(row) {
-  const code = row.stock_code
-  const v = row.last_price
-  if (v == null) return '--'
-  return v.toFixed(getScale(code))
+  return row.last_price == null ? '--' : formatPriceByCode(row.last_price, row.stock_code)
 }
 
-// 涨跌幅
+// 涨跌幅 (固定 2 位百分比, 不走 scale)
 function formatChangePct(row) {
   const v = row.change_pct
   if (v == null) return '--'
@@ -289,35 +281,26 @@ function formatChangePct(row) {
   return `${sign}${v.toFixed(2)}%`
 }
 
-// 涨跌额
+// 涨跌额 — 按 stockScale(code) 补 0
 function formatChangeAmt(row) {
-  const code = row.stock_code
-  const v = row.change_amt
-  if (v == null) return '--'
-  const sign = v > 0 ? '+' : ''
-  return `${sign}${v.toFixed(getScale(code))}`
+  return row.change_amt == null ? '--' : formatPriceByCode(row.change_amt, row.stock_code)
 }
 
-// 通用字段 (open_price / high_price / low_price / prev_close)
+// 通用字段 (open_price / high_price / low_price / prev_close) — 按 scale 补 0
 function formatField(row, key) {
-  const code = row.stock_code
-  const v = row[key]
-  if (v == null) return '--'
-  return Number(v).toFixed(getScale(code))
+  return row[key] == null ? '--' : formatPriceByCode(row[key], row.stock_code)
 }
 
-// 成交量 (手)
+// 成交量 (手) — 与价格无关, 走千分位
 function formatVolume(row) {
-  const v = row.volume
-  if (v == null) return '--'
-  return (v / 100).toLocaleString('zh-CN', { maximumFractionDigits: 0 })
+  if (row.volume == null) return '--'
+  return (row.volume / 100).toLocaleString('zh-CN', { maximumFractionDigits: 0 })
 }
 
-// 成交额 (元 → 万元)
+// 成交额 (元 → 万元) — 与价格无关, 千分位 + 2 位
 function formatAmount(row) {
-  const v = row.amount
-  if (v == null) return '--'
-  return (v / 10000).toLocaleString('zh-CN', {
+  if (row.amount == null) return '--'
+  return (row.amount / 10000).toLocaleString('zh-CN', {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   })
