@@ -1,5 +1,5 @@
 from fastapi import WebSocket
-from typing import Dict, Set, Optional, Iterable
+from typing import Dict, Set, Optional, Iterable, List
 
 # v10 增: WS 广播日志 (server-interaction-logging REQ-LOG-003)
 #   顶层 import 走 lazy (在 broadcast 函数内), 避免触发 logflow 的循环链
@@ -246,6 +246,82 @@ class WSManager:
             self.clear_ws(ws)
             if channel in self.active_connections:
                 self.active_connections[channel].discard(ws)
+        return delivered
+
+    async def broadcast_batch(
+        self,
+        ticks: List[dict],
+        channel: str = "quote_update",
+        trace_id: Optional[str] = None,
+    ) -> int:
+        """v131 quote-batch-flush: 1 个 ws frame 装 N 个 tick (按订阅过滤)
+
+        - 输入: ticks = [{stock_code, last_price, snapshot, fields, body}, ...]
+        - 输出: 1 个 payload = {type:quote_batch, channel:quote_update, ticks:[...]}
+        - 推给所有 ws 客户端, 每个客户端只收到它订阅的 stock_code 对应 tick
+        - 返回: 实际推送成功的连接数
+
+        与 broadcast_to_stock 的对比:
+        - broadcast_to_stock: N tick = N ws frame (现状低效)
+        - broadcast_batch:    N tick (去重后) = 1 ws frame (新方案)
+        """
+        if not ticks:
+            return 0
+        # 索引 by stock_code, O(1) 查
+        tick_by_code = {t.get("stock_code"): t for t in ticks if t.get("stock_code")}
+        if not tick_by_code:
+            return 0
+
+        from server.utils.logflow import DIR_SVC_TO_FRONT, log_interaction
+
+        # 找出所有活跃 ws 客户端 (避免对无订阅 ws 推空 batch)
+        active_ws = list(self.active_connections.get(channel, set()))
+        if not active_ws:
+            return 0
+
+        delivered = 0
+        dead = set()
+        for ws in active_ws:
+            sub_patterns = self.subscriber_index.get(ws)
+            if not sub_patterns:
+                continue
+            # 过滤本 ws 订阅的 tick (按 pattern 子串匹配)
+            matched = []
+            for pattern in sub_patterns:
+                for stock_code, tick in tick_by_code.items():
+                    if match_pattern(stock_code, pattern) and tick not in matched:
+                        matched.append(tick)
+            if not matched:
+                continue
+            payload = {
+                "type": "quote_batch",
+                "channel": channel,
+                "data": {"ticks": matched},
+            }
+            try:
+                await ws.send_json(payload)
+                delivered += 1
+            except Exception as e:
+                log_interaction(
+                    DIR_SVC_TO_FRONT,
+                    "ws broadcast_batch 1 client disconnected",
+                    data={"err": "{}: {}".format(type(e).__name__, e), "tick_count": len(matched)},
+                    level="warning",
+                    trace_id=trace_id,
+                )
+                dead.add(ws)
+
+        for ws in dead:
+            self.clear_ws(ws)
+            self.active_connections.get(channel, set()).discard(ws)
+
+        log_interaction(
+            DIR_SVC_TO_FRONT,
+            "ws broadcast_batch ticks={} subs={}".format(len(tick_by_code), delivered),
+            data={"channel": channel, "ticks": len(tick_by_code), "clients": delivered},
+            level="info",
+            trace_id=trace_id,
+        )
         return delivered
 
 

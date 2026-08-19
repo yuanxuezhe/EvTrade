@@ -56,33 +56,42 @@ async fn handle_one(cfg: &Config, hub: &WsHub, pkt: Vec<u8>) {
     // 解码 body 文本（优先 gbk，旧 Python 端一直用 gbk；不行再 utf-8 lossy）
     let body = decode_best_effort(&pkt);
 
-    // 字段切分
-    let fields: Vec<String> = body.split('|').map(|s| s.to_string()).collect();
-
-    // 首字段 stock_code
-    let stock_code = fields.first().cloned().unwrap_or_default();
-
-    if cfg.debug {
-        let last = fields.get(2).cloned().unwrap_or_default();
-        let preview_len = fields.len().min(8);
-        tracing::debug!(
-            "[TICK] {} fields={} last={} preview={:?}",
-            stock_code,
-            fields.len(),
-            last,
-            &fields[..preview_len]
-        );
-    }
-
-    let payload = QuotePayload::new(stock_code, fields, body);
-    let text = match serde_json::to_string(&payload) {
-        Ok(s) => s,
-        Err(e) => {
-            warn!("[Worker] payload 序列化失败: {e}");
-            return;
+    // ---- v1.1 batch 模式: 帧内 ',' 分隔 N 条 tick, 向后兼容无 ',' 的单 tick ----
+    // 每条 tick 内部仍用 '|' 分字段
+    for tick_body in body.split(',') {
+        let tick_str = tick_body.trim();
+        if tick_str.is_empty() {
+            continue;
         }
-    };
-    hub.broadcast(text).await;
+
+        // 字段切分
+        let fields: Vec<String> = tick_str.split('|').map(|s| s.to_string()).collect();
+
+        // 首字段 stock_code
+        let stock_code = fields.first().cloned().unwrap_or_default();
+
+        if cfg.debug {
+            let last = fields.get(2).cloned().unwrap_or_default();
+            let preview_len = fields.len().min(8);
+            tracing::debug!(
+                "[TICK] {} fields={} last={} preview={:?}",
+                stock_code,
+                fields.len(),
+                last,
+                &fields[..preview_len]
+            );
+        }
+
+        let payload = QuotePayload::new(stock_code, fields, tick_str.to_string());
+        let text = match serde_json::to_string(&payload) {
+            Ok(s) => s,
+            Err(e) => {
+                warn!("[Worker] payload 序列化失败: {e}");
+                continue;
+            }
+        };
+        hub.broadcast(text).await;
+    }
 }
 
 /// 兼容 gbk（主路径）+ utf-8 lossy（兜底）。

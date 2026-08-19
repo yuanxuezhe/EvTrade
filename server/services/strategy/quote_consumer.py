@@ -8,6 +8,12 @@ strategy 表已删)。保留核心职责:
 - 解析 tick → 写 quote_cache (内存快照, 持久化由 main.py periodic flush task 负责)
 - broadcast_to_stock 推前端 WS /ws/quote_update (行情面板实时刷新)
 
+v131 (2026-08-19): quote_consumer 内合并 (quote-batch-flush)
+- 同一只股票在 flush 窗口内多次 tick → 只推最新一次 (股票级去重)
+- flush 触发: 50 条 tick OR 1 秒 (双阈值)
+- 前端 ws payload 格式不变 (单 tick), ws frame 数显著下降
+- 仍走 broadcast_to_stock 按订阅过滤
+
 📌 指数退避重连 1s → 2s → 4s → ... → 30s 上限
 📌 60s 无 tick → warn log (连接是活的, 行情低谷不重连)
 📌 30s 心跳 log 累计 tick 数
@@ -17,7 +23,7 @@ import asyncio
 import json
 import logging
 import time
-from typing import Dict, Optional
+from typing import Dict, Optional, List
 
 from server.cache.quote_cache import get_quote_cache as _get_quote_cache  # 2026-07-10 quote-cache
 from server.ws.manager import ws_manager  # change ws-quote-fanout: 让前端 /ws/quote_update 也能收到 tick
@@ -50,18 +56,37 @@ class QuoteConsumer:
         self._ws = None
         self._last_tick_ts: Optional[float] = None
         self._tick_count: int = 0
+        # v131 quote-batch-flush: 同窗口内同股票去重, 50 tick / 1秒 flush
+        from server.config import settings
+        self._batch_max: int = settings.QUOTE_BATCH_MAX
+        self._batch_flush_ms: int = settings.QUOTE_BATCH_FLUSH_MS
+        self._batch_buf: Dict[str, dict] = {}  # stock_code -> latest_tick
+        self._batch_lock = asyncio.Lock()
+        self._last_flush_ts: float = time.time()
+        self._flusher_task: Optional[asyncio.Task] = None
 
     # ── 生命周期 ──
 
     async def start(self) -> None:
         """入口：启动主循环（永久直到 stop）"""
-        log.info("quote_consumer starting: url=%s", self.url)
+        log.info("quote_consumer starting: url=%s batch_max=%d flush_ms=%d",
+                 self.url, self._batch_max, self._batch_flush_ms)
+        # v131: 启动定时 flush 后台 task (1秒兜底, 防止慢市累计)
+        self._flusher_task = asyncio.ensure_future(self._flusher_loop())
         await self._main_loop()
 
     async def stop(self) -> None:
         """置停止信号 + 关 ws"""
         log.info("quote_consumer stopping...")
         self._stop.set()
+        if self._flusher_task and not self._flusher_task.done():
+            self._flusher_task.cancel()
+            try:
+                await self._flusher_task
+            except asyncio.CancelledError:
+                pass
+        # v131: final flush 确保最后一批不丢
+        await self._flush_batch()
         if self._ws is not None:
             try:
                 await self._ws.close()
@@ -222,10 +247,11 @@ class QuoteConsumer:
         }
 
     async def _fanout_tick(self, tick: dict) -> None:
-        """写 quote_cache (内存 O(1)) + broadcast_to_stock 推前端 WS。
+        """v131 quote-batch-flush: 写 cache + 入 batch buffer (去重+合并)
 
-        2026-07-10 quote-cache: 不直接 MySQL UPSERT (锁死在 ~6/s), 写内存 cache,
-        持久化由 main.py periodic flush task 负责。
+        - 同窗口内同 stock_code 只保留最新 tick (股票级去重)
+        - 50 条 OR 1 秒触发 flush (双阈值)
+        - 仍走 broadcast_to_stock 按订阅过滤 (前端 ws payload 格式不变)
         """
         stock_code = tick.get("stock_code")
         snapshot = tick.get("snapshot") or {}
@@ -237,13 +263,55 @@ class QuoteConsumer:
         if snapshot and snapshot.get("stock_code"):
             quote_cache.set(snapshot)
 
-        # 按 stock_code 推订阅者 (严格过滤, 零订阅者不推)
+        # 入 batch buffer (锁内: dict set + 阈值判定)
+        should_flush = False
+        async with self._batch_lock:
+            self._batch_buf[stock_code] = tick
+            if len(self._batch_buf) >= self._batch_max:
+                should_flush = True
+
+        if should_flush:
+            await self._flush_batch()
+
+    async def _flush_batch(self) -> None:
+        """取出 buffer 内全部 tick (按订阅过滤) 并广播。
+
+        v131 quote-batch-flush: 1 个 ws frame 装 N 个 tick (按 ws 客户端订阅过滤)
+        """
+        async with self._batch_lock:
+            if not self._batch_buf:
+                return
+            ticks = list(self._batch_buf.values())
+            self._batch_buf.clear()
+            self._last_flush_ts = time.time()
+
+        # 1 次 broadcast_batch: 每个 ws 客户端收到自己订阅的 tick batch
         try:
-            await ws_manager.broadcast_to_stock(
-                stock_code, {"type": "quote", "channel": "quote_update", "data": tick}
-            )
+            delivered = await ws_manager.broadcast_batch(ticks=ticks)
         except Exception:
-            log.exception("ws quote broadcast failed (non-fatal)")
+            log.exception("ws quote_batch broadcast failed (non-fatal)")
+            delivered = 0
+
+        log.debug("[quote_consumer batch] flushed %d ticks, delivered to %d subs",
+                  len(ticks), delivered)
+
+    async def _flusher_loop(self) -> None:
+        """v131 定时 flush 后台 task: 防止慢市累积超 1 秒
+
+        每 self._batch_flush_ms/2 ms 检查一次 (100ms 间隔, 1s flush 上限误差 ±100ms)
+        """
+        interval = max(50, self._batch_flush_ms // 4) / 1000.0  # 100ms
+        while not self._stop.is_set():
+            try:
+                await asyncio.wait_for(self._stop.wait(), timeout=interval)
+                return  # stop 触发, 正常退出
+            except asyncio.TimeoutError:
+                pass  # 间隔到, 检查是否需要 flush
+            # 检查距上次 flush 是否超过阈值
+            now = time.time()
+            elapsed_ms = (now - self._last_flush_ts) * 1000
+            if elapsed_ms >= self._batch_flush_ms:
+                await self._flush_batch()
 
 
 # ─────────────── Module-level singleton（仿 RPClient 模式） ───────────────

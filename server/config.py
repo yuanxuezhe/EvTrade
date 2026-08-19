@@ -112,6 +112,11 @@ class Settings:
     # ---- 行情 (hqserver WS 地址, hq/hqserver.py 默认监听 8765) ----
     HQ_WS_URL: str = _env("HQ_WS_URL", "ws://127.0.0.1:8765")
 
+    # ---- v131 quote-batch-flush: quote_consumer 内合并参数 ----
+    # 50 tick 或 1 秒强制 flush (股票级去重, 同窗口内同股票只推最新)
+    QUOTE_BATCH_MAX = _env_int("QUOTE_BATCH_MAX", 50)
+    QUOTE_BATCH_FLUSH_MS = _env_int("QUOTE_BATCH_FLUSH_MS", 1000)
+
     # ---- Historical K-line data (v120+: strategy_exec/market_data/hq_history.py) ----
     # 拉历史 K 线走独立 RabbitMQ 通道(同 broker, 不同 exchange/queue)
     # 请求队列必须是 EvTrade.ReqHisHq (broker 端 his_hq 应答服务消费此队列)

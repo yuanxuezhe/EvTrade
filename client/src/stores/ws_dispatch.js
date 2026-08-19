@@ -60,6 +60,10 @@ export function dispatchPayload(payload) {
   if (t === 'ord_cfm') _onOrderCfm(payload.data)
   else if (t === 'trd_cfm') _onTradeCfm(payload.data)
   else if (t === 'quote') _onQuote(payload.data)
+  // v131 quote-batch-flush: 后端 quote_consumer 内合并后 1 个 ws frame 装 N 个 tick
+  //   payload = {type:'quote_batch', channel:'quote_update', data:{ticks:[{stock_code,last_price,...},...]}}
+  //   解开后每个 tick 走原 _onQuote 路径 (quote store / holdings store / 持仓面板)
+  else if (t === 'quote_batch') _onQuoteBatch(payload.data)
   // v91.4: 回测 / live task 进度推送 (ScriptTask.vue 详情实时刷新)
   else if (t === 'task_progress_update') _onTaskProgress(payload.data)
   // v99: 资金定时同步推送
@@ -202,6 +206,25 @@ function _onQuote(row) {
     const holdings = useHoldingsStore()
     holdings.applyQuote(row)
   } catch (_) { /* 同上 */ }
+}
+
+/**
+ * v131 quote-batch-flush: 后端 quote_consumer 内合并推送
+ *   payload = { ticks: [{stock_code, last_price, snapshot, fields, body}, ...] }
+ *   解开 N 个 tick 后逐条走 _onQuote (复用 quote store / holdings store 写入)
+ *
+ * 为什么不批量调 quoteStore.update:
+ *   - quoteStore.update 内部有订阅者通知, 单条 update 触发一次响应式 patch
+ *   - 批量 update 会让 Vue 在同 tick 内合并响应, 但内部 Pinia 仍是逐 tick 处理
+ *   - 直接循环 _onQuote 与原行为一致, 风险最小 (验证更快)
+ */
+function _onQuoteBatch(data) {
+  if (!data || !Array.isArray(data.ticks) || data.ticks.length === 0) return
+  // eslint-disable-next-line no-console
+  log.debug(`quote_batch: ${data.ticks.length} ticks`)
+  for (const tick of data.ticks) {
+    _onQuote(tick)
+  }
 }
 
 /**
