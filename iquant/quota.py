@@ -1,16 +1,16 @@
-#encoding: utf-8
+#encoding: gbk
 """
-QMT tick publisher: æ‰¹é‡ UDP å‘é€ (Buffer + åŒè§¦å‘:50 æ¡ OR 4KB OR 200ms å®šæ—¶å™¨)ã€‚
+QMT tick publisher: ÅúÁ¿ UDP ·¢ËÍ (Buffer + Ë«´¥·¢:50 Ìõ OR 4KB OR 200ms ¶¨Ê±Æ÷)¡£
 
-åè®® (v1.1 batch æ¨¡å¼):
-  - å•å¸§ UDP datagram = N æ¡ tick æ‹¼æ¥ (1 <= N <= QUOTA_BATCH_MAX)
-  - tick ä¹‹é—´ç”¨ ',' åˆ†éš”; å­—æ®µå†…ä»ç”¨ '|' åˆ†éš” (å‘åå…¼å®¹)
-  - å¸§å†…ç¦æ­¢å‡ºç° ',', æ‰€æœ‰ 32 å­—æ®µå€¼ (æ•°å­—/ASCII) å·²å¤©ç„¶ä¸åŒ…å« ','
+Ğ­Òé (v1.1 batch Ä£Ê½):
+  - µ¥Ö¡ UDP datagram = N Ìõ tick Æ´½Ó (1 <= N <= QUOTA_BATCH_MAX)
+  - tick Ö®¼äÓÃ ',' ·Ö¸ô; ×Ö¶ÎÄÚÈÔÓÃ '|' ·Ö¸ô (Ïòºó¼æÈİ)
+  - Ö¡ÄÚ½ûÖ¹³öÏÖ ',', ËùÓĞ 32 ×Ö¶ÎÖµ (Êı×Ö/ASCII) ÒÑÌìÈ»²»°üº¬ ','
 
-è§¦å‘æ¡ä»¶ (æ»¡è¶³ä»»ä¸€å³ flush):
-  1. ç´¯ç§¯ tick æ•° >= QUOTA_BATCH_MAX (é»˜è®¤ 50)
-  2. ä¼°ç®—å¸§å­—èŠ‚æ•° > QUOTA_MAX_FRAME_BYTES (é»˜è®¤ 4096, é˜² UDP åˆ†ç‰‡)
-  3. è‡ªä¸Šæ¬¡ flush èµ· QUOTA_FLUSH_MS ms (é»˜è®¤ 200, é˜²æ…¢å¸‚å»¶è¿Ÿæ— é™ç´¯ç§¯)
+´¥·¢Ìõ¼ş (Âú×ãÈÎÒ»¼´ flush):
+  1. ÀÛ»ı tick Êı >= QUOTA_BATCH_MAX (Ä¬ÈÏ 50)
+  2. ¹ÀËãÖ¡×Ö½ÚÊı > QUOTA_MAX_FRAME_BYTES (Ä¬ÈÏ 4096, ·À UDP ·ÖÆ¬)
+  3. ×ÔÉÏ´Î flush Æğ QUOTA_FLUSH_MS ms (Ä¬ÈÏ 200, ·ÀÂıÊĞÑÓ³ÙÎŞÏŞÀÛ»ı)
 """
 import os
 import socket
@@ -26,100 +26,100 @@ class Config:
     UDP_HOST = os.environ.get("QUOTA_UDP_HOST", "192.168.10.2")
     UDP_PORT = int(os.environ.get("QUOTA_UDP_PORT", "9001"))
 
-    # ---- batch è°ƒä¼˜å‚æ•° (opsx å­ä»»åŠ¡ 1: å®‰å…¨ä¾§é»˜è®¤) ----
-    # QUOTA_BATCH_MAX æ¡ tick Ã— æ¯æ¡ ~150B + 50 ä¸ª ',' â‰ˆ 7600B, å– 8192B ä¿è¯ size é˜ˆå€¼å…ˆè§¦å‘
+    # ---- batch µ÷ÓÅ²ÎÊı (opsx ×ÓÈÎÎñ 1: °²È«²àÄ¬ÈÏ) ----
+    # QUOTA_BATCH_MAX Ìõ tick ¡Á Ã¿Ìõ ~150B + 50 ¸ö ',' ¡Ö 7600B, È¡ 8192B ±£Ö¤ size ãĞÖµÏÈ´¥·¢
     QUOTA_BATCH_MAX = int(os.environ.get("QUOTA_BATCH_MAX", "50"))
     QUOTA_FLUSH_MS = int(os.environ.get("QUOTA_FLUSH_MS", "200"))
     QUOTA_MAX_FRAME_BYTES = int(os.environ.get("QUOTA_MAX_FRAME_BYTES", "8192"))
 
 config = Config()
 
-# È«ï¿½ï¿½Ô­ï¿½ï¿½ UDP ï¿½×½ï¿½ï¿½Ö£ï¿½ï¿½ï¿½ï¿½Ì¼ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
+# È«¾ÖÔ­Éú UDP Ì×½Ó×Ö£¨½ø³Ì¼¶±ğµ¥Àı£©
 _udp_sock = None
 _target_addr = (config.UDP_HOST, config.UDP_PORT)
 
 # ================================================================
-# 1.5 Batch Buffer (å­ä»»åŠ¡ 1)
+# 1.5 Batch Buffer (×ÓÈÎÎñ 1)
 # ================================================================
 class _BatchBuffer:
-    """åŒè§¦å‘æ‰¹é‡ç¼“å†²: size / bytes / timer ä¸‰é˜ˆå€¼ã€‚
+    """Ë«´¥·¢ÅúÁ¿»º³å: size / bytes / timer ÈıãĞÖµ¡£
 
-    - on_quote å›è°ƒçº¿ç¨‹: enqueue() å…¥é˜Ÿ, è§¦å‘ç«‹å³ flush åˆ¤å®š
-    - åå° timer çº¿ç¨‹: æ¯ QUOTA_FLUSH_MS æ‰«æ, è¶…æ—¶å¼ºåˆ¶ flush
-    - é”ç²’åº¦: ä»…ä¿æŠ¤ deque å¤´éƒ¨ä¸è®¡æ•°å™¨, ä¸´ç•ŒåŒº < 10us
+    - on_quote »Øµ÷Ïß³Ì: enqueue() Èë¶Ó, ´¥·¢Á¢¼´ flush ÅĞ¶¨
+    - ºóÌ¨ timer Ïß³Ì: Ã¿ QUOTA_FLUSH_MS É¨Ãè, ³¬Ê±Ç¿ÖÆ flush
+    - ËøÁ£¶È: ½ö±£»¤ deque Í·²¿Óë¼ÆÊıÆ÷, ÁÙ½çÇø < 10us
     """
 
     def __init__(self):
         self._lock = threading.Lock()
-        self._buf = deque()          # å…ƒç´ : å·²ç¼–ç çš„ tick bytes (gbk)
-        self._byte_len = 0           # ä¼°ç®—å¸§å­—èŠ‚æ•° (å« ',' åˆ†éš”ç¬¦)
+        self._buf = deque()          # ÔªËØ: ÒÑ±àÂëµÄ tick bytes (gbk)
+        self._byte_len = 0           # ¹ÀËãÖ¡×Ö½ÚÊı (º¬ ',' ·Ö¸ô·û)
         self._last_flush_ts = time.monotonic()
         self._timer = None
 
     def _start_timer(self):
-        """å¯åŠ¨åå°å®šæ—¶å™¨ (é¦–æ¬¡å…¥é˜Ÿæ—¶è°ƒç”¨ä¸€æ¬¡, ä¹‹åç”± timer è‡ªæˆ‘é‡å¯)ã€‚"""
+        """Æô¶¯ºóÌ¨¶¨Ê±Æ÷ (Ê×´ÎÈë¶ÓÊ±µ÷ÓÃÒ»´Î, Ö®ºóÓÉ timer ×ÔÎÒÖØÆô)¡£"""
         if self._timer is not None and self._timer.is_alive():
             return
         self._timer = threading.Thread(target=self._timer_loop, daemon=True)
         self._timer.start()
 
     def _timer_loop(self):
-        """åå°å®ˆæŠ¤çº¿ç¨‹: æ¯ QUOTA_FLUSH_MS æ‰«æä¸€æ¬¡, è§¦å‘ timeout flushã€‚"""
+        """ºóÌ¨ÊØ»¤Ïß³Ì: Ã¿ QUOTA_FLUSH_MS É¨ÃèÒ»´Î, ´¥·¢ timeout flush¡£"""
         interval_s = config.QUOTA_FLUSH_MS / 1000.0
         while True:
             time.sleep(interval_s)
             with self._lock:
                 if not self._buf:
-                    # ç©ºé˜Ÿåˆ—: é€€å‡º timer, ä¸‹æ¬¡ enqueue å†å¯åŠ¨
+                    # ¿Õ¶ÓÁĞ: ÍË³ö timer, ÏÂ´Î enqueue ÔÙÆô¶¯
                     return
                 if (time.monotonic() - self._last_flush_ts) * 1000 >= config.QUOTA_FLUSH_MS:
                     self._flush_locked()
 
     def enqueue(self, line: bytes):
-        """on_quote å›è°ƒè°ƒç”¨: å…¥é˜Ÿ + ä¸‰é˜ˆå€¼åˆ¤å®šã€‚"""
+        """on_quote »Øµ÷µ÷ÓÃ: Èë¶Ó + ÈıãĞÖµÅĞ¶¨¡£"""
         with self._lock:
             self._buf.append(line)
-            # ä¼°ç®—å¸§å­—èŠ‚æ•°: len(line) + 1 (',')
+            # ¹ÀËãÖ¡×Ö½ÚÊı: len(line) + 1 (',')
             self._byte_len += len(line) + 1
             self._start_timer()
 
-            # é˜ˆå€¼ 1: tick æ•° >= 50
-            # é˜ˆå€¼ 2: å¸§å­—èŠ‚æ•° > 4KB (é˜² UDP åˆ†ç‰‡)
+            # ãĞÖµ 1: tick Êı >= 50
+            # ãĞÖµ 2: Ö¡×Ö½ÚÊı > 4KB (·À UDP ·ÖÆ¬)
             if (len(self._buf) >= config.QUOTA_BATCH_MAX
                     or self._byte_len > config.QUOTA_MAX_FRAME_BYTES):
                 self._flush_locked()
-            # é˜ˆå€¼ 3: timer è´Ÿè´£
+            # ãĞÖµ 3: timer ¸ºÔğ
 
     def _flush_locked(self):
-        """ä¸´ç•ŒåŒºå†…: å¼¹å‡ºæ‰€æœ‰ tick, ',' join, sendtoã€‚"""
+        """ÁÙ½çÇøÄÚ: µ¯³öËùÓĞ tick, ',' join, sendto¡£"""
         if not self._buf:
             return
         frame = b",".join(self._buf)
         self._buf.clear()
         self._byte_len = 0
         self._last_flush_ts = time.monotonic()
-        # sendto å¿…é¡»æ”¾é”å¤– (ç½‘ç»œ IO å¯èƒ½é˜»å¡, ä¼šå¡ä½ enqueue)
-        # ç”¨ list æŠŠç›®æ ‡ä¼ å‡º, é‡Šæ”¾é”åå†å‘
+        # sendto ±ØĞë·ÅËøÍâ (ÍøÂç IO ¿ÉÄÜ×èÈû, »á¿¨×¡ enqueue)
+        # ÓÃ list °ÑÄ¿±ê´«³ö, ÊÍ·ÅËøºóÔÙ·¢
         _pending_frames.append(frame)
 
     def flush_now(self):
-        """å¤–éƒ¨å¼ºåˆ¶ flush (stop / è°ƒè¯•ç”¨)ã€‚"""
+        """Íâ²¿Ç¿ÖÆ flush (stop / µ÷ÊÔÓÃ)¡£"""
         with self._lock:
             self._flush_locked()
 
-# å…¨å±€: ç¼“å†² + å¾…å‘é€å¸§é˜Ÿåˆ— (é”å¤–å¼‚æ­¥å‘é€)
+# È«¾Ö: »º³å + ´ı·¢ËÍÖ¡¶ÓÁĞ (ËøÍâÒì²½·¢ËÍ)
 _buffer = _BatchBuffer()
-_pending_frames = deque()  # é”å¤–çº¿ç¨‹å®‰å…¨çš„ append/sendto é˜Ÿåˆ—
+_pending_frames = deque()  # ËøÍâÏß³Ì°²È«µÄ append/sendto ¶ÓÁĞ
 _pending_lock = threading.Lock()
 _sender_started = False
 _sender_lock = threading.Lock()
 
 
 def _ensure_sender():
-    """å¯åŠ¨å¸¸é©» sender çº¿ç¨‹ (åªèµ·ä¸€æ¬¡), è½®è¯¢ _pending_frames æ‰§è¡Œ sendtoã€‚
+    """Æô¶¯³£×¤ sender Ïß³Ì (Ö»ÆğÒ»´Î), ÂÖÑ¯ _pending_frames Ö´ĞĞ sendto¡£
 
-    ä¸ºä»€ä¹ˆå¿…é¡»å¸¸é©»: å®šæ—¶å™¨ flush å‡ºæ¥çš„ frame å¿…é¡»æœ‰çº¿ç¨‹æ¥ sendto,
-    å¦åˆ™å³ä½¿ buffer è§¦å‘äº† flush, æ•°æ®ä¹Ÿåªèººåœ¨ _pending_frames é‡Œä¸å‡ºå»ã€‚
+    ÎªÊ²Ã´±ØĞë³£×¤: ¶¨Ê±Æ÷ flush ³öÀ´µÄ frame ±ØĞëÓĞÏß³ÌÀ´ sendto,
+    ·ñÔò¼´Ê¹ buffer ´¥·¢ÁË flush, Êı¾İÒ²Ö»ÌÉÔÚ _pending_frames Àï²»³öÈ¥¡£
     """
     global _sender_started
     with _sender_lock:
@@ -131,11 +131,11 @@ def _ensure_sender():
         while True:
             with _pending_lock:
                 if not _pending_frames:
-                    # æ²¡æ•°æ®å°±ç¡ä¸€ä¼š, é¿å…ç©ºè½¬ CPU
+                    # Ã»Êı¾İ¾ÍË¯Ò»»á, ±ÜÃâ¿Õ×ª CPU
                     time.sleep(0.001)
                     continue
                 frame = _pending_frames.popleft()
-            # ç­‰ socket å°±ç»ª (test fixture å¯èƒ½å…ˆäº init å®Œæˆ, æˆ–ä¸´æ—¶ç½‘ç»œæŠ–åŠ¨)
+            # µÈ socket ¾ÍĞ÷ (test fixture ¿ÉÄÜÏÈÓÚ init Íê³É, »òÁÙÊ±ÍøÂç¶¶¶¯)
             sock = None
             for _ in range(100):
                 sock = _udp_sock
@@ -143,7 +143,7 @@ def _ensure_sender():
                     break
                 time.sleep(0.001)
             else:
-                # 100ms è¿˜æ²¡ socket, æ”¾å¼ƒè¿™å¸§ (é¿å…ç§¯å‹)
+                # 100ms »¹Ã» socket, ·ÅÆúÕâÖ¡ (±ÜÃâ»ıÑ¹)
                 continue
             try:
                 sock.sendto(frame, _target_addr)
@@ -155,14 +155,14 @@ def _ensure_sender():
 
 
 def safe_get(lst, idx, default=0):
-    """ï¿½ï¿½È«ï¿½ï¿½È¡ï¿½ï¿½ï¿½ï¿½Ö¸ï¿½ï¿½ï¿½Â±ï¿½Ôªï¿½Ø£ï¿½ï¿½ï¿½ï¿½ï¿½ IndexError"""
+    """°²È«»ñÈ¡Êı×éÖ¸¶¨ÏÂ±êÔªËØ£¬·ÀÓù IndexError"""
     if isinstance(lst, (list, tuple)) and len(lst) > idx:
         return lst[idx]
     return default
 
 
 def format_quote(datas) -> list:
-    """ï¿½ï¿½Ê½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Îª GBK ï¿½Ö½Ú´ï¿½"""
+    """¸ñÊ½»¯ĞĞÇéÊı¾İÎª GBK ×Ö½Ú´®"""
     def fmt_price(v) -> str:
         try:
             s = f"{float(v):.4f}".rstrip("0").rstrip(".")
@@ -194,7 +194,7 @@ def format_quote(datas) -> list:
             fmt_price(q.get("transactionNum", 0)),
         ]
 
-        # ï¿½ï¿½ï¿½ï¿½ 5 ï¿½ï¿½
+        # ÂòÂô 5 µµ
         for i in range(5):
             fields.append(fmt_price(safe_get(ask_prices, i, 0)))
         for i in range(5):
@@ -214,24 +214,19 @@ def format_quote(datas) -> list:
 def init(ContextInfo) -> None:
     global _udp_sock
     try:
-        # åˆå§‹åŒ–å…¨å±€ UDP Socket
+        # ³õÊ¼»¯È«¾Ö UDP Socket
         if _udp_sock is None:
             _udp_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            # åŠ å¤§ç³»ç»Ÿå‘é€ç¼“å­˜
+            # ¼Ó´óÏµÍ³·¢ËÍ»º´æ
             _udp_sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 4 * 1024 * 1024)
             print(f"[Init] Direct UDP Socket initialized -> {_target_addr}", flush=True)
     except Exception as e:
         print(f"[Init Error] Failed to create UDP socket: {e}", flush=True)
 
-    # å¯åŠ¨å¸¸é©» sender çº¿ç¨‹ (æ‰¹é‡æ¨¡å¼ä¸‹, å®šæ—¶å™¨ flush çš„å¸§å¿…é¡»æœ‰çº¿ç¨‹ sendto)
+    # Æô¶¯³£×¤ sender Ïß³Ì (ÅúÁ¿Ä£Ê½ÏÂ, ¶¨Ê±Æ÷ flush µÄÖ¡±ØĞëÓĞÏß³Ì sendto)
     _ensure_sender()
 
-    # ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
-    etfs = list(dict.fromkeys(ContextInfo.get_stock_list_in_sector("ï¿½ï¿½Ö¤ETF")))
-    if not etfs:
-        etfs = list(dict.fromkeys(ContextInfo.get_stock_list_in_sector("ï¿½ï¿½ï¿½ï¿½Aï¿½ï¿½")))
-    print(f"[Init] Subscribed to {len(etfs)} symbols", flush=True)
-
+    # ¶©ÔÄĞĞÇé
     ContextInfo.subscribe_whole_quote(["SZ", "SH"], on_quote)
 
 
@@ -242,8 +237,8 @@ def on_quote(datas) -> None:
 
     try:
         lines = format_quote(datas)
-        # æ‰¹é‡å…¥é˜Ÿ: ç”± _BatchBuffer åˆ¤å®š 50 æ¡ / 4KB / 200ms ä¸‰é˜ˆå€¼
-        # å¸¸é©» sender çº¿ç¨‹è´Ÿè´£ sendto (è§ _ensure_sender)
+        # ÅúÁ¿Èë¶Ó: ÓÉ _BatchBuffer ÅĞ¶¨ 50 Ìõ / 4KB / 200ms ÈıãĞÖµ
+        # ³£×¤ sender Ïß³Ì¸ºÔğ sendto (¼û _ensure_sender)
         for line in lines:
             _buffer.enqueue(line)
     except Exception as e:
