@@ -1,16 +1,15 @@
 #encoding: gbk
 """
-QMT tick publisher: 批量 UDP 发送 (Buffer + 双触发:50 条 OR 4KB OR 200ms 定时器)。
+QMT tick publisher: 批量 UDP 发送 (Buffer + 按 50 条切片: datas <= 50 一帧发, > 50 分多帧发)。
 
 协议 (v1.1 batch 模式):
   - 单帧 UDP datagram = N 条 tick 拼接 (1 <= N <= QUOTA_BATCH_MAX)
   - tick 之间用 ',' 分隔; 字段内仍用 '|' 分隔 (向后兼容)
   - 帧内禁止出现 ',', 所有 32 字段值 (数字/ASCII) 已天然不包含 ','
 
-触发条件 (满足任一即 flush):
-  1. 累积 tick 数 >= QUOTA_BATCH_MAX (默认 50)
-  2. 估算帧字节数 > QUOTA_MAX_FRAME_BYTES (默认 4096, 防 UDP 分片)
-  3. 自上次 flush 起 QUOTA_FLUSH_MS ms (默认 200, 防慢市延迟无限累积)
+触发条件 (size 切片):
+  on_quote 整批 datas format 后, 按 QUOTA_BATCH_MAX (默认 50) 切片
+  每片 "," join 后立即发送 - 不再使用 timer / bytes 阈值
 """
 import os
 import socket
@@ -29,7 +28,7 @@ class Config:
     # ---- batch 调优参数 (opsx 子任务 1: 安全侧默认) ----
     # QUOTA_BATCH_MAX 条 tick × 每条 ~150B + 50 个 ',' ≈ 7600B, 取 8192B 保证 size 阈值先触发
     QUOTA_BATCH_MAX = int(os.environ.get("QUOTA_BATCH_MAX", "50"))
-    QUOTA_FLUSH_MS = int(os.environ.get("QUOTA_FLUSH_MS", "200"))
+    # QUOTA_FLUSH_MS 已删: on_quote 整批按 50 切片发, 不再 timer 等待
     QUOTA_MAX_FRAME_BYTES = int(os.environ.get("QUOTA_MAX_FRAME_BYTES", "8192"))
 
 config = Config()
@@ -54,41 +53,18 @@ class _BatchBuffer:
         self._buf = deque()          # 元素: 已编码的 tick bytes (gbk)
         self._byte_len = 0           # 估算帧字节数 (含 ',' 分隔符)
         self._last_flush_ts = time.monotonic()
-        self._timer = None
-
-    def _start_timer(self):
-        """启动后台定时器 (首次入队时调用一次, 之后由 timer 自我重启)。"""
-        if self._timer is not None and self._timer.is_alive():
-            return
-        self._timer = threading.Thread(target=self._timer_loop, daemon=True)
-        self._timer.start()
-
-    def _timer_loop(self):
-        """后台守护线程: 每 QUOTA_FLUSH_MS 扫描一次, 触发 timeout flush。"""
-        interval_s = config.QUOTA_FLUSH_MS / 1000.0
-        while True:
-            time.sleep(interval_s)
-            with self._lock:
-                if not self._buf:
-                    # 空队列: 退出 timer, 下次 enqueue 再启动
-                    return
-                if (time.monotonic() - self._last_flush_ts) * 1000 >= config.QUOTA_FLUSH_MS:
-                    self._flush_locked()
 
     def enqueue(self, line: bytes):
-        """on_quote 回调调用: 入队 + 三阈值判定。"""
+        """on_quote 回调调用: 入队 (size-only 阈值: tick 数 >= 50 立即 flush)。"""
         with self._lock:
             self._buf.append(line)
-            # 估算帧字节数: len(line) + 1 (',')
+            # 累计帧字节数: len(line) + 1 (',')
             self._byte_len += len(line) + 1
-            self._start_timer()
 
-            # 阈值 1: tick 数 >= 50
-            # 阈值 2: 帧字节数 > 4KB (防 UDP 分片)
-            if (len(self._buf) >= config.QUOTA_BATCH_MAX
-                    or self._byte_len > config.QUOTA_MAX_FRAME_BYTES):
+            # 唯一阈值: tick 数 >= 50 立即 flush
+            # (bytes / timer 阈值已删, on_quote 整批按 50 切片, 中间不留 buffer)
+            if len(self._buf) >= config.QUOTA_BATCH_MAX:
                 self._flush_locked()
-            # 阈值 3: timer 负责
 
     def _flush_locked(self):
         """临界区内: 弹出所有 tick, ',' join, sendto。"""
@@ -237,10 +213,15 @@ def on_quote(datas) -> None:
 
     try:
         lines = format_quote(datas)
-        # 批量入队: 由 _BatchBuffer 判定 50 条 / 4KB / 200ms 三阈值
-        # 常驻 sender 线程负责 sendto (见 _ensure_sender)
-        for line in lines:
-            _buffer.enqueue(line)
+        # 按 QUOTA_BATCH_MAX (默认 50) 切片 - <= 50 一次发, > 50 分多次发
+        # 每片由 _BatchBuffer.enqueue 累积到阈值后立刻 flush
+        # (不再使用 timer / bytes 阈值)
+        for i in range(0, len(lines), config.QUOTA_BATCH_MAX):
+            chunk = lines[i:i + config.QUOTA_BATCH_MAX]
+            for line in chunk:
+                _buffer.enqueue(line)
+            # 一片入序完成, 强制 flush 本片 (避免下一片污染)
+            _buffer.flush_now()
     except Exception as e:
         print(f"[on_quote Send Error] {e}\n{traceback.format_exc()}", flush=True)
 
