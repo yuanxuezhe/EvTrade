@@ -244,13 +244,18 @@ const statusSymbol = computed(() => {
 })
 
 // ─── 衍生: 均价 / 振幅 / 涨/跌停 ───
+// 2026-08-20 修复均价量级错误:
+//   QMT xtquant tick.volume 单位是"手" (1 手 = 100 股), 不是股。
+//   之前直接 amount / volume, 公式算出的"均价"是真实均价的 100 倍
+//   (例如 511360.SH 价格 113.82, 算出均价 11382.13 差 100 倍)。
+//   amount 单位是元 (不需要换算), 所以均价 = amount / (volume * 100) 元/股。
 const avgPrice = computed(() => {
   const q = quote.value
   if (!q || !q.fields) return null
   const amount = Number(q.fields[F.AMOUNT])
-  const volume = Number(q.fields[F.VOLUME])
+  const volume = Number(q.fields[F.VOLUME])  // 单位: 手
   if (!Number.isFinite(amount) || !Number.isFinite(volume) || volume === 0) return null
-  return amount / volume
+  return amount / (volume * 100)  // volume(手) × 100 = 真实股数
 })
 // v82.2: 均价按 stock scale 四舍五入 (与限价/涨跌停一致, 默认 2, ETF/可转债 3)
 const avgPriceText = computed(() => avgPrice.value != null ? avgPrice.value.toFixed(pricePrecision.value) : '—')
