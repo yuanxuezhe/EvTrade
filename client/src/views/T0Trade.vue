@@ -169,14 +169,8 @@
             <span class="text-mono">{{ formatNumber(holdingsStore.positions?.find(p=>p.stock_code===row.stock_code)?.vol ?? 0) }}</span>
           </template>
           <template #column-last_price="{ row }">
-            <span class="text-mono">{{ formatPrice(quoteStore.getLastPrice(row.stock_code), row.stock_code) }}</span>
-            <span :class="(quoteStore.getChangePct(row.stock_code) ?? 0) >= 0 ? 'up' : 'down'" class="col-change"
-              style="margin-left: 4px; font-size: 12px">
-              <template v-if="quoteStore.getChangePct(row.stock_code) != null">
-                {{ (quoteStore.getChangePct(row.stock_code) ?? 0) >= 0 ? '+' : '' }}{{ (quoteStore.getChangePct(row.stock_code)).toFixed(2) }}%
-              </template>
-              <template v-else>—</template>
-            </span>
+            <!-- 2026-08-20: 改用通用 LivePriceCell (与 HoldingsPanel / CachePositions 三处一致) -->
+            <LivePriceCell :stock-code="row.stock_code" />
           </template>
           <template #column-t0_pnl="{ row }">
             <span class="text-mono" :class="(t0PnlCell(row)?.total_pnl ?? 0) >= 0 ? 'up' : 'down'">
@@ -347,6 +341,7 @@ import DataTableView from '../components/DataTableView.vue'
 import T0TaskDetail from '../components/trade/T0TaskDetail.vue'
 import T0TaskCreateDialog from '../components/trade/T0TaskCreateDialog.vue'
 import HoldingsPanel from '../components/trade/HoldingsPanel.vue'
+import LivePriceCell from '../components/cells/LivePriceCell.vue'  // 2026-08-20: 最新价+涨跌幅通用 cell
 import PriceTypeInput from '../components/PriceTypeInput.vue'
 import { PriceType } from '../constants/priceType.js'
 import { useT0OrderSubmit } from '../composables/useT0OrderSubmit'

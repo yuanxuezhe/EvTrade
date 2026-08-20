@@ -52,11 +52,9 @@
           <span class="text-mono">{{ row.cost_price != null ? formatPrice(row.cost_price, row.stock_code) : '—' }}</span>
         </template>
 
+        <!-- 2026-08-20: 最新价 + 涨跌幅合并到单 cell (复用 LivePriceCell, Trade/T0Trade/CachePositions 三处统一) -->
         <template #column-last_price="{ row }">
-          <span v-if="getLastPrice(row.stock_code) != null" class="text-mono" :class="priceClass(row)">
-            {{ formatPrice(getLastPrice(row.stock_code), row.stock_code) }}
-          </span>
-          <span v-else class="text-muted">—</span>
+          <LivePriceCell :stock-code="row.stock_code" />
         </template>
 
         <template #column-market_value="{ row }">
@@ -100,6 +98,7 @@
 <script setup>
 import { computed, ref } from 'vue'
 import DataTableView from '../DataTableView.vue'
+import LivePriceCell from '../cells/LivePriceCell.vue'  // 2026-08-20: 最新价+涨跌幅合并 cell
 import { formatNumber, formatMoney } from '../../utils/format'
 import { formatPrice } from '../../composables/usePricePrecision'
 import { stockName } from '../../utils/stockNames'
@@ -179,11 +178,29 @@ function getReturnRate(row) {
   return holdingsStore.getReturnRate ? holdingsStore.getReturnRate(row) : null
 }
 
+// 2026-08-20: 最新价后面跟涨跌幅 (行情推送驱动, 复用 quoteStore.getChangePct 返回 %)
+function getChangePct(code) {
+  void quoteTickTrigger.value
+  return quoteStore.getChangePct(code)
+}
+
 function profitClass(v) {
   if (v == null) return ''
   if (v > 0) return 'text-up'
   if (v < 0) return 'text-down'
   return 'text-flat'
+}
+function pctClass(v) {
+  // quoteStore.getChangePct 返回的是百分比 (e.g. 1.23 表示 +1.23%)
+  if (v == null || !Number.isFinite(v)) return ''
+  if (v > 0) return 'text-up'
+  if (v < 0) return 'text-down'
+  return 'text-flat'
+}
+function formatPct(v) {
+  if (v == null || !Number.isFinite(v)) return '—'
+  const sign = v > 0 ? '+' : ''
+  return `${sign}${Number(v).toFixed(2)}%`
 }
 function priceClass(row) {
   const price = getLastPrice(row.stock_code)
@@ -213,7 +230,7 @@ const holdingsColumns = [
   { key: 'vol', label: '持仓', vBind: COL.NUMBER },
   { key: 'avl_vol', label: '可用', vBind: COL.NUMBER },
   { key: 'cost_price', label: '成本', vBind: COL.PRICE },
-  { key: 'last_price', label: '最新', vBind: COL.PRICE },
+  { key: 'last_price', label: '最新价(涨跌幅)', width: 140, sortable: false },  // 2026-08-20: 用 LivePriceCell, 列名更新
   { key: 'market_value', label: '市值', vBind: COL.MONEY, sortable: false },
   { key: 'day_pnl', label: '当日盈亏', vBind: COL.MONEY, sortable: false },
   { key: 'profit', label: '浮动盈亏', vBind: COL.MONEY, sortable: false },
