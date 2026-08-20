@@ -11,10 +11,15 @@ import { userApi } from '../api'
 
 
 export function useUserActions() {
+  // ===== dialog refs (由外部 Users.vue 通过 actions.dialogRefs.edit = ref 注入) =====
+  // 不能用 reactive 包 ref — Vue 会自动 unwrap ref 到 .value, 导致 dialogRefs.edit
+  // 直接是组件 instance, 而内部期望拿 ref 再 .value 才是 instance。
+  // 用普通对象 + Vue 不会 unwrap, dialogRefs.edit 就是 ref 对象本身, .value 拿到组件 instance。
+  const dialogRefs = { edit: null, pwd: null }
+
   // ===== 新建 / 编辑 弹窗 =====
   const editVisible = ref(false)
   const editLoading = ref(false)
-  const editDialogRef = ref(null)  // 外部挂 dialog instance，submit 时调 validate
   const editForm = reactive({
     id: null,
     username: '',
@@ -75,8 +80,16 @@ export function useUserActions() {
   }
 
   async function submitEdit() {
-    if (!editDialogRef.value) return false
-    const valid = await editDialogRef.value.validate().catch(() => false)
+    // dialogRefs.edit 由外部注入 (Users.vue: actions.dialogRefs.edit = editDialogEl)
+    const dlgRef = dialogRefs.edit
+    if (!dlgRef || !dlgRef.value) {
+      console.error('[useUserActions] editDialogRef not injected by parent')
+      return false
+    }
+    const valid = await dlgRef.value.validate().catch((err) => {
+      console.debug('[useUserActions] form validate rejected:', err)
+      return false
+    })
     if (!valid) return false
     editLoading.value = true
     try {
@@ -112,7 +125,6 @@ export function useUserActions() {
   // ===== 重置密码 弹窗 =====
   const pwdVisible = ref(false)
   const pwdLoading = ref(false)
-  const pwdDialogRef = ref(null)
   const pwdTarget = ref(null)
   const pwdForm = reactive({ new_password: '', confirm: '' })
 
@@ -139,8 +151,12 @@ export function useUserActions() {
   }
 
   async function submitResetPwd() {
-    if (!pwdDialogRef.value) return false
-    const valid = await pwdDialogRef.value.validate().catch(() => false)
+    const dlgRef = dialogRefs.pwd
+    if (!dlgRef || !dlgRef.value) {
+      console.error('[useUserActions] pwdDialogRef not injected by parent')
+      return false
+    }
+    const valid = await dlgRef.value.validate().catch(() => false)
     if (!valid) return false
     pwdLoading.value = true
     try {
@@ -205,11 +221,13 @@ export function useUserActions() {
   }
 
   return {
+    // dialog refs 容器 (外部 Users.vue: actions.dialogRefs.edit = ref, .pwd = ref)
+    dialogRefs,
     // edit
-    editVisible, editLoading, editDialogRef, editForm, editRules,
+    editVisible, editLoading, editForm, editRules,
     openCreate, openEdit, submitEdit,
     // reset password
-    pwdVisible, pwdLoading, pwdDialogRef, pwdForm, pwdTarget, pwdRules,
+    pwdVisible, pwdLoading, pwdForm, pwdTarget, pwdRules,
     openResetPwd, submitResetPwd,
     // inline actions
     toggleActive, confirmDelete,

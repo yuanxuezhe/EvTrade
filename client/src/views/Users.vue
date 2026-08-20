@@ -213,11 +213,14 @@ function resetFilters() {
 // ===== Actions (弹窗状态 + 业务方法) =====
 const actions = useUserActions()
 
-// 把 dialog 组件 instance 挂到 composable，让 submit 调 validate
+// 把 dialog 组件 instance 注入到 actions.dialogRefs, 让 submit 调 validate
+// (不能 actions.editDialogRef = ref, 因为那只覆盖 actions 上的属性, 没改 useUserActions
+// 闭包内的引用 → submit 时 dialogRef.value 永远是 null → 静默退出)
+// 改用 reactive 容器 actions.dialogRefs.edit = ref, submitEdit 读 dialogRefs.edit.value
 const editDialogEl = ref(null)
 const pwdDialogEl = ref(null)
-actions.editDialogRef = editDialogEl
-actions.pwdDialogRef = pwdDialogEl
+actions.dialogRefs.edit = editDialogEl
+actions.dialogRefs.pwd = pwdDialogEl
 
 async function onSubmitEdit() {
   const ok = await actions.submitEdit()
