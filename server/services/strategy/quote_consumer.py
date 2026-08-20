@@ -9,10 +9,10 @@ strategy 表已删)。保留核心职责:
 - broadcast_to_stock 推前端 WS /ws/quote_update (行情面板实时刷新)
 
 v131 (2026-08-19): quote_consumer 内合并 (quote-batch-flush)
-- 同一只股票在 flush 窗口内多次 tick → 只推最新一次 (股票级去重)
-- flush 触发: 50 条 tick OR 1 秒 (双阈值)
-- 前端 ws payload 格式不变 (单 tick), ws frame 数显著下降
-- 仍走 broadcast_to_stock 按订阅过滤
+- 累积 tick 入 buffer 后 flush 触发: 50 条 OR 1 秒 (双阈值)
+- v131.1: 不做股票级去重 - 同窗口内同股票多 tick 全部保留 (用户要求看到每一根 tick)
+- 前端 ws payload 格式不变 (单 tick), 但 1 个 ws frame 装 N 条 tick
+- 仍走 broadcast_to_stock 按订阅过滤 (前端 ws payload 格式不变)
 
 📌 指数退避重连 1s → 2s → 4s → ... → 30s 上限
 📌 60s 无 tick → warn log (连接是活的, 行情低谷不重连)
@@ -56,11 +56,12 @@ class QuoteConsumer:
         self._ws = None
         self._last_tick_ts: Optional[float] = None
         self._tick_count: int = 0
-        # v131 quote-batch-flush: 同窗口内同股票去重, 50 tick / 1秒 flush
+        # v131 quote-batch-flush: 累积 N tick 后 flush 触发 (50条 / 1秒)
+        # v131.1: 不去重, 同股票多 tick 全部保留
         from server.config import settings
         self._batch_max: int = settings.QUOTE_BATCH_MAX
         self._batch_flush_ms: int = settings.QUOTE_BATCH_FLUSH_MS
-        self._batch_buf: Dict[str, dict] = {}  # stock_code -> latest_tick
+        self._batch_buf: List[dict] = []  # 改为 list, 保留每一根 tick
         self._batch_lock = asyncio.Lock()
         self._last_flush_ts: float = time.time()
         self._flusher_task: Optional[asyncio.Task] = None
@@ -247,9 +248,9 @@ class QuoteConsumer:
         }
 
     async def _fanout_tick(self, tick: dict) -> None:
-        """v131 quote-batch-flush: 写 cache + 入 batch buffer (去重+合并)
+        """v131 quote-batch-flush: 写 cache + 入 batch buffer (不去重)
 
-        - 同窗口内同 stock_code 只保留最新 tick (股票级去重)
+        - v131.1: 不做股票级去重, 同股票多 tick 全部入 buffer
         - 50 条 OR 1 秒触发 flush (双阈值)
         - 仍走 broadcast_to_stock 按订阅过滤 (前端 ws payload 格式不变)
         """
@@ -263,10 +264,10 @@ class QuoteConsumer:
         if snapshot and snapshot.get("stock_code"):
             quote_cache.set(snapshot)
 
-        # 入 batch buffer (锁内: dict set + 阈值判定)
+        # 入 batch buffer (锁内: append + 阈值判定)
         should_flush = False
         async with self._batch_lock:
-            self._batch_buf[stock_code] = tick
+            self._batch_buf.append(tick)
             if len(self._batch_buf) >= self._batch_max:
                 should_flush = True
 
@@ -276,12 +277,12 @@ class QuoteConsumer:
     async def _flush_batch(self) -> None:
         """取出 buffer 内全部 tick (按订阅过滤) 并广播。
 
-        v131 quote-batch-flush: 1 个 ws frame 装 N 个 tick (按 ws 客户端订阅过滤)
+        v131.1 不去重: buffer 内 N 条 tick 可能同股票多次, 全部推到 ws (1 个 frame 装 N 个 tick dict)。
         """
         async with self._batch_lock:
             if not self._batch_buf:
                 return
-            ticks = list(self._batch_buf.values())
+            ticks = list(self._batch_buf)
             self._batch_buf.clear()
             self._last_flush_ts = time.time()
 

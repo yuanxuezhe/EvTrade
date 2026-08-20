@@ -63,7 +63,7 @@ def _make_consumer(batch_max=50, flush_ms=1000):
     c._tick_count = 0
     c._batch_max = batch_max
     c._batch_flush_ms = flush_ms
-    c._batch_buf = {}
+    c._batch_buf = []  # v131.1 list (no dedup)
     c._batch_lock = asyncio.Lock()
     c._last_flush_ts = time.monotonic()
     c._flusher_task = None
@@ -92,27 +92,27 @@ def fake_wsm():
     qc_mod.ws_manager = wm_mod.ws_manager
 
 
-# ──────────────── 1. 股票去重 ────────────────
+# ──────────────── 1. 不做股票级去重 (v131.1) ────────────────
 
 
-class TestDeduplication:
-    """同窗口内同 stock_code 多 tick → batch 只保留最新。"""
+class TestNoDeduplication:
+    """v131.1: 同窗口内同 stock_code 多 tick 全部保留, 用户要求看到每一根 tick。"""
 
     @pytest.mark.asyncio
-    async def test_same_stock_multiple_ticks_keep_latest(self, fake_wsm):
+    async def test_same_stock_multiple_ticks_all_kept(self, fake_wsm):
         c = _make_consumer(batch_max=50, flush_ms=10000)  # 长 flush 防止 timer 抢
-        # 同股票 5 次 tick, 价递增
+        # 同股票 5 次 tick, 价递增 - 全部保留
         for i in range(5):
             await c._fanout_tick(_make_tick("600519.SH", last_price=100.0 + i))
 
-        # 立即 flush (用 size 阈值或手动)
         await c._flush_batch()
 
         assert len(fake_wsm.calls) == 1
-        # batch 内只有 1 条 tick (dedup)
-        assert fake_wsm.calls[0]["tick_count"] == 1
-        assert fake_wsm.calls[0]["stock_codes"] == ["600519.SH"]
-        # last_price 是最新 (5次递增, 最后是 104.0)
+        # 5 条全部保留 (no dedup)
+        assert fake_wsm.calls[0]["tick_count"] == 5
+        # 验证 stock_code 出现 5 次 (last_prices dict 同名 key 覆盖, 但 tick_count=5)
+        assert fake_wsm.calls[0]["stock_codes"].count("600519.SH") == 5
+        # 价递增 100/101/102/103/104 - last_prices 仅保留 dict 里最后一次
         assert fake_wsm.calls[0]["last_prices"]["600519.SH"] == 104.0
 
     @pytest.mark.asyncio
@@ -128,6 +128,22 @@ class TestDeduplication:
         assert sorted(fake_wsm.calls[0]["stock_codes"]) == sorted(
             ["600519.SH", "600000.SH", "000001.SZ", "688981.SH"]
         )
+
+    @pytest.mark.asyncio
+    async def test_interleaved_same_stock_all_kept(self, fake_wsm):
+        """同股票穿插入 buffer 仍全部保留 - 用户场景: 5 只 ETF 交替 tick"""
+        c = _make_consumer(batch_max=50, flush_ms=10000)
+        # 5 ETF 各 tick 3 次, 交替入队 = 15 条
+        codes = ["512760.SH", "515650.SH", "515880.SH", "560470.SH", "588710.SH"]
+        for round_n in range(3):
+            for code in codes:
+                await c._fanout_tick(_make_tick(code, last_price=round_n + 1))
+
+        await c._flush_batch()
+        assert fake_wsm.calls[0]["tick_count"] == 15
+        # 每只股票出现 3 次
+        for code in codes:
+            assert fake_wsm.calls[0]["stock_codes"].count(code) == 3
 
 
 # ──────────────── 2. size 阈值 (50 tick 立即 flush) ────────────────
@@ -233,13 +249,13 @@ class TestSubscriptionFiltering:
     """
 
     @pytest.mark.asyncio
-    async def test_flush_passes_all_dedup_ticks_to_broadcast_batch(self, fake_wsm):
+    async def test_flush_passes_all_ticks_no_dedup(self, fake_wsm):
         c = _make_consumer(batch_max=50, flush_ms=10000)
-        # 5 只不同股票 + 2 只同股票 (去重后 = 6)
+        # 5 只不同股票 + 2 只同股票 (no dedup = 7 条全保留)
         codes_prices = [
             ("600519.SH", 1.0), ("000001.SZ", 2.0), ("688981.SH", 3.0),
-            ("600519.SH", 1.5),  # dedup 同股票, 只留 1.5
-            ("512760.SH", 4.0), ("515650.SH", 5.0), ("000001.SZ", 2.5),  # dedup
+            ("600519.SH", 1.5),  # 同股票第 2 次 (不 dedup)
+            ("512760.SH", 4.0), ("515650.SH", 5.0), ("000001.SZ", 2.5),  # 同股票第 2 次
         ]
         for code, p in codes_prices:
             await c._fanout_tick(_make_tick(code, p))
@@ -247,10 +263,11 @@ class TestSubscriptionFiltering:
         await c._flush_batch()
 
         assert len(fake_wsm.calls) == 1
-        # 5 个独立 stock_code (600519/000001/688981/512760/515650)
-        assert fake_wsm.calls[0]["tick_count"] == 5
+        # 7 条全部保留 (no dedup), tick_count 反映真实条数
+        assert fake_wsm.calls[0]["tick_count"] == 7
         last_prices = fake_wsm.calls[0]["last_prices"]
-        # 验证去重: 600519 应该用 1.5 (最新), 000001 应该用 2.5
+        # last_prices dict 仅保留同名 key 的最后一次 (dict 特性, 不是 dedup)
+        # 真实前端拿到的 ticks[] 才是 7 条
         assert last_prices["600519.SH"] == 1.5
         assert last_prices["000001.SZ"] == 2.5
 
@@ -320,15 +337,15 @@ class TestConcurrency:
     async def test_concurrent_fanout_no_loss(self, fake_wsm):
         c = _make_consumer(batch_max=1000, flush_ms=10000)  # 永不到 size, 也不会 timer flush
 
-        # 10 协程各入 50 只股票, 共 500 条 (50 unique stocks, 10 个相同)
+        # 10 协程各入 50 tick (50 unique stocks × 10 same) - v131.1 不去重, 应保留 500 条
         async def worker(worker_id):
             for i in range(50):
                 await c._fanout_tick(_make_tick(f"{(i % 50):06d}.SH", 1.0))
 
         await asyncio.gather(*[worker(i) for i in range(10)])
-        # dedup 后应该是 50 个 stock_code
-        assert len(c._batch_buf) == 50
+        # 不 dedup: 500 条全在 buffer
+        assert len(c._batch_buf) == 500
 
         await c._flush_batch()
         assert len(fake_wsm.calls) == 1
-        assert fake_wsm.calls[0]["tick_count"] == 50
+        assert fake_wsm.calls[0]["tick_count"] == 500
