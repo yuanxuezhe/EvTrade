@@ -36,6 +36,7 @@ import os
 import re
 import subprocess
 import time
+import asyncio  # 2026-08-20 fix: ai_analysis 走 asyncio.to_thread 防 event loop 阻塞
 from typing import List, Optional
 
 from fastapi import APIRouter
@@ -272,13 +273,19 @@ async def ai_analysis(req: AnalysisRequest):
     - 进程级串行锁（broker 限频 / 账号白名单）
     - 超时 240s；超时客户端需 reload 再问
     - 不做缓存、不做异步、不做权限分级（演示账号即可）
+
+    2026-08-20 修复: 把 _run_demo_script 丢到 asyncio.to_thread (线程池) ——
+    之前在 async def 里直接调 subprocess.run 会阻塞整个 event loop, 导致
+    其他 UI 请求 (GET /api/positions 等) 在 ai_analysis 跑期间全部排队等待,
+    表现"页面卡死/数据加载不出"。改用线程池后, 路由立刻返回 Future,
+    FastAPI 在该线程内继续跑 subprocess.run, 不影响其他 async 路由。
     """
     logger.info(
         "[ai-analysis] request: stock=%s periods=%s %s~%s",
         req.stock_code, req.periods, req.start_date, req.end_date,
     )
     try:
-        out = _run_demo_script(req)
+        out = await asyncio.to_thread(_run_demo_script, req)
     except subprocess.TimeoutExpired:
         logger.warning("[ai-analysis] timeout after %ss", _SUBPROCESS_TIMEOUT)
         return AnalysisResponse(
