@@ -50,6 +50,7 @@
   .log-warn { color: #dcdcaa; }
   .log-err { color: #f48771; }
   .log-tick { color: #c586c0; }
+  .log-batch { color: #b5cea8; font-weight: bold; }
   .log-time { color: #6a6a6a; }
   table { border-collapse: collapse; width: 100%; margin-top: 10px; font-size: 13px; }
   th, td { border: 1px solid #3c3c3c; padding: 6px 10px; text-align: left; }
@@ -154,6 +155,9 @@
     <div class="stat-box"><div class="stat-label">tick 总数</div><div class="stat-value" id="statTicks">0</div></div>
     <div class="stat-box"><div class="stat-label">活跃标的</div><div class="stat-value" id="statCodes">0</div></div>
     <div class="stat-box"><div class="stat-label">server ping</div><div class="stat-value" id="statPings">0</div></div>
+    <!-- v131 quote-batch-flush 统计: 让用户直观看到 N tick / 1 ws frame 的合并效果 -->
+    <div class="stat-box" style="border-left-color:#b5cea8;"><div class="stat-label">batch 帧数</div><div class="stat-value" id="statBatches">0</div></div>
+    <div class="stat-box" style="border-left-color:#b5cea8;"><div class="stat-label">最新帧 ticks</div><div class="stat-value" id="statTicksPerBatch">0</div></div>
   </div>
   <div id="ticksTable"></div>
 </div>
@@ -179,7 +183,7 @@
 
 const $ = (id) => document.getElementById(id);
 const log = (level, msg) => {
-  const colors = { INFO: 'log-info', OK: 'log-ok', WARN: 'log-warn', ERR: 'log-err', TICK: 'log-tick' };
+  const colors = { INFO: 'log-info', OK: 'log-ok', WARN: 'log-warn', ERR: 'log-err', TICK: 'log-tick', BATCH: 'log-batch' };
   const div = document.createElement('div');
   const ts = new Date().toLocaleTimeString('zh-CN', { hour12: false });
   div.innerHTML = `<span class="log-time">[${ts}]</span> <span class="${colors[level] || ''}">[${level}]</span> ${msg}`;
@@ -192,7 +196,8 @@ let ws = null;
 let state = 'disconnected'; // disconnected / connecting / connected
 const stats = {
   ticks: 0,
-  codes: new Map(), // code → {count, last, firstTs}
+  batches: 0,
+  codes: new Map(), // code → {count, last, firstTs, lastTs}
   pings: 0,
   samples: [],
 };
@@ -326,6 +331,27 @@ $('btnConnect').addEventListener('click', connect);
 $('btnDisconnect').addEventListener('click', disconnect);
 
 // ── 消息处理 ──
+// 处理一条 tick (单条 quote / quote_batch 内部 tick 复用)
+function onTick(tickData) {
+  stats.ticks++;
+  // ⚠️ 后端 tick payload 结构: data.last_price (顶层) + data.snapshot.* (22 字段快照)
+  //    demo 取值时优先 data.snapshot (完整), fallback 到 data 顶层
+  const snap = tickData.snapshot || tickData;
+  const code = snap.stock_code || '?';
+  const now = new Date().toLocaleTimeString('zh-CN', { hour12: false });
+  if (!stats.codes.has(code)) {
+    stats.codes.set(code, { count: 0, last: 0, firstTs: now, lastTs: now });
+  }
+  const e = stats.codes.get(code);
+  e.count++;
+  e.last = snap.last_price;
+  e.lastTs = now;
+  log('TICK', `${code} last=${(snap.last_price || 0).toFixed(3)} bid1=${(snap.bid1_price || 0).toFixed(3)} ask1=${(snap.ask1_price || 0).toFixed(3)} vol=${snap.volume}`);
+  $('statTicks').textContent = stats.ticks;
+  $('statCodes').textContent = stats.codes.size;
+  renderTable();
+}
+
 function handleMessage(msg) {
   // 样本
   if (stats.samples.length < 5) {
@@ -358,19 +384,21 @@ function handleMessage(msg) {
     return;
   }
   if (msg.type === 'quote' && msg.data) {
-    stats.ticks++;
-    // ⚠️ 后端 tick payload 结构: data.last_price (顶层) + data.snapshot.* (22 字段快照)
-    //    demo 取值时优先 data.snapshot (完整), fallback 到 data 顶层
-    const snap = msg.data.snapshot || msg.data;
-    const code = snap.stock_code || '?';
-    if (!stats.codes.has(code)) stats.codes.set(code, { count: 0, last: 0, firstTs: new Date().toLocaleTimeString('zh-CN', {hour12:false}) });
-    const e = stats.codes.get(code);
-    e.count++;
-    e.last = snap.last_price;
-    log('TICK', `${code} last=${(snap.last_price || 0).toFixed(3)} bid1=${(snap.bid1_price || 0).toFixed(3)} ask1=${(snap.ask1_price || 0).toFixed(3)} vol=${snap.volume}`);
-    $('statTicks').textContent = stats.ticks;
-    $('statCodes').textContent = stats.codes.size;
-    renderTable();
+    onTick(msg.data);
+    return;
+  }
+  // v131 quote-batch-flush: 后端 broadcast_batch 把 N 条 tick 装 1 个 ws frame
+  //   payload = {type:'quote_batch', channel:'quote_update', data:{ticks:[...]}}
+  //   每个 tick 内层结构和单条 quote 完全相同 (data.snapshot.* + data.last_price)
+  if (msg.type === 'quote_batch' && msg.data && Array.isArray(msg.data.ticks)) {
+    stats.batches++;
+    const n = msg.data.ticks.length;
+    $('statBatches').textContent = stats.batches;
+    $('statTicksPerBatch').textContent = n;
+    if (n > 0) {
+      log('BATCH', `quote_batch: 1 ws frame = ${n} ticks`);
+      for (const t of msg.data.ticks) onTick(t);
+    }
     return;
   }
   log('INFO', `recv msg.type=${msg.type}: ${JSON.stringify(msg).slice(0, 200)}`);
@@ -380,9 +408,9 @@ function handleMessage(msg) {
 function renderTable() {
   if (stats.codes.size === 0) { $('ticksTable').innerHTML = ''; return; }
   const sorted = [...stats.codes.entries()].sort((a, b) => b[1].count - a[1].count);
-  let html = '<table><thead><tr><th>stock_code</th><th>ticks</th><th>last px</th><th>first ts</th></tr></thead><tbody>';
+  let html = '<table><thead><tr><th>stock_code</th><th>ticks</th><th>last px</th><th>first ts</th><th>last ts</th></tr></thead><tbody>';
   for (const [code, e] of sorted) {
-    html += `<tr><td>${code}</td><td>${e.count}</td><td>${(e.last || 0).toFixed(3)}</td><td>${e.firstTs}</td></tr>`;
+    html += `<tr><td>${code}</td><td>${e.count}</td><td>${(e.last || 0).toFixed(3)}</td><td>${e.firstTs}</td><td>${e.lastTs}</td></tr>`;
   }
   html += '</tbody></table>';
   $('ticksTable').innerHTML = html;
@@ -442,6 +470,7 @@ log('INFO', '  2. 点 "连接 WS" 建立连接');
 log('INFO', '  3. 选模式 + 点 "发送 subscribe"');
 log('INFO', '  4. 实时日志 + 统计 + tick 表会刷新');
 log('INFO', '提示: "零订阅"模式可验证后端严格按订阅过滤,即使后端收到 tick 也不会推送');
+log('INFO', 'v131 quote-batch-flush: 后端 1 ws frame 装 N tick (payload type=quote_batch), 演示日志会显示 [BATCH] + N 行 [TICK]');
 </script>
 </body>
 </html>
