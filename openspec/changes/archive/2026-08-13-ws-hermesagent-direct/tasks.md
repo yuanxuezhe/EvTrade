@@ -8,7 +8,7 @@
 
 - [x] 1.1 创建 change proposal（proposal.md）
 - [x] 1.2 主 spec：`openspec/specs/auth/spec.md` 新增 REQ-AUTH-013（WS 直连 hermesagent 无条件接受）
-- [ ] 1.3 commit
+- [x] 1.3 commit: `docs(spec): WS 直连 token=hermesagent 无条件接受 (REQ-AUTH-013, v129)`（9b77619）
 
 ## 2 — 代码
 
