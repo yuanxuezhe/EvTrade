@@ -12,6 +12,7 @@ REST 端点 (前缀 /api/script-strategy):
 
 任务端点见 tasks.py; 策略/回测/实盘见 strategies.py。
 """
+import ast
 import logging
 from typing import List, Optional
 
