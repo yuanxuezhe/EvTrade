@@ -23,7 +23,13 @@ for (const [key, component] of Object.entries(ElementPlusIconsVue)) {
 import { t0BadgeDirective } from './directives/t0Badge'
 app.directive('t0-badge', t0BadgeDirective)
 
-app.use(createPinia())
+// 2026-08-21 fix: 显式 setActivePinia, 否则顶层 useAuthStore() 报
+//   "getActivePinia() was called but there was no active Pinia"
+//   (app.use(pinia) 不会立刻激活 active pinia, 需 setActivePinia)
+import { setActivePinia } from 'pinia'
+const pinia = createPinia()
+setActivePinia(pinia)
+app.use(pinia)
 
 // v119: 启动屏障 — 在 router 安装前 await IDB token 恢复
 // 避免首轮 beforeEach 读不到 token 误跳 /login (Pinia store 初始化时 localStorage
