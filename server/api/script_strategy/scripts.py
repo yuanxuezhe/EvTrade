@@ -147,12 +147,18 @@ def get_default_script_template():
 
 @router.post("/scripts/{script_id}/compile")
 def compile_script_endpoint(script_id: str, user: User = Depends(get_current_user)):
-    """静态语法检查（仅 ast.parse，不回测）"""
+    """静态语法检查（仅 ast.parse，不回测）
+
+    2026-08-22 fix: svc.get_script() 返回 dict（_convert.py script_row_to_dict），
+    不是 SimpleNamespace。属性访问 .code 在真实环境会 AttributeError → 500。
+    改为 dict[key] 访问。subagent 测试用 SimpleNamespace mock 绕过了这个 bug，
+    真值需用真实 DB 验证。
+    """
     out = svc.get_script(script_id, user.id, is_admin=(user.role == "admin"))
     if out is None:
         raise HTTPException(status_code=404, detail={"code": "SCRIPT_NOT_FOUND"})
     try:
-        ast.parse(out.code)
+        ast.parse(out["code"])
     except SyntaxError as e:
         return {
             "ok": False,
