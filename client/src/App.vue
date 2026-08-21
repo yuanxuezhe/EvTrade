@@ -71,11 +71,14 @@ function onToggleSidebar() {
 }
 
 // 路由切换时关闭移动端抽屉
+// 2026-08-21 fix: route 在 setup 阶段可能尚未初始化 (router.install 是异步),
+//   route.fullPath undefined → TypeError。可选链 + flush:post 兜底
 watch(
-  () => route.fullPath,
+  () => route?.fullPath,
   () => {
     if (uiStore.isMobile) uiStore.toggleSidebar()
-  }
+  },
+  { flush: 'post' }
 )
 
 onMounted(async () => {
