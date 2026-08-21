@@ -39,6 +39,13 @@ export const scriptStrategyApi = {
     await http.delete(`/script-strategy/scripts/${id}`)
   },
 
+  async compileScript(id) {
+    // 2026-08-21: 静态语法检查（ast.parse，不跑回测）
+    // 返 {ok: true, warnings: []} 或 {ok: false, error: {line, col, msg}}
+    const { data } = await http.post(`/script-strategy/scripts/${id}/compile`)
+    return data
+  },
+
   async getDefaultTemplate() {
     const { data } = await http.get('/script-strategy/templates/default')
     return data

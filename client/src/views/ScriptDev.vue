@@ -195,9 +195,13 @@
         <!-- 底部按钮 -->
         <div class="sd-footer">
           <el-button @click="onCancel" data-el="sd-cancel">取消</el-button>
-          <el-button :icon="Delete" v-if="form.id" type="danger" plain :disabled="isReadonly" @click="onDelete" data-el="sd-delete">删除</el-button>
+          <el-button :icon="Delete" v-if="form.id" type="danger" :disabled="isReadonly" @click="onDelete" data-el="sd-delete">删除</el-button>
           <el-button :icon="Document" type="primary" :loading="saving" :disabled="isReadonly" @click="onSave" data-el="sd-save">
             保存
+          </el-button>
+          <!-- 2026-08-21: 编译按钮 — 静态语法检查（ast.parse）不跑回测 -->
+          <el-button :icon="DocumentChecked" type="warning" :loading="compiling" :disabled="isReadonly || !form.id" @click="onCompile" data-el="sd-compile">
+            编译
           </el-button>
           <el-button :icon="VideoPlay" type="success" :loading="testing" :disabled="isReadonly" @click="onTestBacktest" data-el="sd-test">
             去测试回测
@@ -216,7 +220,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus, Refresh, Delete, Document, VideoPlay, FullScreen, Aim } from '@element-plus/icons-vue'
+import { Plus, Refresh, Delete, Document, DocumentChecked, VideoPlay, FullScreen, Aim } from '@element-plus/icons-vue'
 import { scriptStrategyApi } from '../api/script_strategy'
 import { useAuthStore } from '../stores/auth'
 import CodeEditor from '../components/cells/CodeEditor.vue'  // 2026-08-20: CodeMirror 6 封装 (python 语法高亮 + 自动缩进)
@@ -227,6 +231,7 @@ const router = useRouter()
 const loading = ref(false)
 const saving = ref(false)
 const testing = ref(false)
+const compiling = ref(false)  // 2026-08-21: 编译按钮 loading 态
 // 2026-08-20: 编辑器最大化开关 — 折叠参数表让编辑器撑满
 const editorExpanded = ref(false)
 const scripts = ref([])
@@ -420,12 +425,34 @@ async function onDelete() {
   }
 }
 
-function onTestBacktest() {
+async function onTestBacktest() {
   // 跳到 ScriptTask 页面并自动选择该脚本
   if (form.value.id) {
     router.push({ path: '/script-task', query: { script_id: form.value.id } })
   } else {
     ElMessage.warning('请先保存脚本')
+  }
+}
+
+// 2026-08-21: 编译按钮 handler — 调后端 POST /scripts/{id}/compile 做 ast.parse 静态校验
+async function onCompile() {
+  if (!form.value.id) {
+    ElMessage.warning('请先保存脚本')
+    return
+  }
+  compiling.value = true
+  try {
+    const result = await scriptStrategyApi.compileScript(form.value.id)
+    if (result.ok) {
+      ElMessage.success('语法 OK')
+    } else {
+      const { line, col, msg } = result.error || {}
+      await ElMessageBox.alert(msg || '语法错误', `语法错误 (line ${line}, col ${col})`, { type: 'error' })
+    }
+  } catch (e) {
+    // axios 拦截器已弹
+  } finally {
+    compiling.value = false
   }
 }
 
