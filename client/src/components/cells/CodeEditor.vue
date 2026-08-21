@@ -33,8 +33,9 @@
 import { ref, onMounted, onBeforeUnmount, watch, markRaw } from 'vue'
 // 静态 import — 顶层加载, 避免在 _mount 闭包内引用
 import { EditorView, basicSetup } from 'codemirror'
-import { EditorState } from '@codemirror/state'
+import { EditorState, Compartment } from '@codemirror/state'
 import { lineNumbers, highlightActiveLine, keymap } from '@codemirror/view'
+import { indentUnit } from '@codemirror/language'
 import { python } from '@codemirror/lang-python'
 import { oneDark } from '@codemirror/theme-one-dark'
 
@@ -50,31 +51,7 @@ const containerRef = ref(null)
 // markRaw: codemirror EditorView 含内部劫持对象, 不放响应式避免 Vue 反复代理
 const editorView = ref(null)
 
-function _buildExtensions() {
-  const exts = [
-    basicSetup,
-    lineNumbers(),
-    highlightActiveLine(),
-    keymap.of([]),
-    python(),
-    oneDark,
-    EditorView.editable.of(!props.readOnly),
-    EditorView.contentAttributes.of({ spellcheck: 'false' }),
-    EditorView.updateListener.of((vu) => {
-      if (vu.docChanged) emit('update:modelValue', vu.state.doc.toString())
-    }),
-  ]
-  if (props.placeholder) {
-    import('@codemirror/view').then(({ placeholder }) => {
-      if (editorView.value) {
-        editorView.value.dispatch({
-          effects: EditorState.reconfigure.of([..._buildExtensions(), placeholder(props.placeholder)]),
-        })
-      }
-    })
-  }
-  return exts
-}
+
 
 onMounted(() => {
   if (!containerRef.value) return
@@ -103,22 +80,30 @@ watch(() => props.modelValue, (newVal) => {
   })
 })
 
-// readOnly 切换
-watch(() => props.readOnly, (ro) => {
-  if (!editorView.value) return
-  editorView.value.dispatch({
-    effects: EditorState.reconfigure.of([
-      basicSetup,
-      lineNumbers(),
-      highlightActiveLine(),
-      keymap.of([]),
-      python(),
-      oneDark,
-      EditorView.editable.of(!ro),
-      EditorView.contentAttributes.of({ spellcheck: 'false' }),
-    ]),
-  })
-})
+// readOnly 切换 — 用 Compartment 包 editable (codelens 标准做法)
+//   后续可加 watch(readOnly, ...) 用 compartment.reconfigure 切换
+const editableCompartment = new Compartment()
+const readonlyCompartment = new Compartment()
+
+function _buildExtensions() {
+  return [
+    // 缩进 (PEP 8: 4 空格) — codemirror 默认 indentUnit=2, 必须显式覆盖
+    // basicSetup 已含 indentOnInput + defaultKeymap + bracketMatching + foldGutter,
+    // 这里只补 indentUnit
+    indentUnit.of('    '),
+    basicSetup,
+    lineNumbers(),
+    highlightActiveLine(),
+    python(),
+    oneDark,
+    editableCompartment.of(EditorView.editable.of(!props.readOnly)),
+    readonlyCompartment.of(EditorState.readOnly.of(props.readOnly)),
+    EditorView.contentAttributes.of({ spellcheck: 'false' }),
+    EditorView.updateListener.of((vu) => {
+      if (vu.docChanged) emit('update:modelValue', vu.state.doc.toString())
+    }),
+  ]
+}
 
 onBeforeUnmount(() => {
   if (editorView.value) {
