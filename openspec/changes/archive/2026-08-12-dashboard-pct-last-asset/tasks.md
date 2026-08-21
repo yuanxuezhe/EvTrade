@@ -32,7 +32,7 @@
 - [x] 3.3 **最终口径**：移除 `todayPnL`；`prevDayTotalAsset = 总资产 − 当日盈亏`；
       `dayPnlPercent`/`todayPnLPercent` = `当日盈亏 / prevDayTotalAsset × 100`，
       当日盈亏缺失或分母≤0 → null 隐藏
-- [ ] 3.4 commit（见 0.3）
+- [x] 3.4 commit: `fix(client): 仪表盘趋势百分比改前一日总资产口径 (总资产−当日盈亏), 不依赖 last_asset`（f42da03，对应 0.3）
 
 ## 4 — 测试
 
