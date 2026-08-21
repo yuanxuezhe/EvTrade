@@ -15,7 +15,7 @@
 - [x] 2.2 `views/CacheTrades.vue` 60
 - [x] 2.3 `views/CachePositions.vue` 30
 - [x] 2.4 `views/CacheOrders.vue` 60
-- [ ] 2.5 commit
+- [x] 2.5 commit: `fix(client): 表格行双击选中标的抛 Cannot create property 'value' on string`（28a1205）+ docs（93a8a23）
 
 ## 3 — 验证
 
