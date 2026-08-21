@@ -57,7 +57,7 @@ def test_compile_syntax_ok(auth_client):
 
     with patch(
         "server.api.script_strategy.scripts.svc.get_script",
-        return_value=SimpleNamespace(code=valid_code, id="s1"),
+        return_value={"id": "s1", "code": valid_code},
     ):
         resp = auth_client.post("/api/script-strategy/scripts/s1/compile")
 
@@ -74,7 +74,7 @@ def test_compile_syntax_error(auth_client):
 
     with patch(
         "server.api.script_strategy.scripts.svc.get_script",
-        return_value=SimpleNamespace(code=bad_code, id="s2"),
+        return_value={"id": "s2", "code": bad_code},
     ):
         resp = auth_client.post("/api/script-strategy/scripts/s2/compile")
 
