@@ -305,17 +305,19 @@ async function onCreate() {
   const defaultParams = (tpl && Array.isArray(tpl.params_schema) && tpl.params_schema.length)
     ? tpl.params_schema
     : FALLBACK_DEMO_PARAMS
-  form.value = {
-    id: null,
-    name: '',
-    description: '',
-    status: 'active',
-    code: defaultCode,
-    params_schema: defaultParams.map(p => ({
-      ...p,
-      valuesStr: Array.isArray(p.values) ? p.values.join(',') : '',
-    })),
-  }
+  // 2026-08-21 fix: 不要整体替换 form.value — el-table 内部对 params_schema 数组
+  //   持有 vnode ref, 整体替换会导致 patchElement 报 'Cannot set properties of
+  //   null (setting __vnode)' (select.vue:407)。改用增量字段更新, 保持 ref 引用。
+  form.value.id = null
+  form.value.name = ''
+  form.value.description = ''
+  form.value.status = 'active'
+  form.value.code = defaultCode
+  // params_schema 必须 splice 清空再 push (保持 ref 引用, 触发 el-table 内部响应)
+  form.value.params_schema.splice(0, form.value.params_schema.length, ...defaultParams.map(p => ({
+    ...p,
+    valuesStr: Array.isArray(p.values) ? p.values.join(',') : '',
+  })))
   selectedId.value = null
   currentScript.value = null
   draft.value = { name: 'new' }

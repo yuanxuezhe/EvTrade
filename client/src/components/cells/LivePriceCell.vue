@@ -40,20 +40,30 @@ import { useQuoteStore } from '../../stores/quote'
 import { formatPrice } from '../../composables/usePricePrecision'
 
 const props = defineProps({
-  stockCode: { type: String, required: true },
+  // 2026-08-21: 取消 required, 允许父组件传 undefined (持仓表里某行 stock_code 缺失 / 
+
+  //   临时过滤行 时不报错, 显示空 cell)
+  stockCode: { type: String, default: '' },
 })
 
 const quoteStore = useQuoteStore()
 
+const hasCode = computed(() => !!props.stockCode)
+
 // 行情推送触发响应式 — quoteStore.size / getChangePct 内部已自动追踪
 const lastPrice = computed(() => {
+  if (!hasCode.value) return null
   const q = quoteStore.get(props.stockCode)
   return q?.last_price != null ? Number(q.last_price) : null
 })
 
-const changePct = computed(() => quoteStore.getChangePct(props.stockCode))
+const changePct = computed(() => {
+  if (!hasCode.value) return null
+  return quoteStore.getChangePct(props.stockCode)
+})
 
 const prevClose = computed(() => {
+  if (!hasCode.value) return null
   const q = quoteStore.get(props.stockCode)
   return q?.prev_close != null ? Number(q.prev_close) : null
 })

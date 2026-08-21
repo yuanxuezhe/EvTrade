@@ -1,5 +1,10 @@
 <template>
-  <div v-if="isBlankLayout" class="blank-layout">
+  <!-- v119: 启动屏障 — 在 hydrate 完成前显示 loading, 避免首轮 beforeEach 读不到 token 误跳 /login -->
+  <div v-if="!authStore.ready" class="app-bootstrap">
+    <div class="app-bootstrap-spinner">加载中...</div>
+  </div>
+
+  <div v-else-if="isBlankLayout" class="blank-layout">
     <router-view />
   </div>
 
@@ -74,6 +79,18 @@ watch(
 )
 
 onMounted(async () => {
+  // v119 (2026-08-09): 启动屏障 — 从 IDB 恢复 token 到内存
+  // 必须 await hydrate 完成, 否则 router 首轮 beforeEach 读不到 token 误跳 /login
+  // 关键: 此 onMounted 在 setup 阶段同步回调, 有 effect scope, 调用 useAuthStore()
+  // 不会 'no active Pinia' (与 main.js 顶层 module scope 不同)
+  if (!authStore.ready) {
+    try {
+      await authStore.hydrate()
+    } catch (e) {
+      console.warn('[App.vue] auth.hydrate failed:', e?.message || e)
+    }
+  }
+
   // 启动时刷新当前用户信息（若有 token）
   if (authStore.token && !authStore.user) {
     await authStore.fetchMe()
@@ -119,6 +136,23 @@ watch(
 .blank-layout {
   width: 100vw;
   height: 100vh;
+}
+
+/* v119: 启动屏障 — 全屏 loading, 避免首轮 beforeEach 误跳 /login */
+.app-bootstrap {
+  width: 100vw;
+  height: 100vh;
+  display: grid;
+  place-items: center;
+  background: var(--bg-base);
+}
+.app-bootstrap-spinner {
+  font-size: 14px;
+  color: var(--text-secondary);
+  padding: 12px 20px;
+  background: var(--bg-elevated);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-base);
 }
 
 .app-layout {
