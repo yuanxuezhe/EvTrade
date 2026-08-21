@@ -144,4 +144,24 @@ def get_default_script_template():
     return {"code": code_str, "params_schema": params_schema}
 
 
+@router.post("/scripts/{script_id}/compile")
+def compile_script_endpoint(script_id: str, user: User = Depends(get_current_user)):
+    """静态语法检查（仅 ast.parse，不回测）"""
+    out = svc.get_script(script_id, user.id, is_admin=(user.role == "admin"))
+    if out is None:
+        raise HTTPException(status_code=404, detail={"code": "SCRIPT_NOT_FOUND"})
+    try:
+        ast.parse(out.code)
+    except SyntaxError as e:
+        return {
+            "ok": False,
+            "error": {
+                "line": e.lineno,
+                "col": e.offset,
+                "msg": str(e),
+            },
+        }
+    return {"ok": True, "warnings": []}
+
+
 __all__ = ["router"]
