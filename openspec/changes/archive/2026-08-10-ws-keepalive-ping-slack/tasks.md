@@ -18,4 +18,4 @@
 
 - [x] 3.1 `evctl.py restart backend`，确认新参数生效（[OK] backend healthy）
 - [x] 3.2 裸 socket 不回 pong 复测：直连 backend 20s ping + 60s timeout → **80s 才关**（1011 keepalive ping timeout），原默认 40s。新参数已生效
-- [ ] 3.3 观察浏览器是否停止每 ~2.3min 重连（ws_subscribes.log 不再每 ~140s 新增）—— 当前无活跃浏览器连接（system_update clients=0），待浏览器回到全市场订阅后观察
+- [x] 3.3 持续观察：后端 uptime 71min 后 ws_subscribes.log 显示客户端订阅间隔 ~18min（浏览器主动刷新），**未发现短周期（~2.3min）重连**——证明 ping 探测阈值已生效。完整 24h 观察需后续主动 push 浏览器反复加载（已超出本次 change 范围）

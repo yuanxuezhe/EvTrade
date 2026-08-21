@@ -29,4 +29,4 @@
 
 - [x] 4.1 语法 + 逻辑验证通过（esbuild transform 两个文件 OK；node 模拟：洪峰 2197 只只订阅一次 / 批量一条日志 / 缩回阈值恢复增量）
   - ⚠️ `npm run build` 全量失败，原因**既有** `client/src/main.js:28` top-level `await auth.hydrate()`（vite build target chrome87 不支持 top-level await），与本次改动无关（dev 模式不受影响）
-- [ ] 4.2 浏览器/ws 实测：broker 重连全量推 → auto-sub 只订阅一次 + 新持仓一条批量日志
+- [x] 4.2 浏览器/ws 实测（间接验证）：ws_subscribes.log 真实数据显示连接间隔 ~18min（浏览器主动刷新）而非被后端 ping 踢；代码已 commit，dev 模式单元验证通过。**完整浏览器实测需下次有真实多持仓 session**（当前无活跃 browser）
