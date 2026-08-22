@@ -8,7 +8,9 @@ sys_config `rpc_test_mode=1` (user='0', 系统配置表, 可在 SystemConfig 页
 设计:
 - `maybe_reply(func, **kw) -> dict | None`: 每次调用读 sysconfig 判定,
   开启 → 返回对应 func 的固定应答; 关闭 → None (走真实链路)。切换即时生效。
-- 查询类: `qry_ast` 固定资产 demo; `qry_ord/qry_mch/qry_pos` 空集 (不污染 DB)。
+- 查询类: `qry_ast` 固定资产 demo; `qry_pos` demo 159992.SZ 持仓
+  (测试模式可看到持仓; 关闭测试后真实对账会覆盖回真实状态);
+  `qry_ord/qry_mch` 空集 (委托/成交靠 push 增量, 不 mock)。
 - `ord_stk`: 动态 `order_id` (`TEST-<seq>` 进程内递增), 让调用方拿到真实格式的应答。
 - `cxl_ord`: 成功空集。
 
@@ -55,6 +57,27 @@ def _empty_reply() -> Dict[str, Any]:
     return {"code": 0, "msg": "", "list": []}
 
 
+def _positions_reply() -> Dict[str, Any]:
+    """测试模式持仓 demo: 159992.SZ (黄金ETF)
+
+    键与 reconcile._apply_broker_data 消费的 Position ORM 列对齐
+    (stock_code/stock_name/last_vol/avl_vol/vol/cost_price)。
+    关闭测试后真实对账 (qry_pos → 全表覆盖) 会同步回真实持仓。
+    """
+    return {
+        "code": 0,
+        "msg": "",
+        "list": [{
+            "stock_code": "159992.SZ",
+            "stock_name": "黄金ETF",
+            "last_vol": 10000,
+            "avl_vol": 10000,
+            "vol": 10000,
+            "cost_price": 1.50,
+        }],
+    }
+
+
 def _ord_stk_reply(**kw) -> Dict[str, Any]:
     return {
         "code": 0,
@@ -68,7 +91,7 @@ _MOCK_BUILDERS: Dict[str, Any] = {
     "qry_ast": _asset_reply,      # 查询资金
     "qry_ord": _empty_reply,      # 查询委托
     "qry_mch": _empty_reply,      # 查询成交
-    "qry_pos": _empty_reply,      # 查询持仓
+    "qry_pos": _positions_reply,  # 查询持仓 (demo 159992.SZ)
     "ord_stk": _ord_stk_reply,    # 下单
     "cxl_ord": _empty_reply,      # 撤单
 }

@@ -60,11 +60,23 @@ def test_qry_asset_fixed_demo(test_mode):
 
 
 def test_query_empty_sets(test_mode):
-    """测试模式 qry_ord/qry_mch/qry_pos → 空集 (不污染 DB)"""
-    for func in ("qry_ord", "qry_mch", "qry_pos"):
+    """测试模式 qry_ord/qry_mch → 空集 (委托/成交靠 push, 不 mock)"""
+    for func in ("qry_ord", "qry_mch"):
         r = maybe_reply(func)
         assert r["code"] == 0
         assert r["list"] == [], f"{func} 应为空集"
+
+
+def test_qry_pos_demo_159992(test_mode):
+    """测试模式 qry_pos → demo 159992.SZ 持仓"""
+    r = maybe_reply("qry_pos")
+    assert r["code"] == 0
+    assert len(r["list"]) == 1
+    p = r["list"][0]
+    assert p["stock_code"] == "159992.SZ"
+    assert p["vol"] == 10000
+    assert p["avl_vol"] == 10000
+    assert p["cost_price"] == 1.50
 
 
 def test_ord_stk_order_id_increments(test_mode):
