@@ -28,9 +28,9 @@ from sqlalchemy.orm import Session
 from datetime import datetime, timezone
 import asyncio
 
-from server.infra.db import get_db
+from server.db import get_db
 from server.tables import SysStatus
-from server.repo.system import get_active_sysstatus
+from server.models.orm import get_active_sysstatus  # helper 内部已走 Tables API；保留 orm.py 直到 A.8 彻底迁移（metadata + alembic 依赖）
 from server.models.user import User
 from server.services.reconcile import do_reconcile
 from server.services.guards import require_admin

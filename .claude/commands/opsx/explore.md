@@ -15,7 +15,7 @@ Enter explore mode. Think deeply. Visualize freely. Follow the conversation wher
 - A vague idea: "real-time collaboration"
 - A specific problem: "the auth system is getting unwieldy"
 - A change name: "add-dark-mode" (to explore in context of that change)
-- A comparison: "postgres vs sqlite for this"
+- A comparison: "postgres vs mysql for this"
 - Nothing (just enter explore mode)
 
 ---
@@ -113,7 +113,7 @@ If the user mentions a change or you detect one is relevant:
    - Read existing files from `artifactPaths.<artifact>.existingOutputPaths`.
 
 2. **Reference them naturally in conversation**
-   - "Your design mentions using Redis, but we just realized SQLite fits better..."
+   - "Your design mentions using Redis, but we just realized MySQL fits better..."
    - "The proposal scopes this to premium users, but we're now thinking everyone..."
 
 3. **Offer to capture when decisions are made**

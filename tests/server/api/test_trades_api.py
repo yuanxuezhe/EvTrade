@@ -114,7 +114,7 @@ def _seed_trade(db, **kwargs):
     """构造测试 trades (默认填充必填字段, 调用方可覆盖)
 
     注: created_at 字段是 DateTime, 由 ORM default=_utcnow 生成, 不传字符串避免
-        SQLite DateTime 报错 ("SQLite DateTime type only accepts Python datetime").
+        DateTime 类型不匹配 ("DateTime type only accepts Python datetime").
     """
     defaults = {
         "trd_date": "20260630",

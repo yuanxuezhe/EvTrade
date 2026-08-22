@@ -114,7 +114,7 @@ EvTrade 部署在 Windows（开发/QMT 柜台）+ Linux（前后端服务），�
 - 启动：`python -m strategy_exec.main --port 8001` 或 `strategy_exec/scripts/evctl_strategy_exec.py`
 - 详见 [`strategy-exec/spec.md`](../strategy-exec/spec.md) REQ-SE-001（部署）/ REQ-SE-002（internal endpoint 鉴权）/ REQ-SE-004（RabbitMQ 拓扑）
 
-### REQ-CFG-009: MySQL 数据库连接（v14 sqlite → mysql 迁移，v20 强制 MySQL-only 永久标准）
+### REQ-CFG-009: MySQL 数据库连接（v20 强制 MySQL-only 永久标准）
 
 | Key | 默认 | 说明 |
 |---|---|---|
@@ -129,15 +129,15 @@ EvTrade 部署在 Windows（开发/QMT 柜台）+ Linux（前后端服务），�
 - **driver 唯一**：pymysql（纯 Python）— 已写进 `requirements.txt` + 已装到 host Python 3.13
 - **v20 强制 MySQL-only 永久标准**：
   - `EVTRADE_DB_URL` **未设置** → `infra/db.py` 启动时 `os.environ["EVTRADE_DB_URL"]` 抛 `KeyError` → 包装为 `RuntimeError`
-  - `EVTRADE_DB_URL` **非 MySQL**（如 `sqlite:///...`）→ `infra/db.py` 启动时 `assert db.bind.dialect.name == "mysql"` 抛 `RuntimeError`，明确文案 `"[infra.db] Only MySQL is supported (v20 permanent standard). SQLite has been permanently disabled."`
+  - `EVTRADE_DB_URL` **非 MySQL**（如 `sqlite:///...`）→ `infra/db.py` 启动时 `assert db.bind.dialect.name == "mysql"` 抛 `RuntimeError`，明确文案 `"EVTRADE_DB_URL is required (must start with mysql+pymysql://)."`
   - migration 脚本同样强制：`os.environ["EVTRADE_DB_URL"]` + `assert startswith("mysql")`（`server/migrations/2026-07-{06,08,09}-*.py`）
-  - 仓库存量 SQLite fallback 代码（`_DEFAULT_SQLITE_URL` / `is_mysql` 双 driver 分支 / SQLite PRAGMA hook / SQLite list-of-dict 占位符）**全部删除**
+  - 仓库存量非 MySQL driver fallback 代码（双 driver 分支 / PRAGMA hook / list-of-dict 占位符）**全部删除**
 - **密码特殊符号 URL encode**：`@` → `%40`、`#` → `%23`
 - **字符集**：服务端 `utf8mb4` / 排序规则 `utf8mb4_unicode_ci`（连接参数 `charset=utf8mb4`）
 - **存储引擎**：InnoDB（MySQL 8.0 默认；事务 + FK + 行锁全支持）
 - **池配置**：MySQL 走 `QueuePool + pool_size/max_overflow/recycle/pre_ping`
 - **legacy 兼容常量**：`BASE_DIR` 保留在 `infra/db.py` 供 `migrations/` 用，`DB_PATH` **永久下线**（`server/db.py` facade 移除该 re-export）
-- **历史工具**：`server/migrations/sqlite-to-mysql-migrate.py` 保留（一次性历史工具，不参与日常启动）
+- **历史工具**：`server/migrations/legacy-data-bootstrap.py` 保留（一次性历史工具，不参与日常启动）
 
 ### REQ-CFG-011: futex 僵死 "根治 vs 预防" 双保险（v52 立）
 
@@ -188,11 +188,11 @@ futex 僵死累计复发 3 次（v46 + v50 + v51），v52 复盘后明确分工�
 **Then** SQLAlchemy `pool_pre_ping` 触发 ping → 失败 → 自动重连 → 请求正常完成  
 **And** **不抛 2013 Lost connection 错误**
 
-#### Scenario: S-CFG-008 (新增): SQLite dev fallback
+#### Scenario: S-CFG-008 (新增): 非法 EVTRADE_DB_URL 启动
 
 **Given** `.env` 未设 `EVTRADE_DB_URL`  
 **When** FastAPI 启动  
-**Then** `infra/db.py` 退回 `sqlite:///./evtrade.db`  
+**Then** `infra/db.py` 启动时直接 `RuntimeError`，明确文案 `"EVTRADE_DB_URL is required (must start with mysql+pymysql://)."`
 **And** PRAGMA foreign_keys 启用（让 dev 行为对齐 MySQL FK 语义）  
 **And** `pool_*` 配置跳过（StaticPool）
 

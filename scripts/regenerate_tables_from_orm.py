@@ -116,7 +116,7 @@ def main():
         print("💡 需要先确保 EVTRADE_DB_URL 已设 (可 placeholder) + server/.env 已加载")
         return 1
 
-    # 现在 sqlite-style Base 已是 declarative_base() 单例; 但 server.db 用了自己 Base
+    # 现在 declarative_base() 已是单例；server.db 用了自己的 Base
     # 如果 EVTRADE_DB_URL 没设真实 DB; 我们直接绕过 — 用 inspect 抓类属性
     import importlib
 

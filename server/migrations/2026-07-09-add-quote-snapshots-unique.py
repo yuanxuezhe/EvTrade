@@ -30,7 +30,7 @@ from sqlalchemy import create_engine, text, inspect
 from sqlalchemy.engine import Engine
 
 # ─────────────── URL 解析（MySQL-only 永久标准 强制 EVTRADE_DB_URL） ───────────────
-# REQ-CFG-009: SQLite fallback 永久下线；migration 脚本同样要求显式 EVTRADE_DB_URL。
+# REQ-CFG-009: migration 脚本要求显式 EVTRADE_DB_URL。
 try:
     DATABASE_URL = os.environ["EVTRADE_DB_URL"]
 except KeyError:

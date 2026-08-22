@@ -5,7 +5,7 @@ infra/db.py — SQLAlchemy 数据库基类层（MySQL-only）
 
 URL 优先级（REQ-CFG-009 永久标准）：
   1. EVTRADE_DB_URL 显式 → 用
-  2. 否则 **RuntimeError**（永久禁用 SQLite fallback，运维必须 .env 配齐 MySQL URL）
+  2. 否则 **RuntimeError**（运维必须 .env 配齐 MySQL URL）
 
 依赖：仅 stdlib + sqlalchemy + pymysql + cryptography + server.models（注册 ORM 元数据）。
 """
@@ -15,7 +15,7 @@ from contextlib import contextmanager
 
 # server.config 才会 load_dotenv(server/.env)，但 infra/db.py
 # 不依赖 config (legacy 兼容),导致模块级 os.environ.get('EVTRADE_DB_URL')
-# 永远拿不到 .env 里的值 → fallback SQLite。
+# 永远拿不到 .env 里的值。
 # 这里自行 load_dotenv 一次（idempotent, 与 config.load_dotenv override=False 不冲突）。
 try:
     from dotenv import load_dotenv
@@ -25,14 +25,14 @@ try:
 except ImportError:
     pass
 
-from sqlalchemy import create_engine, event
+from sqlalchemy import create_engine, event, inspect, text
 from sqlalchemy.orm import sessionmaker, declarative_base, Session
 from sqlalchemy.engine import Engine
 
 log = logging.getLogger(__name__)
 
 # ─────────────── URL 解析（MySQL-only 永久标准） ───────────────
-# 无 SQLite fallback：未设 EVTRADE_DB_URL 直接 RuntimeError，本项目只允许 MySQL/pymysql。
+# MySQL 唯一：未设 EVTRADE_DB_URL 直接 RuntimeError，本项目只允许 MySQL/pymysql。
 try:
     DATABASE_URL = os.environ["EVTRADE_DB_URL"]
 except KeyError:
@@ -42,8 +42,8 @@ except KeyError:
     )
 if not DATABASE_URL.startswith("mysql"):
     raise RuntimeError(
-        f"[infra.db] Only MySQL is supported (permanent standard). "
-        f"Got URL: {DATABASE_URL[:80]!r}. SQLite has been permanently disabled."
+        f"EVTRADE_DB_URL is required (must start with mysql+pymysql://). "
+        f"Got URL: {DATABASE_URL[:80]!r}."
     )
 
 # BASE_DIR 保留以兼容 import
@@ -168,8 +168,159 @@ def db_session():
         db.close()
 
 
+# ─────────────────── schema.yml parser (inline, no external dep) ─────────────
+def _parse_yaml_inline(text):
+    """Minimal YAML parser matching scripts/sync_schema.py parse_yaml."""
+    lines = text.split('\n')
+    return _parse_mapping(lines, 0, 0)[0]
+
+def _indent(line):
+    return len(line) - len(line.lstrip())
+
+def _parse_value(val):
+    val = val.strip()
+    if not val or val in ('~', 'null'):
+        return None
+    if val in ('true', 'True'):
+        return True
+    if val in ('false', 'False'):
+        return False
+    if val.startswith('[') and val.endswith(']'):
+        return [_parse_value(x) for x in val[1:-1].split(',') if x.strip()]
+    if len(val) >= 2 and val[0] == val[-1] and val[0] in ('"', "'"):
+        return val[1:-1]
+    try:
+        return int(val)
+    except ValueError:
+        pass
+    try:
+        return float(val)
+    except ValueError:
+        pass
+    return val
+
+def _parse_mapping(lines, start, base_indent):
+    result = {}
+    i = start
+    while i < len(lines):
+        line = lines[i]
+        stripped = line.strip()
+        if not stripped or stripped.startswith('#'):
+            i += 1; continue
+        ind = _indent(line)
+        if ind < base_indent:
+            break
+        if ind > base_indent and i == start:
+            break
+        if ':' in stripped:
+            cp = stripped.index(':')
+            key = stripped[:cp].strip()
+            vp = stripped[cp+1:].strip()
+            if vp:
+                result[key] = _parse_value(vp)
+                i += 1
+            else:
+                # empty value — look ahead to determine list or nested dict
+                j = i + 1
+                while j < len(lines) and (not lines[j].strip() or lines[j].strip().startswith('#')):
+                    j += 1
+                if j < len(lines):
+                    ni = _indent(lines[j])
+                    ns = lines[j].strip()
+                    if ni > ind and ns.startswith('- '):
+                        lst, i = _parse_list(lines, j, ni)
+                        result[key] = lst
+                    elif ni > ind:
+                        child, i = _parse_mapping(lines, j, ni)
+                        result[key] = child
+                    else:
+                        result[key] = None; i += 1
+                else:
+                    result[key] = None; i += 1
+        else:
+            i += 1
+    return result, i
+
+def _parse_list(lines, start, base_indent):
+    result = []
+    i = start
+    while i < len(lines):
+        s = lines[i].strip()
+        if not s or s.startswith('#'):
+            i += 1; continue
+        if _indent(lines[i]) < base_indent:
+            break
+        if s.startswith('- '):
+            item = s[2:].strip()
+            result.append(_parse_value(item))
+            i += 1
+        else:
+            i += 1
+    return result, i
+
+
+# ─────────────────── DDL renderer from schema.yml ──────────────────────────
+_SCHEMA_YML_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "schema.yml")
+
+# MySQL type mapping: schema YAML type → MySQL DDL type
+_TYPE_MAP = {
+    'String': 'VARCHAR',
+    'Integer': 'INT',
+    'Float': 'DOUBLE',
+    'DateTime': 'DATETIME',
+    'TinyInt': 'TINYINT',
+    'SmallInteger': 'SMALLINT',
+    'BIGINT': 'BIGINT',
+    'Boolean': 'BOOLEAN',
+    'Text': 'TEXT',
+    'LargeText': 'LONGTEXT',
+    'JSON': 'JSON',
+    'Time': 'TIME',
+}
+
+
+def _schema_type_to_mysql(yaml_type: str) -> str:
+    """Map schema.yml type (e.g. 'String(255)') to MySQL DDL type."""
+    import re
+    m = re.match(r'(\w+)\((\d+)\)', yaml_type)
+    if m:
+        base = m.group(1)
+        size = m.group(2)
+        return f"{_TYPE_MAP.get(base, base)}({size})"
+    return _TYPE_MAP.get(yaml_type, yaml_type)
+
+
+def render_create_table_from_schema(table_name: str, table_def: dict) -> str:
+    """Render MySQL CREATE TABLE IF NOT EXISTS DDL from parsed schema.yml table def."""
+    columns = table_def.get('columns', {})
+    pk_fields = table_def.get('pk', [])
+    lines = [f"CREATE TABLE IF NOT EXISTS `{table_name}` ("]
+    col_defs = []
+    for col_name, cdef in columns.items():
+        col_type = _schema_type_to_mysql(cdef.get('type', 'VARCHAR(255)'))
+        nullable = cdef.get('nullable', True)
+        default = cdef.get('default')
+        # NOT NULL columns with no default must NOT have server_default
+        not_null = 'NOT NULL' if not nullable else 'NULL'
+        default_clause = ''
+        if default is not None and default != 'None':
+            if isinstance(default, str) and not default.startswith(("'", '"')):
+                default_clause = f" DEFAULT {default}"
+            elif isinstance(default, (int, float)):
+                default_clause = f" DEFAULT {default}"
+        col_defs.append(f"  `{col_name}` {col_type}{default_clause} {not_null}")
+    # PRIMARY KEY
+    if pk_fields:
+        pk_cols = ', '.join(f'`{p}`' for p in pk_fields)
+        col_defs.append(f"  PRIMARY KEY ({pk_cols})")
+    lines.append(',\n'.join(col_defs))
+    lines.append(")")
+    return '\n'.join(lines)
+
+
+# ─────────────────── init_db (no Base.metadata) ───────────────────────────
 def init_db():
-    """Create all tables + orders index.
+    """Create all tables + orders index using schema.yml (no SQLAlchemy metadata).
 
     首次部署用；重复调用幂等（CREATE TABLE IF NOT EXISTS）。
 
@@ -179,46 +330,51 @@ def init_db():
 
     生产环境推荐：跑一次后即把 admin URL 从 env 移除（避免 runtime 错用）。
     """
-    from server.models import user  # noqa: F401  # users declarative User 注册 metadata
-    import server.tables  # noqa: F401  # 表类加载
-    import server.tables.metadata  # noqa: F401  # tables/ → Base.metadata 注册
-    from sqlalchemy import text
-
     # admin engine 重新计算 pool_kwargs (不重用模块级 _engine_kwargs)
     admin_url = os.environ.get("EVTRADE_DB_ADMIN_URL", DATABASE_URL)
     admin_engine = create_engine(admin_url, **_pool_kwargs(admin_url))
 
-    Base.metadata.create_all(bind=admin_engine)
+    # 1. 读 schema.yml 并创建缺失的表
+    schema_path = os.environ.get('EVTRADE_SCHEMA_YML', _SCHEMA_YML_PATH)
+    with open(schema_path) as f:
+        schema = _parse_yaml_inline(f.read())
 
-    # stocks 加 stktype + scale 两列（幂等 — 仅在列不存在时 ALTER）
-    # 业务：stktype=0(股票)/1(ETF) 用户手动维护；scale=价格小数位精度 默认 2
+    insp = inspect(admin_engine)
+    existing_tables = set(insp.get_table_names())
+
+    for table_name, table_def in schema.get('tables', {}).items():
+        if table_name in existing_tables:
+            print(f"[init_db] table `{table_name}` 已存在, 跳过")
+            continue
+        ddl = render_create_table_from_schema(table_name, table_def)
+        with admin_engine.begin() as conn:
+            conn.execute(text(ddl))
+        print(f"[init_db] CREATE TABLE `{table_name}`")
+
+    # 2. stocks 加 stktype + scale 两列（幂等 — 仅在列不存在时 ALTER）
     _ensure_stocks_columns(admin_engine)
 
-    # sys_config 兜底初始化 cantrdstktypes=0,1
+    # 3. sys_config 兜底初始化 cantrdstktypes=0,1
     _run_seed_cantrdstktypes_via_session(admin_engine)
 
-    # change strategy_trade: 为 orders.user_def 加索引
-    # SQLite IF NOT EXISTS；MySQL 用 INFORMATION_SCHEMA 探测
+    # 4. change strategy_trade: 为 orders.user_def 加索引
     idx_name = "ix_orders_user_def"
     table = "orders"
     col = "user_def"
 
     with admin_engine.begin() as conn:
-        if admin_engine.dialect.name == "mysql":
-            row = conn.execute(text("""
-                SELECT 1 FROM INFORMATION_SCHEMA.STATISTICS
-                 WHERE TABLE_SCHEMA = DATABASE()
-                   AND TABLE_NAME   = :t
-                   AND INDEX_NAME   = :n
-                 LIMIT 1
-            """), {"t": table, "n": idx_name}).first()
-            if row is None:
-                conn.execute(text(f"CREATE INDEX {idx_name} ON {table} ({col})"))
-        else:
-            conn.execute(text(f"CREATE INDEX IF NOT EXISTS {idx_name} ON {table} ({col})"))
+        row = conn.execute(text("""
+            SELECT 1 FROM INFORMATION_SCHEMA.STATISTICS
+             WHERE TABLE_SCHEMA = DATABASE()
+               AND TABLE_NAME   = :t
+               AND INDEX_NAME   = :n
+             LIMIT 1
+        """), {"t": table, "n": idx_name}).first()
+        if row is None:
+            conn.execute(text(f"CREATE INDEX {idx_name} ON {table} ({col})"))
+            print(f"[init_db] CREATE INDEX {idx_name}")
 
     admin_engine.dispose()
-
 
 def _ensure_stocks_columns(engine) -> None:
     """stocks.stktype + stocks.scale 幂等迁移。
@@ -234,33 +390,23 @@ def _ensure_stocks_columns(engine) -> None:
     ]
 
     with engine.begin() as conn:
-        if engine.dialect.name == "mysql":
-            for col_name, col_type, default_val, col_comment in target_cols:
-                row = conn.execute(text("""
-                    SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS
-                     WHERE TABLE_SCHEMA = DATABASE()
-                       AND TABLE_NAME   = 'stocks'
-                       AND COLUMN_NAME   = :c
-                     LIMIT 1
-                """), {"c": col_name}).first()
-                if row is None:
-                    # MySQL 8.0: ALTER ... ADD COLUMN ... NOT NULL DEFAULT ... COMMENT ...
-                    conn.execute(text(
-                        f"ALTER TABLE stocks ADD COLUMN {col_name} {col_type} "
-                        f"NOT NULL DEFAULT {default_val} COMMENT '{col_comment}'"
-                    ))
-                    print(f"[init_db] ADD COLUMN stocks.{col_name} ({col_type} DEFAULT {default_val})")
-                else:
-                    print(f"[init_db] stocks.{col_name} 已存在, 跳过")
-        else:
-            # SQLite 走 pragma (开发环境支持)
-            for col_name, col_type, default_val, _ in target_cols:
-                row = conn.execute(text("PRAGMA table_info(stocks)")).fetchall()
-                col_names = {r[1] for r in row}
-                if col_name not in col_names:
-                    conn.execute(text(
-                        f"ALTER TABLE stocks ADD COLUMN {col_name} {col_type} DEFAULT {default_val} NOT NULL"
-                    ))
+        for col_name, col_type, default_val, col_comment in target_cols:
+            row = conn.execute(text("""
+                SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS
+                 WHERE TABLE_SCHEMA = DATABASE()
+                   AND TABLE_NAME   = 'stocks'
+                   AND COLUMN_NAME   = :c
+                 LIMIT 1
+            """), {"c": col_name}).first()
+            if row is None:
+                # MySQL 8.0: ALTER ... ADD COLUMN ... NOT NULL DEFAULT ... COMMENT ...
+                conn.execute(text(
+                    f"ALTER TABLE stocks ADD COLUMN {col_name} {col_type} "
+                    f"NOT NULL DEFAULT {default_val} COMMENT '{col_comment}'"
+                ))
+                print(f"[init_db] ADD COLUMN stocks.{col_name} ({col_type} DEFAULT {default_val})")
+            else:
+                print(f"[init_db] stocks.{col_name} 已存在, 跳过")
 
 
 def _seed_cantrdstktypes() -> None:

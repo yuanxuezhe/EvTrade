@@ -16,7 +16,7 @@ EvTrade 是多用户交易平台，必须区分：
 `POST /api/auth/login` 接收 `username + password`，返回 JWT。
 - 失败：401，msg 形如"用户名或密码错误"（不区分两种错误，防枚举）
 - 成功：200，返回 `{access_token, token_type: "bearer", user: UserInfo}`
-- 密码用 bcrypt 哈希，存 SQLite
+- 密码用 bcrypt 哈希，存 MySQL `users.password_hash`
 - **v52 起必须 `async def`**（futex 僵死根治）：bcrypt 走 `run_in_threadpool`，不阻塞 Starlette anyio threadpool
 
 ### REQ-AUTH-002: 路由守卫
@@ -166,7 +166,7 @@ And 日志提示首次登录后必须改密码
 
 ### S-AUTH-006: 开发期 wipe users 表后重启
 
-Given 用户通过 SQLite 工具手动 `DELETE FROM users`（清空 users 表但保留 schema）
+Given admin 通过 MySQL 客户端手动 `DELETE FROM users`（清空 users 表但保留 schema）
 When FastAPI 重启
 Then `on_startup` 检测到 `count == 0`，自动补 admin 和 trader 两个默认账号
 And `[INIT] Created default accounts` 日志出现
