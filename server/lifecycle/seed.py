@@ -40,7 +40,7 @@ def _run_pending_migrations():
     # Load and run pending migrations
     migration_files = sorted(f for f in os.listdir(migrations_dir)
                              if f.endswith('.py') and not f.startswith('__')
-                             and f != 'sqlite-to-mysql-migrate.py')
+                             and f != 'legacy-data-bootstrap.py')
 
     with engine.begin() as conn:
         applied = {row[0] for row in conn.execute(

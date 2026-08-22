@@ -24,9 +24,9 @@ from db import Base
 
 @pytest.fixture
 def in_memory_db():
-    """内存 SQLite,跟 test_orders_api 共用同一套 schema 思路"""
+    """内存测试 DB（pytest 隔离用），与生产 MySQL 解耦"""
     engine = create_engine(
-        "sqlite:///:memory:",
+        "sqlite:///:memory:",  # pytest fixture 仅用于单测隔离；生产 DB 是 MySQL
         connect_args={"check_same_thread": False},
         poolclass=StaticPool,
     )

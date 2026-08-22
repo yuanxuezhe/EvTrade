@@ -7,7 +7,7 @@
 - 旧 orders 数据无破坏（NULL fallback）
 
 幂等性：先查列是否存在，存在则 skip。
-MySQL-only：INFORMATION_SCHEMA.COLUMNS 探测（SQLite 永久下线）。
+MySQL-only：INFORMATION_SCHEMA.COLUMNS 探测。
 
 执行：
     # 默认用业务账号 (EVTRADE_DB_URL)；若需 DDL ALTER 设 EVTRADE_DB_ADMIN_URL
@@ -19,7 +19,7 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
 
 # ─────────────── URL 解析（MySQL-only 永久标准 强制 EVTRADE_DB_URL） ───────────────
-# REQ-CFG-009: SQLite fallback 永久下线；migration 脚本同样要求显式 EVTRADE_DB_URL。
+# REQ-CFG-009: migration 脚本要求显式 EVTRADE_DB_URL。
 # 没设 → KeyError，运维必须先 .env 配齐 URL。
 try:
     DATABASE_URL = os.environ["EVTRADE_DB_URL"]
@@ -31,7 +31,7 @@ except KeyError:
 if not DATABASE_URL.startswith("mysql"):
     raise RuntimeError(
         f"[migration] Only MySQL is supported (permanent standard). Got: {DATABASE_URL[:80]!r}. "
-        "SQLite has been permanently disabled."
+        "EVTRADE_DB_URL must start with mysql+pymysql://"
     )
 # ALTER TABLE 需要 DDL；优先 ADMIN_URL，回退业务 URL
 ADMIN_URL = os.environ.get("EVTRADE_DB_ADMIN_URL", DATABASE_URL)

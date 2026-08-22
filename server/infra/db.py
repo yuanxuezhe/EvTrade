@@ -5,7 +5,7 @@ infra/db.py — SQLAlchemy 数据库基类层（MySQL-only）
 
 URL 优先级（REQ-CFG-009 永久标准）：
   1. EVTRADE_DB_URL 显式 → 用
-  2. 否则 **RuntimeError**（永久禁用 SQLite fallback，运维必须 .env 配齐 MySQL URL）
+  2. 否则 **RuntimeError**（运维必须 .env 配齐 MySQL URL）
 
 依赖：仅 stdlib + sqlalchemy + pymysql + cryptography + server.models（注册 ORM 元数据）。
 """
@@ -15,7 +15,7 @@ from contextlib import contextmanager
 
 # server.config 才会 load_dotenv(server/.env)，但 infra/db.py
 # 不依赖 config (legacy 兼容),导致模块级 os.environ.get('EVTRADE_DB_URL')
-# 永远拿不到 .env 里的值 → fallback SQLite。
+# 永远拿不到 .env 里的值。
 # 这里自行 load_dotenv 一次（idempotent, 与 config.load_dotenv override=False 不冲突）。
 try:
     from dotenv import load_dotenv
@@ -32,7 +32,7 @@ from sqlalchemy.engine import Engine
 log = logging.getLogger(__name__)
 
 # ─────────────── URL 解析（MySQL-only 永久标准） ───────────────
-# 无 SQLite fallback：未设 EVTRADE_DB_URL 直接 RuntimeError，本项目只允许 MySQL/pymysql。
+# MySQL 唯一：未设 EVTRADE_DB_URL 直接 RuntimeError，本项目只允许 MySQL/pymysql。
 try:
     DATABASE_URL = os.environ["EVTRADE_DB_URL"]
 except KeyError:
@@ -42,8 +42,8 @@ except KeyError:
     )
 if not DATABASE_URL.startswith("mysql"):
     raise RuntimeError(
-        f"[infra.db] Only MySQL is supported (permanent standard). "
-        f"Got URL: {DATABASE_URL[:80]!r}. SQLite has been permanently disabled."
+        f"EVTRADE_DB_URL is required (must start with mysql+pymysql://). "
+        f"Got URL: {DATABASE_URL[:80]!r}."
     )
 
 # BASE_DIR 保留以兼容 import
@@ -196,24 +196,21 @@ def init_db():
     _run_seed_cantrdstktypes_via_session(admin_engine)
 
     # change strategy_trade: 为 orders.user_def 加索引
-    # SQLite IF NOT EXISTS；MySQL 用 INFORMATION_SCHEMA 探测
+    # MySQL: 用 INFORMATION_SCHEMA 探测索引存在性
     idx_name = "ix_orders_user_def"
     table = "orders"
     col = "user_def"
 
     with admin_engine.begin() as conn:
-        if admin_engine.dialect.name == "mysql":
-            row = conn.execute(text("""
-                SELECT 1 FROM INFORMATION_SCHEMA.STATISTICS
-                 WHERE TABLE_SCHEMA = DATABASE()
-                   AND TABLE_NAME   = :t
-                   AND INDEX_NAME   = :n
-                 LIMIT 1
-            """), {"t": table, "n": idx_name}).first()
-            if row is None:
-                conn.execute(text(f"CREATE INDEX {idx_name} ON {table} ({col})"))
-        else:
-            conn.execute(text(f"CREATE INDEX IF NOT EXISTS {idx_name} ON {table} ({col})"))
+        row = conn.execute(text("""
+            SELECT 1 FROM INFORMATION_SCHEMA.STATISTICS
+             WHERE TABLE_SCHEMA = DATABASE()
+               AND TABLE_NAME   = :t
+               AND INDEX_NAME   = :n
+             LIMIT 1
+        """), {"t": table, "n": idx_name}).first()
+        if row is None:
+            conn.execute(text(f"CREATE INDEX {idx_name} ON {table} ({col})"))
 
     admin_engine.dispose()
 
@@ -232,33 +229,23 @@ def _ensure_stocks_columns(engine) -> None:
     ]
 
     with engine.begin() as conn:
-        if engine.dialect.name == "mysql":
-            for col_name, col_type, default_val, col_comment in target_cols:
-                row = conn.execute(text("""
-                    SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS
-                     WHERE TABLE_SCHEMA = DATABASE()
-                       AND TABLE_NAME   = 'stocks'
-                       AND COLUMN_NAME   = :c
-                     LIMIT 1
-                """), {"c": col_name}).first()
-                if row is None:
-                    # MySQL 8.0: ALTER ... ADD COLUMN ... NOT NULL DEFAULT ... COMMENT ...
-                    conn.execute(text(
-                        f"ALTER TABLE stocks ADD COLUMN {col_name} {col_type} "
-                        f"NOT NULL DEFAULT {default_val} COMMENT '{col_comment}'"
-                    ))
-                    print(f"[init_db] ADD COLUMN stocks.{col_name} ({col_type} DEFAULT {default_val})")
-                else:
-                    print(f"[init_db] stocks.{col_name} 已存在, 跳过")
-        else:
-            # SQLite 走 pragma (开发环境支持)
-            for col_name, col_type, default_val, _ in target_cols:
-                row = conn.execute(text("PRAGMA table_info(stocks)")).fetchall()
-                col_names = {r[1] for r in row}
-                if col_name not in col_names:
-                    conn.execute(text(
-                        f"ALTER TABLE stocks ADD COLUMN {col_name} {col_type} DEFAULT {default_val} NOT NULL"
-                    ))
+        for col_name, col_type, default_val, col_comment in target_cols:
+            row = conn.execute(text("""
+                SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS
+                 WHERE TABLE_SCHEMA = DATABASE()
+                   AND TABLE_NAME   = 'stocks'
+                   AND COLUMN_NAME   = :c
+                 LIMIT 1
+            """), {"c": col_name}).first()
+            if row is None:
+                # MySQL 8.0: ALTER ... ADD COLUMN ... NOT NULL DEFAULT ... COMMENT ...
+                conn.execute(text(
+                    f"ALTER TABLE stocks ADD COLUMN {col_name} {col_type} "
+                    f"NOT NULL DEFAULT {default_val} COMMENT '{col_comment}'"
+                ))
+                print(f"[init_db] ADD COLUMN stocks.{col_name} ({col_type} DEFAULT {default_val})")
+            else:
+                print(f"[init_db] stocks.{col_name} 已存在, 跳过")
 
 
 def _seed_cantrdstktypes() -> None:

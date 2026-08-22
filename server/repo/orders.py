@@ -9,7 +9,7 @@ repo/orders.py — orders 表仓库 + order_no_seq 表仓库
 - DB 访问走 server/tables/ 层: 用 Orders.add_one / Orders.query_one / Orders.update_one 等标准接口
 
 规范: openspec/specs/rpc-protocol/spec.md REQ-RPC-009
-      openspec/changes/2026-06-22-order-no-sqlite-compat (SQLite 3.21.0 兼容)
+      openspec/changes/2026-06-22-order-no-three-step (三步分离兼容)
       openspec/changes/2026-07-06-layered-architecture-and-strategy-master (分层)
       openspec/changes/2026-07-23-tables-codegen-and-orm-removal (tables 层)
 """
@@ -28,13 +28,13 @@ from server.tables.reconcile_report import ReconcileReport
 
 
 # ================================================================
-# 8 位订单序号生成器 (8 位单调递增; SQLite ≥ 3.21 三步分离)
+# 8 位订单序号生成器 (8 位单调递增；三步分离)
 # ================================================================
 
 def next_seq(name: str, db=None) -> str:
     """按 seq_name 分键的原子自增序号生成器.
 
-    3 步分离方案 (SQLite ≥ 3.21 兼容), 按 `seq_name` 分键:
+    三步分离方案，按 `seq_name` 分键:
         1) INSERT IGNORE INTO order_no_seq (seq_name, last_value, updated_at) ...  # 兜底初始化
         2) UPDATE ... SET last_value = last_value + 1 WHERE seq_name = :name ...   # 自增
         3) SELECT last_value ...                                                  # 读出
