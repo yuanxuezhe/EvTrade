@@ -121,7 +121,7 @@ WS 推 {channel: "system_update", type: "init_completed", trd_date: today, repor
 
 - 后端：`server/api/system_init.py` / `server/api/fee_config.py` / `server/api/admin.py` / `server/services/reconcile.py`
 - 前端：`client/src/views/SystemInit.vue` / `client/src/api/system_init.js` / `client/src/stores/system_init.js`
-- DB：`server/models/orm.py`（`SysStatus` / `TradingSession` / `ReconcileConfig` / `ReconcileReport`）
+- DB：`server/tables/`（ORM 层已删除，数据访问统一走 server/tables/ 表类，如 `SysStatus` / `ReconcileReport`）
 - 路由：FastAPI `/api/admin/*` 前缀，admin 角色守卫
 
 ## 测试

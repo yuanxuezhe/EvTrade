@@ -6,7 +6,7 @@
 - `scripts/gen_tables.py`（tables 代码生成器：INFORMATION_SCHEMA → `server/tables/*.py`）
 - `scripts/run_all_migrations.py`（按序运行 `server/migrations/` 全部迁移）
 - `scripts/migrate_db.py`（evtrade → evtrade_dev 数据拷贝）
-- `scripts/regenerate_tables_from_orm.py`、`scripts/sync_schema_to_target.py`（辅助变体）
+- `scripts/sync_schema_to_target.py`（辅助变体）
 - `server/schema.yml`（schema 单一真相源）
 - `server/migrations/`（一次性迁移脚本目录）、`server/alembic/`（Alembic 骨架）
 - `openspec/specs/data-model/spec.md` §Schema Governance（治理规则权威源）

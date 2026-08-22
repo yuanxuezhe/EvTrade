@@ -97,7 +97,7 @@ The system SHALL 在以下时机写 IDB：
   - DB version = 2, 2 个 object store: `orders` / `trades`
   - `orders`  key = `${trd_date}:${order_no}`              value = 单行 OrderOut
   - `trades`  key = `${trd_date}:${order_no}:${trade_id}` value = 单行 TradeOut
-  - 镜像 server/models/orm.py: Order/Trade PK 维度
+  - 镜像 server/tables/ 表类：Order/Trade PK 维度
 - **读时机**：
   - `bootstrap()` 第 2 步：loadOrdersForDate / loadTradesForDate 走 idbGetAllKeys 扫描 + 前缀过滤
 - **清时机**：

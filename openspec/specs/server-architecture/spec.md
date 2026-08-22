@@ -24,7 +24,7 @@ infra/    ← 基类层（基础设施抽象，aio_pika / SQLAlchemy 顶层封�
 **依赖方向（严格单向，禁止反向 import）**：
 
 ```
-api/  →  services/  →  repo/  →  infra/  →  models/
+api/  →  services/  →  repo/  →  infra/  →  tables/
   ↓         ↓            ↓
  ws/     rpc/  ────────┘
 ```
@@ -36,13 +36,13 @@ api/  →  services/  →  repo/  →  infra/  →  models/
 #### infra/ 基类层
 - **包含**：消息队列基类（`MessageQueueClient`）、数据库基类（`DatabaseBase`/`SessionLocal`/`get_db`/`db_session`）
 - **职责**：封装第三方依赖（aio_pika / SQLAlchemy）的细节，对上层只暴露纯接口
-- **不允许 import**：任何上层（api / services / rpc / repo）；仅可 import `server.models.orm`（如需要 type hint）和第三方库
+- **不允许 import**：任何上层（api / services / rpc / repo）；仅可 import `server.tables`（如需要 type hint）和第三方库
 - **文件**：当前 ≤ 2 个（`mq.py` + `db.py`）
 
 #### repo/ 仓库层
 - **包含**：按表聚合的 CRUD 函数（`repo.orders / repo.trades / repo.positions / repo.assets / repo.system / repo.quote_snapshots`）
 - **职责**：封装单表的查询/插入/更新/删除 + 表级业务方法（如 `next_order_no` / `infer_order_status`）；不含跨表编排
-- **允许 import**：`server.models.*` / `server.infra.db` / `server.utils.*`
+- **允许 import**：`server.tables.*` / `server.infra.db` / `server.utils.*`
 - **不允许 import**：`server.services.*` / `server.rpc.*` / `server.api.*`
 - **文件目标**：每个 `repo/<domain>.py` ≤ 250 行
 - **不包含** strategy 表 CRUD（远程 `2026-07-05-strategy_trade` 已实现 `server/services/strategy/repository.py`；本 spec 不动 strategy 模块）
@@ -50,14 +50,14 @@ api/  →  services/  →  repo/  →  infra/  →  models/
 #### rpc/ RPC 接口层
 - **包含**：消息队列传输（`RPClient`）+ 业务级 RPC 调用（`handlers.py:qry_*/ord_*/cancel_*`）+ 报文解析（`parsers_*.py`）
 - **职责**：通过 MQ 与 broker（xtquant）通信；封装 RPC 调用模式（call / reply / push / dispatch）
-- **允许 import**：`server.models.*` / `server.infra.*` / `server.utils.*` / `server.services.push.*`（push dispatcher）
+- **允许 import**：`server.tables.*` / `server.infra.*` / `server.utils.*` / `server.services.push.*`（push dispatcher）
 - **不允许 import**：`server.api.*` / `server.repo.*`
 - **继承约束**：`RPClient` MUST 继承 `infra.mq.MessageQueueClient`
 
 #### services/ 业务编排层
 - **包含**：跨表 / 跨 RPC 的业务流（`services.t0` / `services.push` / `services.reconcile` / `services.guards` / `services.strategy`）
 - **职责**：组合多个 repo 函数 + RPC 调用 + 业务规则（如 T0 配平、对账、push 编排、strategy 信号消费）
-- **允许 import**：`server.repo.*` / `server.rpc.*` / `server.models.*` / `server.infra.*` / `server.utils.*`
+- **允许 import**：`server.repo.*` / `server.rpc.*` / `server.tables.*` / `server.infra.*` / `server.utils.*`
 - **不允许 import**：`server.api.*`
 - **`server/services/strategy/`**：原远程 `2026-07-05-strategy_trade` 的网格引擎子模块（models / repository / indicators / flags / regime / grid / engine / audit）已随 commit `aa70dae` **删除**；现仅含 `signal_consumer`（RabbitMQ 信号 → 下单）+ `quote_consumer`（纯行情快照 + `quote_update` 广播）
 
@@ -73,7 +73,7 @@ api/  →  services/  →  repo/  →  infra/  →  models/
 - **强制规则**：每个 Python 文件 `import server.X` 必须满足 `X` 的层 ≤ 当前文件所在层
 - **层优先级**（数字越小越内层）：
   - `infra` = 0
-  - `models` = 0（与 infra 同级，纯定义）
+  - `tables` = 0（与 infra 同级，纯定义；`server/models/` 已删除，数据访问统一走 `server/tables/`）
   - `repo` = 1
   - `rpc` = 1（与 repo 同级，但 rpc 不依赖 repo；rpc 只依赖 infra）
   - `services` = 2
@@ -104,9 +104,9 @@ api/  →  services/  →  repo/  →  infra/  →  models/
   ```
 - **例外**（白名单）：
   - `server/api/orders/__init__.py` — 顶层 re-export 允许跨层（test_orders_api.py monkeypatch 目标）
-  - `server/db.py` / `server/main.py` / `server/config.py` / `server/constants.py` — 兼容垫片/入口文件，不做层级检查
+  - `server/infra/db.py` / `server/main.py` / `server/config.py` / `server/constants.py` — 兼容垫片/入口文件，不做层级检查
   - `server/services/push/*` — push dispatcher 编排层，跨 rpc + repo
-  - `server/infra/db.py` — `init_db()` 需要 import `strategy.models` 注册到 `Base.metadata`（后续 PR 收敛为 model registry）
+  - `server/infra/db.py` — `init_db()` 渲染 `server/schema.yml` → `text()` DDL（不再走 `Base.metadata.create_all`）；表类注册由 `server/tables/metadata.py` 统一负责
   - `server/rpc/transport.py` + `server/rpc/client.py` — RPClient 业务方法编排跨 rpc + repo
 
 ### REQ-ARCH-003: 文件行数约束
@@ -114,12 +114,11 @@ api/  →  services/  →  repo/  →  infra/  →  models/
 - **硬约束**：每个源文件 ≤ 250 行（CLAUDE.md）
 - **超过处理**：立即拆分为同模块下的子文件（按职责）
 - **CI 检查**：`tests/server/test_layer_dependencies.py::test_no_250_line_violation` 用 `wc -l` 检查所有源文件
-- **迁移期豁免**：迁移中的 facade 文件（如 `server/db.py` 转兼容垫片）暂不计入（但目标 ≤ 50 行）
+- **迁移期豁免**：迁移中的 facade 文件（如 `server/infra/db.py` 转兼容垫片）暂不计入（但目标 ≤ 50 行）
 - **v120.5 变更（2026-08-10）**：`server/services/strategy/` 网格引擎子模块已随 commit `aa70dae` 删除；现仅存 `signal_consumer` / `quote_consumer`，不再有行数豁免项
 - **v13 已知超出**（拆分由后续 PR 处理）：
   - `server/repo/orders.py` (280 行)
   - `server/rpc/transport.py` (380 行)
-  - `server/models/orm.py` (344 行)
   - `server/services/t0/aggregators.py` (283 行)
   - `server/api/t0_stats.py` (253 行)
 

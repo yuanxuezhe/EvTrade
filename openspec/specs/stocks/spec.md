@@ -1,6 +1,6 @@
 # stocks — 股票基础信息管理 capability spec
 
-> 单一事实源(Single Source of Truth)。本文件改 → 同步到 `server/models/orm.py` + `server/repo/stocks.py`。
+> 单一事实源(Single Source of Truth)。本文件改 → 同步到 `server/tables/stocks.py` + `server/repo/stocks.py`。
 
 ## Purpose
 
@@ -26,7 +26,7 @@ EvTrade 当前缺股票基础信息(行业/市值/PE/PB/公司简介)。本 capa
 - DDL 幂等(`CREATE TABLE IF NOT EXISTS`)
 - 历史 14 字段完整数据保留在 `stocks_legacy` 表
 
-**And** ORM `server/models/orm.py:Stock` 必须与 spec 同构
+**And** 表类 `server/tables/stocks.py:Stock` 必须与 spec 同构
 
 ## REQ-STOCK-002: 增量 upsert
 

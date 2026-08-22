@@ -520,8 +520,8 @@ admin 资金 / 持仓盘中调平端点，**核心合约**详见 `asset-position
 
 - **`Order.user_def` 关联**：人工 T0 单写字面量 `"T0"`；旧网格策略自动单曾写 `str(strategy.id)`（如 `"5"`、`"7"`）——**策略表已删，不再产生新策略单**，历史值仍参与查询
 - **索引 `ix_orders_user_def`**：在 `Order` 表加 B-tree 索引支撑 T0 端点 JOIN 过滤
-  - `server/models/orm.py::Order.Index("ix_orders_user_def", "user_def")`
-  - `server/db.py::init_db` 幂等迁移：`CREATE INDEX IF NOT EXISTS ix_orders_user_def ON orders(user_def)`
+  - `server/tables/orders.py`（Order 表类）：`Index("ix_orders_user_def", "user_def")`
+  - `server/infra/db.py::init_db` 幂等迁移：`CREATE INDEX IF NOT EXISTS ix_orders_user_def ON orders(user_def)`
 - **T0 端点 JOIN 迁移**（`server/api/t0_stats.py` + `t0_aggregate.py`）：
   - `Order.user_def == "T0"` → `Order.user_def.in_(resolve_t0_user_defs(db, "T0"))`
   - `resolve_t0_user_defs(db, user_def) -> Optional[Set[str]]`：`"T0"` → `{'T0'}`（v124 起**不再**含策略表 id）；空 → `None`（不限）；其他 → `{user_def}` 单值

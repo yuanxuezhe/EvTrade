@@ -536,7 +536,7 @@ ORM 注释（`server/tables/<表名>.py` 自动生成）必须与本 spec 保持
 修改任何表结构时：
 
 1. **改本 spec**：先在本文件相应表的字段表中改，明确类型/PK/默认值
-2. **改 ORM**：`server/models/orm.py` 同步（diff 必须 0 除注释）
+2. **改 ORM**：`server/schema.yml` → `scripts/gen_tables.py` 重生 `server/tables/<表名>.py`（diff 必须 0 除注释）
 3. **改 API/service**：消费方按新 schema 改（如有）
 4. **改测试**：`server/test_models.py` 等加回归
 5. **重建 DB**：dev 期 `rm server/evtrade.db`，生产需手工迁移（无 Alembic）
@@ -561,13 +561,13 @@ ORM 注释（`server/tables/<表名>.py` 自动生成）必须与本 spec 保持
 #### Scenario: 移除 today_buy 列
 
 - **WHEN** 实施本 change
-- **THEN** `server/models/orm.py:Position` 不再含 `today_buy` 列
+- **THEN** `server/tables/positions.py:Position` 不再含 `today_buy` 列
 - **AND** 数据迁移脚本 `ALTER TABLE positions DROP COLUMN today_buy` 在 dev/prod 都执行
 
 #### Scenario: 移除 today_sell 列
 
 - **WHEN** 实施本 change
-- **THEN** `server/models/orm.py:Position` 不再含 `today_sell` 列
+- **THEN** `server/tables/positions.py:Position` 不再含 `today_sell` 列
 - **AND** 数据迁移脚本 `ALTER TABLE positions DROP COLUMN today_sell` 在 dev/prod 都执行
 
 #### Scenario: 业务规则段同步删除

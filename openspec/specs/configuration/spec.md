@@ -136,7 +136,7 @@ EvTrade 部署在 Windows（开发/QMT 柜台）+ Linux（前后端服务），�
 - **字符集**：服务端 `utf8mb4` / 排序规则 `utf8mb4_unicode_ci`（连接参数 `charset=utf8mb4`）
 - **存储引擎**：InnoDB（MySQL 8.0 默认；事务 + FK + 行锁全支持）
 - **池配置**：MySQL 走 `QueuePool + pool_size/max_overflow/recycle/pre_ping`
-- **legacy 兼容常量**：`BASE_DIR` 保留在 `infra/db.py` 供 `migrations/` 用，`DB_PATH` **永久下线**（`server/db.py` facade 移除该 re-export）
+- **legacy 兼容常量**：`BASE_DIR` 保留在 `infra/db.py` 供 `migrations/` 用，`DB_PATH` **永久下线**（`server/db.py` 垫片已删除，不再有 re-export）
 - **历史工具**：`server/migrations/legacy-data-bootstrap.py` 保留（一次性历史工具，不参与日常启动）
 
 ### REQ-CFG-011: futex 僵死 "根治 vs 预防" 双保险（v52 立）

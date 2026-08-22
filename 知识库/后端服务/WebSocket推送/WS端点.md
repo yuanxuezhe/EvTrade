@@ -6,7 +6,7 @@
 - `server/auth/security.py`（decode_token / HERMES_AGENT_TOKEN）
 - `server/auth/session.py`（touch）
 - `server/repo/quote_snapshots.py`（get_latest_multi / to_dict）
-- `server/models/user.py`（sync_update admin 校验查库）
+- `server/tables/users.py`（sync_update admin 校验查库）
 
 ## 功能概述
 
@@ -74,7 +74,7 @@ unsubscribe：
 
 ## 依赖关系
 - 上游：前端 /ws/{channel}?token=...、main.py 注册
-- 下游：auth/security、auth/session、ws_manager、repo/quote_snapshots、models/user（sync_update 校验）
+- 下游：auth/security、auth/session、ws_manager、repo/quote_snapshots、tables/users（sync_update 校验）
 
 ## 修改指南
 - 新增客户端消息类型：在主循环 `msg_type` 分支追加；保持"失败只 send 错误 ack、不打断连接"原则（一处未捕获异常曾导致连接静默死亡无限重连）。

@@ -102,7 +102,7 @@ The system SHALL NOT 在 `Position` / `Asset` 表新增 `manual_offset_*` 列 �
 
 #### Scenario: grep 自检
 
-- **WHEN** 实施完成时静态扫 `server/models/orm.py`
+- **WHEN** 实施完成时静态扫 `server/tables/positions.py`
 - **THEN** grep -rE 'manual_offset_(vol|avl_vol|cash|total_asset)' 应 0 命中
 
 #### Scenario: 不引入 AdjustAudit 子表
