@@ -145,10 +145,9 @@ Vue3 + FastAPI 量化交易 Web 平台。**业务数据 MySQL 优先**（v4 改�
 - **测试文件命名**：`<模块>_test.py` 或 `test_<模块>.py`（与现有 `server/tests/` 风格一致）
 - **测试函数命名**：`test_<函数名>_<场景>`
 - **目标通过率**：100%（新写的测试必须全过）
-- **核心目标**：
-  - `pytest hq/` 18/18
-  - `pytest server/test_*.py` 75/75
-  - 任何破坏性 refactor 必须保证上述数字不降低
+- **核心目标**（2026-08-23 基线）：
+  - `pytest hq/ server/tests/` → **71 collected / 64 passed**（数字按 `pytest` 输出如实记录；任何 refactor 不得让 `passed` 数字降低）
+  - 7 个 failed 属历史基线（详见 `openspec/AGENTS.md` 与归档 change 历史）
 
 ---
 
@@ -231,12 +230,6 @@ Vue3 + FastAPI 量化交易 Web 平台。**业务数据 MySQL 优先**（v4 改�
 
 ## 当前活跃 change
 
-`openspec/AGENTS.md` § 当前活跃 change 段维护实时列表。
+`openspec/AGENTS.md` § 当前活跃 change 段维护实时列表（单一事实来源，本文件不重复）。
 
-最近归档的 change（参考）：
-- `archive/2026-06-14-persistence-and-t0`（v4 实施）
-- `archive/2026-08-08-structure-cleanup-no-logic-change`（partial, 后续转 `2026-08-22-structure-cleanup-remaining`）
-- `archive/2026-08-21-scriptdev-fix-compile`
-- `archive/2026-08-23-delete-orm-layer`（A.8：删 ORM 层，数据访问统一 tables/）
-- `archive/2026-08-23-script-visibility-toggle`（ScriptDev 脚本公开/私有开关）
-- `archive/2026-08-23-rpc-test-mode`（RPC 测试模式：固定应答，不发真实请求）
+> 历史归档清单以 `openspec/changes/archive/` 实际目录为准；如需索引请看 `openspec/AGENTS.md`。
