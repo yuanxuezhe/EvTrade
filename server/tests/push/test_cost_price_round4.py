@@ -40,6 +40,22 @@ class _FakeSession:
         pass
 
 
+class _FakePositionsUpsert:
+    """记录 Positions.upsert_one 的调用参数，供测试断言"""
+    recorded = []
+
+    @classmethod
+    def upsert_one(cls, data, **pk):
+        cls.recorded.append((data, pk))
+        # 验证 cost_price 已正确 round（这是测试的核心断言）
+        cost_price = data.get("cost_price")
+        if cost_price is not None and cost_price != round(cost_price, 4):
+            raise AssertionError(
+                f"cost_price not rounded: got {cost_price!r}, "
+                f"expected {round(cost_price, 4)!r}"
+            )
+
+
 class _FakeRow:
     """模拟 ORM Row 的属性访问"""
     def __init__(self, **kwargs):
@@ -65,6 +81,8 @@ def test_reconcile_write_rounds_cost_price_by_scale_2(monkeypatch):
     """
     monkeypatch.setattr(reconcile_module, "_update_last_asset", lambda db: None)
     monkeypatch.setattr(reconcile_module, "get_stock_scale", _fake_scale)
+    monkeypatch.setattr(reconcile_module.Positions, "upsert_one", _FakePositionsUpsert.upsert_one)
+    _FakePositionsUpsert.recorded.clear()
     db = _FakeSession()
 
     positions = [{
@@ -77,8 +95,9 @@ def test_reconcile_write_rounds_cost_price_by_scale_2(monkeypatch):
     }]
     _apply_broker_data(db, "20260812", positions, [])
 
-    assert len(db.added) == 1
-    assert db.added[0].cost_price == 1.42
+    assert len(_FakePositionsUpsert.recorded) == 1
+    data, pk = _FakePositionsUpsert.recorded[0]
+    assert data["cost_price"] == 1.42
 
 
 def test_reconcile_write_rounds_cost_price_by_scale_3(monkeypatch):
@@ -87,6 +106,8 @@ def test_reconcile_write_rounds_cost_price_by_scale_3(monkeypatch):
     """
     monkeypatch.setattr(reconcile_module, "_update_last_asset", lambda db: None)
     monkeypatch.setattr(reconcile_module, "get_stock_scale", _fake_scale)
+    monkeypatch.setattr(reconcile_module.Positions, "upsert_one", _FakePositionsUpsert.upsert_one)
+    _FakePositionsUpsert.recorded.clear()
     db = _FakeSession()
 
     positions = [{
@@ -99,7 +120,8 @@ def test_reconcile_write_rounds_cost_price_by_scale_3(monkeypatch):
     }]
     _apply_broker_data(db, "20260812", positions, [])
 
-    assert db.added[0].cost_price == 0.764
+    data, pk = _FakePositionsUpsert.recorded[0]
+    assert data["cost_price"] == 0.764
 
 
 # ─────────────── 读路径: WS 序列化 ───────────────
