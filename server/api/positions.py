@@ -19,7 +19,7 @@ from fastapi import APIRouter, Depends
 from typing import List, Optional
 from pydantic import BaseModel
 
-from server.db import get_db
+from server.infra.db import get_db
 from server.tables import Positions
 from server.utils.time import format_db_dt
 from server.api.position_adjust import register_adjust

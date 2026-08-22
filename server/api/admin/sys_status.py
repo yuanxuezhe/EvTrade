@@ -28,7 +28,7 @@ from sqlalchemy.orm import Session
 from datetime import datetime, timezone
 import asyncio
 
-from server.db import get_db
+from server.infra.db import get_db
 from server.tables import SysStatus
 from server.repo.system import get_active_sysstatus
 from server.models.user import User

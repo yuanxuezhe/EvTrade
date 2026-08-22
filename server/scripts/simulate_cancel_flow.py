@@ -33,7 +33,7 @@ from sqlalchemy import text  # noqa: E402
 from server.api.orders import cancel as cancel_mod  # noqa: E402
 from server.api.orders import place as place_mod  # noqa: E402
 from server.auth.security import create_access_token, hash_password  # noqa: E402
-from server.db import SessionLocal  # noqa: E402
+from server.infra.db import SessionLocal  # noqa: E402
 from server.main import app  # noqa: E402
 from server.tables import SysStatus, Orders
 from server.models.user import User  # noqa: E402

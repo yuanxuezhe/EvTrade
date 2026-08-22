@@ -311,7 +311,6 @@ class TableBase:
     def _get_required_columns(cls) -> list:
         if cls.__tablename__ in cls._required_columns_cache:
             return cls._required_columns_cache[cls.__tablename__]
-        from server.db import engine
         sql = text(
             "SELECT COLUMN_NAME, DATA_TYPE FROM INFORMATION_SCHEMA.COLUMNS "
             "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = :t "

@@ -3,7 +3,7 @@ User ORM model.
 """
 from datetime import datetime, timezone
 from sqlalchemy import Column, Integer, String, DateTime, Boolean
-from server.db import Base
+from server.infra.db import Base
 
 # 统一时间戳格式 "YYYY-MM-DD HH:MM:SS.fff"
 #   这里内联 format_db_dt 而非 import server.services.push.helpers,

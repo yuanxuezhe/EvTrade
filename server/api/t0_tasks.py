@@ -24,7 +24,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from server.auth.deps import get_current_user, require_admin, require_trader
-from server.db import get_db
+from server.infra.db import get_db
 from server.models.user import User
 from server.services.t0 import tasks as t0_tasks_service
 

@@ -26,7 +26,7 @@ pytestmark = pytest.mark.asyncio
 from server.api.orders.place import _submit_rpc_async
 from server.api.orders import ord_stk as real_ord_stk
 from server.api.orders import ws_manager as real_ws_manager
-from server.db import SessionLocal
+from server.infra.db import SessionLocal
 from server.tables import Orders, SysStatus, T0Tasks
 from server.models.user import User
 from server.auth.security import hash_password, create_access_token
@@ -306,7 +306,7 @@ async def test_endpoint_creates_task_and_returns_immediately(trader, fake_ord_st
     from server.main import app
     from server.auth.deps import get_current_user
     from sqlalchemy import text
-    from server.db import SessionLocal as _SL
+    from server.infra.db import SessionLocal as _SL
     from server.models.user import User as UserM
 
     # 清理 orders 表

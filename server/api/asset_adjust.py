@@ -17,7 +17,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, validator
 from sqlalchemy.orm import Session
 
-from server.db import get_db
+from server.infra.db import get_db
 from server.tables import Assets, Row
 from server.auth.deps import require_admin
 from server.models.user import User

@@ -29,7 +29,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 
 from server.auth.security import decode_token, HERMES_AGENT_TOKEN
 from server.auth.session import touch as session_touch  # WS ping 续期 HTTP session
-from server.db import SessionLocal
+from server.infra.db import SessionLocal
 from server.ws.manager import ws_manager, match_pattern
 from server.repo.quote_snapshots import get_latest_multi as repo_get_latest_multi, to_dict as repo_to_dict
 from server.models.user import User as UserModel  # sync_update admin 鉴权

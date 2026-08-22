@@ -17,7 +17,7 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 
-from server.db import db_session
+from server.infra.db import db_session
 from server.services.t0 import get_fee_config
 from server.services.t0.aggregators import (
     aggregate_by_day,

@@ -13,7 +13,7 @@ from typing import Optional, List
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from server.db import get_db
+from server.infra.db import get_db
 from server.tables.assets import Assets
 from server.utils.time import format_db_dt
 from server.api.asset_adjust import register_adjust

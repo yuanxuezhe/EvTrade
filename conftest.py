@@ -76,7 +76,7 @@ if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
 # 2. 预加载 server.* 包内模块
-import server.db as _server_db
+import server.infra.db as _server_db
 import server.models.user as _server_user
 import server.services.guards as _server_guards
 import server.services.reconcile as _server_reconcile

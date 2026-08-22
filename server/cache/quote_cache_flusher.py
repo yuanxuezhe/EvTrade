@@ -22,7 +22,7 @@ import time
 
 from server.cache.quote_cache import get_quote_cache
 from server.config import settings
-from server.db import db_session
+from server.infra.db import db_session
 from server.repo import quote_snapshots as quote_repo
 
 log = logging.getLogger(__name__)

@@ -15,7 +15,7 @@ from typing import Optional, List
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field, validator
-from server.db import get_db
+from server.infra.db import get_db
 from server.auth.deps import require_admin
 from server.repo import stocks as stocks_repo
 from server.tables.stocks import Stocks

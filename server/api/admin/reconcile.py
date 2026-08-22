@@ -17,7 +17,7 @@ from typing import Optional, List
 from sqlalchemy.orm import Session
 import json
 
-from server.db import get_db
+from server.infra.db import get_db
 from server.models.user import User
 from server.services.guards import require_admin
 from server.services import sysconfig

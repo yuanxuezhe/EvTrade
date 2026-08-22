@@ -7,7 +7,7 @@ lifecycle/seed.py — 启动时建表 + 默认账号 seed
 - 若 User 表为空，seed admin / trader 两个默认账号
 - 已有用户则什么都不做（不覆盖、不重置）
 """
-from server.db import init_db, SessionLocal
+from server.infra.db import init_db, SessionLocal
 from server.models.user import User
 from server.auth.security import hash_password
 from server.config import validate_config

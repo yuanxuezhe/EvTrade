@@ -18,7 +18,7 @@ import pytest
 
 # mode=AUTO 自动检测 async test, 不需要 pytestmark (否则对 sync 测试警告)
 
-from server.db import SessionLocal
+from server.infra.db import SessionLocal
 from server.tables import Orders
 from server.services.push.ord import handle_ord_cfm
 

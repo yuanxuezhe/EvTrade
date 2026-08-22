@@ -20,7 +20,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from typing import List, Optional
 
-from server.db import db_session
+from server.infra.db import db_session
 from server.auth.deps import get_current_user
 from server.models.user import User
 from server.services.guards import resolve_default_trd_date

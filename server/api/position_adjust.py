@@ -18,7 +18,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Path
 from pydantic import BaseModel, validator
 
-from server.db import get_db
+from server.infra.db import get_db
 from server.tables import Positions, Row
 from server.auth.deps import require_admin
 from server.models.user import User

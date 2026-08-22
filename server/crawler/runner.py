@@ -17,7 +17,7 @@ import time
 from typing import Callable, List, Optional
 
 from server.crawler.sources import eastmoney
-from server.db import SessionLocal
+from server.infra.db import SessionLocal
 from server.repo import stocks as stocks_repo
 
 

@@ -20,7 +20,7 @@ def _run_handle_push(func: str, row: Dict[str, Any], ts: str) -> Optional[Dict[s
     - handle_push 同步签名不变（向后兼容 test_push_handlers.py 11 用例）
     - 返回 handler 的重组包结果（OrderOut/TradeOut 兼容 dict）
     """
-    from server.db import db_session
+    from server.infra.db import db_session
     from server.services.push.handlers import handle_push
     with db_session() as db:
         result = handle_push(db, func, row, ts)
@@ -40,7 +40,7 @@ def _resolve_active_trd_date_safe() -> Optional[str]:
     - 不传 row 参数给 ws：返回 None 时不注入 trd_date，前端用 _today_yyyymmdd 兜底
     """
     try:
-        from server.db import db_session
+        from server.infra.db import db_session
         from server.services.guards import resolve_active_trd_date
         with db_session() as db:
             return resolve_active_trd_date(db)

@@ -10,7 +10,7 @@ repo/system.py — 系统配置仓库
 from datetime import datetime, time as dtime
 from typing import Optional
 
-from server.db import db_session
+from server.infra.db import db_session
 from server.tables import SysStatus
 
 

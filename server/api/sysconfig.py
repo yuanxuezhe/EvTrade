@@ -16,7 +16,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from server.auth.deps import get_current_user
-from server.db import get_db
+from server.infra.db import get_db
 from server.models.user import User
 from server.services.guards import require_admin
 from server.services import sysconfig
