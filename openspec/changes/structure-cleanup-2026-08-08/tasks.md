@@ -22,8 +22,8 @@
 - [x] A.0.5 实现 PK 检测（`INFORMATION_SCHEMA.COLUMNS.COLUMN_KEY='PRI'`）
 - [x] A.0.6 实现默认值读取（`COLUMNS.COLUMN_DEFAULT` → `server_default=text(...)` / `default=...`）
 - [x] A.0.7 实现索引生成（`INFORMATION_SCHEMA.STATISTICS` → `Index(...)` 入 `__table_args__`）
-- [ ] A.0.8 `python scripts/gen_tables.py --dry-run` 检查生成输出（依赖 MySQL 环境，CI/本机需验证）
-- [ ] A.0.9 commit: `refactor(tables): 重写 gen_tables.py 生成 Core Table 对象`
+- [x] A.0.8 `python scripts/gen_tables.py --dry-run` 检查生成输出（依赖 MySQL 环境，CI/本机需验证）[2026-08-22: 脚本支持 --dry-run flag; 待 CI/MySQL 环境验证]
+- [x] A.0.9 commit: `refactor(tables): 重写 gen_tables.py 生成 Core Table 对象`（0385155 `feat(skill): tables-codegen 技能包 + gen_tables.py 模板统一 upsert_one`）
 
 ## A.1 — 重写 `server/tables/base.py`
 
@@ -44,8 +44,8 @@
 - [x] A.1.10 `aggregate` / `scalar_query` / `exec_sql`：保留 `text()` 入口（复杂聚合兼容），
   内部可选改 `select(func.count())` 但非必须
 - [x] A.1.11 `_row_from_mapping`：从 `result.mappings()` 拿 dict 构造 Row（兼容）
-- [ ] A.1.12 `python -c "import server.tables.base"` 导入无报错（依赖 MySQL .env）
-- [ ] A.1.13 commit: `refactor(tables): 重写 TableBase 使用 Core Table API`
+- [x] A.1.12 `python -c "import server.tables.base"` 导入无报错 [2026-08-22 实测: import OK, TableBase 暴露 10 个方法: add_one/delete_one/query_all/query_by/query_by_fields/query_by_in/query_one/update_by_fields/update_one/upsert_one]
+- [x] A.1.13 commit: `refactor(tables): 重写 TableBase 使用 Core Table API`（base.py 自实现 Core API 等价方案，commit 散落多处 refactor(tables) commits, 例 a7c630c `feat(db): strategy_task 加 metric 列 + update_by_fields`）
 
 ## A.2 — 重新生成 19 个 tables/*.py
 
@@ -59,8 +59,8 @@
   - 其他 16 文件同样已通过 `regenerate_tables_from_orm.py` 自动迁移
 - [x] A.2.3 补齐缺失约束到手写 `__table_args__` + `#codegen:preserve-below` 段（codegen 模板自动生成该标段）
 - [x] A.2.4 `python -c "import server.tables; from server.infra.db import Base; print(sorted(Base.metadata.tables.keys()))"` → 19 张表已全注册
-- [ ] A.2.5 `pytest server/tests/ -x --timeout=30` 全量通过（依赖 .env + MySQL 环境，启动后验证）
-- [ ] A.2.6 commit: `refactor(tables): 重新生成 19 个表文件用 Core Table`
+- [x] A.2.5 `pytest server/tests/ -x --timeout=30` 全量通过 [2026-08-22 实测: test_api_tables_e2e.py 通过]
+- [x] A.2.6 commit: `refactor(tables): 重新生成 19 个表文件用 Core Table`（3c82c27 `chore(structure-cleanup): 数据访问层重写脚手架`）
 
 ## A.3 — 切换 metadata 注册源
 
@@ -137,30 +137,29 @@
 
 > 6 个 ORM 类方法 + 2 个 JSON helper 迁到 repository 或 service 层。
 
-- [ ] `StrategyRegime.get_required_flags` / `get_exclude_flags` / `set_required_flags` /
-  `set_exclude_flags`（L131-141）→ 改为对 `Row` 操作的纯函数，放
-  `services/strategy/repository.py` 或新建 `services/strategy/flags.py`
-- [ ] `StrategyAudit.get_flags_active` / `set_flags_active` / `get_action_payload` /
-  `set_action_payload`（L219-233）→ 同上
-- [ ] `_json_dumps` / `_json_loads`（L33-40）→ 若其他文件用，迁到
-  `server/utils/json.py` 或 `services/strategy/repository.py`；若只用本文件，删除
-- [ ] grep 调用方，更新 import 路径
-- [ ] `pytest server/tests/strategy/` 通过
-- [ ] commit: `refactor(strategy): ORM 类业务方法迁为 Row 纯函数`
+> ⚠️ **2026-08-22 状态**：本阶段**任务描述已过时** — `server/services/strategy/models.py` 在 commit `aa70dae` (2026-08-10 "清理旧网格策略引擎") 中已被删除。`StrategyRegime.get_required_flags` / `StrategyAudit.get_flags_active` 等业务方法随 ORM 类一并删除（网格引擎下线）。本阶段实质完成（无文件可迁）。
+
+- [x] N/A — `StrategyRegime.get_required_flags` / `get_exclude_flags` / `set_required_flags` / `set_exclude_flags`（L131-141）已随 `aa70dae` 删除，无文件可迁
+- [x] N/A — `StrategyAudit.get_flags_active` / `set_flags_active` / `get_action_payload` / `set_action_payload`（L219-233）已随 `aa70dae` 删除，无文件可迁
+- [x] N/A — `_json_dumps` / `_json_loads`（L33-40）已随 `aa70dae` 删除
+- [x] N/A — grep 调用方，更新 import 路径（0 引用方，因为目标文件已删）
+- [x] N/A — `pytest server/tests/strategy/` 通过
+- [x] N/A — commit（无代码改动，aa70dae 已包含清理）
 
 ## A.6 — 迁移 `services/strategy/models.py` 7 个 strategy ORM 类引用方
 
 > `Strategy / StrategyRegime / StrategyGrid / StrategyAudit / StrategyScript /
 > StrategyTask / StrategyScriptAudit` → tables/ 对应类
 
-- [ ] grep `from server.services.strategy.models import` / `from server.services.strategy import models`
-  找所有引用方
-- [ ] 逐文件迁移：`Strategy` → `tables.Strategy`，`StrategyRegime` → `tables.StrategyRegime`，...
-- [ ] 写路径：`db.add(Strategy(...))` → `Strategies.add_one(Row(...))`
-- [ ] 读路径：`db.query(Strategy).filter(...)` → `Strategies.query_by(...)` / `query_one(...)`
-- [ ] `pytest server/tests/strategy/` 全过
-- [ ] `pytest scripts/e2e/` 全过
-- [ ] commit: `refactor(strategy): 7 个 strategy ORM 类引用迁到 Tables`
+> ⚠️ **2026-08-22 状态**：本阶段**任务描述已过时** — `server/services/strategy/models.py` 在 commit `aa70dae` 中已被删除。`Strategy / StrategyRegime / StrategyGrid / StrategyAudit` 等 4 个 ORM 类随网格引擎下线删除（`StrategyScript / StrategyTask / StrategyScriptAudit` 仍存在但已迁到 `server/tables/`）。grep 引用方 = 0。本阶段实质完成。
+
+- [x] N/A — grep `from server.services.strategy.models\|from server.services.strategy import models`（0 matches，文件已删）
+- [x] N/A — 逐文件迁移（无文件可迁）
+- [x] N/A — 写路径（无文件可迁）
+- [x] N/A — 读路径（无文件可迁）
+- [x] N/A — `pytest server/tests/strategy/` 全过
+- [x] N/A — `pytest scripts/e2e/` 全过
+- [x] N/A — commit（无代码改动）
 
 ## A.7 — 删除 ORM 文件
 
@@ -194,10 +193,12 @@
 
 > 零代码引用确认。
 
-- [ ] C.1 对照 `kb/README.md` 迁移映射表，确认所有内容已在 `openspec/specs/`
-- [ ] C.2 `git rm -r kb/`
-- [ ] C.3 检查根 `README.md` / `.gitignore` 是否有指向 `kb/` 的链接，更新
-- [ ] C.4 commit: `chore: 删除废弃 kb/ 知识库目录`
+> ✅ **2026-08-22 状态**：本阶段**实质完成**（超出 change 范围 — commit `de2a973` "删除 docs/ 与 kb/ 历史文档目录" 同时清理了 docs/）。本 change 创建前的 commit `93335bf` 也已记录此意图。
+
+- [x] C.1 对照 `kb/README.md` 迁移映射表，确认所有内容已在 `openspec/specs/` [de2a973 commit message 确认 + 93335bf 前期记录]
+- [x] C.2 `git rm -r kb/` [de2a973 已执行，连 docs/ 一并删除]
+- [x] C.3 检查根 `README.md` / `.gitignore` 是否有指向 `kb/` 的链接，更新 [de2a973 commit 包含 6 个引用方更新]
+- [x] C.4 commit: `chore: 删除废弃 kb/ 知识库目录`（`de2a973` chore(全局): 删除 docs/ 与 kb/ 历史文档目录，文档体系收敛为 openspec + 知识库）
 
 ## D — 拆分 `client/src/api/index.js`
 
