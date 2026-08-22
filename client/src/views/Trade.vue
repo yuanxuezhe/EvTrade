@@ -1,18 +1,14 @@
 <!--
-  Trade.vue — 交易下单页（v32 四宫格重构）
+  Trade.vue — 交易下单页（四宫格布局）
 
   主体 grid 2x2:
-    - 左列 420px (v30 280 + 50% ≈ 420), 右列 1fr 吃剩
+    - 左列 420px, 右列 1fr 吃剩
     - 左上 (1,1) = OrderForm 下单
     - 左下 (2,1) = QuotePanel 行情
     - 右上 (1,2) = HoldingsPanel 持仓
     - 右下 (2,2) = TodayOrdersPanel 今日委托 (内含 委托/成交 tab)
     - 行高各 1fr, 视觉上四块等大
-
-  历史:
-    v32 重构: 5 区布局 → 2x2 四宫格 (左列 420px, 行高 1fr 1fr)
-    v30 重构: 5 区布局 → 4 区 (成交并入委托, 左列 22% / 280px)
-    v13  / v12 修订: 委托/成交嵌入 mini panel, 删独立路由
+    - 委托/成交嵌入 TodayOrdersPanel mini panel, 无独立路由
 -->
 <template>
   <div class="trade-view fade-in-up" :style="tradeViewStyle" :class="{ 'is-mobile': uiStore.isMobile }">
@@ -63,9 +59,9 @@ const uiStore = useUiStore()
 const orderFormRef = ref(null)
 const quickStock = ref('')
 
-// v35: 滚动条按需显示 — 监听 .el-scrollbar__wrap 的 scrollWidth/clientWidth
+// 滚动条按需显示 — 监听 .el-scrollbar__wrap 的 scrollWidth/clientWidth
 //   当 wrap.scrollWidth > clientWidth 时, 给父 .el-scrollbar 加 .has-scroll-x class
-//   main.css 只对 .has-scroll-x 强制显示水平滚动条 (修 v32 `display:block !important` 的副作用)
+//   main.css 只对 .has-scroll-x 强制显示水平滚动条 (避免 `display:block !important` 的副作用)
 let scrollXObserver = null
 
 function updateScrollXFlags() {
@@ -103,7 +99,7 @@ const formStockCode = computed(() => quickStock.value || '')
 
 async function handleOrderSubmit(orderData) {
   try {
-    // v66: REQ-TRADE-026; Trade.vue 下单 = 普通单 strategy_type=0
+    // REQ-TRADE-026; Trade.vue 下单 = 普通单 strategy_type=0
     //   (后端 Pydantic Literal[0,1] 默认 0, 此处显式传避免隐式默认被未来默认值改动影响)
     const payload = { ...orderData, strategy_type: 0 }
     // placeOrder 内部已 _upsertToHoldings 写缓存(等 WS 推送二次确认)
@@ -120,7 +116,7 @@ function onApplyPrice(price) {
   }
 }
 
-// v53: 持仓行 dblclick → 写入 OrderForm 代码输入框 (REQ-FE-HOLDINGS-DBLCLICK)
+// 持仓行 dblclick → 写入 OrderForm 代码输入框 (REQ-FE-HOLDINGS-DBLCLICK)
 //   走 expose API (OrderForm 不 watch props.defaultStockCode, 必须主动 setter)
 function onApplyHolding({ stock_code, stock_name }) {
   if (!stock_code) return
@@ -134,14 +130,14 @@ function onApplyHolding({ stock_code, stock_name }) {
 
 <style scoped>
 /*
- * Trade.vue 布局 (v32 2x2 四宫格)
+ * Trade.vue 布局 (2x2 四宫格)
 
  * 整体策略: grid 2x2
  *   .trade-view         flex column, 填满 .app-content 的可用区
  *   .trade-grid         grid 模板 1fr 1fr / 420px 1fr, 4 个 cell 各占一格
  *   .trade-cell         flex column, 容纳单个组件, min-width/min-height 0 防止内容溢出
  *
- * OperationLog 遮挡修复 (沿用 v30):
+ * OperationLog 遮挡修复:
  *   --oplog-h 由 uiStore.oplogExpanded 驱动 (折叠 44px / 展开 320px)
  *   .trade-view 利用 --oplog-h 算出可用高度
  */
@@ -151,13 +147,13 @@ function onApplyHolding({ stock_code, stock_name }) {
   gap: var(--space-4);
   height: 100%;
   min-height: 0;
-  /* v32: 用 --oplog-h 限制实际可用高度,避免右侧 panel 撑出 OperationLog 遮挡区 */
+  /* 用 --oplog-h 限制实际可用高度,避免右侧 panel 撑出 OperationLog 遮挡区 */
   max-height: calc(100vh - 80px - var(--oplog-h, 44px));
 }
 
 .trade-grid {
   display: grid;
-  /* v32: 左列 420px (v30 280 + 用户要求 50% 加宽), 行高 1fr 1fr 四宫格
+  /* 左列 420px, 行高 1fr 1fr 四宫格
      grid-template-areas 显式指定每格内容, 避免 grid auto-flow 把第二个子元素塞到 (1,2) */
   grid-template-columns: 420px 1fr;
   grid-template-rows: 1fr 1fr;
@@ -174,7 +170,7 @@ function onApplyHolding({ stock_code, stock_name }) {
   flex-direction: column;
   min-width: 0;
   min-height: 0;
-  /* v32 (commit 4): overflow hidden 防止内容溢出到隔壁 cell, 横向滚动由内层 el-scrollbar 处理 */
+  /* overflow hidden 防止内容溢出到隔壁 cell, 横向滚动由内层 el-scrollbar 处理 */
   overflow: hidden;
 }
 
@@ -209,7 +205,7 @@ function onApplyHolding({ stock_code, stock_name }) {
 }
 
 /*
- * v37: 手机竖屏布局优化 (兼容 useUiStore().isMobile)
+ * 手机竖屏布局优化 (兼容 useUiStore().isMobile)
  *   - 触发条件: ui store isMobile=true (URL ?mobile=1 或 window <= 900)
  *   - 策略: 单列垂直堆叠, OrderForm/QuotePanel/HoldingsPanel/TodayOrdersPanel 顺序排
  *   - 持仓/委托/成交 表: 改卡片式 (display:block + 每行变卡片), 避免横向滚动看不到关键数据

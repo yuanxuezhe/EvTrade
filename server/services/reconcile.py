@@ -1,5 +1,5 @@
 """
-reconcile.py — v5 对账算法 (schema refactor: trading_day→sys_status, 字段重命名)
+reconcile.py — 对账算法 (sys_status 单行宽表, 现行字段命名)
 
 启动人工触发，admin 调 POST /api/admin/reconcile/trigger：
 1. 调 qry_positions + qry_asset（仅 2 个 RPC，委托/成交靠 push 增量）
@@ -12,10 +12,8 @@ reconcile.py — v5 对账算法 (schema refactor: trading_day→sys_status, 字
 对账失败 → 不切交易日，返回 503，用户重试。
 RPC 部分失败 → 写对账报告 + 503 错误详情，不切交易日。
 
-v5 改动（schema refactor）：
-- TradingDay → SysStatus；current_date → trd_date
-- Position 字段：initial_position→last_vol, available→avl_vol, total→vol, cost→cost_price
-- Asset 去 TRD_DATE，单行无主键
+相关 schema 约定：
+- Position 字段: last_vol / avl_vol / vol / cost_price; Asset 单行无主键
 - ReconcileReport 复合主键 (trd_date, mode, created_at)
 """
 from datetime import datetime, timezone
@@ -24,19 +22,19 @@ from sqlalchemy.orm import Session
 
 from server.rpc.client import qry_positions, qry_asset
 from server.models.orm import (
-    Position, Asset,  # ORM-only: Position / Asset 保留 v_next 老逻辑 (Position 行 insert/delete via db.add)
+    Position, Asset,  # ORM-only: Position / Asset 保留老逻辑 (Position 行 insert/delete via db.add)
 )
-from server.tables import Positions, Assets, SysStatus, ReconcileReport  # v81.11: 修复 /api/admin/sys-status/init 500 (tables API)
+from server.tables import Positions, Assets, SysStatus, ReconcileReport
 from server.repo.stocks import get_stock_scale  # cost_price 按 stock.scale 保留精度
 from server.services.push.helpers import _round_scale  # cost_price 按 scale 保留精度
-import json  # v103: 修复 do_reconcile 抛 NameError: name 'json' is not defined
+import json
 import logging
 
 log = logging.getLogger(__name__)
 
 
 def get_reconcile_config(db=None) -> dict:
-    """获取对账配置 (dict, v_next: 改读 sysconfig)
+    """获取对账配置 (dict, 读 sysconfig)
 
     返回 dict, 字段: auto_reconcile (int 0/1), auto_use_broker_data (int 0/1)
     """
@@ -56,7 +54,7 @@ async def do_reconcile(
     db: Session,
     new_trd_date: str,
     by_user: str,
-    reconcile_kind: str = "incremental",   # v118: 'init' = 系统初始化 (允许覆盖 positions); 'incremental' = 兜底 (不动 positions, 靠 pos_push)
+    reconcile_kind: str = "incremental",   # 'init' = 系统初始化 (允许覆盖 positions); 'incremental' = 兜底 (不动 positions, 靠 pos_push)
 ) -> Dict[str, Any]:
     """执行对账
 
@@ -68,10 +66,10 @@ async def do_reconcile(
         error: str | None,
     }
 
-    NOTE: report_id 在 v5 改为 (trd_date, mode, created_at) 复合键，
+    NOTE: report_id 是 (trd_date, mode, created_at) 复合键，
     返回中只取 created_at 作为标识。
 
-    v118: reconcile_kind 区分:
+    reconcile_kind 区分:
       - 'init' (系统初始化): 调 qry_positions RPC, 用返回数据**全表覆盖** positions
         (broker 推送 pos_push 还没启动, 必须靠 RPC 一次性同步)
       - 'incremental' (任何其他时刻): **不动 positions** (由 pos_push 驱动)
@@ -90,7 +88,7 @@ async def do_reconcile(
         rpc_errors.append(f"qry_positions: {e}")
         positions_data = []
 
-    # v99: 初始化只同步持仓, 不同步资金 (资金由 rpc_health 定时 5s 同步)
+    # 初始化只同步持仓, 不同步资金 (资金由 rpc_health 定时 5s 同步)
     #   保留 diffs['assets_count'] = 0 占位, 不拉 qry_asset
     diffs['assets_count'] = 0
     assets_data = []
@@ -145,7 +143,7 @@ async def do_reconcile(
         }
 
     # 4. auto_reconcile=True → 覆盖本地 (Position + Asset, 委托/成交跳过)
-    # v118: reconcile_kind 决定是否覆盖 positions
+    # reconcile_kind 决定是否覆盖 positions
     #   - 'init': 初始化, qry_positions RPC 一次性同步 → 覆盖 positions 表
     #   - 'incremental': 兜底, pos_push 已接管 → 不动 positions (避免破坏 pos_push 累计态)
     applied = False
@@ -170,7 +168,7 @@ async def do_reconcile(
                 'error': f"覆盖本地失败: {e}",
             }
 
-    # 5. 切交易日 (v_next: SysStatus 单行宽表 id=1)
+    # 5. 切交易日 (SysStatus 单行宽表 id=1)
     #
     # DB 层级: sys_status 是单行表 (CHECK id=1), 切日 = UPDATE 同一行的 trd_date + status
     # 同日重 init: 走同一行, 更新 status='active' + 初始化元数据
@@ -206,7 +204,7 @@ def _apply_broker_data(
 ) -> bool:
     """用柜台数据覆盖本地 (仅 Position + Asset, 委托/成交靠 push)
 
-    v5 简化: 委托/成交不在对账流程处理, 改靠 push_handlers.handle_push
+    委托/成交不在对账流程处理, 靠 push_handlers.handle_push
     (ord_cfm / trd_cfm 事件) 自动 upsert 到本地表。
     """
     # Positions: 按 stock_code PK 全表覆盖
@@ -228,7 +226,7 @@ def _apply_broker_data(
             synced_from='rpc_reconcile',
         ))
 
-    # Assets: v99 初始化不同步资金 (由 rpc_health 定时 5s 同步)
+    # Assets: 初始化不同步资金 (由 rpc_health 定时 5s 同步)
     #   assets_data 为空时跳过, 不删除已有资产行
     if assets_data:
         db.query(Asset).delete()
@@ -242,7 +240,7 @@ def _apply_broker_data(
             synced_from='rpc_reconcile',
         ))
 
-    # v114: 计算期初总资产 last_asset = 可用资金 + sum(持仓量 * 标的昨收盘)
+    # 计算期初总资产 last_asset = 可用资金 + sum(持仓量 * 标的昨收盘)
     #   数据源:
     #     - 资金: 刚从 broker 同步来的 cash 字段 (本次 init 推到 assets.id=1)
     #     - 持仓: 刚从 broker 同步来的 positions_data (用 last_vol 持仓量)
@@ -255,7 +253,7 @@ def _apply_broker_data(
 
 
 def _update_last_asset(db: Session) -> None:
-    """v114: 计算并写入 assets.id=1 的 last_asset
+    """计算并写入 assets.id=1 的 last_asset
 
     last_asset = cash + sum(positions.last_vol * positions.stock_code's prev_close)
 

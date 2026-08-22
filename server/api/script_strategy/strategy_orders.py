@@ -1,5 +1,5 @@
 """
-server/api/script_strategy/strategy_orders.py — 策略下单母单 REST 端点 (v126)
+server/api/script_strategy/strategy_orders.py — 策略下单母单 REST 端点
 
 REST 端点 (前缀 /api/script-strategy, 由 __init__.py 挂载):
   POST  /strategy-orders                      建母单 {strategy_id} → 201

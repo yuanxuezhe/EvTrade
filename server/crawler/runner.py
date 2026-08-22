@@ -1,9 +1,9 @@
 """
-crawler/runner.py — 同步循环主控 (v23 slim-stocks-table)
+crawler/runner.py — 同步循环主控
 
 职责:
 - 遍历 all_codes 列表
-- 调 eastmoney.fetch_base_info() 拉取单只股票信息(v23 仅 3 字段)
+- 调 eastmoney.fetch_base_info() 拉取单只股票信息(仅 3 字段)
 - 调 repo.stocks.upsert() 增量入库
 - 通过 progress_callback 推送进度(由 sync_manager 注入 WS broadcast)
 
@@ -108,7 +108,7 @@ async def run(
             "eta_s": round(eta, 1),
         })
 
-        # v90: 去掉 stock_synced WS 推送 (前端 IndexedDB 负责缓存, 后端不再推单只同步事件)
+        # 不推 stock_synced WS 事件 (前端 IndexedDB 负责缓存, 后端不推单只同步事件)
 
         # 防反爬 sleep
         await asyncio.sleep(sleep_sec)

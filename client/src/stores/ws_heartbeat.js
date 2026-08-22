@@ -1,5 +1,5 @@
 /**
- * ws_heartbeat.js — WebSocket 连接 / 重连 / 心跳管理（v119 单向心跳）
+ * ws_heartbeat.js — WebSocket 连接 / 重连 / 心跳管理（单向心跳）
  *
  * 职责:
  * - WS URL 构造 (含 hqserver 直连 quote_update 特例)
@@ -9,15 +9,14 @@
  * - 服务端 10 分钟无任意消息 → close 4001 "idle timeout" → onclose 接 4001 → 跳登录
  * - 指数退避: delay = min(1000 * 2^retryCount, 30000)
  *
- * v95: 新增 position_update 频道 — 后端 trd_cfm 完成后主动推该标的完整持仓行,
+ * - position_update 频道 — 后端 trd_cfm 完成后主动推该标的完整持仓行,
  *      前端 applyPositionUpdate 按 stock_code 整条 ref 替换 (不增量/不 spread).
- *      (change consolidate-position-data-flow 当年删了 pos_cfm/ast_cfm channel,
- *       现在 v95 重新引入 - 但只是 position_update, 没有 asset_update)
- * v119 (2026-08-09): 服务端不再主动 ping, 改为客户端 30s 主动 ping + 服务端 10 分钟 idle 独立计时
- *                    - 删除 _pongMissed 计数器（时钟漂移导致 90s 一次误断）
- *                    - 新增 _lastRecvAt 时间戳，按真实空闲时间判断超时
- *                    - onclose 接 event, code===4001 → 调 _onTokenExpired 跳登录（不重连）
- *                    - _onTokenExpired 走 auth.clear() + router.replace('/login')（避免硬刷新）
+ *      (change consolidate-position-data-flow 删了 pos_cfm/ast_cfm channel,
+ *       position_update 是持仓推送的唯一频道, 没有 asset_update)
+ * - 心跳机制: 客户端 30s 主动 ping + 服务端 10 分钟 idle 独立计时
+ *   - 按真实空闲时间 (_lastRecvAt 时间戳) 判断超时
+ *   - onclose 接 event, code===4001 → 调 _onTokenExpired 跳登录（不重连）
+ *   - _onTokenExpired 走 auth.clear() + router.replace('/login')（避免硬刷新）
  *
  * 暴露 createWsManager() 工厂, 返回 { connect, disconnect, connected (ref), lastEvent (ref) }
  * 通过依赖注入 onMessage 回调（ws_dispatch.dispatchPayload）, 不直接 import dispatch
@@ -27,29 +26,26 @@ import { makeLogger } from '../utils/logger'
 
 const log = makeLogger('ws')
 
-// change 2026-07-21-system-init-page-refresh: 加 system_update 频道
+// 加 system_update 频道
 //   - 后端 init_trading_day 成功后会通过 ws_manager.broadcast('system_update', {...})
 //     推送 type=init_completed 事件 (server/api/admin/sys_status.py:118)
 //   - 前端 ws_dispatch._onInitCompleted 接收后做：active day 切换 + force bootstrap
 //   - 之前 ws_dispatch._onInitCompleted 写了但永远收不到 (CHANNELS 没列)，导致日初后页面不切日
-// v118: 加 'position_update' channel — broker 推 pos_push 事件 → 后端 handle_pos_push 覆盖本地 → ws 推前端
+// 'position_update' channel — broker 推 pos_push 事件 → 后端 handle_pos_push 覆盖本地 → ws 推前端
 export const CHANNELS = ['order_update', 'trade_update', 'position_update', 'quote_update', 'system_update', 'task_progress_update']
 //                                                                            ^^^^^^^^^^^^^^^^
-//                                                                            v99: 日初完成后推 init_completed
-//                                                                            v95: trd_cfm payload.data.position 同时携带持仓行, 前端 _onTradeCfm 内部处理
-//                                                                            v118: pos_push 独立走 position_update channel (broker 持仓变化推送)
-//                                                                                  _onTradeCfm.position 不再处理 (trd_cfm 不动持仓)
-//                                                                                  (不需要独立 position_update channel, position 行嵌入 trd_cfm payload)
+//                                                                            日初完成后推 init_completed
+//                                                                            trd_cfm payload.data.position 同时携带持仓行, 前端 _onTradeCfm 内部处理
+//                                                                            pos_push 独立走 position_update channel (broker 持仓变化推送)
 
-// v7 改: WS 重连从固定 3s 改为指数退避
+// WS 重连采用指数退避:
 //   delay = min(1000 * 2^retryCount, 30000)
 //   broker 长时间故障时不会 3s 一次疯狂重连
 export const RECONNECT_BASE_DELAY = 1000
 export const RECONNECT_MAX_DELAY = 30000
 
-// v122: 客户端视角的 WS 空闲超时
-//   原 90_000 (3 × 30s ping) 太激进: 服务端 / 反代偶尔吞 pong 时会误断刷屏
-//   改 300_000 (5 min), 给服务端/反代留 buffer; 服务端 WS_IDLE_TIMEOUT (600s) 是兜底
+// 客户端视角的 WS 空闲超时
+//   300_000 (5 min), 给服务端/反代留 buffer; 服务端 WS_IDLE_TIMEOUT (600s) 是兜底
 //   适用场景: 网络真断但服务端探测不到 (前端先断触发指数退避重连)
 export const WS_IDLE_TIMEOUT_MS = 300_000
 
@@ -79,7 +75,7 @@ function _wsUrl(channel) {
 }
 
 // Token 过期检测：仅执行一次，停止所有重连并跳转登录
-// v119: 改为走 auth store + router（避免硬刷新丢业务状态），auth/router import 失败时回退硬跳转
+// 走 auth store + router（避免硬刷新丢业务状态），auth/router import 失败时回退硬跳转
 let _loginRedirected = false
 function _onTokenExpired() {
   if (_loginRedirected) return
@@ -112,7 +108,7 @@ function _onTokenExpired() {
  * 工厂: 创建一个 ws manager 实例
  *
  * @param {Function} onMessage  payload → void（业务分发回调，注入 ws_dispatch.dispatchPayload）
- * @param {Function} [onConnected]  (channel) → void（连接成功回调，用于 2026-07-14 fix 重订阅）
+ * @param {Function} [onConnected]  (channel) → void（连接成功回调，用于重订阅）
  * @returns {{connect, disconnect, connected, lastEvent, sendToChannel}}
  */
 export function createWsManager(onMessage, onConnected) {
@@ -120,9 +116,9 @@ export function createWsManager(onMessage, onConnected) {
   const lastEvent = ref(null)
   const _sockets = {}    // channel -> WebSocket
   const _reconnectTimer = {}
-  const _retryCount = {}  // v7 增: 指数退避计数, per-channel
-  const _heartbeatTimer = {}  // v10 增: 客户端主动 ping 定时器, per-channel
-  const _lastRecvAt = {}      // v119 增: 最后收到任意消息时间戳（Date.now()），per-channel
+  const _retryCount = {}  // 指数退避计数, per-channel
+  const _heartbeatTimer = {}  // 客户端主动 ping 定时器, per-channel
+  const _lastRecvAt = {}      // 最后收到任意消息时间戳（Date.now()），per-channel
 
   function _openChannel(channel) {
     const url = _wsUrl(channel)
@@ -138,15 +134,15 @@ export function createWsManager(onMessage, onConnected) {
 
     ws.onopen = () => {
       connected.value = true
-      _retryCount[channel] = 0  // v7 增: 连接成功重置退避计数
-      _lastRecvAt[channel] = Date.now()  // v119 增: 重置空闲计时
+      _retryCount[channel] = 0  // 连接成功重置退避计数
+      _lastRecvAt[channel] = Date.now()  // 重置空闲计时
       // eslint-disable-next-line no-console
       log.info(`${channel} connected`)
-      // 2026-07-14 fix-ws-reconnect-subscription: 通知业务层连接成功
+      // change fix-ws-reconnect-subscription: 通知业务层连接成功
       //   让 quote store 强制重发 subscribedSet (服务端 disconnect 时已 clear_ws)
       try { onConnected?.(channel) } catch (e) { /* 业务层错误不影响 ws */ }
-      // v119: 客户端 30s 主动 ping — 服务端只回 pong（重置其 last_recv）
-      //   不再累计 _pongMissed；改为基于真实空闲时间判断超时
+      // 客户端 30s 主动 ping — 服务端只回 pong（重置其 last_recv）
+      //   基于真实空闲时间判断超时
       if (!_heartbeatTimer[channel]) {
         _heartbeatTimer[channel] = setInterval(() => {
           const sock = _sockets[channel]
@@ -154,8 +150,8 @@ export function createWsManager(onMessage, onConnected) {
           try {
             sock.send(JSON.stringify({ type: 'ping', ts: Date.now() }))
           } catch (_) { /* 忽略发送失败 */ }
-          // 基于真实空闲时间判断（替代 v10 的 _pongMissed 计数器）
-          // 服务端 WS_IDLE_TIMEOUT = 600s; 客户端视角 90s 更激进（网络真断兜底）
+          // 基于真实空闲时间判断
+          // 服务端 WS_IDLE_TIMEOUT = 600s; 客户端视角更激进（网络真断兜底）
           const idleMs = Date.now() - (_lastRecvAt[channel] || Date.now())
           if (idleMs > WS_IDLE_TIMEOUT_MS) {
             log.warn(`${channel} no message for ${Math.round(idleMs / 1000)}s, force close`)
@@ -166,19 +162,19 @@ export function createWsManager(onMessage, onConnected) {
     }
 
     ws.onclose = (event) => {
-      // v10 增: 清理心跳定时器
+      // 清理心跳定时器
       if (_heartbeatTimer[channel]) {
         clearInterval(_heartbeatTimer[channel])
         _heartbeatTimer[channel] = null
       }
-      // v119: 服务端 10 分钟 idle 超时关闭 → 前端调 _onTokenExpired 跳登录、不重连
+      // 服务端 10 分钟 idle 超时关闭 → 前端调 _onTokenExpired 跳登录、不重连
       //   服务端 4001 同时表示 auth 失败 / idle 超时，行为相同：踢登录
       if (event && event.code === 4001) {
         log.warn(`${channel} closed by server (code=4001), token expired or idle timeout`)
         _onTokenExpired()
         return
       }
-      // v7 改: 其他关闭原因（网络抖动、服务端重启等）→ 指数退避重连
+      // 其他关闭原因（网络抖动、服务端重启等）→ 指数退避重连
       const c = (_retryCount[channel] || 0) + 1
       _retryCount[channel] = c
       const delay = Math.min(RECONNECT_BASE_DELAY * 2 ** (c - 1), RECONNECT_MAX_DELAY)
@@ -193,7 +189,7 @@ export function createWsManager(onMessage, onConnected) {
     }
 
     ws.onmessage = (e) => {
-      // v119: 任何消息到达都重置空闲计时（包括 ping/pong/业务消息）
+      // 任何消息到达都重置空闲计时（包括 ping/pong/业务消息）
       _lastRecvAt[channel] = Date.now()
       let payload
       try {
@@ -203,7 +199,7 @@ export function createWsManager(onMessage, onConnected) {
         log.warn('bad payload', e.data, err)
         return
       }
-      // v119: 仅响应服务端 ping → 立即回 pong；不再处理服务端主动 pong（已删）
+      // 仅响应服务端 ping → 立即回 pong；服务端主动 pong 不处理
       //   客户端主动 ping → 服务端回 pong → 这里收到 pong 时仅重置 _lastRecvAt（首行已做）
       const t = payload?.type
       if (t === 'ping') {
@@ -246,12 +242,12 @@ export function createWsManager(onMessage, onConnected) {
         clearTimeout(_reconnectTimer[ch])
         _reconnectTimer[ch] = null
       }
-      if (_heartbeatTimer[ch]) {  // v10 增
+      if (_heartbeatTimer[ch]) {
         clearInterval(_heartbeatTimer[ch])
         _heartbeatTimer[ch] = null
       }
-      _retryCount[ch] = 0  // v7 增: 主动断开也清计数
-      _lastRecvAt[ch] = 0   // v119 增
+      _retryCount[ch] = 0  // 主动断开也清计数
+      _lastRecvAt[ch] = 0
       if (_sockets[ch]) {
         _sockets[ch].onclose = null
         _sockets[ch].close()
@@ -262,7 +258,7 @@ export function createWsManager(onMessage, onConnected) {
   }
 
   /**
-   * 2026-07-09 quote-snapshot-subscribe: 给指定 channel 发业务消息
+   * change quote-snapshot-subscribe: 给指定 channel 发业务消息
    *   - 用于 quote_store.subscribe() → 调 ws.send({type:'subscribe', stock_codes:[...]})
    *   - 默认 channel = 'quote_update'
    *   - 静默失败 (socket 未就绪 / 关闭): 返 false

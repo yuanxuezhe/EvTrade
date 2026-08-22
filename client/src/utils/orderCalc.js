@@ -47,18 +47,18 @@ export function recomputeOrderFromTrade(order, trade) {
  * (traded_volume / traded_amount / avg_price / cancelled_volume 不被 row 覆盖)
  * 但 status 用 row.status 作 broker_status 信号调 inferOrderStatus 重推断
  *
- * v65 (REQ-TRADE-025): 补 task_id 字段透传.
- *   之前 metaMerge 漏 task_id, 导致 T0 下单后 _upsertToHoldings(order) → applyOrderPush
+ * REQ-TRADE-025: task_id 字段透传.
+ *   metaMerge 漏 task_id 会导致 T0 下单后 _upsertToHoldings(order) → applyOrderPush
  *   → metaMerge 丢 task_id (merged.task_id=undefined). 重刷 bootstrap 才会回填.
- *   修复: row.task_id ?? ref.task_id ?? null 写回 merged.
+ *   写回规则: row.task_id ?? ref.task_id ?? null 写回 merged.
  *
- * v66 (REQ-TRADE-026): 补 strategy_type 字段透传.
- *   之前 v65 修了 task_id 但同样模式下 strategy_type 也是 PK 元数据 (不会变化),
+ * REQ-TRADE-026: strategy_type 字段透传.
+ *   strategy_type 是 PK 元数据 (不会变化),
  *   必须 row.strategy_type ?? ref.strategy_type ?? 0 写回 merged, 否则 T0Trade 缓存 filter 失效.
  *   后端 Pydantic Literal[0,1] default 0 + ORM NOT NULL DEFAULT 0, 前端兜底 0.
  */
 export function metaMerge(row, ref) {
-  // v77: ref 可能被显式传 null (ws push 阶段 B 异步竞态), 默认参数 {} 仅对 undefined 生效.
+  // ref 可能被显式传 null (ws push 阶段 B 异步竞态), 默认参数 {} 仅对 undefined 生效.
   // 必须 ?? {} 兜底, 否则 ref.task_id 等字段触发 Cannot read properties of null.
   ref = ref ?? {}
   const merged = {
@@ -74,18 +74,18 @@ export function metaMerge(row, ref) {
     price: Number(row.price ?? ref.price ?? 0),
     volume: Number(row.volume ?? ref.volume ?? 0),
     status_msg: row.status_msg ?? ref.status_msg ?? '',
-    // v76 (REQ-TRADE-027): 透传 4 个累计字段 (首次 ws push ref=undefined, 之前漏 → 下单后表格成交量列 0)
+    // REQ-TRADE-027: 透传 4 个累计字段 (首次 ws push ref=undefined 时漏传 → 下单后表格成交量列 0)
     //   业务语义: server 端 OrderOut 一定含 4 字段 (push/helpers.py:50-53 验证),
     //   row 优先 (后续 ws 推 broker 增量用最新值), ref 兜底 (后续 ws 推不含累计字段用旧值).
-    //   v65/v66 同模式: task_id / strategy_type 都是元数据透传, 累计字段同性质.
+    //   task_id / strategy_type 同模式: 元数据透传, 累计字段同性质.
     traded_volume: Number(row.traded_volume ?? ref.traded_volume ?? 0),
     traded_amount: Number(row.traded_amount ?? ref.traded_amount ?? 0),
     avg_price: Number(row.avg_price ?? ref.avg_price ?? 0),
     cancelled_volume: Number(row.cancelled_volume ?? ref.cancelled_volume ?? 0),
-    // v65 (REQ-TRADE-025): 透传 task_id 供 T0Trade 委托明细 filter + cache 列展示.
-    // 之前 metaMerge 漏, 导致 T0 下单后 _upsertToHoldings → applyOrderPush → metaMerge 丢 task_id.
+    // REQ-TRADE-025: 透传 task_id 供 T0Trade 委托明细 filter + cache 列展示.
+    // 漏传会导致 T0 下单后 _upsertToHoldings → applyOrderPush → metaMerge 丢 task_id.
     task_id: row.task_id ?? ref.task_id ?? null,
-    // v66 (REQ-TRADE-026): 透传 strategy_type 供缓存过滤 (T0Trade filter strategy_type=1) + cache 列展示.
+    // REQ-TRADE-026: 透传 strategy_type 供缓存过滤 (T0Trade filter strategy_type=1) + cache 列展示.
     //   与 task_id 同模式: 行级元数据, row 优先, ref 兜底, 默认 0.
     strategy_type: row.strategy_type ?? ref.strategy_type ?? 0,
   }

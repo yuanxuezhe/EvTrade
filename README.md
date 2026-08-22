@@ -55,8 +55,6 @@ uv run python scripts/evctl.py stop
 | [`hq/`](hq/) | 独立行情 WebSocket 服务 |
 | [`iquant/`](iquant/) | XtQuant / msgpacket 参考实现（仅参考） |
 | [`openspec/`](openspec/) | 规范驱动开发：specs + changes + archive |
-| [`docs/`](docs/) | 设计稿、归档分析、协议文档 |
-| [`kb/`](kb/) | **已弃用** — 内容已并入 [`openspec/specs/`](openspec/specs/) |
 | [`scripts/`](scripts/) | 启停脚本 + 一次性迁移 |
 
 ## 进一步阅读
@@ -65,4 +63,4 @@ uv run python scripts/evctl.py stop
 - 当前活跃变更：[`openspec/changes/active/`](openspec/changes/active/)
 - 数据模型：[`openspec/specs/data-model/spec.md`](openspec/specs/data-model/spec.md)
 - 交易流程：[`openspec/specs/trading/spec.md`](openspec/specs/trading/spec.md)
-- 协议文档：[`docs/msgpacket-python-api.md`](docs/msgpacket-python-api.md)
+- 协议文档：[`openspec/specs/rpc-protocol/spec.md`](openspec/specs/rpc-protocol/spec.md)

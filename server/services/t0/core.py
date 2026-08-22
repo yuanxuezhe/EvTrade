@@ -9,7 +9,7 @@ t0.py — T0 一键买卖 + 配平系数 + 费率
 - T0 一键买: 根据目标股数自动取整到 100 股倍数
 - T0 一键卖: 直接平仓所有可用
 
-费率 (fee) — v7 schema 后 ORM 完整字段：
+费率 (fee):
 - commission_rate  默认 0.0001（万一）
 - stamp_tax_rate   默认 0（无印花税）
 - min_commission   默认 0（免五，无最低佣金）
@@ -30,7 +30,7 @@ LOT_SIZE = 100
 
 
 def get_fee_config() -> dict:
-    """获取费率配置 (dict, v_next: 改读 sysconfig)
+    """获取费率配置 (dict, 读 sysconfig)
 
     返回 dict 替代 ORM dict 对象, 调用方需调整字段访问:
     - cfg.commission_rate → cfg["commission_rate"]
@@ -86,7 +86,7 @@ def calc_t0_volume(target_volume: int, coefficient: float, direction: str) -> in
 def calc_commission(amount: float, cfg: dict, direction: str) -> Tuple[float, float]:
     """算手续费 + 印花税（卖出）
 
-    注：v7 schema 后 ORM dict 完整字段：
+    注：cfg dict 完整字段：
         commission_rate / stamp_tax_rate / min_commission / slippage
     min_commission 兜底逻辑在 services.t0.aggregate_api.calc_commission_and_tax 中实现，
     本函数保留原签名（不带 min 兜底）以兼容既有调用方。

@@ -12,7 +12,7 @@ request_logging.py — FastAPI HTTP 请求/响应日志中间件（server-intera
   - 优先用客户端传的 X-Trace-Id header
   - 否则服务端生成
 
-v10 增修复 (trace=0ad408d4 事故):
+body 流回放约束:
 - BaseHTTPMiddleware + await request.body() 会消耗 body 流, 下游 endpoint 拿不到
 - 修复: 读 body 后, 重新构造 Request 对象, 注入 receive() 回放 body
 - 这样 call_next(request) 派发的 endpoint 仍能正常解析 Pydantic 模型

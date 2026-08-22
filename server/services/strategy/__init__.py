@@ -1,8 +1,8 @@
 """
-strategy — 行情消费 + 策略信号消费（精简 v124）
+strategy — 行情消费 + 策略信号消费
 
 旧网格策略引擎（Strategy / StrategyRegime / StrategyGrid / StrategyAudit）
-已下线：对应 4 张表已删（2026-08-10-drop-legacy-strategy-tables），
+已下线：对应 4 张表已删，
 引擎 / repository / grid / regime / audit / indicators / flags / t0 模块已移除。
 
 保留两个仍在用的服务：

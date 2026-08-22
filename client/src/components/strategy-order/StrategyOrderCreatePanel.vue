@@ -1,8 +1,8 @@
 <!--
-  StrategyOrderCreatePanel.vue — 策略下单创建母单 (v126, 子组件)
+  StrategyOrderCreatePanel.vue — 策略下单创建母单 (子组件)
 
   顶部策略下拉 (仅含 best_params 已回测出的) + 「创建母单」按钮
-  策略 store 已含 best_params (v123 落库); 无 best_params 灰置按钮
+  策略 store 已含 best_params (落库); 无 best_params 灰置按钮
 -->
 <template>
   <el-card shadow="never" class="so-create-card" data-el="so-create-card">

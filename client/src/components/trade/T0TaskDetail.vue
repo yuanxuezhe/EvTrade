@@ -1,5 +1,5 @@
 <!--
-  T0TaskDetail.vue — T0Task 详情视图（v18 change t0-task-management）
+  T0TaskDetail.vue — T0Task 详情视图（change t0-task-management）
 
   Props:
     taskId (Number) — 当前查看的 task id（从路由 query 传）

@@ -21,10 +21,10 @@
     </div>
 
     <div class="form-body">
-      <!-- v32: label 同行 (label-position="left" label-width="80px"), 让左列 420px 充分利用 -->
+      <!-- label 同行 (label-position="left" label-width="80px"), 让左列 420px 充分利用 -->
       <el-form :model="form" label-position="left" label-width="80px" size="default">
         <el-form-item label="股票代码" class="row-tight">
-          <!-- v28: StockCodePicker 强化'输入合法性'契约, blur 时未选自动清空 -->
+          <!-- StockCodePicker 强化'输入合法性'契约, blur 时未选自动清空 -->
           <StockCodePicker
             ref="stockCodePickerRef"
             v-model="form.stock_code"
@@ -36,7 +36,7 @@
           />
         </el-form-item>
 
-        <!-- v33: 价格类型 + 委托价格 → 合并为 1 行 PriceTypeInput (input + select 50/50) -->
+        <!-- 价格类型 + 委托价格 → 合并为 1 行 PriceTypeInput (input + select 50/50) -->
         <el-form-item label="委托价格" class="row-tight" prop="price">
           <PriceTypeInput
             v-model:price="form.price"
@@ -45,7 +45,7 @@
           />
         </el-form-item>
 
-        <!-- v33: 可用行 — 在价格组合行下, 委托数量行上; 根据买入/卖出 + 价格类型实时计算 -->
+        <!-- 可用行 — 在价格组合行下, 委托数量行上; 根据买入/卖出 + 价格类型实时计算 -->
         <el-form-item label="可交易" class="row-tight">
           <div class="order-available-row" @dblclick="applyAvailableToVolume">
             <span class="order-available-label">{{ availableLabel }}</span>
@@ -79,7 +79,7 @@
             <span class="summary-label">预估金额</span>
             <span class="summary-value text-mono">
               <template v-if="form.price_type === PriceType.FIX_PRICE">¥{{ formatMoney(estimatedAmount) }}</template>
-              <!-- v33.1.3: 最新价=last_price; 市价=方向对手方价 (买→卖1, 卖→买1) -->
+              <!-- 最新价=last_price; 市价=方向对手方价 (买→卖1, 卖→买1) -->
               <template v-else-if="form.stock_code && estimatedPrice > 0">¥{{ formatMoney(estimatedAmountByPriceType) }}<span class="summary-sub">({{ estimatedPriceLabel }} ¥{{ formatPriceAuto(estimatedPrice) }} × {{ formatVolume(form.volume) }})</span></template>
               <template v-else>— 市价单 —</template>
             </span>
@@ -129,20 +129,20 @@ const stockCodePickerRef = ref(null)
 
 const form = reactive({
   stock_code: props.defaultStockCode || '',
-  // v28: 证券名称, 由 StockCodePicker @select 回调写入 (UI 展示用, 不参与后端下单字段)
+  // 证券名称, 由 StockCodePicker @select 回调写入 (UI 展示用, 不参与后端下单字段)
   stock_name: '',
   // 柜台 order_type：股票 23=买入，24=卖出
   order_type: OrderType.BUY,
-  // v83: 柜台 price_type: 11=限价 5=最新价 44=市价 (与 xtconstant 柜台协议 1:1 对齐)
+  // 柜台 price_type: 11=限价 5=最新价 44=市价 (与 xtconstant 柜台协议 1:1 对齐)
   //   UI 默认 FIX_PRICE = 11
   price_type: PriceType.FIX_PRICE,
-  // v108: 默认 null 而非 0 — input 不显示 "0", 显示空 placeholder.
+  // 默认 null 而非 0 — input 不显示 "0", 显示空 placeholder.
   //   0 让 el-input type=number 显示 "0", 误导用户以为已输入.
   price: null,
   volume: 100
 })
 
-// v33: 新增 — 持仓 / 资金 / 行情 store 引用 (用于可交易数量实时计算)
+// 持仓 / 资金 / 行情 store 引用 (用于可交易数量实时计算)
 const assetStore = useAssetStore()
 const positionStore = usePositionStore()
 const quoteStore = useQuoteStore()
@@ -158,7 +158,7 @@ const volumeShortcuts = [100, 500, 1000, 5000, 10000]
 
 const estimatedAmount = computed(() => (form.price || 0) * (form.volume || 0))
 
-// v33.1.3: 按价格类型取预估价
+// 按价格类型取预估价
 //   FIX_PRICE: 输入价
 //   LATEST_PRICE: 直接取 last_price (最新价, 不分方向)
 //   MARKET_PEER_PRICE_FIRST: 按方向取对手方最优价 (买→卖1, 卖→买1)
@@ -190,7 +190,7 @@ const estimatedAmountByPriceType = computed(() => {
   return px * vol
 })
 
-// v33.1.3: 预估金额 sub 标签
+// 预估金额 sub 标签
 //   FIX_PRICE: 空
 //   LATEST_PRICE: "最新价" (不分方向)
 //   MARKET_PEER_PRICE_FIRST: 按方向 "卖一价" (买) / "买一价" (卖)
@@ -206,7 +206,7 @@ const estimatedPriceLabel = computed(() => {
 })
 
 // ==============================================================
-// v33: 可交易数量 (可买 / 可卖) 计算 — 实时响应持仓 + 资金 + 行情
+// 可交易数量 (可买 / 可卖) 计算 — 实时响应持仓 + 资金 + 行情
 // ==============================================================
 
 /** 买卖方向 label — 动态切换 "可买" / "可卖" */
@@ -266,7 +266,7 @@ const availableText = computed(() => {
 watch(() => form.price_type, (newType, oldType) => {
   if (newType !== PriceType.FIX_PRICE) {
     // 市价/最新价不依赖具体价格，但保留作为显示用也行；这里清空避免误读
-    form.price = null  // v108: null 而非 0, input 显示空
+    form.price = null  // null 而非 0, input 显示空
   }
 })
 
@@ -276,7 +276,7 @@ function onExternalApply(price) {
   form.price = Number(price)
 }
 
-// v53: 外部双击持仓/委托带入 stock_code (REQ-FE-HOLDINGS-DBLCLICK)
+// 外部双击持仓/委托带入 stock_code (REQ-FE-HOLDINGS-DBLCLICK)
 //   走 StockCodePicker.applyStockCode() 绕过 cache+blur 竞态
 function onExternalApplyStockCode(code) {
   const c = String(code || '').trim().toUpperCase()
@@ -294,17 +294,17 @@ function formatVolume(v) {
 }
 
 function onStockCodeChange(val) {
-  // v28: StockCodePicker 已收紧 emit 语义, 此处 val 必然来自 onSelectItem 真正选中
+  // StockCodePicker 已收紧 emit 语义, 此处 val 必然来自 onSelectItem 真正选中
   //   若来自 blur 未选中, val = '' (前端也已清空 form.stock_code)
   //   仅做 trim + uppercase 归一化, 然后转发给父组件
   const raw = (val || '').trim()
   form.stock_code = raw.toUpperCase()
-  // 2026-07-09: emit 名改 kebab-case, 与父组件 Trade.vue @update:stock-code 对应
+  // emit 名为 kebab-case, 与父组件 Trade.vue @update:stock-code 对应
   emit('update:stock-code', form.stock_code)
 }
 
 function onStockCodeBlur() {
-  // v28: 控件失焦时若未真正选中已自动 emit('') 清空
+  // 控件失焦时若未真正选中已自动 emit('') 清空
   //   这里只需把 form.stock_name 同步清掉 (UI 上下文, 避免残留陈旧名称)
   if (!form.stock_code) {
     form.stock_name = ''
@@ -313,7 +313,7 @@ function onStockCodeBlur() {
 }
 
 function onAutocompleteSelect(stock) {
-  // v28: StockCodePicker 选中真实存在的 stock 时触发
+  // StockCodePicker 选中真实存在的 stock 时触发
   //   stock.stock_name 写到 form.stock_name (UI 展示, 不参与下单字段)
   if (stock && stock.stock_name) {
     form.stock_name = stock.stock_name
@@ -372,7 +372,7 @@ function applyAvailableToVolume() {
 }
 
 function handleReset() {
-  form.price = null  // v108: null 而非 0
+  form.price = null  // null 而非 0
   form.volume = 100
 }
 </script>
@@ -436,7 +436,7 @@ function handleReset() {
 
 .form-body {
   padding: var(--space-3) var(--space-4);
-  /* v32: 修 commit 4 副作用 — 4 个 form-item + 快捷金额 + 按钮 在 206.5px cell 内溢出, 加纵向滚动 */
+  /* 4 个 form-item + 快捷金额 + 按钮 在 206.5px cell 内溢出, 加纵向滚动 */
   overflow-y: auto;
   flex: 1;
   min-height: 0;
@@ -473,7 +473,7 @@ function handleReset() {
   margin: var(--space-3) 0;
 }
 
-/* v33: 可交易行 — 与 summary-row 对称, 左 label 右 value */
+/* 可交易行 — 与 summary-row 对称, 左 label 右 value */
 .order-available-row {
   display: flex;
   justify-content: space-between;
@@ -510,7 +510,7 @@ function handleReset() {
   color: var(--text-primary);
 }
 
-/* v33.1: 预估金额的细分小字 (最新价/卖一价 × N股) */
+/* 预估金额的细分小字 (最新价/卖一价 × N股) */
 .summary-sub {
   margin-left: 8px;
   font-size: 11px;
@@ -519,7 +519,7 @@ function handleReset() {
 }
 
 .form-actions {
-  /* v35: 与上方 el-form-item 对齐 — el-form label-width=80px, 此处左边留 80px 让按钮行与 input 区域对齐 */
+  /* 与上方 el-form-item 对齐 — el-form label-width=80px, 此处左边留 80px 让按钮行与 input 区域对齐 */
   display: flex;
   gap: var(--space-2);
   margin-top: var(--space-3);
@@ -552,5 +552,5 @@ function handleReset() {
   font-size: 13px;
 }
 
-/* v15 trade-pricetype-inline: 价格类型 radio-button 单行布局,沿用 el-radio-group 默认样式,不需 grid 重置 */
+/* 价格类型 radio-button 单行布局, 沿用 el-radio-group 默认样式, 不需 grid 重置 (change trade-pricetype-inline) */
 </style>

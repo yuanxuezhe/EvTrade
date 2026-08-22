@@ -1,5 +1,5 @@
 """
-sysconfig/__init__.py — 统一配置 cache (v78 + v81 tables-migration)
+sysconfig/__init__.py — 统一配置 cache
 
 启动时一次性从 sys_config 表加载到内存, 业务层从 cache 读
 - user='0' 默认配置
@@ -8,13 +8,7 @@ sysconfig/__init__.py — 统一配置 cache (v78 + v81 tables-migration)
 读策略: get(user, key, default) → 先查 user 行, 缺失回退 user='0' 默认
 写策略: set(user, key, val) → 同步更新 cache + DB
 
-v81 tables-migration:
-- 删 sqlalchemy.orm.Session / server.db.SessionLocal 依赖 (DB I/O 走 server.tables.SysConfig)
-- db.query(SysConfig).filter(SysConfig.user == "0").all() → SysConfig.query_by('user', '0')
-- db.add(row); db.commit()                        → SysConfig.add_one({...})
-- m.x = val; db.commit()                          → row.x = val; row.update(SysConfig, **pk)
-- db.delete(row); db.commit()                     → SysConfig.delete_one(**pk)
-- 删 db.close() (tables 全局 engine 自管理)
+DB I/O 走 server.tables.SysConfig (query_by / query_all / add_one / update / delete_one)。
 """
 import logging
 import threading
@@ -26,7 +20,7 @@ log = logging.getLogger(__name__)
 
 _lock = threading.RLock()
 
-# 全局默认配置 (v78 整合)
+# 全局默认配置
 # user='0' 表示默认, 启动时会 upsert 到 sys_config 表
 DEFAULT_CONFIGS: list[dict] = [
     {"cfg_key": "commission_rate", "cfg_val": "0.0001", "desc": "佣金费率 (万一)"},
@@ -37,29 +31,26 @@ DEFAULT_CONFIGS: list[dict] = [
     {"cfg_key": "auto_use_broker_data", "cfg_val": "1", "desc": "自动对账时以柜台为准 (0=本地/1=柜台)"},
     {"cfg_key": "trdtime", "cfg_val": "093000-113000;130000-153000", "desc": "交易时段 (分号分隔多段 HHMMSS-HHMMSS)"},
     {"cfg_key": "must_change_password_required", "cfg_val": "1", "desc": "首次登录强制改密 (0=关/1=开; 关掉后 seed 用户 must_change_password=True 也不再拦截)"},
-    # v80: 可交易证券类型列表 (stktype 逗号分隔) — 默认 0(股票)+1(ETF)
+    # 可交易证券类型列表 (stktype 逗号分隔) — 默认 0(股票)+1(ETF)
     {"cfg_key": "cantrdstktypes", "cfg_val": "0,1", "desc": "可交易的证券类型 (stktype 逗号分隔, e.g. 0,1)"},
-] # v_next: 新增首次登录强制改密开关
+]
 
 # user → {cfg_key → cfg_val}
 _cache: dict[str, dict[str, str]] = {}
-# v78.1: desc 旁路 cache (list_all UI 需要展示说明)
+# desc 旁路 cache (list_all UI 需要展示说明)
 _desc_cache: dict[str, dict[str, str]] = {}
 _loaded: bool = False
 
 
 def _ensure_defaults() -> None:
-    """确保 user='0' 默认配置行存在 (v78 整合: 从 fee_config/reconcile_config 一次性导入)
-
-    v81 tables-migration: SysConfig.query_by('user', '0') 替代 db.query(SysConfig).filter(...).all()
-                       + SysConfig.add_one({...}) 替代 db.add(SysConfig(...)); db.commit()
+    """确保 user='0' 默认配置行存在 (含 fee_config/reconcile_config 等整合项)
     """
     existing = {
         r.cfg_key for r in SysConfig.query_by('user', '0')
     }
     for cfg in DEFAULT_CONFIGS:
         if cfg["cfg_key"] not in existing:
-            # v81: add_one 返回 Row; 简化参数构造
+            # add_one 返回 Row; 简化参数构造
             SysConfig.add_one({
                 "user": "0",
                 "cfg_key": cfg["cfg_key"],
@@ -72,7 +63,6 @@ def _ensure_defaults() -> None:
 def load_all(db: Optional[Any] = None) -> None:
     """启动时一次性加载全表到 cache
 
-    v81 tables-migration: SysConfig.query_all() 替代 db.query(SysConfig).all()
     db 参数保留 (兼容旧调用方: load_all(db=None) — 实际不依赖)
     """
     global _loaded
@@ -140,16 +130,13 @@ def get_raw(key: str, user: str = "0") -> Optional[str]:
 
 def set_value(user: str, key: str, val: str, desc: str = "", updated_by: Optional[str] = None) -> None:
     """写配置 — 同步更新 cache + DB
-
-    v81 tables-migration: SysConfig.query_one + obj.update + SysConfig.add_one
-                       替代 db.query(...).filter_by(...).first() + db.add/commit
     """
     row = SysConfig.query_one(user=user, cfg_key=key)
     if row:
         row.cfg_val = val
         if desc:
             row.desc = desc
-        # v81: updated_by 字段也通过 update 写; updated_at 由 DB DEFAULT 自动更新
+        # updated_by 字段也通过 update 写; updated_at 由 DB DEFAULT 自动更新
         row.updated_by = updated_by
         row.update(SysConfig, user=user, cfg_key=key)
     else:
@@ -168,8 +155,6 @@ def set_value(user: str, key: str, val: str, desc: str = "", updated_by: Optiona
 
 def delete_value(user: str, key: str) -> bool:
     """删除配置 — 同步删 cache + DB
-
-    v81 tables-migration: SysConfig.delete_one 替代 db.delete(row); db.commit()
     """
     ok = SysConfig.delete_one(user=user, cfg_key=key)
     if not ok:
@@ -219,12 +204,12 @@ def list_all(user: Optional[str] = None) -> list[dict]:
                 })
         return out
 # ============================================================================
-# v_next (config 整合): 旧 fee_config / reconcile_config / trading_session
-# 改走 sysconfig 后, 业务层便捷访问 helper
+# 旧 fee_config / reconcile_config / trading_session 配置项 (已整合进 sysconfig)
+# 的业务层便捷访问 helper
 # ============================================================================
 
-# 旧 fee_config 字段 (系统级, user='0')
-# 2026-08-12 费率规则: 万1免五 (min_commission=0)、无印花税 (stamp_tax_rate=0)
+# 费率字段 (系统级, user='0')
+# 费率规则: 万1免五 (min_commission=0)、无印花税 (stamp_tax_rate=0)
 FEE_KEYS = {
     "commission_rate": 0.0001,
     "stamp_tax_rate": 0.0,
@@ -287,7 +272,7 @@ def _hms_to_time(hms: str):
 
 
 # ============================================================================
-# v80: 可交易证券类型 helper
+# 可交易证券类型 helper
 # ============================================================================
 def get_cantrd_stktypes(user: str = "0") -> set[int]:
     """获取可交易的证券类型集合 (stktype 集合, e.g. {0, 1})

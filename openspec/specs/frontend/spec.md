@@ -1,7 +1,7 @@
 # frontend — Vue3 前端
 
 > 📖 **DB schema**详见 [`data-model/spec.md`](../data-model/spec.md)（前端 store 与 DB schema 校对）
-> 📖 **接口契约**详见 [`../../../docs/server-rest-api.md`](../../../docs/server-rest-api.md)（FastAPI 端点 + 出入参）
+> 📖 **接口契约**见 `知识库/后端服务/` 各模块文档（FastAPI 端点 + 出入参）；字段级契约历史版可查 git 历史
 
 ## Purpose
 

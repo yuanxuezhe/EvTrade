@@ -1,5 +1,5 @@
 """
-test_place_async.py — v77 (REQ-TRADE-028) 两阶段下单架构单测
+test_place_async.py — 两阶段下单架构单测 (REQ-TRADE-028)
 
 覆盖 place.py 阶段 A + 阶段 B 行为:
 - 阶段 A: DB INSERT 后立即 HTTP 应答 (含 status=48)
@@ -269,7 +269,7 @@ async def test_submit_rpc_missing_order_logs_error_no_push(trader, fake_ord_stk,
 
 
 async def test_submit_rpc_payload_includes_task_id_and_strategy(trader, fake_ord_stk, fake_broadcast, db):
-    """v66 task_id + strategy_type 必须透传到 ws push (T0Trade filter/cache 列依赖)"""
+    """task_id + strategy_type 必须透传到 ws push (T0Trade filter/cache 列依赖)"""
     # 改 order 带 task_id + strategy_type=1
     from server.models.orm import T0Task
     db.query(T0Task).delete()
@@ -370,7 +370,7 @@ async def test_endpoint_creates_task_and_returns_immediately(trader, fake_ord_st
             assert elapsed < 2.0, "endpoint 必须 <2s 内返回 (httpx + ASGI lifespan 启动开销), 实际 %.3fs" % elapsed
 
             data = resp.json()
-            # 2. code=0 + status=48 (v77 DB 写完即返; broker xtconstant 48=未报)
+            # 2. code=0 + status=48 (DB 写完即返; broker xtconstant 48=未报)
             assert data["code"] == 0, "code=%s msg=%s" % (data.get("code"), data.get("msg"))
             assert data["order"]["status"] == "48"
             assert data["order"]["status_msg"] == "未报"

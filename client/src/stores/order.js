@@ -8,7 +8,7 @@ import { useHoldingsStore } from './holdings'
 /**
  * 委托/成交 操作层
  *
- * v8: 单一缓存源架构
+ * 单一缓存源架构
  *   - holdings store 是权威缓存（orders/trades ref + applyOrderPush/applyTradePush 守门）
  *   - orderStore 不再持有独立 orders/trades,只暴露 actions
  *   - 视图层读数据走 holdingsStore.orders / holdingsStore.trades
@@ -17,7 +17,7 @@ import { useHoldingsStore } from './holdings'
  * 关键设计：
  *   - createOrder 旧调用: 推数组进 orders → 破坏(类型错乱)
  *     现在: 调 api → 取 list[0] → upsertLocal(holdings.applyOrderPush) → 写流水
- *   - placeOrder 跟 createOrder 等价（v8 统一 list[0] 模式）
+ *   - placeOrder 跟 createOrder 等价（统一 list[0] 模式）
  *   - cancelOrder: 乐观更新 holdings.orders[i].status = '51' (待撤), 等 push 改终态
  */
 export const useOrderStore = defineStore('order', () => {
@@ -27,7 +27,7 @@ export const useOrderStore = defineStore('order', () => {
   const cancelling = ref(false)
 
   /**
-   * v8: 下单后立即写缓存（关键: 推送匹配需要 order_no 在缓存里）
+   * 下单后立即写缓存（关键: 推送匹配需要 order_no 在缓存里）
    *   走 holdings.applyOrderPush → 单点守门 + 单点 upsert 逻辑
    */
   function _upsertToHoldings(order) {
@@ -53,8 +53,8 @@ export const useOrderStore = defineStore('order', () => {
   }
 
   async function placeOrder(orderData) {
-    // v8: placeOrder 跟 createOrder 等价(后端同一接口, 现在统一返 list[0])
-    // v93: 下单前 sysconfig 检查 — confirm_before_order=true → 弹二次确认 (全站生效)
+    // placeOrder 跟 createOrder 等价(后端同一接口, 统一返 list[0])
+    // 下单前 sysconfig 检查 — confirm_before_order=true → 弹二次确认 (全站生效)
     //   此处统一拦截所有 placeOrder 调用方: Trade.vue / T0Trade.vue / useT0OrderSubmit.js
     //   sysconfig 缺失视为关闭 (默认 false)
     if (await _shouldConfirmBeforeOrder()) {
@@ -73,7 +73,7 @@ export const useOrderStore = defineStore('order', () => {
   }
 
   /**
-   * v93: 读 sysconfig.confirm_before_order, 缓存 60s 避免每次下单打后端
+   * 读 sysconfig.confirm_before_order, 缓存 60s 避免每次下单打后端
    *   - 返回 bool: true = 需要弹二次确认
    *   - sysconfig 读取失败 → 默认 false (不弹)
    *   - 简单内存缓存, 进程内; 用户改 sysconfig 后等 ≤60s 生效 (或刷新页面)
@@ -96,7 +96,7 @@ export const useOrderStore = defineStore('order', () => {
   }
 
   /**
-   * v93: 二次确认弹窗展示文案的精简版 (避免弹窗太高)
+   * 二次确认弹窗展示文案的精简版 (避免弹窗太高)
    *   只列最关键的: 标的 / 方向 / 数量 / 价格 (限价时)
    */
   function _buildConfirmMessage(d) {
@@ -115,7 +115,7 @@ export const useOrderStore = defineStore('order', () => {
   async function cancelOrder(orderNo, trdDate) {
     cancelling.value = true
     try {
-      // v6: 撤单用 order_no + trd_date；status 由 ord_cfm push 异步改, 不本地写
+      // 撤单用 order_no + trd_date；status 由 ord_cfm push 异步改, 不本地写
       await api.cancelOrder(orderNo, trdDate)
       // 乐观更新 UI: 标记为"待撤" (51), 等 push 改终态
       const holdings = useHoldingsStore()
@@ -133,7 +133,7 @@ export const useOrderStore = defineStore('order', () => {
     placing, cancelling,
     // actions
     createOrder, placeOrder, cancelOrder
-    // v8: 不暴露 orders/trades getter, view 必须显式 useHoldingsStore().orders
+    // 不暴露 orders/trades getter, view 必须显式 useHoldingsStore().orders
     //     避免"看起来是 orderStore 独立缓存"误解, 强制走单一源
   }
 })

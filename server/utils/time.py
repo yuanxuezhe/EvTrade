@@ -1,5 +1,5 @@
 """
-time.py — 时间工具集（v10 rpc-field-alignment-ts-unify）
+time.py — 时间工具集
 
 提供：
 - _utcnow(): 统一返回 naive UTC datetime（DB 列无 tz）
@@ -19,7 +19,7 @@ def _utcnow():
 
 
 # ================================================================
-# v10 时间戳工具
+# 时间戳工具
 # ================================================================
 
 # 标准时间戳格式: "YYYY-MM-DD HH:MM:SS.fff" (23 字符)
@@ -27,7 +27,7 @@ TS_FMT = "%Y-%m-%d %H:%M:%S.%f"
 
 
 def format_ts(dt: Optional[datetime] = None, *, tz: str = 'local') -> str:
-    """统一时间戳字符串化入口（v10）
+    """统一时间戳字符串化入口
 
     Args:
         dt: datetime 对象;None 表示用当前时间
@@ -48,7 +48,7 @@ def format_ts(dt: Optional[datetime] = None, *, tz: str = 'local') -> str:
 
 
 def parse_broker_ts(s: str, trd_date: str = '', *, tz: str = 'local') -> str:
-    """把 broker 推送的多种时间格式解析为标准格式（v10）
+    """把 broker 推送的多种时间格式解析为标准格式
 
     支持输入格式（按优先级尝试）:
       1. "HH:MM:SS"          → 需传 trd_date 补全日期
@@ -106,7 +106,7 @@ def parse_broker_ts(s: str, trd_date: str = '', *, tz: str = 'local') -> str:
 
 
 def format_db_dt(dt: Optional[datetime], *, tz: str = 'utc') -> str:
-    """把 DB DateTime (naive UTC) 序列化为标准格式字符串（v10）
+    """把 DB DateTime (naive UTC) 序列化为标准格式字符串
 
     DB 内部 DateTime 列统一存 naive UTC;
     序列化到 API 响应时,按 'utc' / 'local' 转换并输出标准格式。

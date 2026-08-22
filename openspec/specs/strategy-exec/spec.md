@@ -13,7 +13,7 @@
 **核心约束**：
 - **只算不算单**：strategy_exec 只负责"算信号"，风控 / 下单 / 落单 / 持仓推全部留在 EvTrade 交易端（signal_consumer 收到信号后调 `/api/orders/place`）。
 - **共享单库**：`strategy_script` / `strategy_task` / `strategy_script_audit` 与 EvTrade 同库（`EVTRADE_DB_URL`），strategy_exec 可写，EvTrade 只读。
-- **用户脚本 BREAKING**：v90 的 `on_bar/on_tick/ctx.lib.doorder` 接口废弃，用户脚本须重写为 Backtrader `bt.Strategy.next()` + `self.buy_signal()/self.sell_signal()`（迁移指南见 `docs/strategy-migration-v90-to-bt.md`）。
+- **用户脚本 BREAKING**：v90 的 `on_bar/on_tick/ctx.lib.doorder` 接口废弃，用户脚本须重写为 Backtrader `bt.Strategy.next()` + `self.buy_signal()/self.sell_signal()`（迁移指南可查 git 历史 `docs/strategy-migration-v90-to-bt.md`）。
 
 ## Requirements
 
@@ -480,4 +480,4 @@ EvTrade 母单路径下，`LiveRunner` MUST 接受并透传母单元数据，使
 | strategy_exec HA（多实例 + 选举）| 后续 change |
 | 多策略组合优化器 | 后续 change（Backtrader 支持）|
 | 策略回测报告 Web 渲染 | 后续 change（独立 BI 模块）|
-| 用户脚本自动迁移工具（v90 → Backtrader）| 后续 change（当前仅静态迁移指南 `docs/strategy-migration-v90-to-bt.md`）|
+| 用户脚本自动迁移工具（v90 → Backtrader）| 后续 change（静态迁移指南可查 git 历史）|

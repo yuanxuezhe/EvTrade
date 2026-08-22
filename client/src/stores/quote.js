@@ -3,7 +3,7 @@ import { ref, shallowRef, triggerRef, computed } from 'vue'
 import { http } from '../api'  // axios 实例 + Bearer interceptor (api/index.js:12-24)
 
 /**
- * 行情缓存 + 订阅管理（v15 2026-07-09 quote-snapshot-subscribe）
+ * 行情缓存 + 订阅管理（quote-snapshot-subscribe）
  *
  * 数据源：
  *   1. WS push 帧: ws_dispatch._onQuote → update({stock_code, last_price, snapshot, fields, body})
@@ -39,14 +39,14 @@ export const FIELD = {
 }
 
 export const useQuoteStore = defineStore('quote', () => {
-  // v32+: shallowRef(new Map()) + triggerRef 模式
+  // shallowRef(new Map()) + triggerRef 模式
   //   原 reactive(new Map()) 陷阱: byCode.get(code) 返回普通对象,
   //   Vue 追踪不到内部字段变化, computed 必须靠 1s tick 强制重算.
   //   现改 shallowRef, .set() 后 triggerRef(byCode) → 所有依赖 .value.get(code).field 的 computed 自动重算
   const byCode = shallowRef(new Map())
-  // v77.4: 全局 tick 计数器 — 每次 update() 自增, 外部组件 watch 这个 ref 即可响应行情推送
+  // 全局 tick 计数器 — 每次 update() 自增, 外部组件 watch 这个 ref 即可响应行情推送
   const tick = ref(0)
-  // 2026-07-09: 维护当前已订阅的 code 集合（防止重复 subscribe + 退出页面时 unsubscribe）
+  // 维护当前已订阅的 code 集合（防止重复 subscribe + 退出页面时 unsubscribe）
   const subscribedSet = ref(new Set())
 
   /**
@@ -57,7 +57,7 @@ export const useQuoteStore = defineStore('quote', () => {
    */
   function update(payload) {
     if (!payload || !payload.stock_code) return
-    // v33: byCode 是 shallowRef(new Map()), .get() 必须在 .value 上
+    // byCode 是 shallowRef(new Map()), .get() 必须在 .value 上
     const cur = byCode.value.get(payload.stock_code) || {}
     const next = {
       ...cur,
@@ -88,7 +88,7 @@ export const useQuoteStore = defineStore('quote', () => {
       if (s.bid1_vol != null) {
         next.bid_vols = [s.bid1_vol, s.bid2_vol, s.bid3_vol, s.bid4_vol, s.bid5_vol].map(Number)
       }
-      // v108: 从 snapshot 派生 xtquant-layout fields 数组 — QuotePanel.vue 用
+      // 从 snapshot 派生 xtquant-layout fields 数组 — QuotePanel.vue 用
       //   quote.fields[F.ASK_PRICE + (level-1)] 读五档, 但 ws payload 在
       //   REST /api/quote/snapshots 路径不传 fields (只有 snapshot dict).
       //   之前 fields=[] 导致 QuotePanel 五档全空, 用户只看到最新价.
@@ -134,9 +134,9 @@ export const useQuoteStore = defineStore('quote', () => {
       next.fields = fields
     }
     byCode.value.set(payload.stock_code, next)
-    // v32+: 手动触发响应 — shallowRef 不会追踪 Map 内部变化
+    // 手动触发响应 — shallowRef 不会追踪 Map 内部变化
     triggerRef(byCode)
-    // v77.4: 全局 tick 自增, 供外部 watch 实时重算 (PnL / 收益率 cell)
+    // 全局 tick 自增, 供外部 watch 实时重算 (PnL / 收益率 cell)
     tick.value++
   }
 
@@ -153,12 +153,12 @@ export const useQuoteStore = defineStore('quote', () => {
       update({ stock_code: code, last_price: snap.last_price, snapshot: snap, ts: snap.ts })
       dirty = true
     }
-    // v32+: 批量更新后触发一次 (避免 N 次 triggerRef)
+    // 批量更新后触发一次 (避免 N 次 triggerRef)
     if (dirty) triggerRef(byCode)
   }
 
   /**
-   * 2026-07-09: 批量订阅（Q1B 一波）
+   * 批量订阅（Q1B 一波）
    * 流程：
    *   1) 本地标记 subscribed（防止重复发）
    *   2) 调 ws_dispatch.subscribe(codes)（发到后端）
@@ -198,7 +198,7 @@ export const useQuoteStore = defineStore('quote', () => {
   }
 
   /**
-   * 2026-07-14 fix-ws-reconnect-subscription: ws 重连后, 自动 replay 所有已订阅 code
+   * fix-ws-reconnect-subscription: ws 重连后, 自动 replay 所有已订阅 code
    *   - 场景: 网络抖动 / 后端重启 / 浏览器切后台 → ws onclose → 重连成功后服务端订阅已清空
    *     前端 subscribedSet 还以为订阅了 → 数据不再更新 (用户报告 "行情不更新")
    *   - 修法: 强制重发所有 subscribedSet 的 code, 不走 dedup 路径
@@ -270,7 +270,7 @@ export const useQuoteStore = defineStore('quote', () => {
     return ((last - prev) / prev) * 100
   }
 
-  // 2026-07-09: 返回 5 档买卖价 (兼容旧 fields 索引访问)
+  // 返回 5 档买卖价 (兼容旧 fields 索引访问)
   function getDepth(code) {
     const q = byCode.value.get(code)
     if (!q) return null

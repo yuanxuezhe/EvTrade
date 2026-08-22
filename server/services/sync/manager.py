@@ -1,5 +1,5 @@
 """
-services/sync/manager.py - 同步任务全局管理器 (v21 stock-info-crawler, v90 去 stock_synced)
+services/sync/manager.py - 同步任务全局管理器
 
 职责:
 - 全局单例 current_task (任何时刻最多 1 个同步任务跑)
@@ -10,7 +10,7 @@ services/sync/manager.py - 同步任务全局管理器 (v21 stock-info-crawler, 
 WS 推送:
 - runner 通过 progress_callback 推 stock_sync_progress (每只推一次)
 - 广播到 ws_manager.active_connections['sync_update']
-- v90: 去掉 stock_synced 单只推送 (前端 IndexedDB 负责缓存, 后端不再推)
+- 不推 stock_synced 单只推送 (前端 IndexedDB 负责缓存, 后端不推)
 """
 import asyncio
 import json

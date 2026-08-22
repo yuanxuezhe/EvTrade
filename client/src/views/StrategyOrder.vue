@@ -1,5 +1,5 @@
 <!--
-  StrategyOrder.vue — 策略下单 (v126, 编排页面)
+  StrategyOrder.vue — 策略下单 (编排页面)
 
   4 面板 (顶部 2 + 下方 1 + 1 联动):
     ① 策略下单 (StrategyOrderCreatePanel) — 顶部左

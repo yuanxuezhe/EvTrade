@@ -1,5 +1,5 @@
 <!--
-  StrategyOrderChildren.vue — 策略母单子单 (v126, 子组件)
+  StrategyOrderChildren.vue — 策略母单子单 (子组件)
 
   选中母单 → 实时从 holdings.orders 过滤 strategy_type=2 + task_id=母单.task_id
   跟随 WS 推送 (holdings store 自动更新, computed 实时刷新)

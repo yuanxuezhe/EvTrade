@@ -5,12 +5,11 @@
 - `openspec/AGENTS.md`（工作流入口与强约束，改代码前必读）
 - `openspec/specs/<capability>/spec.md`（能力级 spec 真相源）
 - `openspec/changes/<name>/`（活跃变更）与 `openspec/changes/archive/`（归档变更）
-- `docs/index.md`（静态沉淀目录索引）
 - `scripts/verify_change.sh`（归档验收证据包）
 
 ## 功能概述
 
-EvTrade 采用 OpenSpec 驱动的变更管理：每个需求/BUG 必须先检索并补全知识库，再创建 change（proposal → spec delta），按 tasks.md 实施，最后归档。spec 是"当前实现的真相源"，change 是"变更追踪单元"，与 `docs/` 静态沉淀构成双体系。
+EvTrade 采用 OpenSpec 驱动的变更管理：每个需求/BUG 必须先检索并补全知识库，再创建 change（proposal → spec delta），按 tasks.md 实施，最后归档。spec 是"当前实现的真相源"，change 是"变更追踪单元"。`docs/` 静态沉淀目录已删除，历史归档内容通过 git 历史查阅（`git log -- docs kb`）。
 
 ## 文件清单
 
@@ -22,8 +21,7 @@ EvTrade 采用 OpenSpec 驱动的变更管理：每个需求/BUG 必须先检索
 | `openspec/changes/<name>/tasks.md` | 实施 checklist（分 Phase，`[x]`/`[ ]` 勾选） |
 | `openspec/changes/<name>/spec-deltas/` | 涉及 capability 的 spec 增量（REQ-XXX-N 编号） |
 | `openspec/changes/<name>/design.md` | （可选）架构设计、数据流、API 契约 |
-| `openspec/changes/archive/` | 已完成并归档的 change（60+ 个，按日期命名） |
-| `docs/` | 静态沉淀：API 契约 4 篇、specs-history/、designs/ |
+| `openspec/changes/archive/` | 已完成并归档的 change（99 个，多数按 `YYYY-MM-DD-<名>` 命名，少数早期/漏改项无日期前缀） |
 
 ## 核心实现
 
@@ -62,15 +60,15 @@ EvTrade 采用 OpenSpec 驱动的变更管理：每个需求/BUG 必须先检索
 
 ### capability 划分（specs/ 目录）
 
-核心 8 个（AGENTS.md 映射表）：`auth`（登录/JWT/RBAC）、`trading`（下单/撤单/T0）、`positioning`（持仓）、`quotes`（行情推送）、`push`（柜台 push 落库+WS 路由）、`frontend`（路由/守卫/WS）、`configuration`（.env 分层）、`rpc-protocol`（msgpacket 契约）。另有 `data-model`（schema 治理）、`strategy`/`strategy-exec`（策略）、`dev-process-control`（evctl 与文档双体系）、`risk-management`、`system-init`、`t0-quota-frame`、`view-testing-stack` 等扩展能力。
+核心 8 个（AGENTS.md 映射表）：`auth`（登录/JWT/RBAC）、`trading`（下单/撤单/T0）、`positioning`（持仓）、`quotes`（行情推送，对应 Rust `hq/hqserverd/`）、`push`（柜台 push 落库+WS 路由）、`frontend`（路由/守卫/WS）、`configuration`（.env 分层）、`rpc-protocol`（msgpacket 契约）。另有 15 个扩展 capability：`data-model`（schema 治理）、`strategy`/`strategy-exec`、`dev-process-control`（evctl 与文档双体系）、`risk-management`、`system-init`、`t0-quota-frame`、`view-testing-stack`、`view-smoke-automation`、`asset-position-adjust`、`intraday-orders-trades-cache`、`orders-trades-history-query`、`server-architecture`、`stocks`、`ws-protocol`。
 
 ### 归档与验收
 
 - 归档条件：spec delta 已合并到 `specs/<cap>/spec.md`、tasks.md 勾完（或标注实际偏差）
-- 归档命令：`mv openspec/changes/<name> openspec/changes/archive/`（活跃目录名不带日期，归档带 `YYYY-MM-DD-` 前缀）
+- 归档命令：`mv openspec/changes/<name> openspec/changes/archive/<date>-<name>`（约定归档带 `YYYY-MM-DD-` 前缀；实践中活跃目录也可能直接带日期名，如 `2026-08-10-holdings-auto-sub-batch`。`changes/active/` 子目录当前为空）
 - 验收证据：`bash scripts/verify_change.sh <change-name> [base-ref]` 输出 7 段证据包（git 历史/归档结构/tasks 完成度/e2e 清单/健康检查/逐 commit stat/REQ-ID）
 
-### Commit 规范（v6：按功能维度拆分）
+### Commit 规范（按功能维度拆分）
 
 | 场景 | 拆法 |
 |---|---|
@@ -87,9 +85,9 @@ commit 前必做：`git diff --stat` 看范围单一 → `git log -1` 校验上�
 | 体系 | 职责 | 禁止 |
 |------|------|------|
 | `openspec/` | 活工作流：当前 spec 真相源 + 变更追踪 + AI 协作约定 | 存历史草稿/大型设计全文 |
-| `docs/` | 静态沉淀：specs-history（被覆盖前演进稿）、designs（阶段性大设计+计划）、API 字段级契约 | 与 openspec spec 重复维护 |
+| `知识库/` | 实现级事实：模块 HOW、对应代码路径锚定 | 与 openspec spec 重复维护 |
 
-规则（`specs/dev-process-control/spec.md` §文档目录双体系约定）：当前能力写 `specs/<cap>/spec.md`；历史版本稿进 `docs/specs-history/`（带日期后缀）；跨能力大设计进 `docs/designs/`；**两目录禁止合并**。4 份 API 契约（xtquant-rpc / server-rest-api / ws-push / msgpacket-python-api）描述字段级细节，与能力级 spec 并行。
+规则：当前能力写 `specs/<cap>/spec.md`；实现细节同步 `知识库/`。`docs/`（specs-history、designs、API 契约）已删除，协议契约以 `openspec/specs/rpc-protocol/` 等能力级 spec 为准，历史版本可查 git 历史。
 
 ## 依赖关系
 

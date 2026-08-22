@@ -10,14 +10,14 @@
  * 不持有 WebSocket 连接，纯函数式（依赖注入 store getter）
  * 这样 ws_heartbeat.js 持有连接，dispatch 拿 payload 就行
  *
- * v8: 唯一权威源是 holdings store。ws 推送**单一写**到 holdings，
- *     position.js / asset.js 通过 computed 桥接 holdings（不再双写）
+ * 唯一权威源是 holdings store。ws 推送**单一写**到 holdings，
+ * position.js / asset.js 通过 computed 桥接 holdings（不双写）
  *
  * change consolidate-position-data-flow:
  *   _onPositionCfm / _onAssetCfm 已删除 (xtquant broker 不发 pos_cfm / ast_cfm)
  *   position.js / asset.js 通过 computed 桥接 holdings.positions / cachedAsset
  *
- * v96 推送优化:
+ * 推送通知策略:
  *   - 委托: 只在 status/traded_volume/avg_price/traded_amount 变化时才弹窗
  *   - 成交: 每一笔都推
  *   - 弹窗颜色: 已报=蓝色, 成交=绿色, 废单=红色, 已撤/部成部撤=黑色
@@ -26,9 +26,9 @@
 import { ElNotification } from 'element-plus'
 import { useQuoteStore } from './quote'
 import { useHoldingsStore } from './holdings'
-import { useSyncStore } from './sync'  // v21 stock-info-crawler
+import { useSyncStore } from './sync'  // stock-info-crawler
 import { useWsStore } from './ws'
-// change 2026-07-15-system-init-broadcast: 收到 init_completed 时需要刷新 asset/position store
+// 收到 init_completed 时需要刷新 asset/position store
 import { useAssetStore } from './asset'
 import { usePositionStore } from './position'
 import { useRpcStatusStore } from './rpc_status'
@@ -60,34 +60,34 @@ export function dispatchPayload(payload) {
   if (t === 'ord_cfm') _onOrderCfm(payload.data)
   else if (t === 'trd_cfm') _onTradeCfm(payload.data)
   else if (t === 'quote') _onQuote(payload.data)
-  // v131 quote-batch-flush: 后端 quote_consumer 内合并后 1 个 ws frame 装 N 个 tick
+  // quote-batch-flush: 后端 quote_consumer 内合并后 1 个 ws frame 装 N 个 tick
   //   payload = {type:'quote_batch', channel:'quote_update', data:{ticks:[{stock_code,last_price,...},...]}}
   //   解开后每个 tick 走原 _onQuote 路径 (quote store / holdings store / 持仓面板)
   else if (t === 'quote_batch') _onQuoteBatch(payload.data)
-  // v91.4: 回测 / live task 进度推送 (ScriptTask.vue 详情实时刷新)
+  // 回测 / live task 进度推送 (ScriptTask.vue 详情实时刷新)
   else if (t === 'task_progress_update') _onTaskProgress(payload.data)
-  // v99: 资金定时同步推送
+  // 资金定时同步推送
   else if (t === 'asset_update') _onAssetUpdate(payload.data)
-  // 2026-07-09 quote-snapshot-subscribe
+  // quote-snapshot-subscribe
   else if (t === 'subscribe_ack') _onSubscribeAck(payload.data)
   else if (t === 'unsubscribe_ack') _onUnsubscribeAck(payload.data)
   // RPC 三态心跳推送: 来自 server/services/rpc_health._broadcast_rpc_status
   // 前端 AppHeader 右上角图标根据 status 字段显示绿/红/黄
   else if (t === 'rpc_status') _onRpcStatus(payload.data)
-  // v21 stock-info-crawler: sync_update 频道 (sync_started/progress/completed/failed/stopped/stock_synced)
+  // stock-info-crawler: sync_update 频道 (sync_started/progress/completed/failed/stopped/stock_synced)
   else if (t === 'sync_started') _onSyncStarted(payload.data)
   else if (t === 'sync_progress') _onSyncProgress(payload.data)
   else if (t === 'sync_completed') _onSyncCompleted(payload.data)
   else if (t === 'sync_failed') _onSyncFailed(payload.data)
   else if (t === 'sync_stopped') _onSyncStopped(payload.data)
   else if (t === 'stock_synced') _onStockSynced(payload.data)
-  // change 2026-07-15-system-init-broadcast: 日初成功后推 → 全量刷新缓存
-  // v117: 统一 type 为 system_status_change (rpc 状态变化 + 切日轨迹 + 交易日信息)
+  // 日初成功后推 → 全量刷新缓存
+  // 统一 type 为 system_status_change (rpc 状态变化 + 切日轨迹 + 交易日信息)
   //   payload 含 trd_date / previous_trd_date / status / rpc_status / change_kind / report_id / ts
   else if (t === 'system_status_change') _onSystemStatusChange(payload.data)
-  // v117 兼容过渡: 老 init_completed 仍然接收 (SystemInit.vue handleInit 兜底)
+  // 兼容过渡: 老 init_completed 仍然接收 (SystemInit.vue handleInit 兜底)
   else if (t === 'init_completed') _onInitCompleted(payload.data)
-  // v118: broker pos_push 推送 (持仓变化) — 经 handle_pos_push 落库后 broadcast position_update
+  // broker pos_push 推送 (持仓变化) — 经 handle_pos_push 落库后 broadcast position_update
   else if (t === 'pos_push') _onPosPush(payload.data)
 }
 
@@ -100,7 +100,7 @@ function _onRpcStatus(data) {
   }
 }
 
-// v118: broker pos_push 推送 (持仓变化)
+// broker pos_push 推送 (持仓变化)
 //   - payload: { position: { stock_code, stock_name, last_vol, vol, avl_vol, cost_price, synced_at, synced_from } }
 //   - 后端 handle_pos_push 已经把 broker 推的覆盖本地 positions 表
 //   - 前端只需要把数据写入 holdings.positions (broker 永远权威)
@@ -109,7 +109,7 @@ function _onRpcStatus(data) {
 //     所以 payload.data = handler_result = { position: {...} }
 function _onPosPush(data) {
   if (!data) return
-  // v118: 兼容两种 payload 形态
+  // 兼容两种 payload 形态
   //   1) 直接 payload (未来 broker 真接): { stock_code, vol, avl_vol, ... }
   //   2) 后端 dispatcher wrap: { position: { stock_code, vol, avl_vol, ... } }
   const row = data.position || data
@@ -121,7 +121,7 @@ function _onPosPush(data) {
   }
   try {
     const hs = useHoldingsStore()
-    // v118: 整条 ref 替换 (broker 永远权威, 不增量)
+    // 整条 ref 替换 (broker 永远权威, 不增量)
     hs.applyPositionUpdate({
       stock_code: row.stock_code,
       stock_name: row.stock_name || '',
@@ -138,7 +138,7 @@ function _onPosPush(data) {
 }
 
 /**
- * 2026-07-09 quote-snapshot-subscribe: 发 subscribe 协议到后端 ws /ws/quote_update
+ * quote-snapshot-subscribe: 发 subscribe 协议到后端 ws /ws/quote_update
  *   - 走 wsStore.sendToChannel('quote_update', {type:'subscribe', stock_codes:[...]})
  *   - 失败静默 (socket 未就绪, 业务由 REST 兜底)
  *   - 供 quoteStore.subscribe() 调（动态 import）
@@ -186,7 +186,7 @@ function _onUnsubscribeAck(data) {
 function _onQuote(row) {
   // row: { stock_code, last_price, snapshot, fields, body, ts? }
   //   snapshot (23 字段 dict, 含 prev_close) 由后端 _parse_tick 每笔都构造并广播;
-  //   v114.3: 必须一并转发, 否则 quote store 只有 last_price、prev_close 缺失,
+  //   必须一并转发, 否则 quote store 只有 last_price、prev_close 缺失,
   //   当日盈亏 calcDayPnl (last_price+prev_close 任一缺 → null) 算不出来.
   //   无 DB 快照行的标的(如低频新代码)只走 live push, 不转发 snapshot 就永远没 prev_close.
   if (!row || !row.stock_code) return
@@ -209,7 +209,7 @@ function _onQuote(row) {
 }
 
 /**
- * v131 quote-batch-flush: 后端 quote_consumer 内合并推送
+ * quote-batch-flush: 后端 quote_consumer 内合并推送
  *   payload = { ticks: [{stock_code, last_price, snapshot, fields, body}, ...] }
  *   解开 N 个 tick 后逐条走 _onQuote (复用 quote store / holdings store 写入)
  *
@@ -228,7 +228,7 @@ function _onQuoteBatch(data) {
 }
 
 /**
- * v96: 委托推送处理 — 更新缓存 + 智能通知
+ * 委托推送处理 — 更新缓存 + 智能通知
  * 只有在 status/traded_volume/avg_price/traded_amount 实际变化时才弹窗
  * 弹窗按状态分组显示不同颜色和内容
  */
@@ -269,7 +269,7 @@ function _onOrderCfm(row) {
 }
 
 /**
- * v96: 判断委托推送是否有关键字段变化 (status / traded_volume / avg_price / traded_amount)
+ * 判断委托推送是否有关键字段变化 (status / traded_volume / avg_price / traded_amount)
  */
 function _hasOrderFieldChange(oldOrder, newRow, finalStatus) {
   if (!oldOrder) {
@@ -291,7 +291,7 @@ function _hasOrderFieldChange(oldOrder, newRow, finalStatus) {
 }
 
 /**
- * v96: 委托智能通知 — 按状态分颜色/内容
+ * 委托智能通知 — 按状态分颜色/内容
  */
 function _notifyOrderSmart(row, status) {
   const s = String(status || '')
@@ -378,7 +378,7 @@ function _notifyOrderSmart(row, status) {
 }
 
 /**
- * v96.1: 成交推送 — 只更新成交表缓存, 不弹窗
+ * 成交推送 — 只更新成交表缓存, 不弹窗
  * 成交信息已通过委托推送 (ord_cfm) 的 traded_volume/avg_price 弹窗展示
  */
 function _onTradeCfm(row) {
@@ -399,7 +399,7 @@ function _onTradeCfm(row) {
     log.error('_onTradeCfm applyTradePush failed:', e)
   }
 
-  // v95: trd_cfm payload.data.position 同时携带最新 Position 行 (后端嵌入).
+  // trd_cfm payload.data.position 同时携带最新 Position 行 (后端嵌入).
   //   applyPositionUpdate 按 stock_code 整条 ref 替换 (不增量/不 spread).
   //   trade_type=1 (cancel-trade) 时 position 字段为 None, 跳过.
   if (row.position && row.position.stock_code) {
@@ -414,11 +414,10 @@ function _onTradeCfm(row) {
   log.info(`[trd_cfm] 成交推送: trd_date=${row.trd_date || '-'} order_no=${row.order_no} code=${row.stock_code} ${row.volume}@${row.price}`)
 }
 
-// (removed: _notifyOrder — replaced by _notifyOrderSmart v96)
-// (removed: _onStrategyUpdate — strategy_update 频道 2026-08-10 随网格引擎删除, commit aa70dae)
+// (removed: _onStrategyUpdate — strategy_update 频道随网格引擎删除, commit aa70dae)
 
 function _onTaskProgress(row) {
-  // v91.4: 回测 / live task 进度实时推送
+  // 回测 / live task 进度实时推送
   // payload: { task_id, status, progress: { phase, msg, bar_idx, ... } }
   // ScriptTask.vue 监听 wsStore.lastTaskProgress 更新 detail.progress
   if (!row || row.task_id == null) return
@@ -430,7 +429,7 @@ function _onTaskProgress(row) {
 }
 
 // ============================================================
-// v99: 资金推送 — 后端每 5 秒 qry_asset 推送，直接覆盖 holdings.cachedAsset
+// 资金推送 — 后端每 5 秒 qry_asset 推送，直接覆盖 holdings.cachedAsset
 // ============================================================
 function _onAssetUpdate(data) {
   if (!data) return
@@ -438,11 +437,11 @@ function _onAssetUpdate(data) {
     const hs = useHoldingsStore()
     hs.cachedAsset = {
       cash: data.cash ?? hs.cachedAsset?.cash ?? 0,
-      available: data.available ?? hs.cachedAsset?.available ?? data.cash ?? hs.cachedAsset?.cash ?? 0,  // v110
+      available: data.available ?? hs.cachedAsset?.available ?? data.cash ?? hs.cachedAsset?.cash ?? 0,
       frozen_cash: data.frozen_cash ?? hs.cachedAsset?.frozen_cash ?? 0,
       market_value: data.market_value ?? hs.cachedAsset?.market_value ?? 0,
       total_asset: data.total_asset ?? hs.cachedAsset?.total_asset ?? 0,
-      last_asset: data.last_asset ?? hs.cachedAsset?.last_asset ?? 0,    // v114: 期初资产锁定, ws 推过来覆盖
+      last_asset: data.last_asset ?? hs.cachedAsset?.last_asset ?? 0,    // 期初资产锁定, ws 推过来覆盖
       synced_at: data.synced_at || hs.cachedAsset?.synced_at || null,
       synced_from: 'rpc_sync',
     }
@@ -452,7 +451,7 @@ function _onAssetUpdate(data) {
 }
 
 // ============================================================
-// v21 stock-info-crawler: sync_update 频道路由（仅路由到 sync store，不抛异常）
+// change stock-info-crawler: sync_update 频道路由（仅路由到 sync store，不抛异常）
 // 后端 sync manager 推送: sync_started / sync_progress / sync_completed
 //                       / sync_failed / sync_stopped / stock_synced
 // ============================================================
@@ -489,23 +488,21 @@ function _onStockSynced(data) {
 }
 
 // ============================================================
-// change 2026-07-21-system-init-page-refresh: 收到后端 init_completed
+// 收到后端 init_completed
 //   1) 切交易日 + force re-bootstrap (重置 activeTrdDate, 清 IDB, 拉新日 RPC 4 路)
 //   2) 通知 SystemInit.vue 当前交易日卡片刷新 (window CustomEvent 解耦, 避免循环依赖)
 //   3) 不弹 toast / Notification, 静默更新 (用户期望与点刷新按钮同体验)
 //   4) ws 推失败时由 SystemInit.vue handleInit 同步刷新路径兜底
-//   change 2026-07-15-system-init-broadcast: 此函数原本只 refreshAll 缓存, 不切日
-//   change 2026-07-21-system-init-page-refresh: 升级为 force re-bootstrap (holdings.resetForNewDay)
 // ============================================================
 function _onInitCompleted(data) {
-  // v117: 兼容过渡期, init_completed 转发到 system_status_change 处理
+  // 兼容过渡期, init_completed 转发到 system_status_change 处理
   _onSystemStatusChange({ ...data, change_kind: 'init_completed' })
 }
 
-// v117: 统一的系统状态变化处理 (取代 init_completed)
+// 统一的系统状态变化处理 (取代 init_completed)
 //   payload: { change_kind, trd_date, previous_trd_date, status, report_id, ts }
 //   用户口径: "系统状态变化里面需要包含交易日信息"
-//   v117.1: 不再带 rpc_status 字段 — rpc_status 独立走自己的 type='rpc_status' 路径
+//   不带 rpc_status 字段 — rpc_status 独立走自己的 type='rpc_status' 路径
 // ============================================================
 function _onSystemStatusChange(data) {
   if (!data) return
@@ -548,7 +545,7 @@ function _onSystemStatusChange(data) {
       log.warn('_onSystemStatusChange activeTrdDate write failed:', e?.message)
     }
   }
-  // v117.1: 移除 rpc_status 写入 — rpc_status 独立走 type='rpc_status' 路径 (rpc_health 5s 推一次)
+  // 不写 rpc_status — rpc_status 独立走 type='rpc_status' 路径 (rpc_health 5s 推一次)
   // 2) 切日/初始化 → 走 resetForNewDay (主路径)
   if (data.change_kind === 'init_completed' || data.change_kind === 'day_init') {
     // change init-push-gate: init_completed → 关丢弃门 + 一次汇总日志 (丢弃 N 条)
@@ -588,13 +585,13 @@ function _onSystemStatusChange(data) {
 }
 
 /**
- * 订阅 sync_update WS 频道（原 /admin/sync 页面专用，v93 页面已移除）
+ * 订阅 sync_update WS 频道（原 /admin/sync 页面专用，页面已移除）
  * 返回一个 unsubscribe 函数（页面 unmount 时调用）
  *
  * 注：sync_update 不需要 client 主动 subscribe 协议——只要连上 /ws/sync_update 就推
  *     所以这里只是包装一层，方便组件 onBeforeUnmount 调用
  *
- * v93: AdminSync.vue 页面已删除, 此函数暂无调用方. 保留 export 作为未来 admin 工具的
+ * AdminSync.vue 页面已删除, 此函数暂无调用方. 保留 export 作为未来 admin 工具的
  *   现成 API; 若确定不再需要, 可删除整个函数.
  */
 export function subscribeSync() {

@@ -1,9 +1,9 @@
 """
-2026-08-11-add-strategy-order.py — DB 迁移 (v126, 策略下单母单)
+2026-08-11-add-strategy-order.py — DB 迁移 (策略下单母单)
 
 3 步幂等迁移:
 1. CREATE TABLE strategy_order (母单, 7 列 + 3 索引)
-2. INSERT IGNORE INTO order_no_seq 添加 strategy_order 生成器 (复用 v123 多生成器)
+2. INSERT IGNORE INTO order_no_seq 添加 strategy_order 生成器 (复用多生成器)
 3. ALTER TABLE orders MODIFY strategy_type COMMENT 更新 (0=普通单 1=快速做T 2=策略下单)
 
 幂等: INFORMATION_SCHEMA 探测 + INSERT IGNORE; 复跑 2 次不报错。
@@ -33,13 +33,13 @@ from sqlalchemy import text, create_engine, inspect  # noqa: E402
 
 DATABASE_URL = os.environ.get("EVTRADE_DB_URL")
 if not DATABASE_URL:
-    raise RuntimeError("EVTRADE_DB_URL is required (v20 MySQL-only permanent standard).")
+    raise RuntimeError("EVTRADE_DB_URL is required (MySQL-only permanent standard).")
 if not DATABASE_URL.startswith("mysql"):
-    raise RuntimeError(f"Only MySQL is supported (v20 permanent standard). Got URL: {DATABASE_URL[:80]!r}")
+    raise RuntimeError(f"Only MySQL is supported (permanent standard). Got URL: {DATABASE_URL[:80]!r}")
 
 engine = create_engine(DATABASE_URL, pool_pre_ping=True)
 
-# v126: 母单 task_id 与 order_no / task_batch 共用 order_no_seq 多生成器
+# 母单 task_id 与 order_no / task_batch 共用 order_no_seq 多生成器
 # 撞号风险详见 openspec/changes/2026-08-11-strategy-order-design/proposal.md §风险 1 (用户决策: 不修)
 SEED_LAST_VALUE = 10000000
 
@@ -111,7 +111,7 @@ def create_strategy_order_table(conn) -> None:
             KEY ix_strategy_order_user_id (user_id),
             KEY ix_strategy_order_strategy_id (strategy_id)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
-        COMMENT='v126 策略下单母单: 可重复启停, 子单按 parent_task_id 归因'
+        COMMENT='策略下单母单: 可重复启停, 子单按 parent_task_id 归因'
     """))
     print("  [OK] created table 'strategy_order'")
 
@@ -162,7 +162,7 @@ def update_orders_strategy_type_comment(conn) -> None:
 
 
 def main() -> None:
-    print("[start] add strategy order persistence (v126, 母单)")
+    print("[start] add strategy order persistence (母单)")
     print(f"  db: {DATABASE_URL.split('@')[-1] if DATABASE_URL else 'NONE'}")
 
     with engine.begin() as conn:
@@ -203,7 +203,7 @@ def main() -> None:
         print(f"  {marker} orders.strategy_type COMMENT 已更新 (含 '2=策略下单')")
 
     engine.dispose()
-    print("\n[DONE] v126 母单迁移完成")
+    print("\n[DONE] 母单迁移完成")
 
 
 if __name__ == "__main__":

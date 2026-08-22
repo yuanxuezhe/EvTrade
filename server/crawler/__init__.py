@@ -1,5 +1,5 @@
 """
-crawler — 股票信息爬虫层 (v21 stock-info-crawler)
+crawler — 股票信息爬虫层
 
 目录结构:
   crawler/

@@ -2,7 +2,7 @@
 server/tables/strategy_order.py — 自动生成 (tables-codegen skill)
 
 表: `strategy_order`  (13 字段, 主键: ['id'])
-描述: v126 策略下单母单: 可重复启停, 子单按 parent_task_id 归因
+描述: 策略下单母单: 可重复启停, 子单按 parent_task_id 归因
 
 ⚠️ 不要手动修改本文件 — 任何字段/主键变更请重新跑 tables-codegen
 """
@@ -12,7 +12,7 @@ from typing import Any, ClassVar, Tuple
 
 
 class StrategyOrder(TableBase):
-    """v126 策略下单母单: 可重复启停, 子单按 parent_task_id 归因
+    """策略下单母单: 可重复启停, 子单按 parent_task_id 归因
 
     自动生成，继承 TableBase 获得标准方法:
       - query_one(**pk)              按主键查单行 → Row | None

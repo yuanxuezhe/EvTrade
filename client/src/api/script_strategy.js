@@ -1,9 +1,9 @@
 /**
- * script_strategy.js — script-strategy change: 前端 API 客户端 (v123)
+ * script_strategy.js — script-strategy change: 前端 API 客户端
  *
  * 端点前缀: /api/script-strategy
  *
- * 模块结构 (v123 三层模型: script → strategy → strategy_task):
+ * 模块结构 (三层模型: script → strategy → strategy_task):
  *   Script CRUD:   listScripts / getScript / createScript / updateScript / deleteScript / getDefaultTemplate
  *   Strategy CRUD: listStrategies / getStrategy / createStrategy / updateStrategy / deleteStrategy
  *   回测/批次:     backtestStrategy / listBatches / listBatchTasks
@@ -30,6 +30,13 @@ export const scriptStrategyApi = {
     return data
   },
 
+  async newScript() {
+    // 自动命名创建: new_strategy → new_strategy01 → new_strategy02 ...
+    // 点击"新建脚本"按钮即调用, 不等用户手动保存
+    const { data } = await http.post('/script-strategy/scripts/new')
+    return data
+  },
+
   async updateScript(id, patch) {
     const { data } = await http.put(`/script-strategy/scripts/${id}`, patch)
     return data
@@ -40,7 +47,7 @@ export const scriptStrategyApi = {
   },
 
   async compileScript(id) {
-    // 2026-08-21: 静态语法检查（ast.parse，不跑回测）
+    // 静态语法检查（ast.parse，不跑回测）
     // 返 {ok: true, warnings: []} 或 {ok: false, error: {line, col, msg}}
     const { data } = await http.post(`/script-strategy/scripts/${id}/compile`)
     return data
@@ -51,7 +58,7 @@ export const scriptStrategyApi = {
     return data
   },
 
-  // ─────────────── Strategy CRUD (v123) ───────────────
+  // ─────────────── Strategy CRUD ───────────────
 
   async listStrategies({ status = null, only_mine = false } = {}) {
     const params = {}
@@ -81,7 +88,7 @@ export const scriptStrategyApi = {
     await http.delete(`/script-strategy/strategies/${id}`)
   },
 
-  // ─────────────── 回测 / 批次 (v123) ───────────────
+  // ─────────────── 回测 / 批次 ───────────────
 
   async backtestStrategy(id, payload) {
     // payload: { mode, stock_code, backtest_start_date, backtest_end_date,
@@ -100,7 +107,7 @@ export const scriptStrategyApi = {
     return data
   },
 
-  // v124: 重测批次 (新 batch, 原批次 task 废弃)
+  // 重测批次 (新 batch, 原批次 task 废弃)
   async retestBatch(id, batchNo) {
     const { data } = await http.post(`/script-strategy/strategies/${id}/batches/${batchNo}/retest`)
     return data
@@ -139,7 +146,7 @@ export const scriptStrategyApi = {
     return data
   },
 
-  // ─────────────── 策略下单母单 (v126) ───────────────
+  // ─────────────── 策略下单母单 ───────────────
 
   async createStrategyOrder(strategyId) {
     const { data } = await http.post('/script-strategy/strategy-orders', { strategy_id: strategyId })

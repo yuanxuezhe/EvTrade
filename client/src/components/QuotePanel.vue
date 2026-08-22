@@ -1,5 +1,5 @@
 <!--
-  QuotePanel.vue — 行情面板（v15.1 quote-panel-template-match r3）
+  QuotePanel.vue — 行情面板（change quote-panel-template-match）
 
   按 broker 终端 行情模板.png 重排版 (r3 修订):
     头部 (Symbol + 名+码, 码字大) → hero (大最新价 + 涨跌, 可点)
@@ -12,7 +12,7 @@
     - 卖 1 / 买 1 中间的"最新价"浮标 (hero 已显示, 重复)
 
   交互:
-    - 所有"价格"cells 单击带入 OrderForm 委托价 (替代 v14 双击)
+    - 所有"价格"cells 单击带入 OrderForm 委托价
     - 卖/买 5 档价 + hero 最新价 + stats grid 7 个价格格 (昨收/开盘/最高/最低/均价/涨停/跌停)
     - hover 态 + tooltip 提示可点击
 
@@ -75,7 +75,7 @@
       </div>
     </div>
 
-    <!-- ⑤ v33.2: 16→8 格 stats grid (删 涨跌/涨幅/现手/量比 + 金额/总手/市值/费率; 最高/最低移到第 2 行 原涨跌位置) -->
+    <!-- ⑤ 8 格 stats grid (含昨收, 价格格均可点; 最高/最低在第 2 行) -->
     <div class="qp-stats-grid">
       <!-- Row 1: 昨收 / 开盘 -->
       <div
@@ -89,7 +89,7 @@
         @click="emitApply(quote?.fields?.[F.OPEN])"
       ><span class="qp-cell-label">开盘</span><span class="qp-cell-value" :class="heroClass">{{ formatPricePanel(quote?.fields?.[F.OPEN], props.stockCode) }}</span></div>
 
-      <!-- Row 2 (原涨跌位置): 最高 / 最低 — v33 从原第 2/3 行移到这里 -->
+      <!-- Row 2: 最高 / 最低 -->
       <div
         class="qp-stats-cell is-clickable"
         :title="(quote?.fields?.[F.HIGH] != null && Number(quote?.fields?.[F.HIGH]) > 0) ? '点击带入委托价' : ''"
@@ -152,13 +152,13 @@ const emit = defineEmits(['apply-price'])
 
 const quoteStore = useQuoteStore()
 const F = FIELD
-// v33: 从证券信息缓存获取证券名称 (v32 已实现 getByCode)
+// 从证券信息缓存获取证券名称 (stocks store getByCode)
 const stocksStore = useStocksStore()
 
-// v80: 价格精度 (按 stock.scale 动态)
+// 价格精度 (按 stock.scale 动态)
 const { precision: pricePrecision } = usePricePrecision(() => props.stockCode)
 
-// v33: 永不退订 — 用户原话"请一直保持系统相关标的的订阅"
+// 永不退订 — 用户原话"请一直保持系统相关标的的订阅"
 //   - 监听 props.stockCode 变化, 当用户输入新代码 (debounce 300ms) 自动调订阅
 //   - 切换 / 清空 / 卸载时都不 unsubscribe (subscribe 内部 subscribedSet dedup 防重发)
 //   - ws_manager 同一 code 仅一份订阅, 无幽灵问题
@@ -185,11 +185,11 @@ watch(
 )
 
 const code = computed(() => (props.stockCode || '').toUpperCase().trim())
-// v33: 订阅 push → triggerRef(byCode) → quote 自动响应, 不再需要 1s tick 强制重建
+// 订阅 push → triggerRef(byCode) → quote 自动响应, 无需 1s tick 强制重建
 const quote = computed(() => quoteStore.get(code.value))
 
 const stockName = computed(() => {
-  // v33: 证券名称从 stocks store 缓存查 (v32 stocks-names-from-cache)
+  // 证券名称从 stocks store 缓存查 (change stocks-names-from-cache)
   return stocksStore.stockName(code.value) || ''
 })
 
@@ -244,11 +244,10 @@ const statusSymbol = computed(() => {
 })
 
 // ─── 衍生: 均价 / 振幅 / 涨/跌停 ───
-// 2026-08-20 修复均价量级错误:
+// 均价量级注意:
 //   QMT xtquant tick.volume 单位是"手" (1 手 = 100 股), 不是股。
-//   之前直接 amount / volume, 公式算出的"均价"是真实均价的 100 倍
-//   (例如 511360.SH 价格 113.82, 算出均价 11382.13 差 100 倍)。
 //   amount 单位是元 (不需要换算), 所以均价 = amount / (volume * 100) 元/股。
+//   (直接 amount / volume 算出的是真实均价的 100 倍)
 const avgPrice = computed(() => {
   const q = quote.value
   if (!q || !q.fields) return null
@@ -257,7 +256,7 @@ const avgPrice = computed(() => {
   if (!Number.isFinite(amount) || !Number.isFinite(volume) || volume === 0) return null
   return amount / (volume * 100)  // volume(手) × 100 = 真实股数
 })
-// v82.2: 均价按 stock scale 四舍五入 (与限价/涨跌停一致, 默认 2, ETF/可转债 3)
+// 均价按 stock scale 四舍五入 (与限价/涨跌停一致, 默认 2, ETF/可转债 3)
 const avgPriceText = computed(() => avgPrice.value != null ? avgPrice.value.toFixed(pricePrecision.value) : '—')
 
 const amplitude = computed(() => {
@@ -272,7 +271,7 @@ const amplitude = computed(() => {
 const amplitudeText = computed(() => amplitude.value != null ? `${amplitude.value.toFixed(2)}%` : '—')
 
 // TODO 区分板块: 创业板/科创板 20%, ST 5%; 当前简化为主板 10%
-// v80: 涨跌停按 stock.scale 动态 round (默认 2, ETF 可配 3)
+// 涨跌停按 stock.scale 动态 round (默认 2, ETF 可配 3)
 const limitUp = computed(() => prevClose.value != null ? Number((prevClose.value * 1.10).toFixed(pricePrecision.value)) : null)
 const limitDown = computed(() => prevClose.value != null ? Number((prevClose.value * 0.90).toFixed(pricePrecision.value)) : null)
 const limitUpText = computed(() => limitUp.value != null ? limitUp.value.toFixed(pricePrecision.value) : '—')
@@ -301,7 +300,7 @@ function hasBid(level) {
 }
 
 // ─── 格式化 ───
-// (formatNum 已废弃, 改用 composables/usePricePrecision.formatPrice (v82.6))
+// (formatNum 已废弃, 改用 composables/usePricePrecision.formatPrice)
 //   通过本地包装 formatPricePanel(v, stockCode) 调用, 空值返 '—' 保留面板友好性
 function formatBigNum(v) {
   if (v == null || v === '') return '—'
@@ -325,7 +324,7 @@ function emitApply(v) {
   emit('apply-price', n)
 }
 
-// v33: quote panel 卸载不清订阅 — 永不退订原则 (持仓/自选/曾经查看过的全部保留)
+// quote panel 卸载不清订阅 — 永不退订原则 (持仓/自选/曾经查看过的全部保留)
 //   减少 ws 抖动, 提升重新打开速度
 </script>
 
@@ -337,7 +336,7 @@ function emitApply(v) {
   gap: 8px;
   font-family: 'Roboto Mono', 'Menlo', monospace;
   font-size: 13px;
-  /* v32: 修 commit 4 副作用 — 五档 + 11 个数据格 在 206.5px cell 内溢出, 加纵向滚动 */
+  /* 五档 + 11 个数据格 在 206.5px cell 内溢出, 加纵向滚动 */
   overflow-y: auto;
   min-height: 0;
 }

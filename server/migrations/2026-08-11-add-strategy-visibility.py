@@ -1,5 +1,5 @@
 """
-2026-08-11-add-strategy-visibility.py — DB 迁移 (v125)
+2026-08-11-add-strategy-visibility.py — DB 迁移
 
 strategy 表加 2 列:
 - is_public TINYINT NOT NULL DEFAULT 0   策略级可见性: 0=私有(默认) 1=公开(列表可见, 供策略下单选择)
@@ -32,7 +32,7 @@ from sqlalchemy import text, create_engine, inspect  # noqa: E402
 
 DATABASE_URL = os.environ.get("EVTRADE_DB_URL")
 if not DATABASE_URL:
-    raise RuntimeError("EVTRADE_DB_URL is required (v20 MySQL-only permanent standard).")
+    raise RuntimeError("EVTRADE_DB_URL is required (MySQL-only permanent standard).")
 if not DATABASE_URL.startswith("mysql"):
     raise RuntimeError(f"Only MySQL is supported. Got URL: {DATABASE_URL[:80]!r}")
 

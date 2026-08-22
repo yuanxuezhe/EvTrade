@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-2026-07-15-remap-price-type.py — 价格类型协议重对齐 (v__)
+2026-07-15-remap-price-type.py — 价格类型协议重对齐
 
-用户指令 (2026-07-15): "重新设计价格类型方案:
+用户指令: "重新设计价格类型方案:
   限价  0: xtconstant.FIX_PRICE
   最新价 1: xtconstant.LATEST_PRICE
   市价  2: xtconstant.MARKET_PEER_PRICE_FIRST"
@@ -22,7 +22,7 @@
   - 末尾做完整性校验: 任何 price_type 不在 {0,1,2} 都报错 (说明还有未识别的码点)
 
 依赖:
-  server/.env 含 EVTRADE_DB_URL (v20 MySQL-only 强制)
+  server/.env 含 EVTRADE_DB_URL (MySQL-only 强制)
 
 用法:
   python3 server/migrations/2026-07-15-remap-price-type.py
@@ -47,16 +47,16 @@ except ImportError:
 
 from sqlalchemy import text, create_engine
 
-# v20 MySQL-only 强制: 显式读 EVTRADE_DB_URL
+# MySQL-only 强制: 显式读 EVTRADE_DB_URL
 DATABASE_URL = os.environ.get("EVTRADE_DB_URL")
 if not DATABASE_URL:
     raise RuntimeError(
-        "EVTRADE_DB_URL is required (v20 MySQL-only permanent standard). "
+        "EVTRADE_DB_URL is required (MySQL-only permanent standard). "
         "Set it in server/.env"
     )
 if not DATABASE_URL.startswith("mysql"):
     raise RuntimeError(
-        f"Only MySQL is supported (v20 permanent standard). Got URL: {DATABASE_URL[:80]!r}"
+        f"Only MySQL is supported (permanent standard). Got URL: {DATABASE_URL[:80]!r}"
     )
 
 engine = create_engine(DATABASE_URL, pool_pre_ping=True)

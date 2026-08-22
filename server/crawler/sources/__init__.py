@@ -2,7 +2,7 @@
 crawler/sources — 数据源适配层
 
 每个文件对应一个数据源:
-  eastmoney.py    # 东方财富 (v21)
+  eastmoney.py    # 东方财富
 
 设计原则:
 - 单一职责:每个 fetch 函数返标准 dict,异常由调用方处理

@@ -8,7 +8,7 @@
  *   refs:
  *     - stockCode: Ref<string>
  *     - priceType: Ref<number|'market'|'oppose'|'latest'|'limit'>
- *       - number: PriceType 常量码 (11/5/44), 推荐 (T0Trade.vue v127 改造)
+ *       - number: PriceType 常量码 (11/5/44), 推荐
  *       - string: 历史 'market'/'oppose'/'latest'/'limit', 向后兼容
  *     - balanceCoeff: Ref<number>
  *     - submitting: Ref<boolean>  (双向, 用于 UI loading)
@@ -21,8 +21,8 @@
  *   params: { orderType: '23'|'24', volume: number, price: number }
  */
 import { ElMessage } from 'element-plus'
-// v2026-08-17: 删除 utils/format.js 的假 formatPrice (硬截 2 位), 改用 composables/usePricePrecision
-//   的按 stockScale(code) 精度补 0 版本. 配合 stockCode 传入才能正确显示 9.000 / 10.85 等.
+// formatPrice 用 composables/usePricePrecision 的按 stockScale(code) 精度补 0 版本.
+//   配合 stockCode 传入才能正确显示 9.000 / 10.85 等.
 import { formatPrice } from '../composables/usePricePrecision'
 
 // 价格类型 → 柜台协议码 (numeric 11/5/44). 同时接受 string (历史) 与 number (新)。
@@ -38,9 +38,9 @@ export function useT0OrderSubmit({ stockCode, priceType, balanceCoeff, submittin
   async function submitOrder({ orderType, volume, price, taskId = null, stockCodeOverride = null }) {
     submitting.value = true
     try {
-      // v127: priceType 直接接受 numeric PriceType 常量 (11/5/44); string 兼容保留
+      // priceType 直接接受 numeric PriceType 常量 (11/5/44); string 兼容保留
       const priceTypeCode = _toPriceTypeCode(priceType.value)
-      // change 2026-07-21-t0-balance-stock-code-guard: 优先用 stockCodeOverride 兜底,
+      // 优先用 stockCodeOverride 兜底,
       //   防止 balanceStockCode 为空时 (selectedTaskId 失效) 后端 place.py:84 校验失败.
       //   T0Trade.vue onBalanceTask 在 selectedTaskId/tasksById 失效时, 从 taskRows 直接取 row.stock_code 传入.
       const finalStockCode = stockCodeOverride || stockCode.value
@@ -49,7 +49,7 @@ export function useT0OrderSubmit({ stockCode, priceType, balanceCoeff, submittin
         submitting.value = false
         return
       }
-      // v8: 走 orderStore 统一处理（已 _upsertToHoldings 写缓存 + 防御性 status 重算）
+      // 走 orderStore 统一处理（含 _upsertToHoldings 写缓存 + 防御性 status 重算）
       //     res = api 拦截器解包后的 list 数组(1 个 OrderOut)
       const res = await orderStore.placeOrder({
         stock_code: finalStockCode,
@@ -59,7 +59,7 @@ export function useT0OrderSubmit({ stockCode, priceType, balanceCoeff, submittin
         volume: volume,
         t0_coefficient: balanceCoeff.value,
         user_def: 'T0',  // T0 页面下单调标记
-        ...(taskId ? { task_id: taskId } : {}),  // v18: 选定的 task 写回 (向后兼容 = null)
+        ...(taskId ? { task_id: taskId } : {}),  // 选定的 task 写回 (无 task 时 = null)
       })
       if (res) {
         const dir = orderType === '23' ? '买' : '卖'

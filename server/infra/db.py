@@ -1,9 +1,9 @@
 """
-infra/db.py — SQLAlchemy 数据库基类层（v14 从 SQLite 迁移到 MySQL/pymysql，v20 强制 MySQL-only）
+infra/db.py — SQLAlchemy 数据库基类层（MySQL-only）
 
 职责：封装 MySQL + SQLAlchemy 1.4 细节，对上层暴露 Session/Base/上下文管理器。
 
-URL 优先级（REQ-CFG-009 v20 永久标准）：
+URL 优先级（REQ-CFG-009 永久标准）：
   1. EVTRADE_DB_URL 显式 → 用
   2. 否则 **RuntimeError**（永久禁用 SQLite fallback，运维必须 .env 配齐 MySQL URL）
 
@@ -13,7 +13,7 @@ import os
 import logging
 from contextlib import contextmanager
 
-# 2026-07-10 fix: server.config 才会 load_dotenv(server/.env)，但 infra/db.py
+# server.config 才会 load_dotenv(server/.env)，但 infra/db.py
 # 不依赖 config (legacy 兼容),导致模块级 os.environ.get('EVTRADE_DB_URL')
 # 永远拿不到 .env 里的值 → fallback SQLite。
 # 这里自行 load_dotenv 一次（idempotent, 与 config.load_dotenv override=False 不冲突）。
@@ -31,55 +31,43 @@ from sqlalchemy.engine import Engine
 
 log = logging.getLogger(__name__)
 
-# ─────────────── URL 解析（v20 MySQL-only 永久标准） ───────────────
-# 永久禁用 SQLite fallback：未设 EVTRADE_DB_URL 直接 RuntimeError。
-# 历史背景：v14 引入 MySQL/pymysql 默认 URL 但保留 sqlite:///./evtrade.db 作 dev fallback；
-# v20 起下线 fallback，本项目只允许 MySQL/pymysql。
+# ─────────────── URL 解析（MySQL-only 永久标准） ───────────────
+# 无 SQLite fallback：未设 EVTRADE_DB_URL 直接 RuntimeError，本项目只允许 MySQL/pymysql。
 try:
     DATABASE_URL = os.environ["EVTRADE_DB_URL"]
 except KeyError:
     raise RuntimeError(
-        "[infra.db] EVTRADE_DB_URL is required (v20 MySQL-only permanent standard). "
+        "[infra.db] EVTRADE_DB_URL is required (MySQL-only permanent standard). "
         "Set it in server/.env, e.g. mysql+pymysql://EvTrade:p%40ssw0rd@127.0.0.1:33066/evtrade?charset=utf8mb4"
     )
 if not DATABASE_URL.startswith("mysql"):
     raise RuntimeError(
-        f"[infra.db] Only MySQL is supported (v20 permanent standard). "
+        f"[infra.db] Only MySQL is supported (permanent standard). "
         f"Got URL: {DATABASE_URL[:80]!r}. SQLite has been permanently disabled."
     )
 
 # BASE_DIR 保留以兼容 import
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))  # server/infra/
 
-# ─────────────── Pool 配置（v20 MySQL-only）──
+# ─────────────── Pool 配置（MySQL-only）──
 def _pool_kwargs(url: str) -> dict:
-    """v20 只支持 MySQL，返回固定 pool_kwargs。
+    """只支持 MySQL，返回固定 pool_kwargs。
 
     pool_timeout 默认 10s（SQLAlchemy 默认 30s）。
 
-    根治 vs 预防（v52 futex 僵死事件复盘）：
-    ┌─────────────────────────────────────────────────────────────┐
-    │ 预防（已落 v51）：pool_timeout=10 + pre_ping，限爆炸半径     │
-    │ 根治（已落 v52）：sync endpoint → async + bcrypt 走 threadpool │
-    └─────────────────────────────────────────────────────────────┘
-
-    futex 僵死完整链路（v52 修复后已破）：
-      ① 旧 login endpoint 是 sync def，bcrypt.checkpw (~250ms) 阻塞
-      ② Starlette anyio threadpool 默认 40 线程被 bcrypt 耗光
-      ③ 其他 sync endpoint (fetch_user / load_trades) 也都抢同一池
-      ④ DB session 在 handler 内 db.commit() 后未归还
-      ⑤ Pool 5+10=15 耗尽 → 新请求 30s 等连接 → 业务逻辑崩
-      ⑥ 部分 session 泄漏（异常路径未走 finally）
-      ⑦ 任何 io 触发 futex_wait_queue → 主进程永久僵死
-
-    v52 根治：login/change-password 改 async，bcrypt 走 run_in_threadpool
+    历史事故教训（futex 僵死）:
+      旧 sync login endpoint 内 bcrypt.checkpw (~250ms) 阻塞 Starlette anyio
+      threadpool (默认 40 线程) → 其他 sync endpoint 抢不到线程 → DB session
+      在 handler 内 commit 后无法归还 → pool 5+10=15 耗尽 → 新请求 30s 等连接
+      → futex_wait 永久僵死。
+    根治: login/change-password 已改 async，bcrypt 走 run_in_threadpool
     → 释放 anyio threadpool → DB session 立即归还 → pool 不爆 → futex 不触发。
 
     pool_timeout=10 仍保留作为兜底：极端情况下仍超时则快速 5xx，
     而不是让主进程卡 30s + 僵死。
     """
     assert url.startswith("mysql"), f"_pool_kwargs called with non-MySQL URL: {url[:80]}"
-    # v128.4 单进程: 进程内只有 1 个 pool, 需承担原 4 worker × (5+10)=15 的并发.
+    # 单进程部署: 进程内只有 1 个 pool, 需承担全部并发.
     # 默认上调: pool_size=20 + max_overflow=30 = 50 (远低于 MySQL 默认 151 max_connections).
     # 仍可被环境变量覆盖 (e.g. MySQL max_connections 受限的小机器).
     size = int(os.environ.get("EVTRADE_DB_POOL_SIZE", "20"))
@@ -107,20 +95,19 @@ engine = create_engine(DATABASE_URL, **_engine_kwargs)
 # 启动时 dialect 断言（双重保险）
 assert engine.dialect.name == "mysql", (
     f"[infra.db] FATAL: engine dialect is {engine.dialect.name!r}, "
-    "expected 'mysql'. v20 MySQL-only standard violated."
+    "expected 'mysql'. MySQL-only standard violated."
 )
 
 log.info("[infra.db] engine ready: driver=mysql pool_size=%d max_overflow=%d",
          _engine_kwargs["pool_size"], _engine_kwargs["max_overflow"])
 
 
-# ─────────────── MySQL connect hook（v20 起无 SQLite 兼容逻辑）──
-# 原 v14 时期有 _set_sqlite_pragma hook 仅在 SQLite 连接上启用 PRAGMA foreign_keys=ON。
-# v20 起 SQLite 永久禁用，整个 hook 删除 — MySQL/InnoDB 自动 enforce FK，无需 PRAGMA。
+# ─────────────── MySQL connect hook ──
+# MySQL/InnoDB 自动 enforce FK，无需 PRAGMA。
 # 保留一个 no-op event listener 占位以兼容未来 MySQL session-level init（如 SET time_zone）。
 @event.listens_for(Engine, "connect")
 def _on_connect(dbapi_connection, connection_record):
-    """v20 MySQL-only: no-op placeholder, MySQL/InnoDB handles FK enforce natively."""
+    """MySQL-only: no-op placeholder, MySQL/InnoDB handles FK enforce natively."""
     pass
 
 
@@ -132,7 +119,7 @@ Base = declarative_base()
 def get_db():
     """FastAPI dependency: yields a database session and closes it after use.
 
-    v52 futex 僵死复盘：
+    futex 僵死教训：
       旧 sync endpoint (login) 阻塞 Starlette threadpool → DB session 在
       handler 内 db.commit() 后无法走到 finally → 连接泄漏 → pool 满 → 僵死。
 
@@ -195,19 +182,17 @@ def init_db():
     from server.models import user, orm  # noqa: F401
     from sqlalchemy import text
 
-    # v20: admin engine 重新计算 pool_kwargs (不重用模块级 _engine_kwargs)
-    # 之前复用 _engine_kwargs 在 SQLite fallback 场景会把 check_same_thread 传给 MySQL
-    # admin engine (pymysql 不识别该参数 → TypeError)
+    # admin engine 重新计算 pool_kwargs (不重用模块级 _engine_kwargs)
     admin_url = os.environ.get("EVTRADE_DB_ADMIN_URL", DATABASE_URL)
     admin_engine = create_engine(admin_url, **_pool_kwargs(admin_url))
 
     Base.metadata.create_all(bind=admin_engine)
 
-    # v80: stocks 加 stktype + scale 两列（幂等 — 仅在列不存在时 ALTER）
+    # stocks 加 stktype + scale 两列（幂等 — 仅在列不存在时 ALTER）
     # 业务：stktype=0(股票)/1(ETF) 用户手动维护；scale=价格小数位精度 默认 2
     _ensure_stocks_columns(admin_engine)
 
-    # v80: sys_config 兜底初始化 cantrdstktypes=0,1
+    # sys_config 兜底初始化 cantrdstktypes=0,1
     _run_seed_cantrdstktypes_via_session(admin_engine)
 
     # change strategy_trade: 为 orders.user_def 加索引
@@ -234,7 +219,7 @@ def init_db():
 
 
 def _ensure_stocks_columns(engine) -> None:
-    """v80: stocks.stktype + stocks.scale 幂等迁移。
+    """stocks.stktype + stocks.scale 幂等迁移。
 
     用 INFORMATION_SCHEMA.COLUMNS 探测列存在性，缺失则 ALTER TABLE ADD COLUMN。
     重入 init_db() 时幂等（已存在则跳过）。
@@ -262,9 +247,9 @@ def _ensure_stocks_columns(engine) -> None:
                         f"ALTER TABLE stocks ADD COLUMN {col_name} {col_type} "
                         f"NOT NULL DEFAULT {default_val} COMMENT '{col_comment}'"
                     ))
-                    print(f"[init_db] v80 ADD COLUMN stocks.{col_name} ({col_type} DEFAULT {default_val})")
+                    print(f"[init_db] ADD COLUMN stocks.{col_name} ({col_type} DEFAULT {default_val})")
                 else:
-                    print(f"[init_db] v80 stocks.{col_name} 已存在, 跳过")
+                    print(f"[init_db] stocks.{col_name} 已存在, 跳过")
         else:
             # SQLite 走 pragma (开发环境支持)
             for col_name, col_type, default_val, _ in target_cols:
@@ -277,7 +262,7 @@ def _ensure_stocks_columns(engine) -> None:
 
 
 def _seed_cantrdstktypes() -> None:
-    """v80: sys_config 兜底初始化 cantrdstktypes=0,1 (可交易股票/ETF).
+    """sys_config 兜底初始化 cantrdstktypes=0,1 (可交易股票/ETF).
 
     与 _ensure_defaults 同模式: idempotent, 若键已存在则跳过.
     """
@@ -293,15 +278,15 @@ def _seed_cantrdstktypes() -> None:
                 value="0,1",
                 desc="可交易的证券类型 (stktype 逗号分隔, e.g. 0,1)",
             )
-            print("[init_db] v80 seeded sys_config.cantrdstktypes=0,1")
+            print("[init_db] seeded sys_config.cantrdstktypes=0,1")
         else:
-            print(f"[init_db] v80 sys_config.cantrdstktypes 已存在 val={existing}, 跳过")
+            print(f"[init_db] sys_config.cantrdstktypes 已存在 val={existing}, 跳过")
     except Exception as e:
-        print(f"[init_db] v80 seed cantrdstktypes WARN: {e}")
+        print(f"[init_db] seed cantrdstktypes WARN: {e}")
 
 
 def _run_seed_cantrdstktypes_via_session(engine) -> None:
-    """v80: 用同一 admin_engine 跑 seed, 避免引入额外 db 连接
+    """用同一 admin_engine 跑 seed, 避免引入额外 db 连接
 
     写到 user='0' 默认区, 与其他 sysconfig 配置保持一致
     sys_config 实际列名是 cfg_key + cfg_val (不是 key+val)
@@ -317,11 +302,11 @@ def _run_seed_cantrdstktypes_via_session(engine) -> None:
                     "INSERT INTO sys_config (`user`, cfg_key, cfg_val, `desc`, updated_at, updated_by) "
                     "VALUES ('0', 'cantrdstktypes', '0,1', '可交易的证券类型 (stktype 逗号分隔)', NOW(), 'system')"
                 ))
-                print("[init_db] v80 seeded sys_config.cantrdstktypes=0,1")
+                print("[init_db] seeded sys_config.cantrdstktypes=0,1")
             else:
-                print(f"[init_db] v80 sys_config.cantrdstktypes 已存在 val={row[0]}, 跳过")
+                print(f"[init_db] sys_config.cantrdstktypes 已存在 val={row[0]}, 跳过")
     except Exception as e:
-        print(f"[init_db] v80 seed cantrdstktypes WARN: {e}")
+        print(f"[init_db] seed cantrdstktypes WARN: {e}")
 
 
 # _admin_engine 占位 (兼容旧引用)

@@ -1,11 +1,11 @@
 """
-server/services/script_strategy/strategy_orders.py — 策略母单 (v126, CRUD 部分)
+server/services/script_strategy/strategy_orders.py — 策略母单 (CRUD 部分)
 
 职责单一: strategy_order 实体业务逻辑 — 查询 + 创建 + 关闭.
 - 启停 (start/stop) + 转发 payload 构造 → strategy_order_lifecycle.py (拆分, 行数约束)
 - 6 个 CRUD 服务函数 + 状态机常量 (stopped / running / closed)
 - 复用 access.py 的 resolve_strategy / require_strategy_order_access
-- best_params 门禁: 无 best_params 不可建 (v122 实盘门禁延续)
+- best_params 门禁: 无 best_params 不可建
 
 不启动任何引擎线程: 启动实盘 = 建 1 行 live strategy_task + 转发 strategy_exec。
 stop 时调用 /internal/stop-task 异步停止, 状态由前端轮询刷新。

@@ -133,7 +133,7 @@ api/  →  services/  →  repo/  →  infra/  →  models/
 
 ### REQ-ARCH-005: 模块依赖图（文档化）
 
-- **维护位置**：`docs/architecture/server-layers.md`（待建）
+- **维护位置**：`知识库/后端服务/`（分层结构文档）
 - **内容**：
   - 当前 5 层目录树（含每个文件用途 1-2 句）
   - 关键调用链图（place_order / cancel_order / reconcile / push handler / strategy engine 等）

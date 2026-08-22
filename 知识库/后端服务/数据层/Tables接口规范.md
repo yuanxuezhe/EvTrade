@@ -4,11 +4,11 @@
 
 - `server/tables/base.py`（TableBase / Row / 模块级 helper）
 - `server/tables/__init__.py`（统一导出全部表类 + base 符号，自动生成勿手改）
-- `MIGRATION_GUIDE.md`（v81 ORM → tables 迁移指北）
+- `MIGRATION_GUIDE.md`（ORM → tables 迁移指北）
 
 ## 功能概述
 
-v80.2 起 `server/tables/` 是数据层唯一入口：每个 MySQL 表一个文件、一个继承 TableBase 的类（`__tablename__` / `__pk_fields__` / `__fields__` / `__field_types__`），底层用参数化 SQL text() 复用 infra.db 全局 engine。**v81 迁移后所有 API 严禁直接 ORM（db.query/.filter/.add/.commit）**，统一走下列接口。
+`server/tables/` 是数据层唯一入口：每个 MySQL 表一个文件、一个继承 TableBase 的类（`__tablename__` / `__pk_fields__` / `__fields__` / `__field_types__`），底层用参数化 SQL text() 复用 infra.db 全局 engine。**所有 API 严禁直接 ORM（db.query/.filter/.add/.commit）**，统一走下列接口。
 
 ## 文件清单
 | 代码文件 | 作用 |
@@ -37,7 +37,7 @@ v80.2 起 `server/tables/` 是数据层唯一入口：每个 MySQL 表一个文�
 - `query_by_fields(filters: Dict, order='asc', limit=None, columns: List[str]|None=None) -> List[Row]` —— 多字段 AND 过滤；`columns` 列白名单（防注入，列名必须在 `__fields__`；用于跳过 backtest_result 等大 JSON 列防 MySQL 1038 排序内存溢出）；filters 为空等价 query_all + limit。
   替代：`db.query(M).filter(M.f1==v1, M.f2==v2).all()`。
 - `query_by_in(field, values, order='asc', limit=None) -> List[Row]` —— 单字段 IN 批查（字段名先校验存在；空列表直接返回 [] 不发 SQL）。替代 `.filter(M.field.in_(values))`；批量场景必用（避免 N 次 round-trip）。
-- `query_all(order='asc') -> List[Row]` —— 全表按 PK 升/降序（v80.5 取消分页，过滤交给前端）。替代 `db.query(M).all()`。
+- `query_all(order='asc') -> List[Row]` —— 全表按 PK 升/降序（不分页，过滤交给前端）。替代 `db.query(M).all()`。
 
 ### TableBase 类方法（写入）
 
@@ -59,7 +59,7 @@ class Orders(TableBase):
     __auto_increment_pk__ = None               # 自增 PK 名（add 时不传）
     __fields__ = {...}                          # 字段名 → 中文注释（columns 白名单校验依据）
     __field_types__ = {...}                     # 字段名 → MySQL 类型
-    __defaults__ = {}                           # v81.11 类实例化默认值
+    __defaults__ = {}                           # 类实例化默认值
 ```
 `__new__` 工厂：`Users(username='alice')` 直接返回绑定了 owner 的 Row（缺字段自动补 `__defaults__`）。
 

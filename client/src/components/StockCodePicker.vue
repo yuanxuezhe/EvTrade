@@ -1,15 +1,15 @@
 <!--
-  StockCodePicker.vue — 证券代码选择器 (v28, 任务: 2026-07-XX-stock-code-picker)
+  StockCodePicker.vue — 证券代码选择器 (change stock-code-picker)
 
   数据源: useStocksStore.cache (全量 5529, 内存, 跨页面共享)
-  筛选:   stock_code 前缀 > short_name 前缀 > stock_name 包含 (复用 v27 评分算法)
+  筛选:   stock_code 前缀 > short_name 前缀 > stock_name 包含 (评分算法)
   视觉:   左 50% el-autocomplete 输入框 / 右 50% el-tag 显示名称 (只读, 不可关闭)
 
-  与 v27 StockCodeAutocomplete 的关键区别 (契约变更):
+  相对旧 StockCodeAutocomplete 的关键契约:
     - v-model 严格语义: 只有"从候选中真正选中"才是 stock_code 的有效值
     - 未选中 (输入框打字未选 / 改输其他代码) 时, blur 会自动 emit('') 清空 v-model
     - 这样避免下游(下单/查询)拿到"用户手打到一半的非法代码"
-    - 父组件使用方式兼容 v27: v-model="stock_code" + @select="(s)=>{stock_name = s.stock_name}"
+    - 父组件使用方式: v-model="stock_code" + @select="(s)=>{stock_name = s.stock_name}"
 
   Props:
     - modelValue   (string)        : v-model stock_code (only "600519.SH", 不含名称)
@@ -29,13 +29,13 @@
     - select           (stock)     : 用户从候选中选中, item 为完整 stock 对象
     - blur             ()          : 失焦 (此时若输入框值与已选 code 不一致, emit('') 自动清空)
 
-  使用场景 (v28 上线, 试水点: OrderForm.vue 即 Trade.vue 下单):
+  使用场景 (试水点: OrderForm.vue 即 Trade.vue 下单):
     - OrderForm.vue      : v-model="form.stock_code", @select 写 form.stock_name
     - T0TaskCreateDialog : 同上
     - AdminStockConfig   : 同上
 -->
 <template>
-    <!-- v28-10: 回退 wrapper 包裹层结构; 用 unscoped <style> block + 加 :scp- 前缀避免污染 -->
+    <!-- wrapper 包裹层结构; 用 unscoped <style> block + 加 :scp- 前缀避免污染 -->
     <div class="scp-wrapper" :style="wrapperStyle">
         <div class="scp-code-input" :style="codeInputStyle">
             <el-autocomplete
@@ -89,9 +89,9 @@ const props = defineProps({
     triggerOnFocus: { type: Boolean, default: false },
     size: { type: String, default: 'default' },
     tagType: { type: String, default: 'primary' },
-    // v28-2: 容器整体宽度 (支持 '100%' / '420px' / 420 数字), 默认 '100%' 与 OrderForm 委托价/数量同行宽
+    // 容器整体宽度 (支持 '100%' / '420px' / 420 数字), 默认 '100%' 与 OrderForm 委托价/数量同行宽
     width: { type: [String, Number], default: '100%' },
-    // v28-2: 左右占比 (相对比例, 自动归一化为百分比), 默认 50/50 (即"55开"理解为"50:50 平分")
+    // 左右占比 (相对比例, 自动归一化为百分比), 默认 50/50 (即"55开"理解为"50:50 平分")
     inputRatio: { type: Number, default: 1 },
     nameRatio: { type: Number, default: 1 },
 })
@@ -103,12 +103,12 @@ const store = useStocksStore()
 // 内部状态 (单一可信源)
 const inputText = ref(props.modelValue || '')        // 输入框值 (含用户打字未选中间态)
 const selectedStock = ref(null)                      // 已选 stock 对象 (唯一可信源, 决定 v-model)
-let lastApplyTs = 0                                  // v53: 外部程序化填入时间戳, 防 blur 竞态
+let lastApplyTs = 0                                  // 外部程序化填入时间戳, 防 blur 竞态
 // 默认占位符 (可由 props.placeholder 覆盖)
 const namePlaceholder = '请选择股票'
 
 /**
- * v28-2 宽度/占比计算:
+ * 宽度/占比计算:
  *   - wrapperStyle.width: props.width 数字→px, 字符串→原样
  *   - inputBasisPercent / nameBasisPercent: 归一化后百分比 (分配 flex-basis)
  *   - 保证 inputRatio:nameRatio=0 也安全 (输入框 0%,名称 100% 会撑爆,所以加 max(1, ...) 兜底)
@@ -130,12 +130,12 @@ const codeInputStyle = computed(() => ({
 }))
 
 const tagBoxStyle = computed(() => ({
-    flex: `0 0 calc(${100 - inputBasisPercent.value}% + 1px)`,  // v28-8: 多吃 1px 抵消左 wrapper 的 inset shadow 1px
+    flex: `0 0 calc(${100 - inputBasisPercent.value}% + 1px)`,  // 多吃 1px 抵消左 wrapper 的 inset shadow 1px
     width: `calc(${100 - inputBasisPercent.value}% + 1px)`,     // 同时给 width 防 flex-basis 退化
     minWidth: 0,
 }))
 
-// 缓存 initCache promise (避免并发触发, 复用 v27 模式)
+// 缓存 initCache promise (避免并发触发)
 let cacheLoadPromise = null
 async function ensureCache() {
     if (store.cacheLoaded) return
@@ -149,7 +149,7 @@ async function ensureCache() {
 
 /**
  * el-autocomplete fetch-suggestions
- * 复用 v27 评分算法: code 前缀 > short_name 前缀 > name 包含
+ * 评分算法: code 前缀 > short_name 前缀 > name 包含
  */
 async function querySearch(queryString, cb) {
     try {
@@ -158,7 +158,7 @@ async function querySearch(queryString, cb) {
         cb([])
         return
     }
-    // v113: 空 query 也返结果 (默认弹全量前 N 条), 不再"不输入无候选"
+    // 空 query 也返结果 (默认弹全量前 N 条), 不"不输入无候选"
     //   旧行为: inputText 为空时 cb([]) → autocomplete 无候选 → 用户看不到任何股票
     //   新行为: 空 query 返 cache 前 50 条, 鼓励用户直接看到列表选
     const results = queryString
@@ -169,7 +169,7 @@ async function querySearch(queryString, cb) {
 
 /**
  * 从候选中真正选中
- * v28 契约: 只有这里 emit 的值才是 v-model 的"有效值"
+ * 契约: 只有这里 emit 的值才是 v-model 的"有效值"
  */
 function onSelectItem(item) {
     if (!item || !item.stock_code) return
@@ -181,7 +181,7 @@ function onSelectItem(item) {
 
 /**
  * el-autocomplete 输入变化
- * v28 语义: 不在这里 emit update:modelValue (避免"打字未选"算有效值)
+ * 语义: 不在这里 emit update:modelValue (避免"打字未选"算有效值)
  * 只在 selectedStock.code 一致时 emit (维持 v-model 同步)
  */
 watch(inputText, (newVal) => {
@@ -192,12 +192,12 @@ watch(inputText, (newVal) => {
 })
 
 /**
- * blur 处理 (v28 核心契约)
+ * blur 处理 (核心契约)
  * 若当前输入框值 !== 已选 stock_code, 视为"未选中/改输", emit('') 清空
  */
 function onBlur() {
     emit('blur')
-    // v53: 如果刚被外部程序化填入, 500ms 内忽略 blur 清空 (避免 dblclick → blur 竞态)
+    // 如果刚被外部程序化填入, 500ms 内忽略 blur 清空 (避免 dblclick → blur 竞态)
     if (Date.now() - lastApplyTs < 500) return
     const typed = inputText.value || ''
     if (!selectedStock.value) {
@@ -269,7 +269,7 @@ watch(
 )
 
 /**
- * cache 加载完后, 若 props.modelValue 命中 cache 自动同步 (复用 v27 模式)
+ * cache 加载完后, 若 props.modelValue 命中 cache 自动同步
  */
 watch(
     () => store.cacheLoaded,
@@ -287,7 +287,7 @@ watch(
 </script>
 
 <style scoped>
-/* v28-3: 输入框和名称框贴一起, 视觉对齐 el-input-number (与委托价/数量同行宽)
+/* 输入框和名称框贴一起, 视觉对齐 el-input-number (与委托价/数量同行宽)
    策略: 删 wrapper gap = 8px → 0; el-autocomplete / 名称框 都各自带 element-plus input 同款边框,
          但 border-radius 一左一右, 形成"连续控件"
 */
@@ -314,13 +314,13 @@ watch(
     align-items: stretch;
 }
 
-/* v28-7: el-autocomplete 内部所有相关层都要清右半圆角,
+/* el-autocomplete 内部所有相关层都要清右半圆角,
    element-plus 结构 .el-autocomplete > .el-input > .el-input__wrapper > .el-input__inner,
    wrapper 默认 box-shadow: inset 1px 模拟边框 (项目里 el-border-radius-base=8)
    必须多层覆盖, 才能呈现"两个直角"
 */
-/* v28-19: 强制 .el-input 从 inline-flex 改 flex, 消除 baseline 偏移
-   实测 v28-18: el-input display:inline-flex vertical-align:middle
+/* 强制 .el-input 从 inline-flex 改 flex, 消除 baseline 偏移
+   实测: el-input display:inline-flex vertical-align:middle
    inline-flex 在 block 父容器内 baseline 计算偏移约 1.30px, 导致 el-input__inner top=175.09
    vs placeholder top=173.80
    改成 flex 后 box top = parent top, 文字 top 也对齐
@@ -336,7 +336,7 @@ watch(
     border-bottom-right-radius: 0 !important;
 }
 
-/* v28-7: 默认 + focus 状态 box-shadow 都吃透明, 让 el-input__wrapper 没有 inset border,
+/* 默认 + focus 状态 box-shadow 都吃透明, 让 el-input__wrapper 没有 inset border,
    视觉上不会出现"双 1px 阴影线" */
 .scp-code-autocomplete :deep(.el-input__wrapper),
 .scp-code-autocomplete :deep(.el-input__wrapper.is-focus),
@@ -358,21 +358,21 @@ watch(
 
 .scp-tag-box {
     /* 宽度由 inline style (tagBoxStyle) 控制 */
-    flex: 0 0 calc(50% + 1px);  /* v28-8: 多吃 1px 用来遮盖左 wrapper 的 inset shadow 1px, 衔接处无缝 */
-    margin-left: -1px;  /* v28-8: 把这 1px 抵消, 总宽不变 */
+    flex: 0 0 calc(50% + 1px);  /* 多吃 1px 用来遮盖左 wrapper 的 inset shadow 1px, 衔接处无缝 */
+    margin-left: -1px;  /* 把这 1px 抵消, 总宽不变 */
     min-width: 0;
     box-sizing: border-box;
     display: flex;
     align-items: stretch;
-    /* v28-8: 用 box-shadow inset 1px 模拟边框, 与 el-input__wrapper 同款, 让两段视觉是一个 input-group */
+    /* 用 box-shadow inset 1px 模拟边框, 与 el-input__wrapper 同款, 让两段视觉是一个 input-group */
     border: none;
     box-shadow: 0 0 0 1px var(--el-input-border-color, #dcdfe6) inset !important;
     border-top-left-radius: 0 !important;
     border-bottom-left-radius: 0 !important;
     border-top-right-radius: var(--el-border-radius-base, 8px) !important;
     border-bottom-right-radius: var(--el-border-radius-base, 8px) !important;
-    /* v28-17: 让 input 文字 baseline 与 placeholder 对齐
-   实测 v28-16: inner_top=175.09 placeholder_top=173.80 差 1.30px
+    /* 让 input 文字 baseline 与 placeholder 对齐
+   实测: inner_top=175.09 placeholder_top=173.80 差 1.30px
    原因: el-input__inner 默认 line-height: normal (~16px), 文字 baseline 在 input 元素内略下偏
    placeholder line-height: 30px, 文字 baseline 在 30px 元素中部
 
@@ -382,8 +382,8 @@ watch(
     line-height: 30px !important;
 }
 
-/* v28-14: 修正垂直对齐 + box-shadow 重叠区颜色统一
-   实测 v28-13:
+/* 修正垂直对齐 + box-shadow 重叠区颜色统一
+   实测:
      wrap_box_shadow: rgb(232, 237, 245) inset 1px (--border-light, 项目 main.css)
      tag_box_shadow:  rgb(220, 223, 230) inset 1px (--el-input-border-color, element-plus 默认)
      两色在 1px 重叠区形成"双线夹一缝"视觉
@@ -395,10 +395,10 @@ watch(
    - 实际效果: 中间衔接 1px 重叠处视觉上只有一条线, 跟委托价/数量一致
 */
     padding: 1px 11px;
-    height: 33px;  /* v28-18: 跟 .scp-code-input 等高 (el-autocomplete 内部 el-input 默认 33px 高) */
-    font-size: 13px !important;  /* v28-15: 强制 13px, 跟左 input 一致 */
+    height: 33px;  /* 跟 .scp-code-input 等高 (el-autocomplete 内部 el-input 默认 33px 高) */
+    font-size: 13px !important;  /* 强制 13px, 跟左 input 一致 */
     line-height: 30px;
-    box-shadow: 0 0 0 1px rgb(232, 237, 245) inset !important;  /* v28-15: hard-code 同色, 避免 var(--border-light) 找不到 */
+    box-shadow: 0 0 0 1px rgb(232, 237, 245) inset !important;  /* hard-code 同色, 避免 var(--border-light) 找不到 */
     background: var(--el-fill-color-light, #f5f7fa);
     color: var(--el-text-color-regular, #606266);
 }
@@ -420,7 +420,7 @@ watch(
 
 .scp-tag-placeholder {
     color: var(--el-text-color-placeholder, #a8abb2);
-    font-size: 13px !important;  /* v28-16: 跟左 input 字号一致 (v28-15 写在父 .scp-tag-box 没生效, 14px 在此覆盖) */
+    font-size: 13px !important;  /* 跟左 input 字号一致 (写在父 .scp-tag-box 没生效, 14px 在此覆盖) */
     padding-left: 12px;
 }
 
@@ -452,7 +452,7 @@ watch(
     font-family: var(--font-mono, 'JetBrains Mono', 'Consolas', monospace);
 }
 
-/* v28-10: UNSCOPED global block
+/* UNSCOPED global block
    scp-code-autocomplete 是 <el-autocomplete> 子组件内部元素,
    Vue scoped 只给当前组件 root 加 data-v-xxx, 不会传给子组件元素,
    所以 :deep() 编译后生成的 [data-v-xxx] .el-input__wrapper 无法 match.
@@ -463,12 +463,12 @@ watch(
 </style>
 
 <style>
-/* v28-20: UNSCOPED (此块必须 unscoped, 因为 .scp-code-autocomplete 是 <el-autocomplete> 组件元素,
+/* UNSCOPED (此块必须 unscoped, 因为 .scp-code-autocomplete 是 <el-autocomplete> 组件元素,
    Vue scoped 只给当前组件 root element 加 data-v, 子组件元素不带 data-v,
    所以 scoped 选择器 .scp-code-autocomplete[data-v-xxx] .el-input 永远匹配不上)
    specificity: (0,2,0) > element-plus .el-input (0,1,0)
 */
-/* v28-19: 强制 .el-input 从 inline-flex 改 flex, 消除 baseline 偏移
+/* 强制 .el-input 从 inline-flex 改 flex, 消除 baseline 偏移
    实测: el-input display:inline-flex vertical-align:middle → baseline 偏移 1.30px
    改 flex 后 el-input top 与父容器 top 一致, 文字 top 也对齐
 */

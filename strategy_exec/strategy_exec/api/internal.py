@@ -59,7 +59,7 @@ async def verify_internal_token(x_internal_token: Optional[str] = Header(None)) 
 class RunTaskRequest(BaseModel):
     task_id: int = Field(ge=1)
     user_id: int = Field(ge=0)
-    strategy_id: int = Field(ge=1)  # v123: 任务归属策略 (best_params 回写目标)
+    strategy_id: int = Field(ge=1)  # 任务归属策略 (best_params 回写目标)
     script_id: str = Field(min_length=1, max_length=64)
     stock_code: str = Field(min_length=1, max_length=16)
     mode: str = Field(pattern="^(backtest|live)$")
@@ -68,7 +68,7 @@ class RunTaskRequest(BaseModel):
     backtest_end_date: Optional[str] = Field(default=None, pattern=r"^\d{8}$")
     period: Optional[str] = Field(default=None, pattern=r"^(1d|1m|5m|15m|30m|60m)$")
     fields: Optional[str] = Field(default=None)
-    # v126: 策略下单母单归因 (signal_consumer 读 parent_task_id 写 orders.task_id)
+    # 策略下单母单归因 (signal_consumer 读 parent_task_id 写 orders.task_id)
     parent_task_id: Optional[int] = Field(default=None, ge=1)
     strategy_name: Optional[str] = Field(default=None, max_length=255)
 
@@ -101,11 +101,11 @@ class StopTaskResponse(BaseModel):
     task_id: int
 
 
-# ──────────── v123+ sweep schemas (strategy-batch-task-model) ────────────
+# ──────────── sweep schemas (strategy-batch-task-model) ────────────
 
 
 class RunSweepTaskRequest(BaseModel):
-    """v123 sweep 启动请求 — 批次已由 EvTrade 预建好 task 行, strategy_exec 只跑.
+    """sweep 启动请求 — 批次已由 EvTrade 预建好 task 行, strategy_exec 只跑.
 
     body: {user_id, strategy_id, script_id, stock_code, backtest_start_date,
            backtest_end_date, batch_no, param_ranges, metric, concurrency, period}
@@ -273,8 +273,8 @@ async def run_task(req: RunTaskRequest) -> RunTaskResponse:
                 script_id=req.script_id,
                 stock_code=req.stock_code,
                 params=req.params,
-                parent_task_id=req.parent_task_id,    # v126 母单归因
-                strategy_name=req.strategy_name or "",  # v126 子单 user_def
+                parent_task_id=req.parent_task_id,    # 母单归因
+                strategy_name=req.strategy_name or "",  # 子单 user_def
             )
         except Exception as e:
             log.error("[run_task] start live failed: %s", e)
@@ -297,7 +297,7 @@ async def _run_backtest_background(
 ) -> None:
     """后台跑回测 (异常时更新 task status='failed')
 
-    v123: 单次回测成功 → 把 params 回写 strategy.best_params (update_strategy_best=True)
+    单次回测成功 → 把 params 回写 strategy.best_params (update_strategy_best=True)
     """
     log.info(
         "[backtest task=%d] background start: stock=%s bars=%d %s~%s period=%s",
@@ -401,7 +401,7 @@ async def receive_progress(task_id: int, req: ProgressRequest) -> ProgressRespon
         )
 
 
-# ──────────── v123+ sweep endpoint ────────────
+# ──────────── sweep endpoint ────────────
 
 
 async def _run_sweep_batch_background(
@@ -444,7 +444,7 @@ async def _run_sweep_batch_background(
     dependencies=[Depends(verify_internal_token)],
 )
 async def run_sweep_task(req: RunSweepTaskRequest) -> RunSweepTaskResponse:
-    """v123 sweep 启动端点 — 立即返 202 + batch_no, 后台异步跑.
+    """sweep 启动端点 — 立即返 202 + batch_no, 后台异步跑.
 
     EvTrade 已预建批次内 task 行 (strategy_id + batch_no + params 落库).
     strategy_exec 只读批次跑 backtest, 不再自建 task / summary task.

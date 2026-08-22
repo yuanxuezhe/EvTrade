@@ -1,5 +1,5 @@
 /**
- * t0_tasks.js — T0Task 缓存 store（v18 change t0-task-management）
+ * t0_tasks.js — T0Task 缓存 store（change t0-task-management）
  *
  * 📖 详见 `openspec/specs/trading/spec.md` §REQ-TRADE-013~018
  *

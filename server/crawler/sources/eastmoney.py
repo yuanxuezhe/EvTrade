@@ -1,5 +1,5 @@
 """
-crawler/sources/eastmoney.py — 东方财富股票基础信息适配 (v23 slim-stocks-table)
+crawler/sources/eastmoney.py — 东方财富股票基础信息适配
 
 数据源契约 (REQ-STOCK-005):
 - 端点: https://emweb.securities.eastmoney.com/PC_HSF10/CompanySurvey/PageAjax
@@ -19,10 +19,10 @@ crawler/sources/eastmoney.py — 东方财富股票基础信息适配 (v23 slim-
 设计说明:
 - push2.eastmoney.com (实时行情) 不被 Python requests 接受(只 curl 可),但
   emweb.securities.eastmoney.com (基本面查询) Python OK → 本适配用此端点
-- v23 字段精简: 仅爬 stock_name + sector(申万二级),其余 9 字段不再入库
+- 字段精简: 仅爬 stock_name + sector(申万二级),其余 9 字段不再入库
 - 一次拉取返全部静态信息,无需多 endpoint
 
-字段映射 (→ Stock ORM, v23 精简):
+字段映射 (→ Stock ORM, 精简):
   SECURITY_NAME_ABBR → stock_name
   INDUSTRYCSRC2 → sector (申万二级)
   SECUCODE → stock_code (由 caller 传入,本函数不解析)
@@ -62,14 +62,14 @@ def _format_code(stock_code: str) -> str:
 
 
 def fetch_base_info(stock_code: str, timeout: float = 10.0) -> Optional[Dict]:
-    """从东方财富拉取单只股票基础信息(v23 仅 3 字段)
+    """从东方财富拉取单只股票基础信息(仅 3 字段)
 
     Args:
         stock_code: 标准代码格式 "000001.SZ" 或 "600519.SH"
         timeout: HTTP 超时秒数
 
     Returns:
-        标准 dict (Stock ORM 字段,v23 精简):
+        标准 dict (Stock ORM 字段,精简):
           {
             "stock_code": "000001.SZ",   # 由 caller 传入,这里冗余
             "stock_name": "平安银行",
@@ -108,7 +108,7 @@ def fetch_base_info(stock_code: str, timeout: float = 10.0) -> Optional[Dict]:
         return None
 
 
-# v23 移除:fetch_intro (intro 字段已删除)
+# 不提供 fetch_intro (intro 字段已删除)
 
 
 # ---------- helpers ----------
@@ -120,7 +120,7 @@ _WS_RE = re.compile(r"\s+")
 def _html_to_text(html: str) -> str:
     """简单 HTML → 纯文本:去标签 + 折叠空白
 
-    v23 保留:fetch_intro 引用此函数,但当前无业务调用方。保留以备未来。
+    当前无业务调用方。保留以备未来。
     """
     if not html:
         return ""
@@ -132,7 +132,7 @@ def _html_to_text(html: str) -> str:
 def _extract_sector(raw: Optional[str]) -> str:
     """申万二级 INDUSTRYCSRC2 直接入库 sector
 
-    与 v21 的 _extract_industry (取 '-' 前段) 不同,v23 直接保留二级全名
+    直接保留二级全名
     如 '银行-国有大型银行' 入库 sector,前端可直接筛选展示。
     """
     if not raw:

@@ -1,5 +1,5 @@
 /**
- * idb.js — 浏览器 IndexedDB 薄封装（v12 新增）
+ * idb.js — 浏览器 IndexedDB 薄封装
  *
  * 用途：
  *   - 仅作为前端持久化层（holds 缓存当日 orders / trades，断网/重启后 F5 即时显示）
@@ -11,7 +11,7 @@
  *   - openDB 自动 resolve；多次 openDB(name) 复用同一 connection
  *   - 单调用失败：reject → 由调用方 try/catch
  *
- * change add-manual-adjust-and-history-pages (v12)
+ * change add-manual-adjust-and-history-pages
  */
 const DB_PREFIX = 'EvTrade'
 

@@ -6,12 +6,11 @@ const Login = () => import('../views/Login.vue')
 const Dashboard = () => import('../views/Dashboard.vue')
 const Trade = () => import('../views/Trade.vue')
 const Asset = () => import('../views/Asset.vue')
-// v32: 删 /holdings 独立查询页 (持仓由 Trade.vue 右上 HoldingsPanel 承担)
-// v13: HistoryOrders/HistoryTrades view 已删除
+// 持仓由 Trade.vue 右上 HoldingsPanel 承担 (无独立查询页, HistoryOrders/HistoryTrades view 不存在)
 // script-strategy change: 前端编写 Python 脚本 + 回测 + 实盘
 const ScriptDev = () => import('../views/ScriptDev.vue')
 const ScriptTask = () => import('../views/ScriptTask.vue')
-// v126: 策略下单母单管理 (4 面板, 拆 5 子组件, 由 StrategyOrder.vue 编排)
+// 策略下单母单管理 (4 面板, 拆 5 子组件, 由 StrategyOrder.vue 编排)
 const StrategyOrder = () => import('../views/StrategyOrder.vue')
 const Users = () => import('../views/Users.vue')
 const Profile = () => import('../views/Profile.vue')
@@ -22,10 +21,7 @@ const CacheAsset = () => import('../views/CacheAsset.vue')
 const CachePositions = () => import('../views/CachePositions.vue')
 const CacheOrders = () => import('../views/CacheOrders.vue')
 const CacheTrades = () => import('../views/CacheTrades.vue')
-// v21 stock-info-crawler: 股票信息同步管理页面 (admin-only)
-// v93: 证券同步独立页面已移除, AdminSync 组件删除 — 同步状态/启动由 stock-config 页面承担
-// const AdminSync = () => import('../views/AdminSync.vue')
-// v21 stock-info-crawler: 证券信息设置页面 (admin-only 占位)
+// change stock-info-crawler: 证券信息设置页面 (admin-only, 含同步状态/启动, sync_config 占位)
 const AdminStockConfig = () => import('../views/AdminStockConfig.vue')
 // add-stkpool-module: 证券池 (auth 通用鉴权, 不分 RBAC)
 const StkPool = () => import('../views/StkPool.vue')
@@ -47,8 +43,7 @@ const routes = [
   { path: '/positions', redirect: '/t0-trade' },
   { path: '/trade', name: 'Trade', component: Trade, meta: { title: '交易下单', requiresTrader: true } },
   { path: '/asset', name: 'Asset', component: Asset, meta: { title: '账户资金' } },
-  // v32: 删 /holdings 独立查询页路由 (持仓由 Trade.vue 右上 HoldingsPanel 承担)
-  //   保留 redirect 兼容旧书签
+  // 持仓由 Trade.vue 右上 HoldingsPanel 承担; 保留 redirect 兼容旧书签
   { path: '/holdings', redirect: '/trade' },
   // /to-management 旧路由 → redirect 到 /t0-trade (T0Trade.vue 真快速做T页面)
   { path: '/to-management', redirect: '/t0-trade' },
@@ -57,7 +52,7 @@ const routes = [
   // script-strategy change: 2 个新页面
   { path: '/script-dev', name: 'ScriptDev', component: ScriptDev, meta: { title: '策略开发', requiresTrader: true } },
   { path: '/script-task', name: 'ScriptTask', component: ScriptTask, meta: { title: '策略运行', requiresTrader: true } },
-  // v126: 策略下单母单 (实盘下单入口, 仿 ScriptTask 路由)
+  // 策略下单母单 (实盘下单入口, 仿 ScriptTask 路由)
   { path: '/strategy-order', name: 'StrategyOrder', component: StrategyOrder, meta: { title: '策略下单', requiresTrader: true } },
   {
     path: '/users',
@@ -67,17 +62,14 @@ const routes = [
   },
   { path: '/profile', name: 'Profile', component: Profile, meta: { title: '个人资料' } },
   { path: '/system-init', name: 'SystemInit', component: SystemInit, meta: { title: '系统初始化', requiresAdmin: true } },
-  { path: '/system-config', name: 'SystemConfig', component: SystemConfig, meta: { title: '系统配置' } },  // v78: 允许普通用户查看 (写权限 UI 层控制)
+  { path: '/system-config', name: 'SystemConfig', component: SystemConfig, meta: { title: '系统配置' } },  // 允许普通用户查看 (写权限 UI 层控制)
   { path: '/t0-trade', name: 'T0Trade', component: T0Trade, meta: { title: '快速做T' } },
   // admin-only: IDB 4 张业务表的 CRUD 查看器
   { path: '/admin/cache/asset', name: 'CacheAsset', component: CacheAsset, meta: { title: '交易查询: 资金', requiresAdmin: true } },
   { path: '/admin/cache/positions', name: 'CachePositions', component: CachePositions, meta: { title: '交易查询: 持仓', requiresAdmin: true } },
   { path: '/admin/cache/orders', name: 'CacheOrders', component: CacheOrders, meta: { title: '交易查询: 委托', requiresAdmin: true } },
   { path: '/admin/cache/trades', name: 'CacheTrades', component: CacheTrades, meta: { title: '交易查询: 成交', requiresAdmin: true } },
-  // v21 stock-info-crawler: 股票同步管理 (admin-only, 启动/停止/进度/错误流)
-  // v93: 证券同步独立页面已移除, 启动/停止/进度由 stock-config 页面承担
-  // { path: '/admin/sync', name: 'AdminSync', component: AdminSync, meta: { title: '证券同步', requiresAdmin: true } },
-  // v21 stock-info-crawler: 证券信息设置 (admin-only, sync_config 占位)
+  // change stock-info-crawler: 证券信息设置 (admin-only, 含同步启动/停止/进度, sync_config 占位)
   { path: '/admin/stock-config', name: 'AdminStockConfig', component: AdminStockConfig, meta: { title: '证券信息设置', requiresAdmin: true } },
   // add-stkpool-module: 证券池 (auth 通用鉴权, 不分 RBAC)
   { path: '/stkpool', name: 'StkPool', component: StkPool, meta: { title: '证券池' } },

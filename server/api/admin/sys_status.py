@@ -1,5 +1,5 @@
 """
-admin/sys_status.py — v_next 重构版（SysStatus 单行宽表）
+admin/sys_status.py — SysStatus 单行宽表
 
 交易日状态机写入 sys_status 表（替代 trading_day）。
 URL 路径：/api/admin/sys-status（替代 /api/admin/trading-day）。
@@ -16,14 +16,12 @@ POST /api/admin/sys-status/reconcile
   body: { "trd_date": "20260614", "mode": "manual" }
   -> 仅生成对账报告（不切日）
 
-v_next 改动（2026-07-22, 用户明令）:
 - 表 sys_status 单行化（id=1, 强制 CHECK id=1）
 - 字段 trd_date 不再是 PK；切日 = UPDATE 单行 trd_date
 - 历史交易日从 reconcile_report.trd_date 查
-- 删除 GET /api/admin/sys-status 列表端点（用户接受此损失）
 """
 from fastapi import APIRouter, HTTPException, Depends
-from server.api.deps import require_rpc_ok  # v101: RPC 健康统一 deps
+from server.api.deps import require_rpc_ok  # RPC 健康统一 deps
 from pydantic import BaseModel
 from typing import Optional
 from sqlalchemy.orm import Session
@@ -41,7 +39,7 @@ router = APIRouter()
 
 
 class SysStatusOut(BaseModel):
-    """SysStatus 响应模型 — v_next 单行宽表
+    """SysStatus 响应模型 — 单行宽表
 
     字段名直接对齐前端 SystemInit.vue
     """
@@ -107,7 +105,7 @@ def _broadcast_init_change(change_kind, status, trd_date, previous_trd_date, rep
 
 
 @router.post("/init", response_model=InitResponse,
-             dependencies=[Depends(require_rpc_ok)])  # v101: 切日前 RPC 健康
+             dependencies=[Depends(require_rpc_ok)])  # 切日前 RPC 健康
 async def init_trading_day(
     req: InitRequest,
     db: Session = Depends(get_db),
@@ -120,11 +118,11 @@ async def init_trading_day(
             detail={"code": "BAD_TRD_DATE", "msg": "trd_date 必须是 8 位数字字符串"}
         )
 
-    # v101: RPC 健康检查已通过 Depends(require_rpc_ok) 在路由层拦截 (替换 v99 内联)
+    # RPC 健康检查已通过 Depends(require_rpc_ok) 在路由层拦截
 
     by_user = str(admin_user.id)
 
-    # v117: 切日前先读"前一交易日" — 后续 ws 推送 previous_trd_date 用
+    # 切日前先读"前一交易日" — 后续 ws 推送 previous_trd_date 用
     #   SysStatus 单行表 id=1, UPDATE 前查到的 trd_date 即切日前的
     _previous_trd_date = None
     try:
@@ -143,7 +141,7 @@ async def init_trading_day(
     #   incremental (manual reconcile) 不动 positions, 不抑制
     from server.services.push.pos import suppress_pos_push
     with suppress_pos_push():
-        # v118: 系统初始化走 init 路径 (覆盖 positions 表, 一次性同步 broker 持仓)
+        # 系统初始化走 init 路径 (覆盖 positions 表, 一次性同步 broker 持仓)
         result = await do_reconcile(db, req.trd_date, by_user, reconcile_kind='init')
 
     if not result['ok']:
@@ -163,10 +161,10 @@ async def init_trading_day(
     # 切日已写入 (do_reconcile 内 UPDATE id=1 行), 这里直接读出来
     row = get_active_sysstatus(db)
 
-    # v25: 日初成功后 ws 推 system_status_change (v117), 让前端自动刷新 holdings/asset/position 缓存
-    #   v117: 去掉 init_completed 类型, 合并到 system_update channel — type='system_status_change'
-    #   v117.1: 移除 rpc_status 字段 — 用户口径: rpc_status 仍独立走自己的 type='rpc_status' 路径
-    #   change init-push-gate: refactor 到共享 helper _broadcast_init_change (init_completed → 前端关 gate)
+    # 日初成功后 ws 推 system_status_change, 让前端自动刷新 holdings/asset/position 缓存
+    #   合并到 system_update channel — type='system_status_change'
+    #   不含 rpc_status 字段 — rpc_status 仍独立走自己的 type='rpc_status' 路径
+    #   change init-push-gate: 走共享 helper _broadcast_init_change (init_completed → 前端关 gate)
     _init_status = 'partial' if result.get('error') else 'ok'
     _broadcast_init_change('init_completed', _init_status, req.trd_date, _previous_trd_date, result['report_id'])
 
@@ -203,7 +201,7 @@ async def reconcile_only(
             detail={"code": "BAD_TRD_DATE", "msg": "trd_date 必须是 8 位数字字符串"}
         )
     by_user = str(admin_user.id)
-    # v118: manual reconcile 不动 positions (pos_push 已接管), 只生成报告
+    # manual reconcile 不动 positions (pos_push 已接管), 只生成报告
     result = await do_reconcile(db, req.trd_date, by_user, reconcile_kind='incremental')
     db.commit()
     return InitResponse(

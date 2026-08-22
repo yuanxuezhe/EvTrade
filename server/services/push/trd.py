@@ -1,42 +1,34 @@
 """
-push_handler_trd.py — trd_cfm 处理（v10 + v78.3 重写 + v79.3 重命名 + (trd_date, order_no) 唯一匹配）
+push_handler_trd.py — trd_cfm 处理（(trd_date, order_no) 唯一匹配）
 
 行为：
-- v78.3 (REQ-TRADE-032): trd_cfm 不再动 Order 累计；只插 Trade + 改 Position
+- (REQ-TRADE-032): trd_cfm 不动 Order 累计；只插 Trade
   (Order traded_volume/traded_amount/avg_price/status 由 ord_cfm 推送一次写入)
-- v79.3 (REQ-TRADE-033) 字段命名统一 (消歧义):
+- 字段命名统一 (REQ-TRADE-033, 消歧义):
   - row['remark']      → order_no        (即我司系统订单号, 我们下单时送入到 broker.remark)
   - row['order_id']    → order_id         (即柜台/券商委托号, broker xtquant 系统分配)
-- v79.3 (REQ-TRADE-034) 唯一匹配维度:
+- 唯一匹配维度 (REQ-TRADE-034):
   - **只用 (trd_date, order_no) 命中本地 Order** — 不用 order_id 兜底
 
 行为：
 - 用 broker.remark（= 本地 order_no）匹配本地 Order
 - Trade 幂等插入：PK 存在则跳过
-- 同步更新 Order traded_volume / traded_amount / avg_price
-- 用 _infer_order_status 本地推断 status（不传 broker_status，trd_cfm 永远不写撤单类）
-- v10 字段对齐：读 broker 原字段 `traded_id`/`traded_volume`/`traded_price`/`traded_amount`/`traded_time`
+- 读 broker 原字段 `traded_id`/`traded_volume`/`traded_price`/`traded_amount`/`traded_time`
 
-change consolidate-position-data-flow:
-- 同时增量更新 Position.vol（intra-day 不依赖 day-init reconcile）
-  - order_type "23" (买) → vol += volume
-  - order_type "24" (卖) → vol -= volume
-- trade_type=1 (cancel-trade) → MUST 跳过 Position.vol 更新（OQ-1 option B；
-  DELETE 端点 R1 抹平已负责 vol 调整）
-- Position 不存在 → log WARNING + 跳过（admin 必须先 day-init reconcile）
-- 不动 Position.cost_price / avl_vol / last_vol (today_buy/today_sell 已删除)
+持仓数据流 (consolidate-position-data-flow 后):
+- 持仓由 pos_push 驱动 (见 push/pos.py), trd_cfm 不写 positions
 """
 from typing import Any, Dict, Optional
 
-from server.tables import Orders, Trades, Positions  # v81: tables API
+from server.tables import Orders, Trades, Positions
 from server.repo.orders import _get_active_trd_date
-from server.services.push.helpers import _float, _int, _str, _round_scale, _order_to_out_dict, _trade_to_out_dict, _position_to_out_dict  # v95: position 推送
+from server.services.push.helpers import _float, _int, _str, _round_scale, _order_to_out_dict, _trade_to_out_dict, _position_to_out_dict
 from server.utils.time import _utcnow, parse_broker_ts
 from server.repo.stocks import get_stock_scale
 
 
 def handle_trd_cfm(db, row: Dict[str, Any], ts: str) -> Optional[Dict[str, Any]]:
-    """处理 trd_cfm 推送（v10: broker 原字段名）"""
+    """处理 trd_cfm 推送（broker 原字段名）"""
     trd_date = _str(row.get('trade_date', '')) or _get_active_trd_date(db)
     if not trd_date or len(trd_date) != 8:
         trd_date = _get_active_trd_date(db)
@@ -57,7 +49,7 @@ def handle_trd_cfm(db, row: Dict[str, Any], ts: str) -> Optional[Dict[str, Any]]
     if existing:
         return None
 
-    # v79.3 (REQ-TRADE-034): 唯一匹配 (trd_date, order_no)
+    # 唯一匹配 (trd_date, order_no) (REQ-TRADE-034)
     order = Orders.query_one(order_no=order_no, trd_date=trd_date)
 
     price = _float(row.get('traded_price', 0))
@@ -67,7 +59,7 @@ def handle_trd_cfm(db, row: Dict[str, Any], ts: str) -> Optional[Dict[str, Any]]
     broker_order_type = _str(row.get('order_type', ''))
     final_order_type = broker_order_type or (order.order_type if order else '')
 
-    # v81: Trades.add_one(dict) → 返回 Row
+    # Trades.add_one(dict) → 返回 Row
     trade = Trades.add_one({
         'trd_date': trd_date,
         'order_no': order_no,
@@ -81,13 +73,12 @@ def handle_trd_cfm(db, row: Dict[str, Any], ts: str) -> Optional[Dict[str, Any]]
         'trade_type': _int(row.get('trade_type', 0), 0),
     })
 
-    # v78.3: trd_cfm 不再累加 Order
+    # trd_cfm 不累加 Order
     if not order:
         print(f"[trd_cfm] WARN: no order for trade_id={trade_id} (order_no={order_no}, order_id={order_id}) — Trade 行已留存")
 
-    # v118: trd_cfm 不再处理持仓
-    #   持仓数据源改为 broker 推 pos_push (xtquant position_callback)
-    #   trd_cfm 仅写 trades + orders, 不写 positions
+    # 持仓数据源是 broker 推 pos_push (xtquant position_callback);
+    # trd_cfm 仅写 trades + orders, 不写 positions
     position_dict = None
 
     print(f"[trd_cfm] inserted trade_id={trade_id} order_no={order_no} vol={trade.volume} px={trade.price}")
@@ -95,7 +86,7 @@ def handle_trd_cfm(db, row: Dict[str, Any], ts: str) -> Optional[Dict[str, Any]]
     return {
         "trade": _trade_to_out_dict(trade),
         "order": _order_to_out_dict(order),
-        "position": position_dict,  # v118: trd_cfm 不再带 position (pos_push 单独推送)
+        "position": position_dict,  # trd_cfm 不带 position (pos_push 单独推送)
     }
 
 
@@ -109,9 +100,9 @@ def _update_position_vol(
     trade_id: str = "",
     trade_price: float = 0.0,
 ) -> Optional[dict]:
-    """v78.3: trd_cfm 增量更新 Position（按 T0/非 T0 规则）
+    """增量更新 Position（按 T0/非 T0 规则）
 
-    v95: 返回更新后 Position 行的 out_dict (供 dispatcher 广播 position_update 用)
+    返回更新后 Position 行的 out_dict (供 dispatcher 广播 position_update 用)
          - Position 不存在 + 买入自动创建 → 同样返回 out_dict
          - Position 不存在 + 卖出跳过 → 返回 None
 
@@ -131,7 +122,7 @@ def _update_position_vol(
     from server.repo.stocks import get_is_t0_able
 
     is_t0 = get_is_t0_able(db, stock_code)
-    # v81: Positions 表主键是 stock_code (单字段)
+    # Positions 表主键是 stock_code (单字段)
     pos_list = Positions.query_by('stock_code', stock_code, limit=1)
     pos = pos_list[0] if pos_list else None
 
@@ -155,7 +146,7 @@ def _update_position_vol(
                     order_no, trade_id,
                 )
             )
-            # v95: 返回新建行的 out_dict, 让 dispatcher 推 position_update
+            # 返回新建行的 out_dict, 让 dispatcher 推 position_update
             return _position_to_out_dict(new_row)
         else:  # 卖
             print(
@@ -187,7 +178,7 @@ def _update_position_vol(
     if not pos.synced_from:
         pos.synced_from = "push_partial"
 
-    # v81: pos.update() 把累加字段一次性 UPDATE
+    # pos.update() 把累加字段一次性 UPDATE
     pos.update(Positions, stock_code=stock_code)
 
     avl_delta = volume if (order_type == "23" and is_t0) else (-volume if order_type == "24" else 0)
@@ -202,6 +193,6 @@ def _update_position_vol(
         )
     )
 
-    # v95: 返回 update 后 Position 行的 out_dict, dispatcher 会推 position_update
+    # 返回 update 后 Position 行的 out_dict, dispatcher 会推 position_update
     #   关键: 必须在 pos.update() 之后返回 (字段已刷新), 否则前端 vol/avl_vol 会差一帧
     return _position_to_out_dict(pos)

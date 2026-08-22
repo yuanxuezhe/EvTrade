@@ -38,7 +38,7 @@ export const stkpoolApi = {
     return body?.details ?? body ?? []
   }),
 
-  /** 加明细 (idempotent) — v128: 支持批量, stock_codes 数组转逗号串 */
+  /** 加明细 (idempotent) — 支持批量, stock_codes 数组转逗号串 */
   detailAdd: (id, stockCodes) => {
     // 兼容旧调用: 单个字符串 / 单只股票
     const arr = Array.isArray(stockCodes) ? stockCodes : [stockCodes]

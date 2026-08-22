@@ -31,14 +31,14 @@ class ProjectStrategy(bt.Strategy):
     _user_id: int = 0
     _script_id: str = ""
     _task_mode: str = ""  # "backtest" | "live"
-    _parent_task_id: Optional[int] = None  # v126 母单归因 (None = 非母单 / 回测)
-    _strategy_name: str = ""               # v126 子单 user_def
+    _parent_task_id: Optional[int] = None  # 母单归因 (None = 非母单 / 回测)
+    _strategy_name: str = ""               # 子单 user_def
 
     def _set_task_meta(
         self, task_id: int, user_id: int, script_id: str, mode: str = "",
         parent_task_id: Optional[int] = None, strategy_name: str = "",
     ) -> None:
-        """Engine 调用: 注入 task 元数据 (mode: backtest/live). v126 +parent_task_id/strategy_name."""
+        """Engine 调用: 注入 task 元数据 (mode: backtest/live, parent_task_id/strategy_name)."""
         self._task_id = task_id
         self._user_id = user_id
         self._script_id = script_id
@@ -104,8 +104,8 @@ class ProjectStrategy(bt.Strategy):
             msg=msg,
             stime=self._bar_time(),
             mode=self._task_mode,
-            parent_task_id=self._parent_task_id,   # v126 母单归因
-            strategy_name=self._strategy_name,     # v126 子单 user_def
+            parent_task_id=self._parent_task_id,   # 母单归因
+            strategy_name=self._strategy_name,     # 子单 user_def
         )
 
         try:

@@ -1,5 +1,5 @@
 """
-2026-07-17-add-orders-strategy-type.py — v66 增量迁移 (idempotent, MySQL-only v20)
+2026-07-17-add-orders-strategy-type.py — 增量迁移 (idempotent, MySQL-only)
 
 变更 (REQ-TRADE-026):
 1. orders 表加 strategy_type 列 (TINYINT NOT NULL DEFAULT 0)
@@ -24,18 +24,18 @@ import sys
 from sqlalchemy import create_engine, text, inspect
 from sqlalchemy.engine import Engine
 
-# ─────────────── URL 解析（v20 MySQL-only 永久标准 强制 EVTRADE_DB_URL） ───────────────
-# REQ-CFG-009 v20: SQLite fallback 永久下线；migration 脚本同样要求显式 EVTRADE_DB_URL。
+# ─────────────── URL 解析（MySQL-only 永久标准 强制 EVTRADE_DB_URL） ───────────────
+# REQ-CFG-009: SQLite fallback 永久下线；migration 脚本同样要求显式 EVTRADE_DB_URL。
 try:
     DATABASE_URL = os.environ["EVTRADE_DB_URL"]
 except KeyError:
     raise RuntimeError(
-        "EVTRADE_DB_URL is required (v20 MySQL-only permanent standard). "
+        "EVTRADE_DB_URL is required (MySQL-only permanent standard). "
         "Set it in server/.env, e.g. mysql+pymysql://EvTrade:p%40ssw0rd@127.0.0.1:33066/evtrade?charset=utf8mb4"
     )
 if not DATABASE_URL.startswith("mysql"):
     raise RuntimeError(
-        f"[migration] Only MySQL is supported (v20 permanent standard). Got: {DATABASE_URL[:80]!r}"
+        f"[migration] Only MySQL is supported (permanent standard). Got: {DATABASE_URL[:80]!r}"
     )
 ADMIN_URL = os.environ.get("EVTRADE_DB_ADMIN_URL", DATABASE_URL)
 if not ADMIN_URL.startswith("mysql"):
@@ -46,7 +46,7 @@ if not ADMIN_URL.startswith("mysql"):
 
 def _engine_dialect_name(engine: Engine) -> str:
     with engine.connect() as conn:
-        return conn.dialect.name  # 'mysql' (v20 永久标准唯一合法值)
+        return conn.dialect.name  # 'mysql' (永久标准唯一合法值)
 
 
 def column_exists(engine: Engine, table: str, column: str) -> bool:
@@ -80,7 +80,7 @@ def main():
             if column_exists(admin_engine, "orders", "strategy_type"):
                 print("[SKIP] orders.strategy_type already exists")
             else:
-                # v66: TINYINT NOT NULL DEFAULT 0
+                # TINYINT NOT NULL DEFAULT 0
                 #   MySQL 8 ALGORITHM=INPLACE 不重写表 (默认 0 不需 rewrite)
                 #   0 = 普通单, 1 = 快速做T, 未来扩展可改 SMALLINT
                 conn.execute(text(

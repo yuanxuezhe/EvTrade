@@ -3,13 +3,13 @@ import { computed } from 'vue'
 import { useHoldingsStore } from './holdings'
 
 /**
- * 资金 store Pinia facade（v8 单源架构）
+ * 资金 store Pinia facade（单源架构）
  *
  * 真实数据在 holdings.cachedAsset；本 store 通过 computed 暴露，
  * view 层继续用 useAssetStore().asset 不变。
  *
  * 设计要点：
- *   - 唯一权威源：holdings.cachedAsset（v8 bootstrap 一次性拉取，day-init reconcile 兜底）
+ *   - 唯一权威源：holdings.cachedAsset（bootstrap 一次性拉取，day-init reconcile 兜底）
  * change consolidate-position-data-flow: ws 不再推 ast_cfm,
  *   仅 bootstrap / refreshAll / reconcile 期间刷新 cachedAsset
  *   - 本 store 零独立状态，零数据漂移风险（以前 ws_dispatch 双写到 asset + holdings 会漂移）

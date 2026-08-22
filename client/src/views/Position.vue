@@ -108,7 +108,7 @@ const totalAvailable = computed(() =>
   positionStore.positions.reduce((sum, p) => sum + (p.avl_vol || 0), 0)
 )
 
-// v12: today_buy/today_sell 已从 Position 删除
+// today_buy/today_sell 不在 Position 中
 // netChange (今日净变动) 改为基于 trades 当前激活日聚合
 const netChange = computed(() => {
   const trades = holdingsStore.trades || []
@@ -140,7 +140,7 @@ async function refresh() {
 
 function handleSelect(stockCode) {
   positionStore.selectStock(stockCode)
-  // v8: 该股委托/成交走 holdings.orders/trades 全量缓存 + ws push 增量更新
+  // 该股委托/成交走 holdings.orders/trades 全量缓存 + ws push 增量更新
   drawerVisible.value = true
 }
 

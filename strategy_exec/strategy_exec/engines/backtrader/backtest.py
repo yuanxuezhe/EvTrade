@@ -79,7 +79,6 @@ def run_backtest(
 
     bars: 来自 broker his_hq 的 K 线数据 (list of dict, 含 open/high/low/close/volume/stime)
 
-    v123:
     - strategy_id: 任务所属策略 (仅用于回写 best_params 定位)
     - update_strategy_best: True=本次回测成功后把 params 写 strategy.best_params
       (单次回测=True; 扫描批次内组合任务=False, best 由 sweep engine 统一回写)
@@ -256,12 +255,12 @@ def run_backtest(
 
     with _update_task_results(task_id, backtest_result, pnl, len(signals)):
         update_task_status(
-            task_id, "finished",  # v123: 终态统一 'finished' (设计契约, list_batches 聚合)
+            task_id, "finished",  # 终态统一 'finished' (设计契约, list_batches 聚合)
             finished_at=datetime.now().isoformat(),
             execution_pid=None,
         )
 
-    # v123: 单次回测成功后把本次 params 回写 strategy.best_params
+    # 单次回测成功后把本次 params 回写 strategy.best_params
     # (扫描批次不在这写 — sweep engine 按批次内 finished tasks 排序统一回写 top1)
     if update_strategy_best and strategy_id:
         from strategy_exec.data_access import update_strategy_best_params
@@ -445,7 +444,7 @@ def _update_task_results(
 ):
     """上下文管理器: 写 backtest_result + pnl + trades_count + 指标值 (乐观锁)
 
-    v123: strategy_task 已删 best_params 列, best 回写 strategy.best_params
+    strategy_task 无 best_params 列, best 回写 strategy.best_params
     (见 run_backtest 的 update_strategy_best 分支 / sweep engine).
     backtest_metric_value: 轻量指标列 — 列表接口 SELECT 白名单免拖回大 blob,
     规避 MySQL 1038 'Out of sort memory'.

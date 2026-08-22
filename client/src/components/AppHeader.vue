@@ -132,7 +132,7 @@ const pageMeta = {
   '/trade': { title: '交易下单', sub: '快速下单与今日委托' },
   '/asset': { title: '账户资金', sub: '资金详情与资产分布' },
   '/users': { title: '用户管理', sub: '管理系统账号与权限' },
-  // v32: 删 /holdings 独立查询页 meta (页面删除后无意义, 保留空注释防误改)
+  // 无 /holdings 独立查询页 (持仓由 Trade.vue 右上 HoldingsPanel 承担)
   '/t0-trade': { title: '快速做T', sub: '日内做T开平仓与敞口管理' },
   '/system-init': { title: '系统初始化', sub: '交易日 / 行情 / 柜台初始化' },
   '/system-config': { title: '系统配置', sub: '对账 / 推送 / 风险参数配置' },
@@ -213,7 +213,7 @@ onUnmounted(() => {
 async function handleRefresh() {
   refreshing.value = true
   try {
-    // v8: 全部走 holdings store 缓存（统一日志 + 加载状态）
+    // 全部走 holdings store 缓存（统一日志 + 加载状态）
     //   委托/成交由 ws push 增量更新, 不再单独 fetch
     await holdingsStore.refreshAll()
     // 同步刷新 asset/position store（兼容老 view）

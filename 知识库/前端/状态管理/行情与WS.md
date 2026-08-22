@@ -4,7 +4,7 @@
 
 - `client/src/stores/quote.js`（309 行，行情快照缓存）
 - `client/src/stores/ws.js`（68 行，WS 管理器 facade store）
-- `client/src/stores/ws_dispatch.js`（585 行，消息分发中枢）
+- `client/src/stores/ws_dispatch.js`（607 行，消息分发中枢）
 - `client/src/stores/ws_heartbeat.js`（283 行，多 channel 连接管理）
 
 ## 功能概述
@@ -47,7 +47,7 @@ const tick = ref(0)                                     // 全局自增，驱动
 const subscribedSet = ref(new Set())
 ```
 
-- `update(payload)`：合并 next + snapshot 字典数值化；v108 起从 snapshot 派生 31 字段 `fields` 数组。写 Map 后 `triggerRef(byCode)` + tick++。
+- `update(payload)`：合并 next + snapshot 字典数值化；从 snapshot 派生 31 字段 `fields` 数组。写 Map 后 `triggerRef(byCode)` + tick++。
 - `applySnapshots(snapMap)`：批量首屏快照，复用 update 路径。
 - `subscribe(codes)`：去重 → 超过 100 只切全市场 `['']` → REST `/quote/snapshots` 立即出价 → `wsDispatch.subscribe` 发订阅协议。
 - `replayAll`：WS 重连后强制重发全部订阅（fix-ws-reconnect-subscription，防服务端重连丢订阅）。
@@ -66,13 +66,14 @@ const subscribedSet = ref(new Set())
 |---|---|
 | ord_cfm | `_onOrderCfm`：diff 检查 + applyOrderPush → `_notifyOrderSmart` 按状态（50/55/56/57/54/53）分色 ElNotification |
 | trd_cfm | `_onTradeCfm`：applyTradePush + payload.data.position → applyPositionUpdate |
-| pos_push | `_onPosPush`（v118）：position_update channel 独立路径，直连 applyPositionUpdate |
+| pos_push | `_onPosPush`：position_update channel 独立路径，直连 applyPositionUpdate |
 | quote | applyQuote（持仓白名单过滤）→ quoteStore.update |
+| quote_batch | `_onQuoteBatch`：后端 quote_consumer 合并成 1 帧 N tick（data.ticks），解包后逐条走 `_onQuote` 原路径 |
 | task_progress_update | 写 ws.lastTaskProgress |
-| asset_update | `_onAssetUpdate`（v99）：覆盖 holdings.cachedAsset（v110 available + v114 last_asset） |
+| asset_update | `_onAssetUpdate`：覆盖 holdings.cachedAsset（available + last_asset） |
 | subscribe_ack / unsubscribe_ack | 确认回执（计数） |
 | rpc_status | rpc_status store.setFromPayload |
-| sync_started/progress/completed/failed/stopped + stock_synced | sync store 对应 onXxx |
+| sync_started/sync_progress/sync_completed/sync_failed/sync_stopped + stock_synced | sync store 对应 onXxx |
 | system_status_change | `_onSystemStatusChange`：init_start 开 initializing gate / init_aborted·init_completed 关 gate + resetForNewDay + `window.dispatchEvent('evtrade:day-init-completed')` |
 | init_completed | 同上收尾 |
 

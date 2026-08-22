@@ -1,16 +1,13 @@
 """
 server/auth/session.py — token session cache 跨线程共享 (进程内 dict + RLock)
 
-REQ-AUTH-IDLE-001 (2026-07-31):
+REQ-AUTH-IDLE-001:
   - token session cache 维护 active token 列表 + last_seen_at (idle 计时)
   - idle > IDLE_TIMEOUT_SECONDS (10min) 视为过期 → 401
   - 后端重启 → cache 清空 → 所有 token 失效 (用户期望)
 
-v128.4 (2026-08-12) 单进程回归:
-  - v127.2 加 --workers 4 → 4 进程独立 dict → 跨进程 401 "登录已过期"
-  - v128.2 改 SQL (ENGINE=MEMORY) 跨 worker 共享 — 引入额外依赖与抖动
-  - 改回单进程部署 (删 --workers 4) → 进程内 dict 可跨线程共享 (RLock 保护)
-  - dict 写微秒级, 比 SQL 简单太多, 无 ENGINE=MEMORY 锁竞争
+单进程部署, 进程内 dict + RLock 实现:
+  - dict 写微秒级, 无 ENGINE=MEMORY 锁竞争
   - 重启清空语义保留 (进程内 dict, 重启即失)
 
 调用者 (签名不变, 内部实现 dict + RLock):
@@ -50,7 +47,7 @@ _TOKEN_CACHE: dict = {}
 _TOKEN_LOCK = threading.RLock()  # RLock 允许重入 (e.g. is_valid 内 touch)
 
 
-# ──────────────────────── 对外 API (签名同 v118, 实现从 SQL 改 dict) ────────────────────────
+# ──────────────────────── 对外 API ────────────────────────
 
 def register_token(token: str, user_id: int, role: str) -> None:
     """登录成功时把新 token 写入 cache. 同 token 重复注册幂等 (覆盖 last_seen_at)."""

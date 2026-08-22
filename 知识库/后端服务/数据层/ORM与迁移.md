@@ -4,7 +4,7 @@
 
 - `server/models/orm.py`（旧 SQLAlchemy ORM 模型）、`server/models/user.py`
 - `server/infra/db.py`（Base / engine / init_db）
-- `server/migrations/`（31 个独立幂等迁移脚本）
+- `server/migrations/`（34 个独立幂等迁移脚本 + sqlite-to-mysql-migrate.py 工具脚本）
 - `server/alembic/`（Alembic 环境：env.py + versions/）
 - `scripts/sync_schema.py`（schema.yml ↔ ORM ↔ DB ↔ tables 统一管理器）
 - `server/schema.yml`（schema 单一事实来源）
@@ -30,7 +30,7 @@ EvTrade 存在三套并存的 schema/迁移机制：① 旧 ORM（models/orm.py�
 
 ### models/orm.py（旧 ORM，仅遗留）
 - 定义与 schema 一致的 declarative 模型；文件头声明"single source of truth 在 openspec/specs/data-model/spec.md"，改前先改 spec。
-- v81 后业务代码禁止 `db.query(Order)` 等直接 ORM 读写；orm.py 存在意义：① init_db create_all 建表元数据；② Alembic autogenerate 对比基准；③ 字段注释历史（各版本 schema 改动记录在类 docstring）。
+- 业务代码禁止 `db.query(Order)` 等直接 ORM 读写；orm.py 存在意义：① init_db create_all 建表元数据；② Alembic autogenerate 对比基准；③ 字段注释历史（各版本 schema 改动记录在类 docstring）。
 - models/user.py 的 User 是例外仍活跃（登录 bcrypt 校验、to_dict 序列化）。
 
 ### init_db（infra/db.py）
@@ -45,7 +45,7 @@ EvTrade 存在三套并存的 schema/迁移机制：① 旧 ORM（models/orm.py�
 
 ### alembic/
 - env.py：`sys.path` 注入 server/ → load .env → 读 EVTRADE_DB_URL → import models 注册 `target_metadata = Base.metadata`。
-- versions 目前只有 baseline 快照（2026-08-06），日常增量主要走 migrations/ 手写脚本；sync_schema apply 时也会生成 Alembic migration。
+- versions 目前只有 baseline 快照，日常增量主要走 migrations/ 手写脚本；sync_schema apply 时也会生成 Alembic migration。
 - 手动流程：改 ORM → `alembic revision --autogenerate -m "..."` → 审查 → `alembic upgrade head` → `python scripts/gen_tables.py` 更新 tables。
 
 ### scripts/sync_schema.py 联动机制
@@ -71,4 +71,4 @@ python scripts/sync_schema.py apply   # schema.yml → ORM 生成 → Alembic mi
 - 禁止手改 `server/tables/` 与 `__init__.py` 生成文件；禁止直接改 DB 不更新 schema.yml（下次 apply 会 diff 出漂移）。
 - 新增独立迁移脚本：放 server/migrations/，命名日期前缀，必须幂等（INFORMATION_SCHEMA 探测），启动会自动跑。
 - orm.py 改动前先改 openspec data-model spec（文件头约定），并同步 schema.yml。
-- SQLite 永久禁用（v20）：EVTRADE_DB_URL 非 mysql 前缀直接 RuntimeError。
+- SQLite 永久禁用：EVTRADE_DB_URL 非 mysql 前缀直接 RuntimeError。

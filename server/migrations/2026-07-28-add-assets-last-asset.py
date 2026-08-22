@@ -1,5 +1,5 @@
 """
-2026-07-28-add-assets-last-asset.py — v114 assets 表加 last_asset 列
+2026-07-28-add-assets-last-asset.py — assets 表加 last_asset 列
 
 变更:
 - assets 表加 last_asset FLOAT NOT NULL DEFAULT 0.0

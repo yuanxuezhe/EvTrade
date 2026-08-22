@@ -39,7 +39,7 @@
 |---|---|---|
 | ALGORITHM | HS256 | security.py |
 | ACCESS_TOKEN_EXPIRE_MINUTES | 60×24（24h） | security.py |
-| HERMES_AGENT_TOKEN | "hermesagent" | security.py（v129） |
+| HERMES_AGENT_TOKEN | "hermesagent" | security.py |
 | IDLE_TIMEOUT_SECONDS | 600（10min） | session.py |
 | SWEEP_INTERVAL_SECONDS | 60 | session.py |
 | bcrypt rounds | 12 | security.py |
@@ -87,7 +87,7 @@ def decode_token(token: str) -> Optional[dict]:     # 无效/过期返回 None
 ```python
 @router.post("/login", response_model=TokenResponse)
 async def login(form: OAuth2PasswordRequestForm = Depends()):
-    matched = Users.query_by("username", form.username, limit=1)   # v81 tables 层
+    matched = Users.query_by("username", form.username, limit=1)   # tables 层
     user = matched[0] if matched else None
     if not user: raise HTTPException(401, detail="用户名或密码错误")
     # bcrypt 是 CPU bound — 必须 run_in_threadpool，否则阻塞 Starlette threadpool(40线程)
@@ -123,7 +123,7 @@ def get_current_user(token=Depends(oauth2_scheme)) -> User:
         raise HTTPException(401, "登录已过期，请重新登录")
     session.touch(token)                     # 重置 idle 计时
     user_id = int(claims.get("sub"))         # 异常 401
-    user = Users.query_one(id=user_id)       # v81.9 tables 层
+    user = Users.query_one(id=user_id)       # tables 层
     if not user: raise HTTPException(401, "用户不存在")
     if not getattr(user, 'is_active', True): raise HTTPException(403, "账号已禁用")
     return user
@@ -137,7 +137,7 @@ def require_trader(current_user=Depends(get_current_user)):
     return current_user
 ```
 
-### 5. token session cache（session.py，v128.4 单进程回归）
+### 5. token session cache（session.py，单进程实现）
 
 ```python
 IDLE_TIMEOUT_SECONDS = 600; SWEEP_INTERVAL_SECONDS = 60
@@ -156,7 +156,7 @@ def sweep_expired() -> int:                 # 清 idle 超时条目
 async def sweep_loop():                     # lifespan 启动的后台协程，60s 一轮
 ```
 
-演进史：v127.2 多 worker → dict 不共享 → 跨进程 401；v128.2 改 MySQL MEMORY 表 → 抖动；v128.4 回归**单进程** + 进程内 dict（微秒级、无锁竞争、重启清空语义保留）。**部署禁止 `--workers N`。**
+现状：**单进程** + 进程内 dict（多 worker 下 dict 不共享会跨进程 401，MySQL MEMORY 表方案曾有抖动）（微秒级、无锁竞争、重启清空语义保留）。**部署禁止 `--workers N`。**
 
 ### 6. grant 永久 token（api/auth.py）
 
@@ -192,7 +192,7 @@ WS 直连时 decode 失败但 token == HERMES_AGENT_TOKEN 也视为 admin(id=6)�
 - **改 idle 超时**：改 session.py 的 `IDLE_TIMEOUT_SECONDS`（heartbeat 响应会自动带回新值）；同时调整前端心跳间隔（当前 5min < 10min 超时）
 - **改 JWT 有效期**：改 `ACCESS_TOKEN_EXPIRE_MINUTES`；注意它只是上限，实际失效由 idle 10min 先触发（活跃用户靠 touch 续命）
 - **新增角色**：users 表 role 列 + `VALID_ROLES`（users.py）+ deps.py 加 `require_xxx` guard
-- **多进程部署**：必须先解决 session cache 共享（Redis 或恢复 v128.2 SQL 方案），否则跨 worker 401
+- **多进程部署**：必须先解决 session cache 共享（Redis 或 SQL 共享方案），否则跨 worker 401
 - **换 secret**：删 `server/auth/.secret_key` 或改 EVTRADE_SECRET 环境变量；**所有已发 token 立即失效**
 - **grant 收紧**：HERMES_AGENT_TOKEN 常量与 WS endpoint 的兜底判断是两处引用，改值需同步
 - **登录加图形验证码等**：加在 login 端点 bcrypt 校验之前；保持 401 文案统一（"用户名或密码错误"）防止用户名枚举

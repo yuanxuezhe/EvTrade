@@ -130,7 +130,7 @@ export const api = {
 
   // 委托
   // opts: undefined | string (stockCode) | { stockCode?, startDate?, endDate?, all?, limit? }
-  // v113: 新增 all=true (前端 startup 缓存拉全量), 删除 taskId (前端缓存过滤, 不再走 API)
+  // all=true 时前端 startup 缓存拉全量; taskId 过滤由前端缓存处理, 不走 API
   // 后向兼容: 无参 / 旧 string 调用 仍工作
   async getOrders(opts) {
     const params = {}
@@ -140,27 +140,27 @@ export const api = {
       if (opts.stockCode) params.stock_code = opts.stockCode
       if (opts.startDate) params.start_date = opts.startDate
       if (opts.endDate) params.end_date = opts.endDate
-      if (opts.all) params.all = true  // v113: 拉全量 (前端启动一次性缓存)
+      if (opts.all) params.all = true  // 拉全量 (前端启动一次性缓存)
       if (opts.limit) params.limit = opts.limit
     }
     const res = await http.get('/orders', { params })
     return res.data
   },
   async createOrder(orderData) {
-    // v8: 后端返 {code, msg, order, list, broker_order_id, fee_breakdown, t0_adjusted_volume}
+    // 后端返 {code, msg, order, list, broker_order_id, fee_breakdown, t0_adjusted_volume}
     //     拦截器解包后 res.data = list 数组
     //     调用方应取 res.data[0] 当 OrderOut(或保留 res.order 兼容旧代码)
     const res = await http.post('/orders/place', orderData)
     return res.data
   },
   async placeOrder(orderData) {
-    // v8: 跟 createOrder 同接口,返 list[0] = OrderOut
+    // 跟 createOrder 同接口,返 list[0] = OrderOut
     //     orderStore.upsertLocal(res.data[0]) 立即写缓存
     const res = await http.post('/orders/place', orderData)
     return res.data
   },
   async cancelOrder(orderNo, trdDate) {
-    // v6: 撤单 URL = DELETE /api/orders/{order_no}?trd_date=YYYYMMDD
+    // 撤单 URL = DELETE /api/orders/{order_no}?trd_date=YYYYMMDD
     const res = await http.delete(`/orders/${orderNo}`, { params: { trd_date: trdDate } })
     return res.data
   },
@@ -202,7 +202,7 @@ export const api = {
     return res.data
   },
 
-  // v8: 系统级查询（激活交易日权威源）
+  // 系统级查询（激活交易日权威源）
   //   - 返 {code, msg, list: [{trd_date, status: 'active'|'inactive'}]}
   //   - 拦截器解包后 res.data = list 数组
   //   - holdings.bootstrap() 调, 取 list[0]?.trd_date
@@ -211,7 +211,7 @@ export const api = {
     return res.data
   },
 
-  // v12: admin-only 调平 API（PUT, admin 鉴权在端点层 require_admin）
+  // admin-only 调平 API（PUT, admin 鉴权在端点层 require_admin）
   //   输入 camelCase (deltaVol / deltaAvlVol / deltaCash / deltaTotalAsset)
   //   输出 snake_case (delta_vol / delta_avl_vol / delta_cash / delta_total_asset)
   //   reason 仅入 log, 不入库
@@ -272,7 +272,7 @@ export const authApi = {
 }
 
 // ============================================================
-// 股票基础信息 API (v21 stock-info-crawler 查询 + v22 stock-info-editor 编辑)
+// 股票基础信息 API (change stock-info-crawler 查询 + change stock-info-editor 编辑)
 // ============================================================
 export { stocksApi } from './stocks'
 

@@ -1,5 +1,5 @@
 """
-server/services/short_name.py — 股票 short_name 自动生成 (v46+ short-name-auto)
+server/services/short_name.py — 股票 short_name 自动生成
 
 REQ-STOCK-007:
 - 拼音首字母转大写
@@ -10,7 +10,7 @@ REQ-STOCK-007:
 调用方:
 - server/repo/stocks.py::create_by_admin  →  新增时自动算
 - server/repo/stocks.py::update_by_admin  →  stock_name 改动时自动重算
-- server/scripts/backfill_short_name.py  →  v25 已 backfill, 仅复用本函数
+- server/scripts/backfill_short_name.py  →  仅复用本函数
 """
 
 import re
@@ -34,8 +34,8 @@ def to_short_name(stock_name: Optional[str]) -> str:
       *st康佳      → *STKJ    (大小写归一化)
       "" / None    → ""
 
-    v129.2 (2026-08-13): 原来对 lazy_pinyin 每段取 s[0], pypinyin 把连续 ASCII 串
-    (ETF/50ETF) 当一个段 → 只剩首字符 (E/5)。改为 re.split 分离 ASCII run 整串保留。
+    实现注意: 不能对 lazy_pinyin 每段取 s[0] — pypinyin 会把连续 ASCII 串
+    (ETF/50ETF) 当一个段 → 只剩首字符 (E/5)。用 re.split 分离 ASCII run 整串保留。
 
     Args:
         stock_name: 股票中文名 (可能含 ST/*ST 前缀, 可能含 ETF/数字)

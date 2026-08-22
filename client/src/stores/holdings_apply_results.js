@@ -11,8 +11,8 @@
  *
  * 调用者：holdings_bootstrap.js 内的 createBootstrap 工厂
  *
- * v113 改动（startup-full-cache-pull）：
- *   applyOrdersResult / applyTradesResult 不再"整 dict 覆盖" — 改成按主键去重合并
+ * startup-full-cache-pull 语义:
+ *   applyOrdersResult / applyTradesResult 不"整 dict 覆盖" — 按主键去重合并
  *     - orders 主键: trd_date + order_no
  *     - trades 主键: trd_date + order_no + trade_id
  *
@@ -30,7 +30,7 @@ function _yield() {
   return new Promise((r) => setTimeout(r, 0))
 }
 
-// ---- 按主键去重 merge helper (v113) ----
+// ---- 按主键去重 merge helper ----
 
 /**
  * 按 (trd_date, order_no) 主键去重合并

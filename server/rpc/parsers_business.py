@@ -1,13 +1,12 @@
 """
-parsers_business.py — 业务特定响应解析器（v10 字段名约定：broker 原字段名）
+parsers_business.py — 业务特定响应解析器（字段名约定：broker 原字段名）
 
 每个 _parse_* 解析器统一返回 {"code": int, "msg": str, "list": list}：
   - code != 0 时 list 直接为空，不读第二结果集
   - code == 0 时按各业务字段映射规则解析第二结果集，list 为业务对象数组
 
-v10 关键变更（rpc-field-alignment-ts-unify）：
+字段名约定：
 - **保留 broker 原始字段名**（snake_case，`traded_id`/`avl_amt`/`avg_price`/`order_status` 等）
-- 之前 parsers 内部把 `traded_id`→`trade_id`、`avl_amt`→`available` 等重命名，**改回 broker 原字段名**
 - 内部命名映射（broker 字段名 → DB / API 字段名）由**调用方**（reconcile / api/）显式完成
 
 权威源：`iquant/xtquant_api.py` 第 130-200 行（query handler）。
@@ -35,7 +34,7 @@ from server.rpc.parsers_common import (
 def _parse_asset(pkt: MsgPacket) -> Dict[str, Any]:
     """解析资金查询结果 → {code, msg, list:[{account_id, cash, frozen_cash, market_value, total_asset}]}
 
-    v10: 透传 broker 原字段 `account_id`（之前丢弃；reconcile 不需要 account_id 但字段透传便于审计）
+    透传 broker 原字段 `account_id`（reconcile 不需要 account_id 但字段透传便于审计）
     """
     code, msg = _parse_code_msg(pkt)
     if code != 0:
@@ -55,12 +54,10 @@ def _parse_asset(pkt: MsgPacket) -> Dict[str, Any]:
 def _parse_orders(pkt: MsgPacket) -> Dict[str, Any]:
     """解析委托查询结果 → {code, msg, list:[order_dict, ...]}
 
-    v10 字段名（broker 原字段）：
+    字段名（broker 原字段）：
       order_id / stock_code / order_type / price_type / price / order_volume /
       traded_volume / traded_price / order_status / status_msg / strategy_name /
       order_remark / order_time
-
-    之前别名 `status`/`volume` 已废弃，调用方读 `order_status`/`order_volume`。
     """
     code, msg = _parse_code_msg(pkt)
     if code != 0:
@@ -89,12 +86,11 @@ def _parse_orders(pkt: MsgPacket) -> Dict[str, Any]:
 def _parse_trades(pkt: MsgPacket) -> Dict[str, Any]:
     """解析成交查询结果 → {code, msg, list:[trade_dict, ...]}
 
-    v10 字段名（broker 原字段）：
+    字段名（broker 原字段）：
       order_id / traded_id / stock_code / order_type / traded_volume /
       traded_price / traded_amount / strategy_name / order_remark / traded_time
 
-    之前别名 `trade_id`/`trade_time`/`volume`/`price` 已废弃，调用方读 `traded_id`/`traded_time`/`traded_volume`/`traded_price`。
-    `traded_amount` / `strategy_name` / `order_remark` 之前丢弃，v10 起透传。
+    `traded_amount` / `strategy_name` / `order_remark` 均透传。
     """
     code, msg = _parse_code_msg(pkt)
     if code != 0:

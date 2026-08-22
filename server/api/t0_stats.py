@@ -1,26 +1,18 @@
 """
-t0_stats.py — v5 重构版（schema refactor）+ v6 真实已实现算法
+t0_stats.py — T0 单标的统计（真实已实现算法）
 
 GET /api/orders/t0-stats/{stock_code}?trd_date=YYYYMMDD   单日统计
 GET /api/orders/t0-history/{stock_code}?days=30            历史曲线
 
-v5 改动：
-- Trade.TRD_DATE → trd_date
-- Position.TRD_DATE 去掉（无此字段）
-- Position 字段重命名：cost→cost_price, total→vol
-- T0StatsOut 响应字段 trd_date 小写
+算法语义：
+- realized_pnl 用 t0_aggregate.calc_realized_pnl（真实算法）
+  = (avg_sell - cost_basis) * sell_vol - commission - stamp_tax
+  （非毛流差额，含持仓成本基准和费用）
+- unrealized_pnl 基于当前持仓（position_vol × cost_basis），不叠加当日已实现
+  = (avg_sell - cost_basis) * position_vol  // 持仓浮动（用当日卖出均价作为市场价近似）
 
-v6 改动（2026-06-19 t0-exposure-and-aggregate change）：
-- realized_pnl 改用 t0_aggregate.calc_realized_pnl（真实算法）
-  旧 = (avg_sell - avg_buy) * paired → 实际是毛流，忽略持仓成本基准和费用
-  新 = (avg_sell - cost_basis) * sell_vol - commission - stamp_tax
-- unrealized_pnl 改为基于当前持仓（position_vol × cost_basis），不再叠加当日已实现
-  旧 = (avg_sell - cost_basis) * paired
-  新 = (avg_sell - cost_basis) * position_vol  // 持仓浮动（用当日卖出均价作为市场价近似）
-
-v81.4 改动（tables-migration）：
-- 删 Depends(get_db) × 4 + sqlalchemy.orm.Session import + server.db.get_db
-- db.query(Order/Trade/Position).filter(…) → Orders/Trades/Positions.query_by(…) + 内存过滤
+实现要点：
+- 无 Depends(get_db)；Orders/Trades/Positions 走 tables API (query_by/query_all) + 内存过滤
 """
 from collections import defaultdict
 from datetime import datetime, timedelta
@@ -73,12 +65,11 @@ async def t0_stats(
 ):
     """T0 当日 + 历史收益汇总（单标的）
 
-    v81.4 tables-migration:
-      原 db.query(Order).filter(...) → Orders.query_by('trd_date', trd) + 内存过滤 stock_code/user_def
-      原 db.query(Position).filter(Position.stock_code == ...) → Positions.query_by('stock_code', stock_code)
+    Orders.query_by('trd_date', trd) + 内存过滤 stock_code/user_def;
+    Positions.query_by('stock_code', stock_code).
     """
-    # v81.4: resolve_default_trd_date / resolve_t0_user_defs 仍需 db session (service 层保留 ORM)
-    #   用 db_session() context manager (auto commit/close) 替代 Depends(get_db)
+    # resolve_default_trd_date / resolve_t0_user_defs 仍需 db session (service 层保留 ORM)
+    #   用 db_session() context manager (auto commit/close)
     with db_session() as db:
         trd = trd_date or resolve_default_trd_date(db)
     if not trd:
@@ -138,7 +129,7 @@ async def t0_stats(
         sell_trades_today, cost_basis, fee_cfg
     )
 
-    # 浮动盈亏（v6 新语义：基于当前持仓 × 持仓成本基准，用当日卖出均价作为市场价近似）
+    # 浮动盈亏（基于当前持仓 × 持仓成本基准，用当日卖出均价作为市场价近似）
     #   - 不包含当日已实现（已用 realized_pnl 单独返回）
     #   - 持仓 vol=0 时无浮动盈亏
     if today_sell_vol > 0 and position_vol > 0:
@@ -203,9 +194,7 @@ def t0_history(
 ):
     """近 N 天做T 每日买入/卖出/笔数 + 累计差额
 
-    v81.4 tables-migration:
-      原 db.query(Trade).filter(Trade.stock_code == ..., Trade.trd_date >= start, ...) → 内存过滤
-      (区间 + 多条件 + IN, API 层不支持; 数据量小, 走 Trades.query_all + 内存)
+    Trades.query_all() + 内存过滤 (区间 + 多条件 + IN, API 层不支持; 数据量小).
     """
     today = datetime.now().strftime("%Y%m%d")
     start = (datetime.now() - timedelta(days=days * 2)).strftime("%Y%m%d")

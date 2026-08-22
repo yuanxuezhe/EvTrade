@@ -225,7 +225,7 @@ def mysql_to_yaml(mysql_type):
 def yaml_to_mysql_base(yt):
     """YML type -> 基础 mysql 类型名 (无括号), 用于 diff 比较.
 
-    v130.1 fix: 大小写/空格不敏感, 跟 yaml_to_mysql_ddl 一致.
+    大小写/空格不敏感, 跟 yaml_to_mysql_ddl 一致.
     """
     if not isinstance(yt, str):
         yt = str(yt)
@@ -249,8 +249,8 @@ def yaml_to_mysql_base(yt):
 def yaml_to_mysql_ddl(yt):
     """YAML type -> MySQL DDL for ALTER TABLE.
 
-    v130.1 fix: yml 历史上可能写 `type: TEXT ` (大写 + 尾随空格) 等不规范值,
-    严格匹配 `Text` 会 fallback 到 VARCHAR(255) → MODIFY 大 JSON 列 1406 截断.
+    yml 可能写 `type: TEXT ` (大写 + 尾随空格) 等不规范值, 严格匹配 `Text`
+    会 fallback 到 VARCHAR(255) → MODIFY 大 JSON 列 1406 截断.
     解决: 先 strip + lower, 再走 lookup table, 找不到再 fallback.
     """
     if not isinstance(yt, str):

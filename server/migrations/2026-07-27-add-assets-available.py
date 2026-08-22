@@ -1,5 +1,5 @@
 """
-2026-07-27-add-assets-available.py — v110 assets 表加 available 列
+2026-07-27-add-assets-available.py — assets 表加 available 列
 
 变更:
 - assets 表加 available FLOAT NOT NULL DEFAULT 0.0
@@ -47,7 +47,7 @@ def main() -> int:
     print(f'[exec] {sql}')
     admin_url = os.environ.get('EVTRADE_DB_ADMIN_URL') or os.environ.get('EVTRADE_DB_URL', '')
     if not admin_url:
-        # v20 fallback 直接读 server/.env
+        # fallback 直接读 server/.env
         load_dotenv(os.path.join(ROOT, 'server', '.env'))
         admin_url = os.environ.get('EVTRADE_DB_ADMIN_URL') or os.environ.get('EVTRADE_DB_URL', '')
     admin_url = admin_url.replace('mysql+pymysql://', 'mysql+pymysql://').replace('+pymysql', '+pymysql')

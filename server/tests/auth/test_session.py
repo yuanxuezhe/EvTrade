@@ -1,9 +1,9 @@
 """
 test_session.py — REQ-AUTH-IDLE-001 token session cache 单元测试
 
-v128.4 (2026-08-12): cache 回归 dict (单进程 + threads)
+cache 回归 dict (单进程 + threads)
   - 原测试直接清模块级 dict (_TOKEN_CACHE.clear) → 继续生效
-  - v128.2 期间改为 _clear_all_for_test (SQL 表) → 撤销该改动
+  - 曾改为 _clear_all_for_test (SQL 表) → 已撤销该改动
   - 时间 mock 仍生效: 内部"now"派生自 time.time()
   - 不需要 migration 建表 (无 token_sessions 表)
 
@@ -162,7 +162,7 @@ def test_sweep_loop_exits_on_cancel(monkeypatch):
 
 
 def test_token_hash_is_sha256():
-    """v118: PK = SHA256(token) hex (64 字符), 不存原文."""
+    """PK = SHA256(token) hex (64 字符), 不存原文."""
     h = session._hash_token("abc")
     assert len(h) == 64
     assert session._hash_token("abc") == h  # 确定性
@@ -170,7 +170,7 @@ def test_token_hash_is_sha256():
 
 
 def test_cross_session_isolation_via_token():
-    """v118 regression: 不同 token 视为不同 session."""
+    """regression: 不同 token 视为不同 session."""
     session.register_token("alpha", user_id=1, role="admin")
     session.register_token("beta", user_id=2, role="trader")
     assert session.is_valid("alpha") is True
@@ -181,7 +181,7 @@ def test_cross_session_isolation_via_token():
 
 
 def test_concurrent_access_thread_safe():
-    """v128.4 regression: 多线程并发 register/touch/is_valid/revoke 不抛错、不死锁。
+    """regression: 多线程并发 register/touch/is_valid/revoke 不抛错、不死锁。
 
     启动 4 线程 × 100 次 register/touch/is_valid 混合操作, 断言最终状态正确
     (size == 400, 所有 token 仍可 is_valid=True), 验证 RLock 保护有效.

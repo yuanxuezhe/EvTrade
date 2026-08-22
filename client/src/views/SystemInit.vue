@@ -47,7 +47,7 @@
       </el-form>
     </el-card>
 
-    <!-- 配置面板（已迁出 → SystemConfig.vue，v6.5 拆分） -->
+    <!-- 配置面板（位于 SystemConfig.vue） -->
     <el-card class="config-link-card" shadow="hover">
       <el-button type="primary" @click="$router.push('/system-config')">
         <el-icon class="el-icon--right"><Setting /></el-icon>
@@ -107,14 +107,13 @@ import { ref, onMounted, reactive, onUnmounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Setting } from '@element-plus/icons-vue'
 import { sysStatusApi, reconcileApi } from '../api/admin'
-// change 2026-07-15-system-init-broadcast: handleInit 成功后同步刷新 holdings/asset/position
+// handleInit 成功后同步刷新 holdings/asset/position
 //   双保险: 即便 ws init_completed 推送丢失/未连, 用户也能立即看到新持仓
 import { useHoldingsStore } from '../stores/holdings'
 import { useAssetStore } from '../stores/asset'
 import { usePositionStore } from '../stores/position'
-// change 2026-07-15-system-init-broadcast end
 
-// change 2026-07-21-system-init-page-refresh: 监听 ws 系统事件 'evtrade:day-init-completed'
+// 监听 ws 系统事件 'evtrade:day-init-completed'
 //   - 其他 tab 或本 tab 通过 ws 收到 init_completed 时, 刷新历史报告列表
 //   - 用 CustomEvent 解耦 (ws_dispatch 不直接 import view)
 
@@ -169,9 +168,9 @@ async function handleInit() {
     if (result.code === 0 || result.ok) {
       ElMessage.success(`日初成功：${result.report_id || ''}`)
       loadReports()
-      // change 2026-07-15-system-init-broadcast: 双保险 — 即便 ws init_completed 推送丢失/未连, 也能立即刷新
+      // 双保险 — 即便 ws init_completed 推送丢失/未连, 也能立即刷新
       //   ws 是主路径（多 tab 自动同步）, 此处是兜底（同 tab 立即可见）
-      // change 2026-07-21-system-init-page-refresh: 升级用 resetForNewDay (切日 + 清 IDB + 重 bootstrap)
+      // 升级用 resetForNewDay (切日 + 清 IDB + 重 bootstrap)
       //   - 旧 refreshAll 不切 activeTrdDate 不清 IDB, 导致 Position.vue netChange / T0Trade 当前日
       //     仍显示昨日; 新路径完整切日
       try {
@@ -222,7 +221,7 @@ async function handleReconcile() {
 
 async function viewReport(row) {
   try {
-    // v5: 复合主键 (trd_date, mode, created_at)
+    // 复合主键 (trd_date, mode, created_at)
     const data = await reconcileApi.getReport(row.trd_date, row.mode, row.created_at)
     reportDetail.value = JSON.stringify(data, null, 2)
     reportDialog.value = true
@@ -231,7 +230,7 @@ async function viewReport(row) {
   }
 }
 
-// change 2026-07-21-system-init-page-refresh: ws 'evtrade:day-init-completed' 事件 handler
+// ws 'evtrade:day-init-completed' 事件 handler
 //   - 触发时机: ws_dispatch._onInitCompleted 收到后端 system_update 推送后
 //   - 行为: loadReports 重拉历史报告 (新报告刚生成)
 function _onDayInitCompleted(e) {
@@ -240,13 +239,13 @@ function _onDayInitCompleted(e) {
 
 onMounted(() => {
   loadReports()
-  // change 2026-07-21-system-init-page-refresh: 注册 ws 系统事件监听
+  // 注册 ws 系统事件监听
   if (typeof window !== 'undefined') {
     window.addEventListener('evtrade:day-init-completed', _onDayInitCompleted)
   }
 })
 onUnmounted(() => {
-  // change 2026-07-21-system-init-page-refresh: 注销 ws 系统事件监听
+  // 注销 ws 系统事件监听
   if (typeof window !== 'undefined') {
     window.removeEventListener('evtrade:day-init-completed', _onDayInitCompleted)
   }

@@ -1,5 +1,5 @@
 """
-asset_adjust.py — 资金调平 API（v12 新增）
+asset_adjust.py — 资金调平 API
 
 端点：PUT /api/asset/adjust
 - admin 鉴权

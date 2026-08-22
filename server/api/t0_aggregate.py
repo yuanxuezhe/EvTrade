@@ -7,11 +7,10 @@ GET /api/orders/t0-exposure?user_def=T0&trd_date=YYYYMMDD
 GET /api/orders/t0-aggregate?user_def=T0&days=30
   → 跨期累计 + 按日/按股双视角 + 胜率/回报率
 
-v81.4 改动（tables-migration）：
-- 删 Depends(get_db) × 2 + sqlalchemy.orm.Session import + server.db.get_db
-- db.query(Order).filter(…) → Orders.query_by(…) + 内存过滤
-  (区间/复合查询 API 层不支持, 走内存过滤 — 数据量小, 走主键升序全表查)
-- db.query(Position) → Positions.query_all() (positions 表行数 ≤ 持仓数, 量小)
+实现要点：
+- 无 Depends(get_db)，需要 db session 时用 db_session() context manager
+- Orders/Trades/Positions 走 tables API (query_by/query_all)；区间/复合查询 API 层不支持,
+  走内存过滤 — 数据量小, 走主键升序全表查
 """
 from typing import List, Optional
 
@@ -132,19 +131,17 @@ async def get_t0_exposure(
 ):
     """当日多标的敞口聚合
 
-    v81.4 tables-migration:
-      原 db.query(Order).filter(Order.trd_date == trd_date).all()
-      改 Orders.query_by('trd_date', trd_date)
+    走 Orders.query_by('trd_date', trd_date) + 内存过滤.
     """
     from server.services.guards import resolve_active_trd_date
 
     if not trd_date:
-        # v81.4 tables-migration: db_session() context manager 替代 Depends(get_db)
+        # db_session() context manager 获取 db session
         with db_session() as db:
             trd_date = resolve_active_trd_date(db) or _today_str()
 
     fee_cfg = get_fee_config()
-    # v81.4: 走 Orders/Trades/Positions tables API (主键升序, 数据量小)
+    # 走 Orders/Trades/Positions tables API (主键升序, 数据量小)
     orders = Orders.query_by("trd_date", trd_date)
     trades = Trades.query_by("trd_date", trd_date)
     positions = _query_positions_dict()
@@ -191,16 +188,14 @@ async def get_t0_aggregate(
 ):
     """跨期累计 + 按日/按股聚合
 
-    v81.4 tables-migration:
-      原 db.query(Order).filter(Order.trd_date >= cutoff).all()
-      改 Orders.query_all() + 内存过滤 (区间 API 层不支持, 数据量小)
+    Orders.query_all() + 内存过滤 (区间 API 层不支持, 数据量小).
     """
     from datetime import datetime, timedelta
 
     fee_cfg = get_fee_config()
     cutoff = (datetime.now() - timedelta(days=days)).strftime("%Y%m%d")
 
-    # v81.4: 全表 + 内存过滤 (Orders/Trades 按 (trd_date, order_no) 复合 PK 升序全表查)
+    # 全表 + 内存过滤 (Orders/Trades 按 (trd_date, order_no) 复合 PK 升序全表查)
     all_orders = Orders.query_all()
     all_trades = Trades.query_all()
     orders = [o for o in all_orders if (o.trd_date or "") >= cutoff]
@@ -245,7 +240,7 @@ async def get_t0_aggregate(
 def _query_positions_dict() -> dict:
     """当前 Position 快照（按 stock_code 主键）
 
-    v81.4 tables-migration: Positions.query_all() — positions 表行数小 (持仓数 ≤ 几十),
+    Positions.query_all() — positions 表行数小 (持仓数 ≤ 几十),
     直接全表读, 内存建 dict 索引.
     """
     pos_list = Positions.query_all()

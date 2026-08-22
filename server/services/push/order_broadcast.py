@@ -1,16 +1,13 @@
-"""order_broadcast.py — 统一的委托 ws 推送 helper (v84.3)
+"""order_broadcast.py — 统一的委托 ws 推送 helper
 
 跨 api/orders + rpc/transport 共享的推送 helper, 包装成与 push/dispatcher.py
 同款 ws payload (前端 ws_dispatch.js t='ord_cfm' 才识别):
 
     { type: 'ord_cfm', channel: 'order_update', ts, data: <order fields> }
 
-历史问题 (v84 之前):
-- api/orders/place.py 与 api/orders/cancel.py 直接 broadcast('order_update', _order_to_out_dict(...))
-  推裸 dict, 前端 ws_dispatch t='order_update' 不识别, 默默丢失.
-- rpc/transport.py (v84.1) 同样裸 dict 推, 也是同样的坑.
-
-修法: 统一走 _broadcast_order_cfm helper.
+注意: 不能直接 broadcast('order_update', _order_to_out_dict(...)) 推裸 dict —
+前端 ws_dispatch t='order_update' 不识别, 会默默丢失.
+统一走 _broadcast_order_cfm helper.
 """
 import asyncio
 import logging
@@ -38,7 +35,7 @@ def _broadcast_order_cfm(order: Any, trace_id: Optional[str] = None) -> None:
         }
         asyncio.ensure_future(ws_manager.broadcast("order_update", payload, trace_id=trace_id))
     except Exception as e:
-        log.warning("v84.3 broadcast_order_cfm failed: %s", e)
+        log.warning("broadcast_order_cfm failed: %s", e)
 
 
 __all__ = ["_broadcast_order_cfm"]

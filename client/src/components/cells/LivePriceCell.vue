@@ -40,8 +40,7 @@ import { useQuoteStore } from '../../stores/quote'
 import { formatPrice } from '../../composables/usePricePrecision'
 
 const props = defineProps({
-  // 2026-08-21: 取消 required, 允许父组件传 undefined (持仓表里某行 stock_code 缺失 / 
-
+  // 不设 required, 允许父组件传 undefined (持仓表里某行 stock_code 缺失 /
   //   临时过滤行 时不报错, 显示空 cell)
   stockCode: { type: String, default: '' },
 })

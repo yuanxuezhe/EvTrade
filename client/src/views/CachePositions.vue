@@ -45,7 +45,7 @@
         <template #column-cost_price="{ row }">
           <span class="text-mono">{{ formatPrice(row.cost_price, row.stock_code) }}</span>
         </template>
-        <!-- 2026-08-20: 最新价 + 涨跌幅合并到单 cell (复用 LivePriceCell, 与 HoldingsPanel / T0Trade 一致) -->
+        <!-- 最新价 + 涨跌幅合并到单 cell (复用 LivePriceCell, 与 HoldingsPanel / T0Trade 一致) -->
         <template #column-last_price="{ row }">
           <LivePriceCell :stock-code="row.stock_code" />
         </template>
@@ -127,7 +127,7 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Search } from '@element-plus/icons-vue'
 import DataTableView from '../components/DataTableView.vue'
-import LivePriceCell from '../components/cells/LivePriceCell.vue'  // 2026-08-20: 最新价+涨跌幅通用 cell
+import LivePriceCell from '../components/cells/LivePriceCell.vue'  // 最新价+涨跌幅通用 cell
 import { api } from '../api'
 import { formatMoney, formatNumber } from '../utils/format'
 import { formatPrice } from '../composables/usePricePrecision'
@@ -198,7 +198,7 @@ const positionColumns = [
   { key: 'vol', label: '总持仓', vBind: COL.NUMBER },
   { key: 'avl_vol', label: '可用', vBind: COL.NUMBER },
   { key: 'cost_price', label: '成本价', vBind: COL.PRICE },
-  { key: 'last_price', label: '最新价(涨跌幅)', width: 140, sortable: false },  // 2026-08-20: LivePriceCell 合并显示
+  { key: 'last_price', label: '最新价(涨跌幅)', width: 140, sortable: false },  // LivePriceCell 合并显示
   { key: 'market_value', label: '市值', vBind: COL.MONEY },
   { key: 'synced_from', label: '来源', width: 100, sortable: false },
   { key: 'synced_at', label: '同步时间', vBind: COL.TIME },

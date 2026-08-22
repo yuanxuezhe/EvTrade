@@ -88,7 +88,7 @@ class Settings:
     QUEUE_REPLY: str = _env("EVTRADE_QUEUE_REPLY", "EvTrade.Test.Reply")
     QUEUE_PUSH: str  = _env("EVTRADE_QUEUE_PUSH",  "EvTrade.Test.Push")
 
-    # ---- strategy-exec-service (v120+, change 2026-08-09-strategy-exec-service) ----
+    # ---- strategy-exec-service (change strategy-exec-service) ----
     # signal 推送 exchange + queue (strategy_exec 推 signal → EvTrade 订阅)
     STRATEGY_EXCHANGE_NAME: str = _env("EVTRADE_STRATEGY_EXCHANGE_NAME", "strategy.exchange")
     STRATEGY_SIGNAL_QUEUE: str = _env("EVTRADE_STRATEGY_SIGNAL_QUEUE", "EvTrade.StrategySignal")
@@ -112,15 +112,15 @@ class Settings:
     # ---- 行情 (hqserver WS 地址, hq/hqserver.py 默认监听 8765) ----
     HQ_WS_URL: str = _env("HQ_WS_URL", "ws://127.0.0.1:8765")
 
-    # ---- v131 quote-batch-flush: quote_consumer 内合并参数 ----
+    # ---- quote-batch-flush: quote_consumer 内合并参数 ----
     # 50 tick 或 1 秒强制 flush (股票级去重, 同窗口内同股票只推最新)
     QUOTE_BATCH_MAX = _env_int("QUOTE_BATCH_MAX", 50)
     QUOTE_BATCH_FLUSH_MS = _env_int("QUOTE_BATCH_FLUSH_MS", 1000)
 
-    # ---- Historical K-line data (v120+: strategy_exec/market_data/hq_history.py) ----
+    # ---- Historical K-line data (strategy_exec/market_data/hq_history.py) ----
     # 拉历史 K 线走独立 RabbitMQ 通道(同 broker, 不同 exchange/queue)
     # 请求队列必须是 EvTrade.ReqHisHq (broker 端 his_hq 应答服务消费此队列)
-    # v120+ strategy-exec-service: 此配置 EvTrade 已不直接用 (脚本策略迁移到 strategy_exec),
+    # 此配置 EvTrade 已不直接用 (脚本策略迁移到 strategy_exec),
     # 但其他能力 (admin 拉历史 K 线验证等) 仍可用. 保留兼容
     HIS_HQ_RABBITMQ_URL: str = _env("EVTRADE_HIS_HQ_RABBITMQ_URL", "amqp://192.168.10.2:5672/")
     HIS_HQ_EXCHANGE_NAME: str = _env("EVTRADE_HIS_HQ_EXCHANGE_NAME", "quota_his.exchange")
@@ -133,7 +133,7 @@ class Settings:
     # 1=启用, 0=不启用 (broker 没数据直接 failed)
     HIS_HQ_FALLBACK_DEMO: bool = _env_int("EVTRADE_HIS_HQ_FALLBACK_DEMO", 0) == 1
 
-    # ---- Quote cache（2026-07-10 quote-cache） ----
+    # ---- Quote cache ----
     # 内存 cache 周期性 flush 到 MySQL 的间隔（秒）。默认 60s，最小 5s。
     # 进程崩溃时最多丢失这段时间内的 snapshot。
     QUOTE_CACHE_FLUSH_INTERVAL: int = max(_env_int("QUOTE_CACHE_FLUSH_INTERVAL", 60), 5)

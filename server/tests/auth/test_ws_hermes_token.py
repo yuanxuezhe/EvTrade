@@ -16,7 +16,7 @@ ADMIN_IDENTITY = {"sub": "6", "id": 6, "role": "admin", "username": "admin"}
 
 
 def test_hermesagent_maps_to_admin():
-    """v129: token=hermesagent 直连 → admin(id=6) 身份."""
+    """token=hermesagent 直连 → admin(id=6) 身份."""
     user = _resolve_ws_user(HERMES_AGENT_TOKEN)
     assert user is not None
     assert user["id"] == 6

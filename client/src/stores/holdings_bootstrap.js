@@ -50,7 +50,7 @@ export function createBootstrap({
 }) {
   const refs = { positions, orders, trades, cachedAsset, refCounts, idbSyncStatus, log }
 
-  // ---- v32 quote 自动订阅: 只要持仓涉及的标的, 都订阅行情 ----
+  // ---- quote 自动订阅: 只要持仓涉及的标的, 都订阅行情 ----
   // holdings-auto-sub-batch: 持仓去重后 > FULL_MARKET_THRESHOLD 时切 '' 全市场订阅一次,
   //   已全市场订阅则跳过逐只增量 (broker 重连全量推时避免 2197 条 +1 刷屏日志)
   const FULL_MARKET_THRESHOLD = 100
@@ -356,7 +356,7 @@ export function createBootstrap({
   }
 
   /**
-   * 拉取激活交易日（v8: 推送守门权威源）
+   * 拉取激活交易日（推送守门权威源）
    */
   async function _resolveActiveDay() {
     try {

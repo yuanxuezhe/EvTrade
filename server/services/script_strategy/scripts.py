@@ -5,7 +5,7 @@ server/services/script_strategy/scripts.py — Script CRUD（直接读写 strate
 - 可见范围: 用户看自己的 + is_public=1 公开的; admin 看全部
 - 删除级联: 先删引用该 script 的 strategy_task (FK 严格约束), 再删 script
 
-运行时（回测/实盘）不在此处 — 已迁移到独立服务 strategy_exec (2026-08-09)。
+运行时（回测/实盘）不在此处 — 在独立服务 strategy_exec。
 """
 from datetime import datetime
 from typing import Any, Dict, List, Optional
@@ -60,7 +60,7 @@ def list_scripts(
 
 
 def get_script(script_id: str, user_id: int, is_admin: bool = False) -> Optional[Dict[str, Any]]:
-    """按 (user_id, id) 取脚本 (v90+ 复合 PK): 用户优先自己的, 否则公开的"""
+    """按 (user_id, id) 取脚本 (复合 PK): 用户优先自己的, 否则公开的"""
     from server.tables import StrategyScript
     row = StrategyScript.query_one(user_id=user_id, id=script_id)
     if row is not None:
@@ -95,7 +95,7 @@ def create_script(
     description: str = "",
     is_public: bool = False,
 ) -> Dict[str, Any]:
-    """创建脚本 (v90+ 复合 PK; id 默认 = name, 同用户内唯一)"""
+    """创建脚本 (复合 PK; id 默认 = name, 同用户内唯一)"""
     from server.tables import StrategyScript
     existing = StrategyScript.query_one(user_id=user_id, id=name)
     if existing is not None:
@@ -122,10 +122,37 @@ def create_script(
     return script_row_to_dict(row)
 
 
+def auto_create_script(
+    user_id: int, code: str, params_schema: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """自动命名创建脚本: 先试 new_strategy, 已存在则递增 new_strategy01/02...
+
+    前端"新建脚本"按钮直接调此接口, 点击即创建并在列表显示, 不等用户手动保存。
+    """
+    from server.tables import StrategyScript
+    base_name = "new_strategy"
+    name = base_name
+    existing = StrategyScript.query_one(user_id=user_id, id=name)
+    if existing is not None:
+        seq = 1
+        while True:
+            name = f"{base_name}{seq:02d}"
+            existing = StrategyScript.query_one(user_id=user_id, id=name)
+            if existing is None:
+                break
+            seq += 1
+    return create_script(
+        user_id=user_id, name=name, code=code,
+        params_schema=params_schema,
+        description="",
+        is_public=False,
+    )
+
+
 def update_script(
     script_id: str, user_id: int, is_admin: bool, patch: Dict[str, Any],
 ) -> Optional[Dict[str, Any]]:
-    """更新脚本 (v90+ 复合 PK = (user_id, id))"""
+    """更新脚本 (复合 PK = (user_id, id))"""
     from server.tables import StrategyScript
     row = StrategyScript.query_one(user_id=user_id, id=script_id)
     if row is None:
@@ -153,12 +180,12 @@ def update_script(
 
 
 def delete_script(script_id: str, user_id: int, is_admin: bool) -> bool:
-    """删除脚本 (v90+ 复合 PK). 级联: task → strategy → script。
+    """删除脚本 (复合 PK). 级联: task → strategy → script。
 
-    v123 任务不再直接挂 script_id, 需先删引用该脚本的策略 (及其 task),
+    任务不直接挂 script_id, 需先删引用该脚本的策略 (及其 task),
     再删脚本本身。策略的 task 一并删除 (FK 严格约束)。
 
-    📌 新架构 (strategy_exec 独立服务): 不再本地停实盘任务 —
+    📌 strategy_exec 独立服务架构: 不本地停实盘任务 —
        正在 strategy_exec 跑的任务由该服务管理, 这里仅做本地 DB 行清理。
     """
     from server.tables import StrategyScript, StrategyTask, Strategy

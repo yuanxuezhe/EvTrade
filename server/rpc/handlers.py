@@ -71,7 +71,7 @@ async def ord_stk(
       price_type  柜台价格类型数字：
                     5=最新价 11=指定价(限价) 14=对手价 44=市价 ...
       remark      委托备注，柜台透传；不传时取 settings.ORDER_REMARK（默认 "EvTrade.Test"）
-      msgid_meta (v84): dict 含 order_no / trd_date / stock_code。
+      msgid_meta: dict 含 order_no / trd_date / stock_code。
         提供后 transport 层在收到 code!=0 应答时按 msgid 找到原 order_no 异步更新为废单。
         不提供时, 废单路径失效 (place.py 同步 await 路径仍会处理 code!=0 → status=57).
     """

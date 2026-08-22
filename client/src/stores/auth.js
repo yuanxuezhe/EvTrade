@@ -9,7 +9,7 @@ export const useAuthStore = defineStore('auth', () => {
   const token = ref(tokenStorage.get() || '')
   const user = ref(loadUser())
   const loading = ref(false)
-  // v119: IDB 持久化 + 启动屏障相关状态
+  // IDB 持久化 + 启动屏障相关状态
   const ready = ref(false)
   const hydratePromise = ref(null)
 
@@ -34,7 +34,7 @@ export const useAuthStore = defineStore('auth', () => {
   const isViewer = computed(() => user.value?.role === 'viewer')
 
   /**
-   * v119: 启动屏障 — 从 IDB 恢复 session 到内存 + localStorage
+   * 启动屏障 — 从 IDB 恢复 session 到内存 + localStorage
    * 必须在 main.js 中 router 安装前 await 完成, 避免首轮守卫读不到 token 误跳 /login
    * 单例 hydratePromise: 多次调用只初始化一次
    */
@@ -66,7 +66,7 @@ export const useAuthStore = defineStore('auth', () => {
       token.value = res.access_token
       tokenStorage.set(res.access_token)
       saveUser(res.user)
-      // v119: 持久化到 IDB（fire-and-forget, 不阻塞登录返回）
+      // 持久化到 IDB（fire-and-forget, 不阻塞登录返回）
       saveSession({ token: res.access_token, user: res.user }).catch((e) => {
         console.warn('[auth] saveSession failed:', e?.message || e)
       })
@@ -103,7 +103,7 @@ export const useAuthStore = defineStore('auth', () => {
     token.value = ''
     saveUser(null)
     tokenStorage.clear()
-    // v119: 同步清 IDB（fire-and-forget, 不阻塞路由跳转）
+    // 同步清 IDB（fire-and-forget, 不阻塞路由跳转）
     clearSession().catch((e) => {
       console.warn('[auth] clearSession failed:', e?.message || e)
     })

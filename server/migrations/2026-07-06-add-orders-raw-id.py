@@ -1,5 +1,5 @@
 """
-2026-07-06-add-orders-raw-id.py — v13 增量迁移（idempotent, SQLAlchemy 双 driver）
+2026-07-06-add-orders-raw-id.py — 增量迁移（idempotent, SQLAlchemy 双 driver）
 
 变更：orders 表加 raw_id 列（String(8), nullable）
 - 用途：cancel-row 写入时存原 order_no，与 user_def="CANCEL:{orig.order_no}" 冗余
@@ -7,7 +7,7 @@
 - 旧 orders 数据无破坏（NULL fallback）
 
 幂等性：先查列是否存在，存在则 skip。
-v20 MySQL-only：INFORMATION_SCHEMA.COLUMNS 探测（SQLite 永久下线）。
+MySQL-only：INFORMATION_SCHEMA.COLUMNS 探测（SQLite 永久下线）。
 
 执行：
     # 默认用业务账号 (EVTRADE_DB_URL)；若需 DDL ALTER 设 EVTRADE_DB_ADMIN_URL
@@ -18,19 +18,19 @@ import sys
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
 
-# ─────────────── URL 解析（v20 MySQL-only 永久标准 强制 EVTRADE_DB_URL） ───────────────
-# REQ-CFG-009 v20: SQLite fallback 永久下线；migration 脚本同样要求显式 EVTRADE_DB_URL。
+# ─────────────── URL 解析（MySQL-only 永久标准 强制 EVTRADE_DB_URL） ───────────────
+# REQ-CFG-009: SQLite fallback 永久下线；migration 脚本同样要求显式 EVTRADE_DB_URL。
 # 没设 → KeyError，运维必须先 .env 配齐 URL。
 try:
     DATABASE_URL = os.environ["EVTRADE_DB_URL"]
 except KeyError:
     raise RuntimeError(
-        "EVTRADE_DB_URL is required (v20 MySQL-only permanent standard). "
+        "EVTRADE_DB_URL is required (MySQL-only permanent standard). "
         "Set it in server/.env, e.g. mysql+pymysql://EvTrade:p%40ssw0rd@127.0.0.1:33066/evtrade?charset=utf8mb4"
     )
 if not DATABASE_URL.startswith("mysql"):
     raise RuntimeError(
-        f"[migration] Only MySQL is supported (v20 permanent standard). Got: {DATABASE_URL[:80]!r}. "
+        f"[migration] Only MySQL is supported (permanent standard). Got: {DATABASE_URL[:80]!r}. "
         "SQLite has been permanently disabled."
     )
 # ALTER TABLE 需要 DDL；优先 ADMIN_URL，回退业务 URL

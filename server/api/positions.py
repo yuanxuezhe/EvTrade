@@ -1,25 +1,14 @@
 """
-positions.py — v5 重构版（schema refactor）
+positions.py
 
 持仓由 trd_cfm push handler (intra-day 增量, Position.vol) + do_reconcile (day-init 全表覆盖) 写入 positions 表。
 change consolidate-position-data-flow: pos_cfm push handler 已删除 (xtquant broker 不发)。
 GET /api/positions 纯读 DB，不调 RPC。
 
-v5 改动：
-- 移除 id、TRD_DATE 字段
-- initial_position → last_vol
-- available → avl_vol
-- total → vol
-- cost → cost_price
-- 主键 stock_code
+- positions 表: 主键 stock_code, 字段 last_vol / avl_vol / vol / cost_price
 - 持仓是「当前快照」语义，不分交易日
-
-v10 改动（rpc-field-alignment-ts-unify）：
 - synced_at 序列化为标准格式 "YYYY-MM-DD HH:MM:SS.fff" (format_db_dt)
-
-v12 改动（add-manual-adjust-and-history-pages）：
 - 装配 PUT /{stock_code}/adjust 调平端点（admin 鉴权），实现见 server/api/position_adjust.py
-- 移除 today_buy / today_sell 字段（v5 schema 遗留死字段）
 
 NOTE: market_value 字段
 - 后端不存 market_value（Position ORM 无此列）
@@ -36,7 +25,7 @@ from server.utils.time import format_db_dt
 from server.api.position_adjust import register_adjust
 
 router = APIRouter()
-register_adjust(router)  # v12: PUT /{stock_code}/adjust（admin 调平）
+register_adjust(router)  # PUT /{stock_code}/adjust（admin 调平）
 
 
 class PositionOut(BaseModel):
@@ -61,7 +50,7 @@ class PositionsListResponse(BaseModel):
 async def list_positions(
     stock_code: Optional[str] = None,
 ):
-    # v81.4 tables-migration: 走 Positions.query_by / query_one
+    # 走 Positions.query_by / query_one
     # Positions.__pk_fields__ = ('stock_code',) → 默认按 stock_code 升序
     if stock_code:
         rows = Positions.query_by("stock_code", stock_code)

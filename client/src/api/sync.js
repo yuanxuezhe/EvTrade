@@ -1,7 +1,7 @@
 import { http } from './index'
 
 /**
- * sync API 客户端 (v21 stock-info-crawler)
+ * sync API 客户端 (stock-info-crawler)
  *
  * 端点：
  * - POST   /api/sync/stocks         启动同步任务 (admin only)

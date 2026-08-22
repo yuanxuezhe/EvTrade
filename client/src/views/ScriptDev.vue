@@ -12,7 +12,7 @@
     <header class="sd-header">
       <h3 class="sd-title">策略开发</h3>
       <div class="sd-actions">
-        <el-button :icon="Plus" type="primary" @click="onCreate" data-el="sd-create">
+        <el-button :icon="Plus" type="primary" @click="onCreate" :loading="creating" data-el="sd-create">
           新建脚本
         </el-button>
         <el-button :icon="Refresh" @click="loadScripts" data-el="sd-refresh">
@@ -25,7 +25,7 @@
       <!-- 左侧: 脚本列表 -->
       <aside class="sd-pane sd-pane-left">
         <h4 class="sd-section-title">脚本列表</h4>
-        <!-- v90+: 公开/我的筛选 -->
+        <!-- 公开/我的筛选 -->
         <div class="sd-filter">
           <el-radio-group v-model="filterMode" size="small" @change="loadScripts">
             <el-radio-button value="all" data-el="sd-filter-all">全部</el-radio-button>
@@ -100,7 +100,7 @@
               <span class="sd-editor-hint">
                 实现 on_init / on_bar / on_tick / on_finish 回调, 可调 MA/EMA/RSI/doorder 等
               </span>
-              <!-- 2026-08-20: 代码编辑器最大化按钮 (切换编辑器填满剩余空间 + 折叠参数表) -->
+              <!-- 代码编辑器最大化按钮 (切换编辑器填满剩余空间 + 折叠参数表) -->
               <el-button
                 :icon="editorExpanded ? Aim : FullScreen"
                 size="small"
@@ -114,7 +114,7 @@
             </span>
           </div>
           <div class="sd-editor" :class="{ expanded: editorExpanded }">
-            <!-- 2026-08-20: 改用 CodeMirror 6 通用组件 (python 语法高亮 + 自动缩进) -->
+            <!-- CodeMirror 6 通用组件 (python 语法高亮 + 自动缩进) -->
             <CodeEditor
               v-model="form.code"
               :read-only="isReadonly"
@@ -125,7 +125,7 @@
         </div>
 
         <!-- 参数 schema -->
-        <!-- 2026-08-20: 展开编辑器时折叠 params 表格成 summary 风格, 给编辑器腾位置 -->
+        <!-- 展开编辑器时折叠 params 表格成 summary 风格, 给编辑器腾位置 -->
         <details v-if="!editorExpanded" class="sd-params-details" open>
           <summary class="sd-params-head">
             <span>参数 schema ({{ form.params_schema.length }})</span>
@@ -199,7 +199,7 @@
           <el-button :icon="Document" type="primary" :loading="saving" :disabled="isReadonly" @click="onSave" data-el="sd-save">
             保存
           </el-button>
-          <!-- 2026-08-21: 编译按钮 — 静态语法检查（ast.parse）不跑回测 -->
+          <!-- 编译按钮 — 静态语法检查（ast.parse）不跑回测 -->
           <el-button :icon="DocumentChecked" type="warning" :loading="compiling" :disabled="isReadonly || !form.id" @click="onCompile" data-el="sd-compile">
             编译
           </el-button>
@@ -223,7 +223,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Refresh, Delete, Document, DocumentChecked, VideoPlay, FullScreen, Aim } from '@element-plus/icons-vue'
 import { scriptStrategyApi } from '../api/script_strategy'
 import { useAuthStore } from '../stores/auth'
-import CodeEditor from '../components/cells/CodeEditor.vue'  // 2026-08-20: CodeMirror 6 封装 (python 语法高亮 + 自动缩进)
+import CodeEditor from '../components/cells/CodeEditor.vue'  // CodeMirror 6 封装 (python 语法高亮 + 自动缩进)
 
 const router = useRouter()
 
@@ -231,20 +231,21 @@ const router = useRouter()
 const loading = ref(false)
 const saving = ref(false)
 const testing = ref(false)
-const compiling = ref(false)  // 2026-08-21: 编译按钮 loading 态
-// 2026-08-20: 编辑器最大化开关 — 折叠参数表让编辑器撑满
+const compiling = ref(false)  // 编译按钮 loading 态
+const creating = ref(false)  // 新建脚本按钮 loading 态
+// 编辑器最大化开关 — 折叠参数表让编辑器撑满
 const editorExpanded = ref(false)
 const scripts = ref([])
 const selectedId = ref(null)
-const selectedUserId = ref(null)  // v90+: 复合 PK (user_id, id)
+const selectedUserId = ref(null)  // 复合 PK (user_id, id)
 const currentScript = ref(null)
 const draft = ref(null)  // 新建未保存
-const filterMode = ref('all')     // v90+: 'all' / 'mine' / 'public'
+const filterMode = ref('all')     // 'all' / 'mine' / 'public'
 const currentUserId = ref(null)   // 从 user store 拿当前用户 ID
 
 const form = ref(_blankForm())
 
-// 2026-08-20: lineCount / syncScroll / editorTab 缩进 等均改由 CodeMirror 内置, 不再手写
+// lineCount / syncScroll / editorTab 缩进 等均由 CodeMirror 内置, 不手写
 const isReadonly = computed(() =>
   currentScript.value != null && currentScript.value.user_id !== currentUserId.value
 )
@@ -264,7 +265,7 @@ function _blankForm() {
 async function loadScripts() {
   loading.value = true
   try {
-    // v90+: filterMode 决定 only_mine 参数
+    // filterMode 决定 only_mine 参数
     const only_mine = filterMode.value === 'mine' ? 'true' : undefined
     scripts.value = await scriptStrategyApi.listScripts(only_mine)
     // 记录当前用户 ID (单一来源: auth store, 用于显示 owner tag / 只读判定)
@@ -278,7 +279,7 @@ async function loadScripts() {
 
 async function onSelect(s) {
   selectedId.value = s.id
-  selectedUserId.value = s.user_id  // v90+: 复合 PK
+  selectedUserId.value = s.user_id  // 复合 PK
   currentScript.value = s
   draft.value = null
   // 拷贝到 form
@@ -296,39 +297,21 @@ async function onSelect(s) {
 }
 
 async function onCreate() {
-  // 拉默认模板 (失败时 fallback inline demo, 避免空白不能编辑)
-  let tpl = null
+  // 直接调后端 API 创建脚本 (自动命名 new_strategy → new_strategy01 → ...),
+  // 创建后刷新列表并选中, 用户可以在编辑器里直接改名称/代码/参数。
+  creating.value = true
   try {
-    tpl = await scriptStrategyApi.getDefaultTemplate()
+    const created = await scriptStrategyApi.newScript()
+    await loadScripts()
+    onSelect(created)
   } catch (e) {
-    // 拦截器已弹 — 但给用户一个可用 demo, 不让编辑器空白
-    tpl = null
+    // 拦截器已弹
+  } finally {
+    creating.value = false
   }
-  const defaultCode = (tpl && typeof tpl.code === 'string' && tpl.code)
-    ? tpl.code
-    : FALLBACK_DEMO_CODE
-  const defaultParams = (tpl && Array.isArray(tpl.params_schema) && tpl.params_schema.length)
-    ? tpl.params_schema
-    : FALLBACK_DEMO_PARAMS
-  // 2026-08-21 fix: 不要整体替换 form.value — el-table 内部对 params_schema 数组
-  //   持有 vnode ref, 整体替换会导致 patchElement 报 'Cannot set properties of
-  //   null (setting __vnode)' (select.vue:407)。改用增量字段更新, 保持 ref 引用。
-  form.value.id = null
-  form.value.name = ''
-  form.value.description = ''
-  form.value.status = 'active'
-  form.value.code = defaultCode
-  // params_schema 必须 splice 清空再 push (保持 ref 引用, 触发 el-table 内部响应)
-  form.value.params_schema.splice(0, form.value.params_schema.length, ...defaultParams.map(p => ({
-    ...p,
-    valuesStr: Array.isArray(p.values) ? p.values.join(',') : '',
-  })))
-  selectedId.value = null
-  currentScript.value = null
-  draft.value = { name: 'new' }
 }
 
-// 2026-08-21: 后端 /templates/default 失败 (或返回空) 时的兜底 demo
+// 后端 /templates/default 失败 (或返回空) 时的兜底 demo
 //   让用户点新建后立刻看到可编辑的 python 代码 + 示例参数,
 //   避免编辑器空白 + 无法编辑给用户造成"按钮坏了"错觉
 const FALLBACK_DEMO_CODE = `# 简易均线交叉策略 (demo)
@@ -434,7 +417,7 @@ async function onTestBacktest() {
   }
 }
 
-// 2026-08-21: 编译按钮 handler — 调后端 POST /scripts/{id}/compile 做 ast.parse 静态校验
+// 编译按钮 handler — 调后端 POST /scripts/{id}/compile 做 ast.parse 静态校验
 async function onCompile() {
   if (!form.value.id) {
     ElMessage.warning('请先保存脚本')
@@ -497,7 +480,7 @@ function _formToPayload(f) {
   }
 }
 
-// ─────────────── editor: 行号/缩进全部由 CodeMirror 内置 (2026-08-20 抽组件) ───────────────
+// ─────────────── editor: 行号/缩进全部由 CodeMirror 内置 ───────────────
 // 旧手写 syncScroll / onEditorTab / onEditorShiftTab / onEditorEnter 已删除
 // (codemirror 6 自带行号侧栏 + 当前行高亮 + Python 自动缩进 + 括号匹配)
 
@@ -604,7 +587,7 @@ onMounted(async () => {
   min-height: 400px;
   max-height: 60vh;
 }
-/* 2026-08-20: 最大化编辑器 — 撑满 sd-pane-right 剩余空间, 不再卡 60vh */
+/* 最大化编辑器 — 撑满 sd-pane-right 剩余空间, 不卡 60vh */
 .sd-editor.expanded {
   flex: 1;
   max-height: none;
@@ -612,7 +595,7 @@ onMounted(async () => {
   height: 100%;
 }
 .sd-line-numbers {
-  /* 2026-08-20: 改用 CodeMirror 内置行号侧栏, 这些手写 CSS 保留无害但不再生效 */
+  /* CodeMirror 内置行号侧栏, 这些手写 CSS 保留无害但不生效 */
   flex-shrink: 0;
   width: 50px;
   background: #252526;
@@ -629,7 +612,7 @@ onMounted(async () => {
 
 /* params */
 .sd-params { flex-shrink: 0; }
-/* 2026-08-20: params 改 details/summary, summary 始终可见 (表头), 表格可点 summary 折叠 */
+/* params 用 details/summary, summary 始终可见 (表头), 表格可点 summary 折叠 */
 .sd-params-details {
   border: 1px solid var(--border-light);
   border-radius: var(--radius-sm);

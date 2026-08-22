@@ -1,12 +1,12 @@
 """
-SQLAlchemy ORM models for EvTrade v5 (schema refactor).
+SQLAlchemy ORM models for EvTrade.
 
 📖 **详细 schema 文档（single source of truth）**：
   参见 `openspec/specs/data-model/spec.md` — 11 张表完整结构知识库
   （字段、类型、PK、约束、业务规则、跨表引用、修改工作流）
   本文件改动前必先改 spec; spec 改动后必同步本文件。
 
-设计原则（2026-06-15 重构）：
+设计原则：
 - 表名 / 列名：snake_case
 - 日期字段：trd_date（8 位数字字符串如 '20260614'）
 - 单行表（assets 等）：无主键，按约定 .first() 访问
@@ -19,7 +19,7 @@ SQLAlchemy ORM models for EvTrade v5 (schema refactor).
   §4 行情：quote_snapshots
   §5 序列：order_no_seq
 
-change v_next-sys-status-single-row (2026-07-22):
+change v_next-sys-status-single-row:
   - sys_status 改为单行宽表 (id=1 PK, 强制 CHECK id=1)
   - trd_date 不再是 PK; 切日 = UPDATE id=1 行的 trd_date
   - 历史交易日仍由 reconcile_report.trd_date 记录
@@ -44,42 +44,20 @@ class Order(Base):
     """委托主表（复合主键 trd_date + order_no）
 
     📖 详见 `openspec/specs/data-model/spec.md` §1
-    v6 schema 改动:
-    - PK (trd_date, order_id) → (trd_date, order_no)
-    - order_id 出 PK,变可空,由 ord_cfm 推送写入
-    - order_no 进 PK(原本就 UNIQUE,加 PK 不冲突)
-    - 删 uq_orders_order_no (被 PK 替代)
-    - 加 uq_orders_broker_id(order_id, trd_date):broker 真实 order_id + 交易日 唯一
-    - 加 ix_orders_order_id:trd_cfm 退路查找(理论上只走 remark,这是兜底)
-    - status 字段保留,语义改为 "本地推断的委托状态"（见 _infer_order_status）
-    v7 schema 改动:
-    - 删 client_order_id 字段 + uq_orders_client_trd 约束（幂等不再走 DB UNIQUE）
-    - 删 uq_orders_broker_id 约束（order_id 下单时为空，UNIQUE 不可靠）
-    - 加 user_def 字段（String(255)，外部自定义信息透传，无约束）
-    - ix_orders_order_id 保留为普通 INDEX（非 UNIQUE），trd_cfm 兜底查找
-    v9 schema 改动:
-    - 加 order_flag 字段（Integer，0=normal 1=cancel-order，NOT NULL DEFAULT 0）
-      标识本地代理的「撤单委托」行（user_def="CANCEL:{orig_order_no}"）
-      broker ord_cfm 用 remark 匹配原 order_no,不会更新本行
-    v10 schema 改动:
-    - order_time 字段类型 String(8) → String(23)，
-      格式由 "HH:MM:SS" 改为 "YYYY-MM-DD HH:MM:SS.fff" (rpc-field-alignment-ts-unify)
-    v13 NEW schema 改动（layered-architecture-and-strategy-master）:
-    - 加 raw_id 字段（String(8)，nullable=True）
-      cancel-row 写入时存 = 原 order_no；普通 strategy 委托 raw_id 永远为 NULL
-      与 user_def="CANCEL:{orig.order_no}" 共存（结构化冗余，便于 JOIN 过滤）
-      不加 NOT NULL DEFAULT — 旧 orders 数据无破坏（NULL fallback）
-    v18 NEW schema 改动（t0-task-management）:
-    - 加 task_id 字段（Integer，nullable=True）
-      关联 t0_tasks.id (REQ-TRADE-013)；NULL 表示无显式 task 关联
-      与 user_def='T0' 共存：有 task 的单同时写 user_def='T0' AND task_id=<id>；
-      无 task 的旧 T0 单保持 user_def='T0' AND task_id=NULL（向后兼容 REQ-TRADE-006）
-      加 ix_orders_task_id 索引（task 维度聚合 + balance 配平查询）
-    v66 NEW schema 改动（orders-strategy-type）：
-    - 加 strategy_type 字段（TINYINT，NOT NULL DEFAULT 0）
-      REQ-TRADE-026 业务契约：0=普通单（Trade.vue 下单），1=快速做T（T0Trade.vue 下单）
-      历史数据不回填（user_def='T0' 单保持 strategy_type=0，向后兼容 v18 task_id 同策略）
-      加 ix_orders_strategy_type 索引（缓存过滤 + 未来策略维度报表）
+
+    字段要点:
+    - PK (trd_date, order_no); order_id 可空,由 ord_cfm 推送写入
+    - uq_orders_order_no 已由 PK 替代; ix_orders_order_id 为普通 INDEX (非 UNIQUE),trd_cfm 兜底查找
+    - user_def (String(255)): 外部自定义信息透传,无约束;幂等不走 DB UNIQUE
+    - order_flag: 0=normal 1=cancel-order,标识本地代理「撤单委托」行
+      (user_def="CANCEL:{orig_order_no}";broker ord_cfm 用 remark 匹配原 order_no,不更新本行)
+    - order_time 格式 "YYYY-MM-DD HH:MM:SS.fff"
+    - raw_id (String(8), nullable): cancel-row 写入时存 = 原 order_no;普通委托永远 NULL
+      (与 user_def="CANCEL:{orig.order_no}" 共存,结构化冗余,便于 JOIN 过滤)
+    - task_id (Integer, nullable): 关联 t0_tasks.id (REQ-TRADE-013);NULL = 无显式 task
+      (有 task 的单同时写 user_def='T0' AND task_id=<id>;旧 T0 单 user_def='T0' AND task_id=NULL,向后兼容 REQ-TRADE-006)
+    - strategy_type: REQ-TRADE-026;0=普通单(Trade.vue 下单) 1=快速做T(T0Trade.vue 下单) 2=策略下单(task_id=strategy_order.task_id)
+      (user_def='T0' 历史单保持 strategy_type=0,不回填)
       DB 迁移：server/migrations/2026-07-17-add-orders-strategy-type.py
     """
     __tablename__ = "orders"
@@ -105,13 +83,13 @@ class Order(Base):
     traded_amount = Column(Float, nullable=False, default=0.0)
     avg_price = Column(Float, nullable=False, default=0.0)
     cancelled_volume = Column(Integer, nullable=False, default=0)  # 累计撤单量（broker ord_cfm 累加）
-    order_flag = Column(Integer, nullable=False, default=0)  # 0=normal 1=cancel-order (v9:本地代理撤单委托行)
+    order_flag = Column(Integer, nullable=False, default=0)  # 0=normal 1=cancel-order (本地代理撤单委托行)
     status = Column(String(2), nullable=False, default="48")  # 48=待报 49=已报 50=部成 51=已成 52=部撤 53=已撤 55=废单
     status_msg = Column(String(255), nullable=False, default="")
-    order_time = Column(String(23), nullable=False, default="")  # v10: "YYYY-MM-DD HH:MM:SS.fff"
-    raw_id = Column(String(8), nullable=True)  # v13 NEW: cancel-row 写 = 原 order_no；普通行 NULL
-    task_id = Column(Integer, nullable=True)    # v18 NEW: 关联 t0_tasks.id；NULL = 无显式 task
-    strategy_type = Column(Integer, nullable=False, default=0)  # v66 NEW: REQ-TRADE-026; 0=普通单 1=快速做T; v126 +2=策略下单 (task_id=strategy_order.task_id)
+    order_time = Column(String(23), nullable=False, default="")  # "YYYY-MM-DD HH:MM:SS.fff"
+    raw_id = Column(String(8), nullable=True)  # cancel-row 写 = 原 order_no；普通行 NULL
+    task_id = Column(Integer, nullable=True)    # 关联 t0_tasks.id；NULL = 无显式 task
+    strategy_type = Column(Integer, nullable=False, default=0)  # REQ-TRADE-026; 0=普通单 1=快速做T 2=策略下单 (task_id=strategy_order.task_id)
     created_at = Column(DateTime, nullable=False, default=_utcnow)
     updated_at = Column(
         DateTime, nullable=False, default=_utcnow, onupdate=_utcnow
@@ -123,17 +101,13 @@ class Trade(Base):
     """成交表（复合主键 trd_date + order_no + trade_id）
 
     📖 详见 `openspec/specs/data-model/spec.md` §1（Trade 行）
-    v7 schema 改动:
-    - 删 order_id 字段（broker 真实号在 trd_cfm 到达时可能尚未到达）
-    - 加 order_no 字段并入 PK（PK = (trd_date, order_no, trade_id)）
-    - ix_trades_order(order_id) → ix_trades_order_no(order_no)（重命名）
-    v9 schema 改动:
-    - 加 trade_type 字段（Integer，0=normal 1=cancel-fill，NOT NULL DEFAULT 0）
-      标识本地代理的「撤单成交」行（order_no 指向 cancel-order 行的 order_no）
-      broker 协议撤单不推 trd_cfm,本地由 DELETE 端点同步插入
-    v10 schema 改动:
-    - trade_time 字段类型 String(8) → String(23)，
-      格式由 "HH:MM:SS" 改为 "YYYY-MM-DD HH:MM:SS.fff" (rpc-field-alignment-ts-unify)
+
+    字段要点:
+    - PK = (trd_date, order_no, trade_id);order_id 不入库
+      (broker 真实号在 trd_cfm 到达时可能尚未到达);ix_trades_order_no(order_no) 普通索引
+    - trade_type: 0=normal 1=cancel-fill,标识本地代理「撤单成交」行
+      (order_no 指向 cancel-order 行的 order_no;broker 协议撤单不推 trd_cfm,本地由 DELETE 端点同步插入)
+    - trade_time 格式 "YYYY-MM-DD HH:MM:SS.fff"
     """
     __tablename__ = "trades"
     __table_args__ = (
@@ -149,8 +123,8 @@ class Trade(Base):
     price = Column(Float, nullable=False, default=0.0)
     volume = Column(Integer, nullable=False, default=0)
     amount = Column(Float, nullable=False, default=0.0)
-    trade_time = Column(String(23), nullable=False, default="")  # v10: "YYYY-MM-DD HH:MM:SS.fff"
-    trade_type = Column(Integer, nullable=False, default=0)  # 0=normal 1=cancel-fill (v9:本地代理撤单成交行)
+    trade_time = Column(String(23), nullable=False, default="")  # "YYYY-MM-DD HH:MM:SS.fff"
+    trade_type = Column(Integer, nullable=False, default=0)  # 0=normal 1=cancel-fill (本地代理撤单成交行)
     created_at = Column(DateTime, nullable=False, default=_utcnow)
 
 
@@ -158,14 +132,14 @@ class Position(Base):
     """持仓表（单股唯一，无 trd_date；当前快照语义）
 
     📖 详见 `openspec/specs/data-model/spec.md` §1（Position 行）
-    📌 vol 字段来源（change consolidate-position-data-flow 后）：
+    📌 vol 字段来源（change consolidate-position-data-flow）：
        - day-init：do_reconcile 全表覆盖（写入 avl_vol / vol / cost_price）
        - intra-day：trd_cfm push handler 按 trade_type 累加/扣减（vol / avl_vol ± volume）
-       - 不再依赖 pos_cfm 推送（xtquant broker 不发）
-    📌 change add-manual-adjust-and-history-pages (v12):
-       - 删除 today_buy / today_sell 列（v5 schema 遗留，从未被消费）
+       - 不依赖 pos_cfm 推送（xtquant broker 不发）
+    📌 manual 调平（change add-manual-adjust-and-history-pages）:
+       - 无 today_buy / today_sell 列（从未被消费）
        - manual 调平 API 直接对 vol / avl_vol 做原子加减（不存 delta 字段）
-       - 当日买卖累计语义改由 Trade 表 SUM 聚合替代
+       - 当日买卖累计语义由 Trade 表 SUM 聚合替代
     """
     __tablename__ = "positions"
 
@@ -187,7 +161,7 @@ class Asset(Base):
     """资金表（单行，SQLAlchemy ORM 强制需要主键，用 id=1 + CheckConstraint 限定单行）
 
     📖 详见 `openspec/specs/data-model/spec.md` §1（Asset 行）
-    v5 schema: 移除 TRD_DATE（不再有交易日维度），保留 cash / frozen_cash / market_value / total_asset。
+    无 TRD_DATE（无交易日维度），保留 cash / frozen_cash / market_value / total_asset。
     业务访问方式：db.query(Asset).first() / db.query(Asset).delete() + db.add(new)
     """
     __tablename__ = "assets"
@@ -197,11 +171,11 @@ class Asset(Base):
 
     id = Column(Integer, primary_key=True, default=1)
     cash = Column(Float, nullable=False, default=0.0)         # 可用
-    available = Column(Float, nullable=False, default=0.0)    # v110: 可用资金 (= cash, 单独字段供前端命名直接读)
+    available = Column(Float, nullable=False, default=0.0)    # 可用资金 (= cash, 单独字段供前端命名直接读)
     frozen_cash = Column(Float, nullable=False, default=0.0)   # 冻结
     market_value = Column(Float, nullable=False, default=0.0)
     total_asset = Column(Float, nullable=False, default=0.0)
-    # v114: 期初总资产 (早上 do_reconcile 系统初始化时计算: 可用资金 + sum(昨收 * 持仓))
+    # 期初总资产 (早上 do_reconcile 系统初始化时计算: 可用资金 + sum(昨收 * 持仓))
     last_asset = Column(Float, nullable=False, default=0.0)
     synced_at = Column(DateTime, nullable=False, default=_utcnow)
     synced_from = Column(String(16), nullable=False, default="")  # rpc_full / push_partial / manual
@@ -210,11 +184,11 @@ class Asset(Base):
 # ─────────────── 配置表 ───────────────
 
 class SysStatus(Base):
-    """系统级状态机（单行宽表, v_next 重构:不再用 trd_date 作 PK）
+    """系统级状态机（单行宽表, 不用 trd_date 作 PK）
 
     📖 详见 `openspec/specs/data-model/spec.md` §2（SysStatus 行）
 
-    设计原则 (v_next 重构, 用户明令):
+    设计原则 (用户明令):
       - 表只存 1 行: 唯一的『当前交易日』状态 (trd_date + status)
       - PK = id=1 (强制 CHECK id=1); 历史交易日由 reconcile_report.trd_date 记录
       - 切日 = UPDATE 这一行的 trd_date 字段, 不是插新行
@@ -235,11 +209,11 @@ class SysStatus(Base):
 
 
 def get_active_trd_date(db: Optional["Session"] = None) -> Optional[str]:  # noqa: ARG001
-    """v_next 单行接口:获取当前交易日 trd_date (status='active')
+    """获取当前交易日 trd_date (status='active')
 
     返回 None 表示未激活/刚闭市。
 
-    v81.9: 改走 server.tables.SysStatus (兼容保留 db 参数但忽略)
+    走 server.tables.SysStatus (兼容保留 db 参数但忽略)
     """
     from server.tables import SysStatus
     row = SysStatus.query_one(id=1)
@@ -251,11 +225,11 @@ def get_active_trd_date(db: Optional["Session"] = None) -> Optional[str]:  # noq
 
 
 def get_active_sysstatus(db: Optional["Session"] = None) -> Optional["SysStatus"]:  # noqa: ARG001
-    """v_next 单行接口:获取当前 SysStatus 完整行 (id=1)
+    """获取当前 SysStatus 完整行 (id=1)
 
     返回 None 表示 id=1 行不存在 (极端脏数据) — 调用方应宽容 None。
 
-    v81.9: 改走 server.tables.SysStatus (兼容保留 db 参数但忽略)
+    走 server.tables.SysStatus (兼容保留 db 参数但忽略)
     """
     from server.tables import SysStatus
     row = SysStatus.query_one(id=1)
@@ -266,7 +240,7 @@ def get_active_sysstatus(db: Optional["Session"] = None) -> Optional["SysStatus"
 
 
 class SysConfig(Base):
-    """统一配置表 (v78)
+    """统一配置表
 
     📖 详见 `openspec/specs/data-model/spec.md` §3 (SysConfig 表)
     主键: (user, cfg_key) 复合主键
@@ -320,7 +294,7 @@ class QuoteSnapshot(Base):
 
     📖 详见 `openspec/specs/data-model/spec.md` §4
 
-    2026-07-09 quote-snapshot-subscribe: latest-only 模型（每 stock_code 1 行）。
+    latest-only 模型（每 stock_code 1 行）。
       - 字段名规范化: open→open_price / high→high_price / low→low_price（语义清楚）
       - volume 是 Integer（手/股数，非金额）
       - 加 stock_code UniqueConstraint + 应用层 INSERT...ON CONFLICT/UPDATE UPSERT
@@ -366,7 +340,7 @@ class QuoteSnapshot(Base):
 # ─────────────── 序列 ───────────────
 
 class OrderNoSeq(Base):
-    """序号生成器（v123 多生成器，按 seq_name 分键）
+    """序号生成器（多生成器，按 seq_name 分键）
 
     生成器: order_no（订单）/ task_batch（策略批次）
     📖 详见 `openspec/specs/data-model/spec.md` §5
@@ -381,24 +355,22 @@ class OrderNoSeq(Base):
 # ─────────────── T0 任务表 ───────────────
 
 class Stock(Base):
-    """股票基础信息表（v23 change slim-stocks-table, 2026-07-12）
+    """股票基础信息表（change slim-stocks-table）
 
     📖 详见 `openspec/specs/data-model/spec.md` §13 (stocks)
 
-    字段精简（v21→v23）：删除 9 个未被消费的字段（industry/market/list_date/
-    total_share/float_share/market_cap/pe_ratio/pb_ratio/intro），新增 3 个业务
-    字段（is_t0_able/min_buy_qty/trade_unit）用于 admin 配置回转标志与买卖粒度。
+    仅保留 6 个业务字段（基础信息 + 交易粒度），删除 9 个未被消费的
+    字段（industry/market/list_date/total_share/float_share/market_cap/pe_ratio/
+    pb_ratio/intro），新增 3 个业务字段（is_t0_able/min_buy_qty/trade_unit）
+    用于 admin 配置回转标志与买卖粒度。
 
     - stock_code 是 PK（与 quote_snapshots 一致,带 .SH/.SZ 后缀）
-    - 6 个业务字段(基础信息 + 交易粒度)
     - 0 个字段索引(sector 暂未加索引,数据量小可走全表扫)
     - updated_at 自动 ON UPDATE,用于增量 upsert 的"7 天内跳过"逻辑
     - 历史 14 字段数据已备份至 stocks_legacy 表
-    v25 schema 改动 (stocks-cache-and-short-name, 2026-07-12):
-    - 加 short_name 字段 (String(16), nullable=True)
-      拼音首字母简称(平安银行→PAYH),用于前端 autocomplete 首字母快速筛选
-      backfill 由 server/scripts/backfill_short_name.py 一次性灌入
-      用户后续"自己去维护",不再走自动同步(同步任务 v26 移除)
+    - short_name 字段 (String(16), nullable): 拼音首字母简称(平安银行→PAYH),
+      用于前端 autocomplete 首字母快速筛选;由 server/scripts/backfill_short_name.py
+      一次性灌入,admin 手动维护,不走自动同步
     """
     __tablename__ = "stocks"
 
@@ -408,15 +380,15 @@ class Stock(Base):
     is_t0_able = Column(Boolean, nullable=False, default=False)  # 是否支持 T+0 回转
     min_buy_qty = Column(Integer, nullable=False, default=100)  # 最小买入数量(A 股默认 100)
     trade_unit = Column(Integer, nullable=False, default=1)      # 买卖单位
-    short_name = Column(String(16), nullable=True)              # v25: 拼音首字母简称(平安银行→PAYH),admin 编辑/手动维护
-    stktype = Column(SmallInteger, nullable=False, default=0)   # v80: 证券类型 (0=股票 1=ETF),用户手动维护
-    scale = Column(SmallInteger, nullable=False, default=2)     # v80: 价格小数位精度 (2=A股 3=ETF),用于四舍五入
+    short_name = Column(String(16), nullable=True)              # 拼音首字母简称(平安银行→PAYH),admin 编辑/手动维护
+    stktype = Column(SmallInteger, nullable=False, default=0)   # 证券类型 (0=股票 1=ETF),用户手动维护
+    scale = Column(SmallInteger, nullable=False, default=2)     # 价格小数位精度 (2=A股 3=ETF),用于四舍五入
     created_at = Column(DateTime, nullable=False, default=_utcnow)
     updated_at = Column(DateTime, nullable=False, default=_utcnow, onupdate=_utcnow)
 
 
 class T0Task(Base):
-    """T0 做 T 任务实体（v18 change t0-task-management）
+    """T0 做 T 任务实体（change t0-task-management）
 
     📖 详见 `openspec/specs/data-model/spec.md` §12
     REQ-TRADE-013: 一等公民实体，区别于 Order.user_def='T0' 的隐式标签。
@@ -446,5 +418,5 @@ class T0Task(Base):
     note = Column(String(255), nullable=True)
     created_trd_date = Column(String(8), nullable=False)
     created_at = Column(DateTime, nullable=False, default=_utcnow)
-    updated_at = Column(DateTime, nullable=False, default=_utcnow, onupdate=_utcnow)  # v18: status 流转时自动更新
+    updated_at = Column(DateTime, nullable=False, default=_utcnow, onupdate=_utcnow)  # status 流转时自动更新
     closed_at = Column(DateTime, nullable=True)

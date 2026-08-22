@@ -3,7 +3,7 @@
 
   数据源: useHoldingsStore().positions
   行情:   useQuoteStore()
-  v55: select-stock emit (单击), apply-to-order emit (双击)
+  emit: select-stock (单击), apply-to-order (双击)
 -->
 <template>
   <div class="hp-shell content-card">
@@ -52,7 +52,7 @@
           <span class="text-mono">{{ row.cost_price != null ? formatPrice(row.cost_price, row.stock_code) : '—' }}</span>
         </template>
 
-        <!-- 2026-08-20: 最新价 + 涨跌幅合并到单 cell (复用 LivePriceCell, Trade/T0Trade/CachePositions 三处统一) -->
+        <!-- 最新价 + 涨跌幅合并到单 cell (复用 LivePriceCell, Trade/T0Trade/CachePositions 三处统一) -->
         <template #column-last_price="{ row }">
           <LivePriceCell :stock-code="row.stock_code" />
         </template>
@@ -98,7 +98,7 @@
 <script setup>
 import { computed, ref } from 'vue'
 import DataTableView from '../DataTableView.vue'
-import LivePriceCell from '../cells/LivePriceCell.vue'  // 2026-08-20: 最新价+涨跌幅合并 cell
+import LivePriceCell from '../cells/LivePriceCell.vue'  // 最新价+涨跌幅合并 cell
 import { formatNumber, formatMoney } from '../../utils/format'
 import { formatPrice } from '../../composables/usePricePrecision'
 import { stockName } from '../../utils/stockNames'
@@ -109,7 +109,7 @@ import { useHoldingsStore } from '../../stores/holdings'
 const holdingsStore = useHoldingsStore()
 const quoteStore = useQuoteStore()
 
-// v55: click → select-stock, dblclick → apply-to-order
+// click → select-stock, dblclick → apply-to-order
 const emit = defineEmits(['apply-to-order', 'select-stock'])
 let lastDblclickTs = 0
 function onRowDblclick(row) {
@@ -150,12 +150,12 @@ const totalMv = computed(() => {
   return sum
 })
 
-// 当日盈亏 (v114.2): 由 holdings store 行情推送驱动重算写入 positions[].day_pnl,
+// 当日盈亏: 由 holdings store 行情推送驱动重算写入 positions[].day_pnl,
 // 本面板只读行字段, 不做任何拉取/轮询
 // 行情 trigger
 const quoteTickTrigger = computed(() => quoteStore.size || 0)
 
-// v37 移动端列标签
+// 移动端列标签
 function cellClassName({ row, column }) {
   const label = (column && column.label) || ''
   return 'col-' + label
@@ -178,7 +178,7 @@ function getReturnRate(row) {
   return holdingsStore.getReturnRate ? holdingsStore.getReturnRate(row) : null
 }
 
-// 2026-08-20: 最新价后面跟涨跌幅 (行情推送驱动, 复用 quoteStore.getChangePct 返回 %)
+// 最新价后面跟涨跌幅 (行情推送驱动, 复用 quoteStore.getChangePct 返回 %)
 function getChangePct(code) {
   void quoteTickTrigger.value
   return quoteStore.getChangePct(code)
@@ -213,7 +213,7 @@ function priceClass(row) {
   return 'text-flat'
 }
 
-// formatMoneyExact 已废弃 (v82.6): 用 formatPrice(price, stock_code) 替代
+// formatMoneyExact 已废弃: 用 formatPrice(price, stock_code) 替代
 //   原 formatMoneyExact = String(Number(v)), 0.900 -> "0.9" 不补 0
 
 function formatPercent(v) {
@@ -230,7 +230,7 @@ const holdingsColumns = [
   { key: 'vol', label: '持仓', vBind: COL.NUMBER },
   { key: 'avl_vol', label: '可用', vBind: COL.NUMBER },
   { key: 'cost_price', label: '成本', vBind: COL.PRICE },
-  { key: 'last_price', label: '最新价(涨跌幅)', width: 140, sortable: false },  // 2026-08-20: 用 LivePriceCell, 列名更新
+  { key: 'last_price', label: '最新价(涨跌幅)', width: 140, sortable: false },  // 用 LivePriceCell, 列名更新
   { key: 'market_value', label: '市值', vBind: COL.MONEY, sortable: false },
   { key: 'day_pnl', label: '当日盈亏', vBind: COL.MONEY, sortable: false },
   { key: 'profit', label: '浮动盈亏', vBind: COL.MONEY, sortable: false },

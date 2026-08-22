@@ -1,5 +1,5 @@
 """
-server/cache/quote_cache_flusher.py — 周期性把内存 cache 同步到 MySQL（2026-07-10 quote-cache）
+server/cache/quote_cache_flusher.py — 周期性把内存 cache 同步到 MySQL
 
 📌 设计目标：
    tick 流走 cache.set()（O(1)），不再每条 await MySQL UPSERT（实测 200ms/次）。
@@ -43,7 +43,7 @@ async def _flush_once() -> None:
         # 用 to_thread 放到线程池，避免阻塞事件循环
         def _do_upsert_all():
             with db_session() as db:
-                # 📌 2026-07-10 batch-flush：批量 UPSERT 替代循环
+                # 批量 UPSERT 替代循环
                 # 性能：pymysql cursor.executemany vs 单条 ~4.7x 提升
                 n_written = quote_repo.upsert_batch(db, list(snapshots.values()))
                 return n_written

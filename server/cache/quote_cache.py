@@ -1,5 +1,5 @@
 """
-server/cache/quote_cache.py — 行情内存缓存（2026-07-10 quote-cache）
+server/cache/quote_cache.py — 行情内存缓存
 
 📌 设计动机：
    quote_consumer 之前每条 tick 都要 await MySQL UPSERT（实测 p50=200ms, p95=410ms），

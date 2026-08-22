@@ -43,7 +43,7 @@ class Signal:
     stime: str = ""  # 触发信号的 K 线时间 (YYYYMMDDHHMMSS), 空=未知
     mode: str = ""   # "backtest" | "live" (区分回测模拟信号 vs 实盘信号)
     trace_id: str = field(default_factory=lambda: str(uuid.uuid4()))
-    # v126: 策略下单母单归因 (signal_consumer 读 parent_task_id 写 orders.task_id)
+    # 策略下单母单归因 (signal_consumer 读 parent_task_id 写 orders.task_id)
     parent_task_id: Optional[int] = None  # strategy_order.task_id (None = 非母单)
     strategy_name: str = ""               # 子单 user_def 用
 

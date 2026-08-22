@@ -32,10 +32,10 @@ export const useHoldingsStore = defineStore('holdings', () => {
   const orders = ref([])             // 后端 orders
   const trades = ref([])             // 后端 trades
   const cachedAsset = ref({         // 后端 asset 接口初值
-    cash: 0, frozen_cash: 0, market_value: 0, total_asset: 0, last_asset: 0  // v114: last_asset
+    cash: 0, frozen_cash: 0, market_value: 0, total_asset: 0, last_asset: 0  // last_asset
   })
 
-  // ---- v8: 激活交易日权威源 -----------------------------------------
+  // ---- 激活交易日权威源 -----------------------------------------
   const activeTrdDate = ref(null)   // 8 位 YYYYMMDD 或 null
   const activeDayStatus = ref(null) // 'active' | 'inactive' | null
 
@@ -80,7 +80,7 @@ export const useHoldingsStore = defineStore('holdings', () => {
     log, positionCodes, getQuoteStore: () => useQuoteStore(),
   })
 
-  // ---- 当日盈亏 recompute（holdings_daypnl.js, v114.2: 行情推送驱动, 无轮询）----
+  // ---- 当日盈亏 recompute（holdings_daypnl.js, 行情推送驱动, 无轮询）----
   const {
     start: startDayPnl, stop: stopDayPnl, refreshDayPnl,
   } = createDayPnlRecompute({ positions, activeTrdDate, trades })
@@ -91,10 +91,10 @@ export const useHoldingsStore = defineStore('holdings', () => {
     refreshAll,
     refreshPositions,
     refreshAsset,
-    // v32: quote 自动订阅控制
+    // quote 自动订阅控制
     _startQuoteAutoSub: _autoSubStart,
     _stopQuoteAutoSub: _autoSubStop,
-    // change 2026-07-21-system-init-page-refresh: 日初成功后 force re-bootstrap (切交易日)
+    // 日初成功后 force re-bootstrap (切交易日)
     resetForNewDay: _resetForNewDay,
   } = createBootstrap({
     positions, orders, trades, cachedAsset,
@@ -112,13 +112,13 @@ export const useHoldingsStore = defineStore('holdings', () => {
   }
   async function bootstrap() {
     const r = await _bootstrap(_startWs)
-    // v32: bootstrap 完成后启动 watch (后续 positions 增量同步)
+    // bootstrap 完成后启动 watch (后续 positions 增量同步)
     _autoSubStart()
     return r
   }
 
   /**
-   * change 2026-07-21-system-init-page-refresh: 日初成功后 force re-bootstrap
+   * 日初成功后 force re-bootstrap
    *   包装 _resetForNewDay, 注入 ws connect 回调 (bootstrap 内部会再调一次, 幂等)
    *   供 ws_dispatch._onInitCompleted 调
    */
@@ -127,7 +127,7 @@ export const useHoldingsStore = defineStore('holdings', () => {
   }
 
   // ---- watcher：quote 变 → 写回 cachedAsset（实时市值）-------------
-  // v8+: asset store 是 facade, a.asset 通过 computed 桥接到 cachedAsset,
+  // asset store 是 facade, a.asset 通过 computed 桥接到 cachedAsset,
   //      单一写 cachedAsset 即可, 无需再双写 a.asset
   let _unwatch = null
   function _startWatchers() {
@@ -143,7 +143,7 @@ export const useHoldingsStore = defineStore('holdings', () => {
       },
       { flush: 'post' }
     )
-    // v114.2: 当日盈亏 recompute 挂进同一生命周期 (行情推送驱动, 无轮询)
+    // 当日盈亏 recompute 挂进同一生命周期 (行情推送驱动, 无轮询)
     startDayPnl()
   }
   function _stopWatchers() {
@@ -158,7 +158,7 @@ export const useHoldingsStore = defineStore('holdings', () => {
     // change init-push-gate: 系统初始化中标志 (ws_dispatch 丢弃门读, SystemInit/刷新兜底写)
     initializing,
     loadHistory,
-    // v8: 激活交易日权威源（推送守门用）
+    // 激活交易日权威源（推送守门用）
     activeTrdDate, activeDayStatus,
     // computed
     liveMarketValue, liveTotalAsset, positionCodes,
@@ -166,7 +166,7 @@ export const useHoldingsStore = defineStore('holdings', () => {
     bootstrap, refreshAll, resetForNewDay,
     refreshPositions, refreshAsset,
     getLivePrice, getMarketValue, getProfit, getReturnRate,
-    // v114.2: 当日盈亏 (recompute 已自动, 手动刷新入口给 AppHeader/测试用)
+    // 当日盈亏 (recompute 已自动, 手动刷新入口给 AppHeader/测试用)
     refreshDayPnl,
     applyOrderPush, applyTradePush, applyQuote, applyPositionUpdate,
     log, clearHistory,

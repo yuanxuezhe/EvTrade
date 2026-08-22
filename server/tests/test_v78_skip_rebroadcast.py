@@ -1,12 +1,12 @@
 """
-test_v78_skip_rebroadcast.py — v78 (REQ-TRADE-029) "已报后续不处理" 回归测试
+test_v78_skip_rebroadcast.py — (REQ-TRADE-029) "已报后续不处理" 回归测试
 
-覆盖 handle_ord_cfm + dispatcher._broadcast_generic 的 v78 语义:
+覆盖 handle_ord_cfm + dispatcher._broadcast_generic 的语义:
 - ord_cfm 1st ack (broker_status=50 code=0) → 写入 status=50, dispatcher 广播
 - ord_cfm 2nd ack (broker_status=50 同委托, 无 cancelled_volume) → handler 返 None, dispatcher 跳过广播
 - ord_cfm 3rd ack (broker_status=53 撤单类穿透) → handler 仍写入 status=53, dispatcher 广播
 - ord_cfm 跨委托 (status=50 但 broker 报另一委托) → 不影响, dispatcher 仍广播
-- trd_cfm 累计推断不受影响 (v78 仅针对 ord_cfm)
+- trd_cfm 累计推断不受影响 (仅针对 ord_cfm)
 
 Mock 策略:
 - 直接创建 Order + 调用 handle_ord_cfm (绕开 RPC)
@@ -88,7 +88,7 @@ def _make_order(db, order_no="10000001", status="48"):
 
 
 def test_first_ack_writes_50_and_broadcasts(db, fake_broadcast):
-    """v78 baseline: 首次 ord_cfm code=0 → status=50 + 1 次 ws broadcast"""
+    """baseline: 首次 ord_cfm code=0 → status=50 + 1 次 ws broadcast"""
     o = _make_order(db, status="48")
 
     row = {
@@ -106,8 +106,8 @@ def test_first_ack_writes_50_and_broadcasts(db, fake_broadcast):
 
 
 def test_second_ack_after_already_reported_returns_none(db, fake_broadcast):
-    """v79 (REQ-TRADE-032): 50 在 PUSH_STATUSES → broker 重复推 50 仍推
-    v78-b 旧设计是"已报后续不推"，现在改成"只推 50/57",
+    """(REQ-TRADE-032): 50 在 PUSH_STATUSES → broker 重复推 50 仍推
+    旧设计是"已报后续不推"，现在改成"只推 50/57",
     重复 50 是合法推送 (DB 写入幂等, 前端仍显示"已报").
     """
     o = _make_order(db, status="50")  # 当前已是已报
@@ -120,12 +120,12 @@ def test_second_ack_after_already_reported_returns_none(db, fake_broadcast):
     result = handle_ord_cfm(db, row, ts="2026-07-18T09:30:05")
     db.commit()
 
-    assert result is not None, "v79: 50 在 PUSH_STATUSES, broker 推 50 必须返回 dict"
+    assert result is not None, "50 在 PUSH_STATUSES, broker 推 50 必须返回 dict"
     assert result["status"] == "50"
 
 
 def test_cancel_class_not_pushed(db, fake_broadcast):
-    """v79 (REQ-TRADE-032): 撤单类 (52/53/54) 不在 PUSH_STATUSES → return None
+    """(REQ-TRADE-032): 撤单类 (52/53/54) 不在 PUSH_STATUSES → return None
 
     撤单由 api/orders/cancel.py 主动 INSERT cancel-trade (trade_type=1)
     走 trd_cfm 路径推送, 前端通过成交通知感知撤单完成.
@@ -140,13 +140,13 @@ def test_cancel_class_not_pushed(db, fake_broadcast):
     result = handle_ord_cfm(db, row, ts="2026-07-18T09:30:10")
     db.commit()
 
-    assert result is None, "v79: 53 不在 PUSH_STATUSES, broker 推部撤应跳过"
+    assert result is None, "53 不在 PUSH_STATUSES, broker 推部撤应跳过"
 
 
 def test_partial_filled_status_pushed_on_50(db, fake_broadcast):
-    """v79 (REQ-TRADE-032): 当前=55 部成, broker 再推 50 → 仍推 (50 在 PUSH_STATUSES)
+    """(REQ-TRADE-032): 当前=55 部成, broker 再推 50 → 仍推 (50 在 PUSH_STATUSES)
 
-    旧 v78-b 设计 55 后跳 50 是为"防止覆盖累计", 现在改成"只推 50/57",
+    旧设计 55 后跳 50 是为"防止覆盖累计", 现在改成"只推 50/57",
     broker 推 50 总是推 (前端显示已报), 累计靠 trd_cfm 推断, 不怕覆盖.
     """
     o = _make_order(db, status="55")  # 部成, 累计推断已落
@@ -159,12 +159,12 @@ def test_partial_filled_status_pushed_on_50(db, fake_broadcast):
     result = handle_ord_cfm(db, row, ts="2026-07-18T09:30:15")
     db.commit()
 
-    assert result is not None, "v79: 50 在 PUSH_STATUSES, broker 推 50 必须返回 dict"
-    assert result["status"] == "50", "v79: broker_status=50 → order.status=50 (非 55)"
+    assert result is not None, "50 在 PUSH_STATUSES, broker 推 50 必须返回 dict"
+    assert result["status"] == "50", "broker_status=50 → order.status=50 (非 55)"
 
 
 def test_first_time_ack_does_not_skip(db, fake_broadcast):
-    """v78 边界: 首次从 48 → 50 不能被误跳
+    """边界: 首次从 48 → 50 不能被误跳
 
     当前 status=48 (未报), broker 推 ack code=0 → 必须写入 50 + 广播
     """
@@ -183,7 +183,7 @@ def test_first_time_ack_does_not_skip(db, fake_broadcast):
 
 
 async def test_dispatcher_skips_on_none_handler_result(db, fake_broadcast):
-    """v78 dispatcher 端到端: handler None → broadcast.calls 0
+    """dispatcher 端到端: handler None → broadcast.calls 0
 
     通过真实 dispatcher._broadcast_generic 验证 None 跳过语义.
     """
@@ -203,13 +203,13 @@ async def test_dispatcher_skips_on_none_handler_result(db, fake_broadcast):
         push_trace="test-trace-1",
     )
 
-    # v78: 跳过路径 — 立即检查, 不需要等调度
+    # 跳过路径 — 立即检查, 不需要等调度
     assert len(fake_broadcast.calls) == 0, \
         "handler_result=None 必须跳过 broadcast, 实际 calls=%s" % fake_broadcast.calls
 
 
 async def test_dispatcher_broadcasts_on_valid_handler_result(db, fake_broadcast):
-    """v78 dispatcher baseline: handler 非 None → broadcast 1 次"""
+    """dispatcher baseline: handler 非 None → broadcast 1 次"""
     from server.services.push.dispatcher import PushDispatcher
 
     disp = PushDispatcher(rpc_client=None)

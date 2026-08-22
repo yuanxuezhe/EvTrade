@@ -1,7 +1,7 @@
 """
-server/services/script_strategy/strategies.py — 策略 CRUD (v123)
+server/services/script_strategy/strategies.py — 策略 CRUD
 
-职责单一: Strategy 实体 CRUD; 可见性判定委托 access.py (显式 is_public, v125)。
+职责单一: Strategy 实体 CRUD; 可见性判定委托 access.py (显式 is_public)。
 - 建策略必填 {name, script_id, stock_code} (绑定标的), 不填参数、不定模式
 - 回测批次 / 实盘门禁在 batches.py; param_ranges 展开在 params.py; 错误类型在 errors.py
 

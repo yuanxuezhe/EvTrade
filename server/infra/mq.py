@@ -1,5 +1,5 @@
 """
-infra/mq.py — aio_pika RMQ 长连接基类（v13 NEW）
+infra/mq.py — aio_pika RMQ 长连接基类
 
 职责：纯传输层基类 — RMQ 连接 / channel / exchange / queue declare / publish / 通用 listener。
 

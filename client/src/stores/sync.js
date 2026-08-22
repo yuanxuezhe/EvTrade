@@ -3,7 +3,7 @@ import { reactive, ref, computed } from 'vue'
 import { syncApi } from '../api/sync'
 
 /**
- * 同步任务状态缓存（v21 stock-info-crawler）
+ * 同步任务状态缓存（stock-info-crawler）
  *
  * 数据源：
  *   1. REST GET /api/sync/stocks/status — 启动时拿一次 + 启动/停止后刷新

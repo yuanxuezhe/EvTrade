@@ -1,28 +1,26 @@
 """
-quote.py — 行情快照 REST API（2026-07-09 quote-snapshot-subscribe, 2026-07-10 quote-cache）
+quote.py — 行情快照 REST API
 
 提供：
 - GET /api/quote/snapshots  — 批量查最新快照（POST body: {stock_codes:[...]}）
 - GET /api/quote/snapshot/{stock_code} — 单条查
 - GET /api/quote/snapshot/{stock_code}/depth — 单条 + 5档买卖深度（供 QuotePanel.vue）
 
-📌 2026-07-10 quote-cache：读路径改为 cache 优先，miss 时查 DB 回填到 cache
+📌 quote-cache：读路径 cache 优先，miss 时查 DB 回填到 cache
 📌 数据源：内存 QuoteCache（主） + quote_snapshots 表（兜底）
 📌 latest-only 模型：每 stock_code 1 行
 📌 前端订阅触发点：
    - 持仓页加载后 → POST /api/quote/snapshots {stock_codes: holdings.codes}
    - Trade.vue 输入代码触发 → GET /api/quote/snapshot/{code}/depth
 
-v81.4 改动（tables-migration）：
-- 删 Depends(get_db) × 2：repo 层 (server/repo/quote_snapshots.py) 已迁到 tables 层，
+- repo 层 (server/repo/quote_snapshots.py) 走 tables 层，
   repo 函数签名保留 db= 占位但实际不依赖 session (quote_cache 兜底 + QuoteSnapshots.query_all)
-- 删 sqlalchemy.orm.Session import + server.db.get_db
 """
 from fastapi import APIRouter
 from typing import List, Optional
 from pydantic import BaseModel, Field
 
-from server.cache.quote_cache import get_quote_cache  # 2026-07-10 quote-cache
+from server.cache.quote_cache import get_quote_cache  # quote-cache
 from server.repo.quote_snapshots import (
     get_latest as repo_get_latest,
     get_latest_multi as repo_get_latest_multi,
@@ -52,7 +50,7 @@ class SnapshotResponse(BaseModel):
 async def post_snapshots(body: SnapshotsRequest):
     """批量查 stock_codes 当前最新快照（cache 优先 + DB 回填）
 
-    v81.4 tables-migration: 删 db 参数 (repo 层已迁到 tables 层, db 为 noop 占位).
+    repo 层已走 tables 层, db 为 noop 占位.
     """
     if not body.stock_codes:
         return SnapshotsResponse(code=0, msg="empty list", snapshots={})
@@ -63,12 +61,12 @@ async def post_snapshots(body: SnapshotsRequest):
     codes = list({c.strip() for c in body.stock_codes if c and c.strip()})
     cache = get_quote_cache()
 
-    # 2026-07-10 quote-cache: 先读 cache, 收集 miss 的 code
+    # quote-cache: 先读 cache, 收集 miss 的 code
     cached = cache.multi_get(codes)
     missing = [c for c in codes if c not in cached]
     snapshots: dict = {code: snap for code, snap in cached.items()}
 
-    # 2026-07-10 quote-cache: miss 的走 DB 回填 (启动期 + 后台 flush 间隔之间的窗口)
+    # quote-cache: miss 的走 DB 回填 (启动期 + 后台 flush 间隔之间的窗口)
     if missing:
         rows = repo_get_latest_multi(missing)
         for code, snap in rows.items():
@@ -85,7 +83,7 @@ async def post_snapshots(body: SnapshotsRequest):
 async def get_snapshot(stock_code: str):
     """单条 stock_code 最新快照（cache 优先 + DB 回填）
 
-    v81.4 tables-migration: 删 db 参数 (repo 层已迁到 tables 层, db 为 noop 占位).
+    repo 层已走 tables 层, db 为 noop 占位.
     """
     cache = get_quote_cache()
     snap = cache.get(stock_code)

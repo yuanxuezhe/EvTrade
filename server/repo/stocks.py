@@ -1,5 +1,5 @@
 """
-repo/stocks.py - 股票基础信息 CRUD (v23 slim-stocks-table, v46+ short-name-auto, v80.5 tables, v90 去 _stock_cache)
+repo/stocks.py - 股票基础信息 CRUD
 
 职责:
 - upsert:增量更新(7 天内跳过),crawler 自动入仓用
@@ -10,19 +10,14 @@ repo/stocks.py - 股票基础信息 CRUD (v23 slim-stocks-table, v46+ short-name
 - create_by_admin:admin 手动添加(自动生成 short_name, REQ-STOCK-007)
 - to_dict:Row -> dict(API 响应用)
 - to_dict_from_data:raw dict (来自 crawler) -> 标准 dict
-- GetStockInfo / get_is_t0_able / get_stock_scale / get_stock_stktype: 证券元信息查询 (v90 直查 DB)
+- GetStockInfo / get_is_t0_able / get_stock_scale / get_stock_stktype: 证券元信息查询 (直查 DB)
 
-字段精简历史:
-- v21 (2026-07-10) stock-info-crawler: 14 个业务字段(基础信息 + 公司简介)
-- v23 (2026-07-12) slim-stocks-table: 6 个业务字段(基础信息 + 交易粒度)
-- v25 (2026-07-12) stocks-cache-and-short-name: +short_name 字段(7 字段)
-- v46+ (2026-07-15) short-name-auto: short_name 改为自动生成, admin 无需传 (REQ-STOCK-007)
-- v90 (2026-07-23): 去掉 _stock_cache 内存缓存, 改为直查 DB; 缓存职责移至前端 IndexedDB
+无内存缓存 (_stock_cache 已去), 直查 DB; 缓存职责在前端 IndexedDB。
 """
 from datetime import datetime, timedelta
 from typing import List, Optional, Dict
 
-from server.services.short_name import to_short_name  # v46+ REQ-STOCK-007
+from server.services.short_name import to_short_name  # REQ-STOCK-007
 from server.tables.base import Row
 from server.tables.stocks import Stocks
 
@@ -32,10 +27,10 @@ SKIP_THRESHOLD_DAYS = 7
 
 
 # ============================================================================
-# v90: 证券信息查询入口 - 直查 DB (去 _stock_cache, 前端 IndexedDB 负责缓存)
+# 证券信息查询入口 - 直查 DB (前端 IndexedDB 负责缓存)
 # ============================================================================
 def GetStockInfo(stock_code: str) -> dict:
-    """获取证券元信息 (v90 去缓存版, 直查 DB)
+    """获取证券元信息 (直查 DB)
 
     Args:
         stock_code: '000001.SZ'
@@ -65,17 +60,17 @@ def GetStockInfo(stock_code: str) -> dict:
 
 
 def get_is_t0_able(db=None, stock_code: str = "") -> bool:
-    """读 stock.is_t0_able (v90 直查 DB)"""
+    """读 stock.is_t0_able (直查 DB)"""
     return GetStockInfo(stock_code)["t0"]
 
 
 def get_stock_scale(db=None, stock_code: str = "") -> int:
-    """读 stock.scale (v90 直查 DB)"""
+    """读 stock.scale (直查 DB)"""
     return GetStockInfo(stock_code)["scale"]
 
 
 def get_stock_stktype(db=None, stock_code: str = "") -> int:
-    """读 stock.stktype (v90 直查 DB)"""
+    """读 stock.stktype (直查 DB)"""
     return GetStockInfo(stock_code)["stktype"]
 
 
@@ -83,7 +78,7 @@ def upsert(db=None, stock_code: str = "", data: Optional[Dict] = None) -> str:
     """增量 upsert stocks 表(REQ-STOCK-002)
 
     Args:
-        db: 兼容旧调用方的保留参数, v80.5 不再使用
+        db: 兼容旧调用方的保留参数, 不再使用
         stock_code: '000001.SZ'
         data: dict 含 stock_name/sector(其余字段白名单过滤)
               (data 里若有 stock_code 会被剔除,以参数 stock_code 为准)
@@ -113,9 +108,8 @@ def get_by_code(db=None, stock_code: str = "") -> Optional[Row]:
     return Stocks.query_one(stock_code=stock_code)
 
 
-# v23 slim-stocks-table: admin 显式编辑 stocks 行
-# v25 stocks-cache-and-short-name: +short_name (6 -> 7 字段)
-# 允许覆盖的字段白名单（stock_code 是 PK,created_at/updated_at 由 DB 维护）
+# admin 显式编辑 stocks 行的允许覆盖字段白名单
+# （stock_code 是 PK, created_at/updated_at 由 DB 维护）
 # 8 字段:stock_name/sector/is_t0_able/min_buy_qty/trade_unit/stktype/scale/short_name
 _ADMIN_EDITABLE_FIELDS = (
     'stock_name', 'sector',
@@ -136,7 +130,7 @@ def update_by_admin(
     - upsert 是爬虫自动入仓,7 天阈值跳过
     - update_by_admin 是 admin 手动改,无阈值,白名单字段全覆盖
 
-    v46+: 若 stock_name 字段在 data 中被修改, 自动重算 short_name (REQ-STOCK-007)
+    若 stock_name 字段在 data 中被修改, 自动重算 short_name (REQ-STOCK-007)
           data 中若含 short_name 也会被忽略 (admin 无权改)
     """
     data = data or {}
@@ -144,20 +138,20 @@ def update_by_admin(
     if existing is None:
         return None
 
-    # v46+: 检测 stock_name 变化, 若变则重算 short_name
+    # 检测 stock_name 变化, 若变则重算 short_name
     new_short_name = None
     if 'stock_name' in data:
         new_short_name = to_short_name(data['stock_name'])
 
     update_data = {}
     for k, v in data.items():
-        # v46+: 忽略 admin 传入的 short_name 字段
+        # 忽略 admin 传入的 short_name 字段
         if k == 'short_name':
             continue
         if k in _ADMIN_EDITABLE_FIELDS and hasattr(existing, k):
             update_data[k] = v
 
-    # v46+: 应用重算后的 short_name
+    # 应用重算后的 short_name
     if new_short_name is not None:
         update_data['short_name'] = new_short_name
 
@@ -176,7 +170,7 @@ def create_by_admin(
     - upsert 是爬虫自动入仓,7 天阈值跳过
     - create_by_admin 是 admin 手动新增,无阈值,stock_code 必填且必须不存在
 
-    v46+: short_name 由 stock_name 自动派生 (REQ-STOCK-007)
+    short_name 由 stock_name 自动派生 (REQ-STOCK-007)
           data 中若含 short_name 会被忽略 (admin 无权传)
     """
     data = data or {}
@@ -189,10 +183,10 @@ def create_by_admin(
     if existing is not None:
         return None
 
-    # 只允许白名单字段,stock_code 单独处理;v46+ 排除 short_name (自动生成)
+    # 只允许白名单字段,stock_code 单独处理; 排除 short_name (自动生成)
     payload = {k: v for k, v in data.items()
                if k in _ADMIN_EDITABLE_FIELDS and k in Stocks.__fields__ and k != 'short_name'}
-    # v46+: 自动生成 short_name (来自 stock_name)
+    # 自动生成 short_name (来自 stock_name)
     payload['short_name'] = to_short_name(data.get('stock_name', ''))
 
     Stocks.add_one({'stock_code': stock_code, **payload})
@@ -211,7 +205,7 @@ def list_codes(db=None) -> List[str]:
 
 
 def to_dict(stock: Row) -> Dict:
-    """Row -> dict(API 响应用, v23 字段精简, v25 加 short_name, v80 加 scale + stktype)"""
+    """Row -> dict(API 响应用)"""
     return {
         'stock_code': stock.stock_code,
         'stock_name': stock.stock_name or '',
@@ -220,13 +214,13 @@ def to_dict(stock: Row) -> Dict:
         'min_buy_qty': stock.min_buy_qty,
         'trade_unit': stock.trade_unit,
         'short_name': stock.short_name,
-        'stktype': int(getattr(stock, 'stktype', 0) or 0),  # v80
-        'scale': int(getattr(stock, 'scale', 2) or 2),      # v80
+        'stktype': int(getattr(stock, 'stktype', 0) or 0),
+        'scale': int(getattr(stock, 'scale', 2) or 2),
     }
 
 
 def to_dict_from_data(stock_code: str, data: Dict) -> Dict:
-    """raw dict (来自 crawler) -> 标准 dict (v23 字段精简, v25 加 short_name, v80 加 scale + stktype)"""
+    """raw dict (来自 crawler) -> 标准 dict"""
     return {
         'stock_code': stock_code,
         'stock_name': data.get('stock_name', ''),
@@ -235,6 +229,6 @@ def to_dict_from_data(stock_code: str, data: Dict) -> Dict:
         'min_buy_qty': int(data.get('min_buy_qty', 100)),
         'trade_unit': int(data.get('trade_unit', 1)),
         'short_name': data.get('short_name'),
-        'stktype': int(data.get('stktype', 0) or 0),  # v80
-        'scale': int(data.get('scale', 2) or 2),      # v80
+        'stktype': int(data.get('stktype', 0) or 0),
+        'scale': int(data.get('scale', 2) or 2),
     }

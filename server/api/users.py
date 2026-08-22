@@ -1,8 +1,8 @@
 """
 User CRUD API — admin only.
 
-v81 tables-migration (strict user-pseudocode 风格):
-  - ORM 残留全部清掉: 无 Depends(get_db), 无 sqlalchemy.orm.Session, 无 server.db.get_db.
+tables API 访问风格 (strict user-pseudocode):
+  - 无 Depends(get_db), 无 sqlalchemy.orm.Session, 无 server.db.get_db.
   - 严格按 MIGRATION_GUIDE.md:
       查   → Users.query_one(id=...) / Users.query_by('field', value) /
              Users.query_by_fields({...}) / Users.query_all()
@@ -86,11 +86,9 @@ def list_users(
 ):
     """List users (admin only).
 
-    v81 tables-migration:
-      原: db.query(User).filter(User.username.ilike(kw) | User.email.ilike(kw) | User.full_name.ilike(kw)).all()
-      改: 关键词 + role 过滤都用 aggregate(COUNT) 检测 + 全表 + 内存过滤
-         (用户偏好: 数据量小, 全表 + 前端/服务侧过滤即可)
-      role 单一精确字段过滤 → Users.query_by('role', role)
+    关键词 + role 过滤: 全表 + 内存过滤
+       (用户偏好: 数据量小, 全表 + 前端/服务侧过滤即可);
+       role 单一精确字段过滤 → Users.query_by('role', role)
     """
     # role 精确过滤走 query_by (单字段非主键)
     if role:
@@ -127,11 +125,8 @@ def create_user(
 ):
     """Create user (admin only).
 
-    v81 tables-migration:
-      原: db.query(User).filter(User.username == payload.username).first() → exists
-      改: Users.query_by('username', payload.username, limit=1) → 0/1 行
-      原: db.add(user); db.commit(); db.refresh(user)
-      改: Users.add_one({...})  (内部 SQLAlchemy INSERT, 自动回填自增 PK)
+    重名校验: Users.query_by('username', payload.username, limit=1) → 0/1 行;
+    写入: Users.add_one({...})  (内部 SQLAlchemy INSERT, 自动回填自增 PK)
     """
     _validate_username(payload.username)
     _validate_password(payload.password)
@@ -163,9 +158,7 @@ def update_user(
 ):
     """Update user (admin only).
 
-    v81 tables-migration:
-      原: user = db.query(User).get(user_id); user.role = ...; db.commit(); db.refresh(user)
-      改: Users.query_one(id=user_id) → user (Row); 改字段 → Users.update_one({...}, id=user_id)
+    Users.query_one(id=user_id) → user (Row); 改字段 → Users.update_one({...}, id=user_id)
     """
     user = Users.query_one(id=user_id)
     if not user:
@@ -217,9 +210,7 @@ def reset_password(
 ):
     """Reset password (admin only).
 
-    v81 tables-migration:
-      原: user.password_hash = hash; db.commit()
-      改: Users.update_one({"password_hash": hash}, id=user_id)
+    Users.update_one({"password_hash": hash}, id=user_id)
     """
     _validate_password(payload.new_password)
     user = Users.query_one(id=user_id)
@@ -236,9 +227,7 @@ def delete_user(
 ):
     """Delete user (admin only).
 
-    v81 tables-migration:
-      原: db.delete(user); db.commit()
-      改: Users.delete_one(id=user_id) → bool
+    Users.delete_one(id=user_id) → bool
     """
     if user_id == admin.id:
         raise HTTPException(status_code=400, detail="不能删除当前登录账号")

@@ -1,11 +1,9 @@
 /**
- * 价格类型常量
- * v83: 用户指令 (2026-07-23) 重新对齐到柜台协议码点
+ * 价格类型常量 — 与柜台协议码点对齐
  *   - FIX_PRICE = 11       xtconstant.FIX_PRICE                  (限价 / 指定价)
  *   - LATEST_PRICE = 5     xtconstant.LATEST_PRICE               (最新价)
  *   - MARKET_PEER_PRICE_FIRST = 44  xtconstant.MARKET_PEER_PRICE_FIRST  (市价 / 对手方最优价, 吃档 1)
  *
- * 历史: 2026-07-15 协议曾简化为 0/1/2; 2026-07-23 按用户指令回滚到 11/5/44 (与柜台 xtconstant 一致)
  */
 export const PriceType = {
   // 柜台协议数字码 (xtconstant)
@@ -50,7 +48,7 @@ export const OrderType = {
 
 /**
  * 价格类型选项（用于 el-radio-button）
- * v83: 3 个按钮 — 限价 (11) / 最新价 (5) / 市价 (44), 与 xtconstant 协议 1:1 对齐
+ * 3 个按钮 — 限价 (11) / 最新价 (5) / 市价 (44), 与 xtconstant 协议 1:1 对齐
  */
 export const priceTypeOptions = [
   { label: '限价', value: PriceType.FIX_PRICE },                    // 11

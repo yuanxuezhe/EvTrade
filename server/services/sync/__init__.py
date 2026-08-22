@@ -1,5 +1,5 @@
 """
-services/sync — 同步任务管理 (v21 stock-info-crawler)
+services/sync — 同步任务管理
 
 目录:
   manager.py   # 全局任务生命周期 (start/stop/status)
