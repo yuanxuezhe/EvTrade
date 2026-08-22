@@ -15,7 +15,7 @@
  *
  *   注: 无 POST /t0-tasks/{id}/balance 端点（前端在 T0Trade.vue 直接读 holdings.orders 算差值 + 调 /orders/place 下市价单）
  */
-import { http } from './index'
+import { http } from './http'
 
 export const t0TasksApi = {
   /**

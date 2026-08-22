@@ -4,7 +4,7 @@
  * http instance baseURL='/api', 这里只写 path 后缀 (不要带 /api 前缀, 会拼成 /api/api/...)
  * 返回 res.data 而不是 res (admin.js 等其他 api 都是这么写的)
  */
-import { http } from './index'
+import { http } from './http'
 
 export const sysconfigApi = {
   /** 列出配置 (当前用户 + 继承默认) */

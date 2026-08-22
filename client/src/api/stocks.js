@@ -1,5 +1,5 @@
 import axios from 'axios'
-import { http } from './index'
+import { http } from './http'
 
 /**
  * stocks API 客户端

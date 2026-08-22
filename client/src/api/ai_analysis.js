@@ -1,6 +1,6 @@
 // ai_analysis.js - AI 分析 API client
 // 调 /api/ai/ai-analysis，返回 {code, msg, report, table_rows, synthesis, elapsed_sec, disclaimer}
-import { http } from './index'
+import { http } from './http'
 
 export const aiAnalysisApi = {
   /**

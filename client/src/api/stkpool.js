@@ -12,7 +12,7 @@
  *
  * 鉴权: 全部走 auth 通用拦截器 (http 401 by deps)
  */
-import { http } from './index'
+import { http } from './http'
 
 // 注意: http 实例 baseURL = '/api', 调用路径必须不带 /api 前缀
 export const stkpoolApi = {

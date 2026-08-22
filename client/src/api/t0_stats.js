@@ -1,4 +1,4 @@
-import { http } from './index'
+import { http } from './http'
 
 /**
  * T0 收益统计 API
