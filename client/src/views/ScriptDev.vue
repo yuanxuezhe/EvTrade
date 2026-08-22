@@ -86,6 +86,15 @@
                 <el-option label="paused" value="paused" />
               </el-select>
             </el-form-item>
+            <el-form-item label="可见性">
+              <el-switch
+                v-model="form.is_public"
+                active-text="公开"
+                inactive-text="私有"
+                :disabled="isReadonly"
+                data-el="sd-is-public"
+              />
+            </el-form-item>
             <el-form-item label="描述">
               <el-input v-model="form.description" placeholder="(可选)" style="width: 300px" :disabled="isReadonly" />
             </el-form-item>
@@ -256,6 +265,7 @@ function _blankForm() {
     name: '',
     description: '',
     status: 'active',
+    is_public: false,
     code: '',
     params_schema: [],
   }
@@ -288,6 +298,7 @@ async function onSelect(s) {
     name: s.name,
     description: s.description,
     status: s.status,
+    is_public: !!s.is_public,
     code: s.code,
     params_schema: (s.params_schema || []).map(p => ({
       ...p,
@@ -464,6 +475,7 @@ function _formToPayload(f) {
     code: f.code,
     description: f.description,
     status: f.status,
+    is_public: !!f.is_public,
     params_schema: f.params_schema.map(p => {
       const out = { key: p.key, type: p.type }
       if (p.type === 'choice') {
