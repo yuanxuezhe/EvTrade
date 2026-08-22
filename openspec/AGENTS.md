@@ -130,14 +130,16 @@ mv openspec/changes/<name> openspec/changes/archive/<date>-<name>
 
 ## 当前活跃 change
 
+> 当前**无活跃 draft change**（最近 5 个变更均已归档）。新增需求请走 `/openspec:proposal <name>`。
+
 | Change | 状态 | 解决什么 |
 |---|---|---|
-| `current-issues` | draft | 列出本轮分析发现的 13 项问题及修复分工 |
-| `add-config-validation` | draft | .env 启动校验 + 配置分层文档化 |
-| `consolidate-rpc-parsers` | draft | 8 个 _parse_* 解析器合并为统一 schema |
 | `2026-06-14-persistence-and-t0` | **✅ 已归档** | v4 实施完成：11 张表 + 屏障 + 日初对账 + T0 + 费率（详见 `archive/2026-06-14-persistence-and-t0/proposal.md`） |
+| `add-config-validation` | **✅ 已归档** | .env 启动校验 + JWT_SECRET auto-gen + 配置分层文档化（commit `d35ed8e`；详见 `archive/add-config-validation/proposal.md`） |
+| `consolidate-rpc-parsers` | **✅ 已归档** | 8 个 _parse_* 解析器合并为统一 schema（commit `390da31`；现 parser 收敛在 `server/rpc/parsers_common.py` + `parsers_business.py`；详见 `archive/consolidate-rpc-parsers/proposal.md`） |
+| `current-issues` | **✅ 已合并/退出** | 本轮分析发现的 13 项问题及修复分工（commit `93335bf` 重命名为 `tracking/`；后由 `de2a973` 全局清理时移除 — 13 项已通过后续 change 实施完毕） |
 | `2026-08-23-delete-orm-layer` | **✅ 已归档** | A.8：删 server/models/ + server/db.py，User 全迁 tables.Users，metadata 由 tables/ 注册 21 表（详见 `archive/2026-08-23-delete-orm-layer/proposal.md`） |
 | `2026-08-23-script-visibility-toggle` | **✅ 已归档** | ScriptDev 脚本编辑补公开/私有开关（后端 REQ-STRAT-014 已就绪，前端缺口）（详见 `archive/2026-08-23-script-visibility-toggle/proposal.md`） |
 | `2026-08-23-rpc-test-mode` | **✅ 已归档** | RPC 测试模式：EVTRADE_TEST_MODE=1 时业务 RPC 不发真实请求，mock.py 固定应答（详见 `archive/2026-08-23-rpc-test-mode/proposal.md`） |
 
-详见 `openspec/changes/<name>/proposal.md`。
+详见 `openspec/changes/archive/<date>-<name>/proposal.md`。
