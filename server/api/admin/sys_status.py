@@ -29,7 +29,8 @@ from datetime import datetime, timezone
 import asyncio
 
 from server.db import get_db
-from server.models.orm import SysStatus, get_active_sysstatus
+from server.tables import SysStatus
+from server.models.orm import get_active_sysstatus  # helper 内部已走 Tables API；保留 orm.py 直到 A.7
 from server.models.user import User
 from server.services.reconcile import do_reconcile
 from server.services.guards import require_admin
@@ -126,7 +127,7 @@ async def init_trading_day(
     #   SysStatus 单行表 id=1, UPDATE 前查到的 trd_date 即切日前的
     _previous_trd_date = None
     try:
-        prev = db.query(SysStatus).filter(SysStatus.id == 1).first()
+        prev = SysStatus.query_one(id=1)
         _previous_trd_date = prev.trd_date if prev else None
     except Exception:
         _previous_trd_date = None

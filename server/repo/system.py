@@ -11,7 +11,7 @@ from datetime import datetime, time as dtime
 from typing import Optional
 
 from server.db import db_session
-from server.models.orm import SysStatus, get_active_sysstatus
+from server.models.orm import get_active_sysstatus  # helper 内部已走 Tables API
 
 
 class TradingClock:
@@ -31,7 +31,6 @@ class TradingClock:
         from server.services.sysconfig import parse_trdtime, get_trdtime_str
         s = get_trdtime_str()
         cls._sessions = parse_trdtime(s)
-        from server.models.orm import get_active_sysstatus
         with db_session() as db:
             active = get_active_sysstatus(db)
             cls._is_half_day = bool(active and active.status == "active" and active.is_half_day)

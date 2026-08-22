@@ -35,7 +35,7 @@ from server.api.orders import place as place_mod  # noqa: E402
 from server.auth.security import create_access_token, hash_password  # noqa: E402
 from server.db import SessionLocal  # noqa: E402
 from server.main import app  # noqa: E402
-from server.models.orm import SysStatus  # noqa: E402
+from server.tables import SysStatus, Orders
 from server.models.user import User  # noqa: E402
 
 # ────────── 全局 monkeypatch: 替换真实 RPC / ws_manager ──────────
@@ -111,18 +111,26 @@ def setup_db():
         # 激活交易日 (v_next: sys_status 单行 id=1)
         from server.models.orm import SysStatus as _Ss
         # 不再 DELETE WHERE trd_date; 改为 UPDATE id=1 行的 trd_date/status
-        existing = db.query(_Ss).filter(_Ss.id == 1).first()
+        existing = SysStatus.query_one(id=1)
         if existing:
-            existing.trd_date = TRD_DATE
-            existing.status = "active"
-            existing.is_half_day = 0
-            existing.remark = "sim"
-            existing.initialized_at = None
-            existing.initialized_by = None
-            existing.closed_at = None
-            existing.closed_by = None
+            SysStatus.update_by_fields(
+                dict(
+                    trd_date=TRD_DATE,
+                    status="active",
+                    is_half_day=0,
+                    remark="sim",
+                    initialized_at=None,
+                    initialized_by=None,
+                    closed_at=None,
+                    closed_by=None,
+                ),
+                id=1,
+            )
         else:
-            db.add(_Ss(id=1, status="active", trd_date=TRD_DATE, is_half_day=False, remark="sim"))
+            SysStatus.upsert_one(
+                dict(id=1, status="active", trd_date=TRD_DATE, is_half_day=0, remark="sim"),
+                id=1,
+            )
         db.commit()
         return db.query(User).filter_by(username=USERNAME).first().id
     finally:
@@ -183,16 +191,15 @@ def step_simulate_broker_ack(client, token: str, order_no: str, broker_oid: str)
     print("=" * 60)
     db = SessionLocal()
     try:
-        from server.models.orm import Order
-
-        o = db.query(Order).filter_by(order_no=order_no, trd_date=TRD_DATE).first()
+        o = Orders.query_by_fields(order_no=order_no, trd_date=TRD_DATE)
         if not o:
             print(f"!! 订单 {order_no} 不存在, 跳过 ack 模拟")
             return
-        o.status = "50"
-        o.status_msg = "已报"
-        o.order_id = broker_oid  # ★ broker 回报了 order_id, 才能撤
-        db.commit()
+        Orders.update_by_fields(
+            dict(status="50", status_msg="已报", order_id=broker_oid),
+            order_no=order_no,
+            trd_date=TRD_DATE,
+        )
         print(f"已写入 DB: status=50, order_id={broker_oid}")
     finally:
         db.close()
