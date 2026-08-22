@@ -7,8 +7,9 @@ lifecycle/seed.py — 启动时建表 + 默认账号 seed
 - 若 User 表为空，seed admin / trader 两个默认账号
 - 已有用户则什么都不做（不覆盖、不重置）
 """
-from server.infra.db import init_db, SessionLocal
-from server.models.user import User
+from datetime import datetime, timezone
+from server.infra.db import init_db
+from server.tables import Users
 from server.auth.security import hash_password
 from server.config import validate_config
 import importlib
@@ -91,32 +92,29 @@ def init_and_seed():
     except Exception:
         import traceback; traceback.print_exc()
         print("[INIT] migration error (continuing anyway)")
-    db = SessionLocal()
-    try:
-        count = db.query(User).count()
-        if count == 0:
-            admin = User(
-                username="admin",
-                password_hash=hash_password("admin123"),
-                role="admin",
-                full_name="系统管理员",
-                is_active=True,
-                must_change_password=True,
-            )
-            trader = User(
-                username="trader",
-                password_hash=hash_password("trader123"),
-                role="trader",
-                full_name="默认交易员",
-                is_active=True,
-                must_change_password=True,
-            )
-            db.add(admin)
-            db.add(trader)
-            db.commit()
-            print("[INIT] Created default accounts (users table was empty):")
-            print("[INIT]   - admin / admin123 (role=admin)")
-            print("[INIT]   - trader / trader123 (role=trader)")
-            print("[INIT] Please change the password after first login.")
-    finally:
-        db.close()
+    if not Users.query_all():
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        Users.add_one({
+            "username": "admin",
+            "password_hash": hash_password("admin123"),
+            "role": "admin",
+            "full_name": "系统管理员",
+            "is_active": True,
+            "must_change_password": True,
+            "created_at": now,
+            "updated_at": now,
+        })
+        Users.add_one({
+            "username": "trader",
+            "password_hash": hash_password("trader123"),
+            "role": "trader",
+            "full_name": "默认交易员",
+            "is_active": True,
+            "must_change_password": True,
+            "created_at": now,
+            "updated_at": now,
+        })
+        print("[INIT] Created default accounts (users table was empty):")
+        print("[INIT]   - admin / admin123 (role=admin)")
+        print("[INIT]   - trader / trader123 (role=trader)")
+        print("[INIT] Please change the password after first login.")

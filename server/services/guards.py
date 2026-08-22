@@ -15,9 +15,9 @@ from typing import Optional
 from sqlalchemy.orm import Session
 
 from server.infra.db import db_session
-from server.models.user import User
 from server.repo.system import TradingClock, get_active_trd_date, get_active_sysstatus
 from server.auth.deps import get_current_user
+from server.tables import Row
 
 
 def resolve_active_trd_date(db: Session) -> Optional[str]:
@@ -81,7 +81,7 @@ async def require_trading_session() -> None:
         )
 
 
-def require_trader(current_user: User = Depends(get_current_user)) -> User:
+def require_trader(current_user: Row = Depends(get_current_user)) -> Row:
     """屏障：只有 trader/admin 角色可下单/撤单
 
     直接复用 auth.deps.get_current_user 取用户对象。
@@ -95,7 +95,7 @@ def require_trader(current_user: User = Depends(get_current_user)) -> User:
     return current_user
 
 
-def require_admin(current_user: User = Depends(get_current_user)) -> User:
+def require_admin(current_user: Row = Depends(get_current_user)) -> Row:
     """屏障：admin 角色校验（日初处理用）"""
     if current_user.role != 'admin':
         raise HTTPException(

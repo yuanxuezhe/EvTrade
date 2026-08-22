@@ -35,8 +35,7 @@ from server.api.orders import place as place_mod  # noqa: E402
 from server.auth.security import create_access_token, hash_password  # noqa: E402
 from server.infra.db import SessionLocal  # noqa: E402
 from server.main import app  # noqa: E402
-from server.tables import SysStatus, Orders
-from server.models.user import User  # noqa: E402
+from server.tables import SysStatus, Orders, Users
 
 # ────────── 全局 monkeypatch: 替换真实 RPC / ws_manager ──────────
 _call_log: list[dict] = []
@@ -106,8 +105,7 @@ def setup_db():
             {"pat": "t_sim_%"},
         )
         # 创建测试用户
-        u = User(username=USERNAME, password_hash=hash_password(PASSWORD), role="trader")
-        db.add(u)
+        Users.add_one({"username": USERNAME, "password_hash": hash_password(PASSWORD), "role": "trader"})
         # 激活交易日 (v_next: sys_status 单行 id=1)
         # 不再 DELETE WHERE trd_date; 改为 UPDATE id=1 行的 trd_date/status
         existing = SysStatus.query_one(id=1)
@@ -131,7 +129,8 @@ def setup_db():
                 id=1,
             )
         db.commit()
-        return db.query(User).filter_by(username=USERNAME).first().id
+        row = Users.query_by("username", USERNAME, limit=1)
+        return row[0].id if row else None
     finally:
         db.close()
 

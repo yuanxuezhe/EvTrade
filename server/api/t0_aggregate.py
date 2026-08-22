@@ -26,8 +26,7 @@ from server.services.t0.aggregators import (
     apply_user_def_filter,
 )
 from server.auth.deps import get_current_user
-from server.models.user import User
-from server.tables import Orders, Trades, Positions
+from server.tables import Orders, Trades, Positions, Row
 
 router = APIRouter()
 
@@ -127,7 +126,7 @@ async def get_t0_exposure(
         default=None,
         description="交易日 YYYYMMDD，留空=当前激活日",
     ),
-    _user: User = Depends(get_current_user),
+    _user: Row = Depends(get_current_user),
 ):
     """当日多标的敞口聚合
 
@@ -184,7 +183,7 @@ async def get_t0_exposure(
 async def get_t0_aggregate(
     user_def: str = Query(default="T0", description="T0 标签键，空字符串=全部"),
     days: int = Query(default=30, ge=1, le=365, description="回溯天数"),
-    _user: User = Depends(get_current_user),
+    _user: Row = Depends(get_current_user),
 ):
     """跨期累计 + 按日/按股聚合
 

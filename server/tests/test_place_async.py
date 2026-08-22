@@ -27,8 +27,7 @@ from server.api.orders.place import _submit_rpc_async
 from server.api.orders import ord_stk as real_ord_stk
 from server.api.orders import ws_manager as real_ws_manager
 from server.infra.db import SessionLocal
-from server.tables import Orders, SysStatus, T0Tasks
-from server.models.user import User
+from server.tables import Orders, SysStatus, T0Tasks, Users
 from server.auth.security import hash_password, create_access_token
 
 
@@ -55,11 +54,9 @@ def db():
 @pytest.fixture
 def trader(db):
     """trader 用户 + 已激活交易日 (v-future REQ-TRADE-030: db fixture finalizer 自动清理 t_*)"""
-    db.query(User).filter_by(username="t_place_v77").delete()
-    u = User(username="t_place_v77", password_hash=hash_password("x"), role="trader")
-    db.add(u)
-    db.commit()
-    db.refresh(u)
+    for _old in Users.query_by("username", "t_place_v77"):
+        Users.delete_one(id=_old.id)
+    u = Users.add_one({"username": "t_place_v77", "password_hash": hash_password("x"), "role": "trader"})
 
     # 激活交易日（place.py 依赖 SysStatus active; sys_status 单行 id=1）
     SysStatus.delete_one(id=1)
@@ -307,7 +304,6 @@ async def test_endpoint_creates_task_and_returns_immediately(trader, fake_ord_st
     from server.auth.deps import get_current_user
     from sqlalchemy import text
     from server.infra.db import SessionLocal as _SL
-    from server.models.user import User as UserM
 
     # 清理 orders 表
     cln = _SL()
@@ -319,7 +315,7 @@ async def test_endpoint_creates_task_and_returns_immediately(trader, fake_ord_st
         cln.close()
 
     # mock get_current_user
-    u = db.query(UserM).filter_by(id=trader["id"]).first()
+    u = Users.query_one(id=trader["id"])
     app.dependency_overrides[get_current_user] = lambda: u
 
     # mock require_trading_session — 绕过 9:15-11:30 / 13:00-15:00 时段检查,

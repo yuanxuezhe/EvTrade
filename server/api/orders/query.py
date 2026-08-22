@@ -17,10 +17,9 @@ from typing import Optional
 from fastapi import Depends, Query
 
 from server.auth.deps import get_current_user
-from server.models.user import User
 from server.repo.orders import _get_active_trd_date  # tables-backed helper
 from server.api.orders.schemas import ListOrdersResponse, _to_order_out
-from server.tables import Orders
+from server.tables import Orders, Row
 from server.tables.base import aggregate
 
 
@@ -80,7 +79,7 @@ def register_query(router):
         ),
         limit: int = Query(2000, le=10000),  # 默认 2k (前端 startup 缓存 / 跨日管理)
         offset: int = 0,
-        user: User = Depends(get_current_user),
+        user: Row = Depends(get_current_user),
     ):
         """委托列表（纯 DB）
 
@@ -126,7 +125,7 @@ def register_query(router):
         stock_code: Optional[str] = None,
         status: Optional[str] = None,
         limit: int = Query(500, le=2000),
-        user: User = Depends(get_current_user),
+        user: Row = Depends(get_current_user),
     ):
         """任意交易日历史委托（admin 也用）
 

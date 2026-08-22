@@ -9,9 +9,9 @@ from pydantic import BaseModel
 from typing import Optional
 
 from server.auth.deps import get_current_user
-from server.models.user import User
 from server.services.guards import require_admin
 from server.services import sysconfig
+from server.tables import Row
 
 router = APIRouter()
 
@@ -32,14 +32,14 @@ class FeeConfigUpdate(BaseModel):
 
 
 @router.get("", response_model=FeeConfigOut)
-async def get_fee_config_route(_user: User = Depends(get_current_user)):
+async def get_fee_config_route(_user: Row = Depends(get_current_user)):
     """v_next: 完全走 sysconfig"""
     cfg = sysconfig.get_fee_dict(user="0")
     return FeeConfigOut(**cfg)
 
 
 @router.patch("", response_model=FeeConfigOut, dependencies=[Depends(require_admin)])
-async def update_fee_config(req: FeeConfigUpdate, user: User = Depends(get_current_user)):
+async def update_fee_config(req: FeeConfigUpdate, user: Row = Depends(get_current_user)):
     """v_next: 写 sysconfig.user='0' 默认 (set_value 已同步 cache+DB)"""
     if req.commission_rate is not None:
         sysconfig.set_value("0", "commission_rate", str(req.commission_rate),

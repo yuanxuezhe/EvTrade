@@ -20,7 +20,6 @@ from sqlalchemy.orm import Session
 from server.infra.db import get_db
 from server.tables import Assets, Row
 from server.auth.deps import require_admin
-from server.models.user import User
 from server.utils.time import _utcnow, format_db_dt
 
 log = logging.getLogger(__name__)
@@ -95,7 +94,7 @@ def register_adjust(router: APIRouter) -> None:
     )
     async def adjust_asset(
         req: AdjustAssetRequest,
-        admin: User = Depends(require_admin),
+        admin: Row = Depends(require_admin),
         db: Session = Depends(get_db),
     ):
         """admin 资金盘中调平：Asset.cash / Asset.total_asset 原子 +=

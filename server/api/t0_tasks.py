@@ -25,8 +25,8 @@ from pydantic import BaseModel, Field
 
 from server.auth.deps import get_current_user, require_admin, require_trader
 from server.infra.db import get_db
-from server.models.user import User
 from server.services.t0 import tasks as t0_tasks_service
+from server.tables import Row
 
 log = logging.getLogger(__name__)
 
@@ -126,11 +126,11 @@ class GlobalStatsResponse(BaseModel):
 
 # ──────── Helpers ────────
 
-def _user_is_admin(user: User) -> bool:
+def _user_is_admin(user: Row) -> bool:
     return user.role == "admin"
 
 
-def _is_trader_or_admin(user: User) -> bool:
+def _is_trader_or_admin(user: Row) -> bool:
     return user.role in ("trader", "admin")
 
 
@@ -139,7 +139,7 @@ def _is_trader_or_admin(user: User) -> bool:
 @router.post("", response_model=TaskOut, status_code=201)
 async def create_task(
     req: CreateTaskRequest,
-    user: User = Depends(require_trader),
+    user: Row = Depends(require_trader),
 ):
     """创建 T0Task. trader/admin 可用."""
     try:
@@ -167,7 +167,7 @@ async def list_tasks(
     status: Optional[str] = Query(None, pattern="^(active|closed|archived)$"),
     stock_code: Optional[str] = None,
     days: Optional[int] = Query(None, ge=1, le=365),
-    user: User = Depends(get_current_user),
+    user: Row = Depends(get_current_user),
 ):
     """列表 task. trader 仅看自己; admin 看所有."""
     rows = t0_tasks_service.list_tasks(user_id=user.id, is_admin=_user_is_admin(user),
@@ -196,7 +196,7 @@ async def list_tasks(
 
 @router.get("/overview", response_model=OverviewResponse)
 async def get_overview(
-    user: User = Depends(get_current_user),
+    user: Row = Depends(get_current_user),
 ):
     """整体做T收益 (cross-task summary)."""
     o = t0_tasks_service.list_overview(user_id=user.id, is_admin=_user_is_admin(user),
@@ -206,7 +206,7 @@ async def get_overview(
 
 @router.get("/stats", response_model=GlobalStatsResponse)
 async def get_global_stats(
-    user: User = Depends(require_admin),  # 全局 stats 仅 admin 可见
+    user: Row = Depends(require_admin),  # 全局 stats 仅 admin 可见
 ):
     """全局 stats (all users + 跨期). admin only.
 
@@ -236,7 +236,7 @@ async def get_global_stats(
 
 @router.get("/by-stock", response_model=List[ByStockOut])
 async def get_by_stock(
-    user: User = Depends(get_current_user),
+    user: Row = Depends(get_current_user),
 ):
     """单券做T收益 (per-stock)."""
     bs = t0_tasks_service.list_overview_by_stock(user_id=user.id, is_admin=_user_is_admin(user),
@@ -247,7 +247,7 @@ async def get_by_stock(
 @router.get("/{task_id}", response_model=TaskOut)
 async def get_task(
     task_id: int,
-    user: User = Depends(get_current_user),
+    user: Row = Depends(get_current_user),
 ):
     d = t0_tasks_service.get_task_detail(task_id=task_id, user_id=user.id, is_admin=_user_is_admin(user),
     )
@@ -276,7 +276,7 @@ async def get_task(
 async def update_task(
     task_id: int,
     req: UpdateTaskRequest,
-    user: User = Depends(get_current_user),
+    user: Row = Depends(get_current_user),
 ):
     try:
         t = t0_tasks_service.update_task(task_id=task_id, user_id=user.id, is_admin=_user_is_admin(user),
@@ -303,7 +303,7 @@ async def update_task(
 @router.delete("/{task_id}")
 async def delete_task(
     task_id: int,
-    user: User = Depends(get_current_user),
+    user: Row = Depends(get_current_user),
 ):
     """删除 task. 仅 archived 状态可删."""
     try:
@@ -319,7 +319,7 @@ async def delete_task(
 @router.post("/{task_id}/close", response_model=CloseResponse)
 async def close_task(
     task_id: int,
-    user: User = Depends(require_trader),
+    user: Row = Depends(require_trader),
 ):
     """关 task (强制配平到 base_volume 后改 status=closed)."""
     try:
@@ -346,7 +346,7 @@ async def close_task(
 @router.post("/{task_id}/archive")
 async def archive_task(
     task_id: int,
-    user: User = Depends(get_current_user),
+    user: Row = Depends(get_current_user),
 ):
     """归档 (closed → archived)."""
     try:
@@ -362,7 +362,7 @@ async def archive_task(
 @router.get("/{task_id}/stats", response_model=TaskStatsOut)
 async def get_task_stats(
     task_id: int,
-    user: User = Depends(get_current_user),
+    user: Row = Depends(get_current_user),
 ):
     """task 完整统计 (realized + unrealized + win_rate + trading_days + daily[])."""
     # 先鉴权 (admin 看所有; trader 仅自己)

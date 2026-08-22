@@ -30,7 +30,6 @@ from datetime import datetime, timezone  # noqa: F401  # kept for legacy refs
 from fastapi import Depends, HTTPException, Query
 
 from server.auth.deps import get_current_user
-from server.models.user import User
 from server.services.guards import require_trader, require_trading_day, require_trading_session
 from server.api.deps import require_rpc_ok  # RPC 健康检查 (统一 deps)
 from server.repo.orders import next_order_no, insert_cancel_row  # insert_cancel_row helper
@@ -39,7 +38,7 @@ from server.api.orders.schemas import (
     CancelResponse,
     _to_order_out,
 )
-from server.tables import Orders, Trades
+from server.tables import Orders, Trades, Row
 
 log = logging.getLogger(__name__)
 
@@ -67,7 +66,7 @@ def register_cancel(router):
                                  Depends(require_trading_session),
                                  Depends(require_rpc_ok)])  # 调 RPC 前阻塞
     async def cancel_order(order_no: str, trd_date: str = Query(..., description="8 位数字 YYYYMMDD"),
-                          user: User = Depends(get_current_user)):
+                          user: Row = Depends(get_current_user)):
         """撤单（本地代理 cancel-order 行 + cancel-trade 行 + raw_id 写入）
 
         全部走 server.tables.*

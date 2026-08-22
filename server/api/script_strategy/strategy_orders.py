@@ -30,7 +30,6 @@ from server.api.script_strategy.schemas import (
     StrategyOrderOut,
 )
 from server.auth.deps import get_current_user
-from server.models.user import User
 from server.services import script_strategy as svc
 from server.services.script_strategy.strategy_order_lifecycle import (
     build_start_forward_payload,
@@ -41,6 +40,7 @@ from server.services.script_strategy.strategy_orders import (
     list_strategy_order_children,
 )
 from server.services.script_strategy.strategies import StrategyError
+from server.tables import Row
 
 log = logging.getLogger(__name__)
 
@@ -67,7 +67,7 @@ def _raise_strategy_error(e: StrategyError) -> None:
 
 @router.post("/strategy-orders", response_model=StrategyOrderOut, status_code=201)
 def create_strategy_order_endpoint(
-    req: StrategyOrderCreate, user: User = Depends(get_current_user),
+    req: StrategyOrderCreate, user: Row = Depends(get_current_user),
 ):
     try:
         return svc.create_strategy_order(
@@ -78,12 +78,12 @@ def create_strategy_order_endpoint(
 
 
 @router.get("/strategy-orders", response_model=List[StrategyOrderOut])
-def list_strategy_orders_endpoint(user: User = Depends(get_current_user)):
+def list_strategy_orders_endpoint(user: Row = Depends(get_current_user)):
     return svc.list_strategy_orders(user.id, is_admin=(user.role == "admin"))
 
 
 @router.get("/strategy-orders/{order_id}", response_model=StrategyOrderOut)
-def get_strategy_order_endpoint(order_id: int, user: User = Depends(get_current_user)):
+def get_strategy_order_endpoint(order_id: int, user: Row = Depends(get_current_user)):
     out = get_strategy_order(order_id, user.id, is_admin=(user.role == "admin"))
     if out is None:
         raise HTTPException(status_code=404, detail={"code": "STRATEGY_ORDER_NOT_FOUND"})
@@ -94,7 +94,7 @@ def get_strategy_order_endpoint(order_id: int, user: User = Depends(get_current_
     "/strategy-orders/{order_id}/children",
     response_model=List[dict],
 )
-def list_strategy_order_children_endpoint(order_id: int, user: User = Depends(get_current_user)):
+def list_strategy_order_children_endpoint(order_id: int, user: Row = Depends(get_current_user)):
     out = list_strategy_order_children(order_id, user.id, is_admin=(user.role == "admin"))
     if out is None:
         raise HTTPException(status_code=404, detail={"code": "STRATEGY_ORDER_NOT_FOUND"})
@@ -108,7 +108,7 @@ def list_strategy_order_children_endpoint(order_id: int, user: User = Depends(ge
     response_model=StartStopResponse,
     status_code=202,
 )
-async def start_strategy_order_endpoint(order_id: int, user: User = Depends(get_current_user)):
+async def start_strategy_order_endpoint(order_id: int, user: Row = Depends(get_current_user)):
     """启动实盘: 校验 + 建 live task + 转发 strategy_exec.
 
     service 层返 forward_payload, api 层负责 await HTTP 转发。
@@ -141,7 +141,7 @@ async def start_strategy_order_endpoint(order_id: int, user: User = Depends(get_
     "/strategy-orders/{order_id}/stop",
     response_model=StartStopResponse,
 )
-async def stop_strategy_order_endpoint(order_id: int, user: User = Depends(get_current_user)):
+async def stop_strategy_order_endpoint(order_id: int, user: Row = Depends(get_current_user)):
     """停止实盘: 校验 running → 改母单 status → 转发 /internal/stop-task."""
     try:
         r = svc.stop_strategy_order(
@@ -180,7 +180,7 @@ async def stop_strategy_order_endpoint(order_id: int, user: User = Depends(get_c
     "/strategy-orders/{order_id}/close",
     response_model=StrategyOrderOut,
 )
-def close_strategy_order_endpoint(order_id: int, user: User = Depends(get_current_user)):
+def close_strategy_order_endpoint(order_id: int, user: Row = Depends(get_current_user)):
     try:
         return svc.close_strategy_order(
             order_id, user.id, is_admin=(user.role == "admin"),

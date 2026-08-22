@@ -22,12 +22,11 @@ from typing import List, Optional
 
 from server.infra.db import db_session
 from server.auth.deps import get_current_user
-from server.models.user import User
 from server.services.guards import resolve_default_trd_date
 from server.services.t0 import get_fee_config
 from server.services.t0.aggregate_api import calc_realized_pnl
 from server.services.t0.aggregators import resolve_t0_user_defs
-from server.tables import Orders, Trades, Positions
+from server.tables import Orders, Trades, Positions, Row
 
 router = APIRouter()
 
@@ -61,7 +60,7 @@ async def t0_stats(
     stock_code: str,
     trd_date: Optional[str] = Query(None, description="8 位数字 YYYYMMDD，默认激活日"),
     t0_only: bool = Query(False, description="只统计 user_def='T0' 标记的委托/成交"),
-    user: User = Depends(get_current_user),
+    user: Row = Depends(get_current_user),
 ):
     """T0 当日 + 历史收益汇总（单标的）
 
@@ -190,7 +189,7 @@ def t0_history(
     stock_code: str,
     days: int = Query(30, ge=1, le=180),
     t0_only: bool = Query(False, description="只统计 user_def='T0' 标记的成交"),
-    user: User = Depends(get_current_user),
+    user: Row = Depends(get_current_user),
 ):
     """近 N 天做T 每日买入/卖出/笔数 + 累计差额
 

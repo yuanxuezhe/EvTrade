@@ -17,9 +17,9 @@ from typing import Optional, List
 from pydantic import BaseModel
 
 from server.auth.deps import get_current_user
-from server.models.user import User
 from server.tables.trades import Trades
 from server.services.guards import resolve_default_trd_date
+from server.tables import Row
 
 router = APIRouter()
 
@@ -57,7 +57,7 @@ async def list_trades(
     ),
     all: Optional[bool] = Query(False, description="返全部 trades 不限日期（前端 startup 缓存）"),
     limit: int = Query(2000, le=10000),  # 默认 2000 (覆盖全量拉取上限)
-    user: User = Depends(get_current_user),
+    user: Row = Depends(get_current_user),
 ):
     """成交列表
 

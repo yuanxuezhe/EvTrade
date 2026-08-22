@@ -25,7 +25,6 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from server.auth.deps import get_current_user
-from server.models.user import User
 from server.services import script_strategy as svc
 from server.services.script_strategy.strategies import StrategyError
 from server.api.script_strategy.forward import _forward_run_task, _forward_run_sweep
@@ -37,6 +36,7 @@ from server.api.script_strategy.schemas import (
     StrategyOut,
     StrategyUpdate,
 )
+from server.tables import Row
 
 log = logging.getLogger(__name__)
 
@@ -50,7 +50,7 @@ router = APIRouter()
 def list_strategies_endpoint(
     status_filter: Optional[str] = Query(None, alias="status", description="draft/active/archived"),
     only_mine: bool = Query(False, description="仅列自己的 (默认含他人公开策略精简卡片)"),
-    user: User = Depends(get_current_user),
+    user: Row = Depends(get_current_user),
 ):
     return svc.list_strategies(
         user.id, is_admin=(user.role == "admin"), status=status_filter, only_mine=only_mine,
@@ -58,7 +58,7 @@ def list_strategies_endpoint(
 
 
 @router.get("/strategies/{strategy_id}", response_model=StrategyOut)
-def get_strategy_endpoint(strategy_id: int, user: User = Depends(get_current_user)):
+def get_strategy_endpoint(strategy_id: int, user: Row = Depends(get_current_user)):
     out = svc.get_strategy(strategy_id, user.id, is_admin=(user.role == "admin"))
     if out is None:
         raise HTTPException(status_code=404, detail={"code": "STRATEGY_NOT_FOUND"})
@@ -66,7 +66,7 @@ def get_strategy_endpoint(strategy_id: int, user: User = Depends(get_current_use
 
 
 @router.post("/strategies", response_model=StrategyOut, status_code=201)
-def create_strategy_endpoint(req: StrategyCreate, user: User = Depends(get_current_user)):
+def create_strategy_endpoint(req: StrategyCreate, user: Row = Depends(get_current_user)):
     try:
         return svc.create_strategy(
             user.id, name=req.name, script_id=req.script_id, stock_code=req.stock_code,
@@ -79,7 +79,7 @@ def create_strategy_endpoint(req: StrategyCreate, user: User = Depends(get_curre
 
 @router.put("/strategies/{strategy_id}", response_model=StrategyOut)
 def update_strategy_endpoint(
-    strategy_id: int, req: StrategyUpdate, user: User = Depends(get_current_user),
+    strategy_id: int, req: StrategyUpdate, user: Row = Depends(get_current_user),
 ):
     patch = req.dict(exclude_unset=True)
     out = svc.update_strategy(strategy_id, user.id, user.role == "admin", patch)
@@ -89,7 +89,7 @@ def update_strategy_endpoint(
 
 
 @router.delete("/strategies/{strategy_id}", status_code=204)
-def delete_strategy_endpoint(strategy_id: int, user: User = Depends(get_current_user)):
+def delete_strategy_endpoint(strategy_id: int, user: Row = Depends(get_current_user)):
     ok = svc.delete_strategy(strategy_id, user.id, user.role == "admin")
     if not ok:
         raise HTTPException(status_code=404, detail={"code": "STRATEGY_NOT_FOUND"})
@@ -105,7 +105,7 @@ def delete_strategy_endpoint(strategy_id: int, user: User = Depends(get_current_
     status_code=202,
 )
 async def backtest_endpoint(
-    strategy_id: int, req: BacktestRequest, user: User = Depends(get_current_user),
+    strategy_id: int, req: BacktestRequest, user: Row = Depends(get_current_user),
 ):
     """单次回测 / 参数扫描: 生成 1 个批次 + N 行 task, 转发 strategy_exec 异步执行。
 
@@ -185,7 +185,7 @@ async def backtest_endpoint(
 
 
 @router.get("/strategies/{strategy_id}/batches", response_model=List[BatchOut])
-def batches_endpoint(strategy_id: int, user: User = Depends(get_current_user)):
+def batches_endpoint(strategy_id: int, user: Row = Depends(get_current_user)):
     try:
         out = svc.list_batches(strategy_id, user.id, is_admin=(user.role == "admin"))
     except StrategyError as e:
@@ -202,7 +202,7 @@ def batches_endpoint(strategy_id: int, user: User = Depends(get_current_user)):
 
 @router.get("/strategies/{strategy_id}/batches/{batch_no}/tasks")
 def batch_tasks_endpoint(
-    strategy_id: int, batch_no: int, user: User = Depends(get_current_user),
+    strategy_id: int, batch_no: int, user: Row = Depends(get_current_user),
 ):
     try:
         out = svc.list_batch_tasks(
@@ -225,7 +225,7 @@ def batch_tasks_endpoint(
     status_code=202,
 )
 async def retest_batch_endpoint(
-    strategy_id: int, batch_no: int, user: User = Depends(get_current_user),
+    strategy_id: int, batch_no: int, user: Row = Depends(get_current_user),
 ):
     """重测批次: 按原批次配置重建新批次 (新 batch_no), 原批次 task 全部废弃,
     转发 strategy_exec 重新执行。运行中的批次返回 409 拒绝。

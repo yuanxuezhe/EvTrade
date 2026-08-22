@@ -11,7 +11,7 @@ from pydantic import BaseModel
 from server.services.guards import require_admin
 from server.services import sysconfig
 from server.auth.deps import get_current_user
-from server.models.user import User
+from server.tables import Row
 
 router = APIRouter()
 
@@ -27,7 +27,7 @@ class SessionUpdate(BaseModel):
 
 
 @router.get("", response_model=SessionOut)
-async def get_session(_user: User = Depends(get_current_user)):
+async def get_session(_user: Row = Depends(get_current_user)):
     """v_next: 读 sysconfig.trdtime"""
     from server.repo.system import TradingClock
     win = TradingClock.get_session_window()
@@ -38,7 +38,7 @@ async def get_session(_user: User = Depends(get_current_user)):
 
 
 @router.patch("", response_model=SessionOut, dependencies=[Depends(require_admin)])
-async def update_session(req: SessionUpdate, user: User = Depends(get_current_user)):
+async def update_session(req: SessionUpdate, user: Row = Depends(get_current_user)):
     """v_next: 写 sysconfig.trdtime (HHMMSS-HHMMSS;HHMMSS-HHMMSS)."""
     if req.trdtime is not None:
         # 验证格式合法

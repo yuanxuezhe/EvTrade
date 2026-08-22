@@ -32,7 +32,7 @@ from server.auth.session import touch as session_touch  # WS ping 续期 HTTP se
 from server.infra.db import SessionLocal
 from server.ws.manager import ws_manager, match_pattern
 from server.repo.quote_snapshots import get_latest_multi as repo_get_latest_multi, to_dict as repo_to_dict
-from server.models.user import User as UserModel  # sync_update admin 鉴权
+from server.tables import Users
 
 
 WS_IDLE_TIMEOUT = 600  # 秒：WS 通道无任意消息的最大容忍（客户端 30s ping → 10 分钟内必收到消息）
@@ -93,14 +93,10 @@ def register_ws_endpoint(app: FastAPI):
         # sync_update admin 鉴权
         if channel in WS_CHANNELS_REQUIRE_ADMIN:
             # 从 DB 查 role(避免 JWT 缓存了旧 role)
-            db = SessionLocal()
-            try:
-                user_row = db.query(UserModel).filter_by(id=int(user.get("id") or user.get("sub", 0))).first()
-                if not user_row or user_row.role != "admin":
-                    await websocket.close(code=4003, reason="Admin required")
-                    return
-            finally:
-                db.close()
+            user_row = Users.query_one(id=int(user.get("id") or user.get("sub", 0)))
+            if not user_row or user_row.role != "admin":
+                await websocket.close(code=4003, reason="Admin required")
+                return
         await ws_manager.connect(websocket, channel)
 
         last_recv = asyncio.get_event_loop().time()

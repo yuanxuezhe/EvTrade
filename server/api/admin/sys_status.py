@@ -29,9 +29,8 @@ from datetime import datetime, timezone
 import asyncio
 
 from server.infra.db import get_db
-from server.tables import SysStatus
+from server.tables import SysStatus, Row
 from server.repo.system import get_active_sysstatus
-from server.models.user import User
 from server.services.reconcile import do_reconcile
 from server.services.guards import require_admin
 from server.utils.time import format_db_dt
@@ -110,7 +109,7 @@ def _broadcast_init_change(change_kind, status, trd_date, previous_trd_date, rep
 async def init_trading_day(
     req: InitRequest,
     db: Session = Depends(get_db),
-    admin_user: User = Depends(require_admin),
+    admin_user: Row = Depends(require_admin),
 ):
     """人工日初: 触发对账 + 切交易日（v_next 单行 UPSERT）"""
     if len(req.trd_date) != 8 or not req.trd_date.isdigit():
@@ -193,7 +192,7 @@ async def init_trading_day(
 async def reconcile_only(
     req: ReconcileRequest,
     db: Session = Depends(get_db),
-    admin_user: User = Depends(require_admin),
+    admin_user: Row = Depends(require_admin),
 ):
     """仅生成对账报告 (manual 模式, 不切日)"""
     if len(req.trd_date) != 8 or not req.trd_date.isdigit():

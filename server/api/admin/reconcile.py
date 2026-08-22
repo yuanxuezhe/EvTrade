@@ -18,11 +18,10 @@ from sqlalchemy.orm import Session
 import json
 
 from server.infra.db import get_db
-from server.models.user import User
 from server.services.guards import require_admin
 from server.services import sysconfig
 from server.utils.time import format_db_dt
-from server.tables import ReconcileReport, get_conn, scalar_query
+from server.tables import ReconcileReport, get_conn, scalar_query, Row
 from sqlalchemy import text as _sa_text
 
 router = APIRouter()
@@ -70,7 +69,7 @@ async def get_config(db: Session = Depends(get_db), _=Depends(require_admin)):
 @router.patch("/config", response_model=ReconcileConfigOut)
 async def update_config(
     req: ReconcileConfigUpdate,
-    admin_user: User = Depends(require_admin),
+    admin_user: Row = Depends(require_admin),
 ):
     """写 sysconfig.user='0'"""
     if req.auto_reconcile is not None:

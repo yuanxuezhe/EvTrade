@@ -28,7 +28,6 @@ import logging
 from fastapi import Depends, HTTPException
 
 from server.auth.deps import get_current_user
-from server.models.user import User
 from server.services.guards import require_trader, require_trading_day, require_trading_session
 from server.api.deps import require_rpc_ok  # RPC 健康统一 deps
 from server.repo.orders import (
@@ -40,7 +39,7 @@ from server.utils.time import format_ts
 from server.services.t0 import calc_net_amount, calc_t0_volume, get_fee_config
 from server.repo.stocks import GetStockInfo  # 统一证券信息入口
 from server.services.sysconfig import get_cantrd_stktypes
-from server.tables import Orders, T0Tasks
+from server.tables import Orders, T0Tasks, Row
 from server.api.orders.schemas import (
     PlaceOrderRequest,
     PlaceOrderResponse,
@@ -57,7 +56,7 @@ def register_place(router):
                  dependencies=[Depends(require_trader), Depends(require_trading_day),
                                Depends(require_trading_session),
                                Depends(require_rpc_ok)])
-    async def place_order(req: PlaceOrderRequest, user: User = Depends(get_current_user)):
+    async def place_order(req: PlaceOrderRequest, user: Row = Depends(get_current_user)):
         """下单（两阶段：DB 写入立即应答，RPC 后台异步回报）
 
         全部走 server.tables.*

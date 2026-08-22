@@ -6,17 +6,16 @@ from typing import Optional
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 
-from server.models.user import User
 from server.auth.security import decode_token
 from server.auth import session  # REQ-AUTH-IDLE-001: token session cache (10min idle + restart invalidation)
-from server.tables import Users  # User ORM → tables.Users
+from server.tables import Users, Row  # User ORM → tables.Users
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login", auto_error=False)
 
 
 def get_current_user(
     token: Optional[str] = Depends(oauth2_scheme),
-) -> User:
+) -> Row:
     """Return the User identified by the JWT, or raise 401.
 
     走 server.tables.Users (compat: 仍返 ORM User-like 对象)
@@ -66,14 +65,14 @@ def get_current_user(
     return user
 
 
-def require_admin(current_user: User = Depends(get_current_user)) -> User:
+def require_admin(current_user: Row = Depends(get_current_user)) -> Row:
     """Allow only admin users."""
     if current_user.role != "admin":
         raise HTTPException(status_code=403, detail="需要管理员权限")
     return current_user
 
 
-def require_trader(current_user: User = Depends(get_current_user)) -> User:
+def require_trader(current_user: Row = Depends(get_current_user)) -> Row:
     """Allow admin or trader (not viewer)."""
     if current_user.role not in ("admin", "trader"):
         raise HTTPException(status_code=403, detail="只读账号无法执行此操作")

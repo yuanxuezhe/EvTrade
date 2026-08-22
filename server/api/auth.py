@@ -39,9 +39,8 @@ def _row_to_user_dict(row) -> dict:
     ORM 版本用 _format_db_dt(...) if self.created_at else None, 这里复用
     server.utils.time.format_db_dt + None 守卫保持行为一致。
 
-    入参 row: 支持 tables.base.Row (query_one/query_by 返回) 或
-    server.models.user.User (deps.get_current_user 仍是 ORM, 兼容期).
-    两者字段名一致 (id/username/email/...), 用 getattr 兼容.
+    入参 row: tables.base.Row (query_one/query_by 返回; deps.get_current_user 已走 tables.Users).
+    字段名与 users 表一致 (id/username/email/...), 用 getattr 兼容.
     """
     def _g(name):
         return getattr(row, name, None)

@@ -17,9 +17,9 @@ from sqlalchemy.orm import Session
 
 from server.auth.deps import get_current_user
 from server.infra.db import get_db
-from server.models.user import User
 from server.services.guards import require_admin
 from server.services import sysconfig
+from server.tables import Row
 
 log = logging.getLogger(__name__)
 
@@ -50,7 +50,7 @@ class SysConfigUpsert(BaseModel):
 @router.get("", response_model=List[SysConfigOut])
 def list_configs(
     user: Optional[str] = Query(None, description="admin 可指定用户查看; 默认看自己+默认"),
-    current: User = Depends(get_current_user),
+    current: Row = Depends(get_current_user),
 ):
     """列出配置 — 普通用户看自己 + 默认; admin 可指定 user"""
     target_user = user if (current.role == "admin" and user is not None) else current.username
@@ -72,7 +72,7 @@ def list_configs(
 def get_config(
     cfg_key: str,
     user: Optional[str] = Query(None),
-    current: User = Depends(get_current_user),
+    current: Row = Depends(get_current_user),
 ):
     """读单个配置 — user 优先, 缺失回退默认"""
     target_user = user if user is not None else current.username
@@ -91,7 +91,7 @@ def get_config(
 @router.post("", response_model=SysConfigOut, status_code=201)
 def upsert_config(
     body: SysConfigUpsert,
-    current: User = Depends(get_current_user),
+    current: Row = Depends(get_current_user),
 ):
     """新增或更新配置 — 普通用户只能写自己的; admin 可写 user='0'"""
     target_user = body.user if body.user is not None else current.username
@@ -115,7 +115,7 @@ def update_config(
     cfg_key: str,
     body: SysConfigUpsert,
     user: Optional[str] = Query(None),
-    current: User = Depends(get_current_user),
+    current: Row = Depends(get_current_user),
 ):
     """更新配置 — 同 upsert 权限"""
     target_user = user if user is not None else current.username
@@ -138,7 +138,7 @@ def update_config(
 def delete_config(
     cfg_key: str,
     user: Optional[str] = Query(None),
-    current: User = Depends(get_current_user),
+    current: Row = Depends(get_current_user),
 ):
     """删除配置 — admin 可删任意, 普通用户只能删自己的 (不能删默认)"""
     target_user = user if user is not None else current.username

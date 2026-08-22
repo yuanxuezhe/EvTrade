@@ -14,13 +14,13 @@ from fastapi import APIRouter, Depends
 from server.infra.db import SessionLocal
 from server.services.guards import resolve_active_trd_date
 from server.auth.deps import get_current_user
-from server.models.user import User
+from server.tables import Row
 
 router = APIRouter()
 
 
 @router.get("/active-day")
-async def get_active_day(user: User = Depends(get_current_user)):
+async def get_active_day(user: Row = Depends(get_current_user)):
     """当前激活交易日（标准 RPC 格式）
 
     Returns:

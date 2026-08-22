@@ -19,9 +19,9 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from server.auth.deps import get_current_user
-from server.models.user import User
 from server.services import script_strategy as svc
 from server.api.script_strategy.schemas import ScriptCreate, ScriptOut, ScriptUpdate
+from server.tables import Row
 
 log = logging.getLogger(__name__)
 
@@ -73,7 +73,7 @@ def list_scripts_endpoint(
     name: Optional[str] = Query(None, description="模糊搜索 name"),
     status_filter: Optional[str] = Query(None, alias="status", description="active/archived"),
     only_mine: bool = Query(False, description="仅列自己的 (默认包含公开脚本)"),
-    user: User = Depends(get_current_user),
+    user: Row = Depends(get_current_user),
 ):
     return svc.list_scripts(
         user.id, is_admin=(user.role == "admin"),
@@ -82,7 +82,7 @@ def list_scripts_endpoint(
 
 
 @router.get("/scripts/by-name/{name}", response_model=ScriptOut)
-def get_script_by_name_endpoint(name: str, user: User = Depends(get_current_user)):
+def get_script_by_name_endpoint(name: str, user: Row = Depends(get_current_user)):
     """按 name 查脚本 (前端的 '脚本选择' 下拉用)
 
     例: /scripts/by-name/ma5_e2e → 返 id=4 的脚本
@@ -94,7 +94,7 @@ def get_script_by_name_endpoint(name: str, user: User = Depends(get_current_user
 
 
 @router.get("/scripts/{script_id}", response_model=ScriptOut)
-def get_script_endpoint(script_id: str, user: User = Depends(get_current_user)):
+def get_script_endpoint(script_id: str, user: Row = Depends(get_current_user)):
     out = svc.get_script(script_id, user.id, is_admin=(user.role == "admin"))
     if out is None:
         raise HTTPException(status_code=404, detail={"code": "SCRIPT_NOT_FOUND"})
@@ -102,7 +102,7 @@ def get_script_endpoint(script_id: str, user: User = Depends(get_current_user)):
 
 
 @router.post("/scripts", response_model=ScriptOut, status_code=201)
-def create_script_endpoint(req: ScriptCreate, user: User = Depends(get_current_user)):
+def create_script_endpoint(req: ScriptCreate, user: Row = Depends(get_current_user)):
     try:
         out = svc.create_script(
             user_id=user.id, name=req.name, code=req.code,
@@ -119,7 +119,7 @@ def create_script_endpoint(req: ScriptCreate, user: User = Depends(get_current_u
 
 
 @router.post("/scripts/new", response_model=ScriptOut, status_code=201)
-def new_script_endpoint(user: User = Depends(get_current_user)):
+def new_script_endpoint(user: Row = Depends(get_current_user)):
     """自动命名创建脚本: new_strategy → new_strategy01 → new_strategy02 ...
 
     前端"新建脚本"按钮直接调此端点, 点击即创建并在列表显示, 不等用户手动保存。
@@ -141,7 +141,7 @@ def new_script_endpoint(user: User = Depends(get_current_user)):
 
 @router.put("/scripts/{script_id}", response_model=ScriptOut)
 def update_script_endpoint(
-    script_id: str, req: ScriptUpdate, user: User = Depends(get_current_user),
+    script_id: str, req: ScriptUpdate, user: Row = Depends(get_current_user),
 ):
     patch = req.dict(exclude_unset=True)
     if "params_schema" in patch and patch["params_schema"] is not None:
@@ -153,7 +153,7 @@ def update_script_endpoint(
 
 
 @router.delete("/scripts/{script_id}", status_code=204)
-def delete_script_endpoint(script_id: str, user: User = Depends(get_current_user)):
+def delete_script_endpoint(script_id: str, user: Row = Depends(get_current_user)):
     ok = svc.delete_script(script_id, user.id, user.role == "admin")
     if not ok:
         raise HTTPException(status_code=404, detail={"code": "SCRIPT_NOT_FOUND"})
@@ -171,7 +171,7 @@ def get_default_script_template():
 
 
 @router.post("/scripts/{script_id}/compile")
-def compile_script_endpoint(script_id: str, user: User = Depends(get_current_user)):
+def compile_script_endpoint(script_id: str, user: Row = Depends(get_current_user)):
     """静态语法检查（仅 ast.parse，不回测）
 
     svc.get_script() 返回 dict（_convert.py script_row_to_dict），

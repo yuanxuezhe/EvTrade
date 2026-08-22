@@ -21,7 +21,6 @@ from pydantic import BaseModel, validator
 from server.infra.db import get_db
 from server.tables import Positions, Row
 from server.auth.deps import require_admin
-from server.models.user import User
 from server.utils.time import _utcnow, format_db_dt
 
 log = logging.getLogger(__name__)
@@ -100,7 +99,7 @@ def register_adjust(router: APIRouter) -> None:
     async def adjust_position(
         stock_code: str = Path(..., description="股票代码（PK）"),
         req: AdjustPositionRequest = ...,
-        admin: User = Depends(require_admin),
+        admin: Row = Depends(require_admin),
         ):
         """admin 持仓盘中调平：Position.vol / Position.avl_vol 原子 +=
 
