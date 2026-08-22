@@ -15,7 +15,7 @@ from typing import Dict, List, Optional, Set, Tuple
 from sqlalchemy.orm import Session
 
 
-from server.models.orm import Order, Trade
+from server.tables import Orders, Trades, Row
 
 from server.services.t0.fees import (
     _BUY_TYPE,
@@ -28,7 +28,7 @@ from server.services.t0.pnl import calc_realized_pnl
 
 
 def calc_net_exposure(
-    orders: List[Order], trades: List[Trade]
+    orders: List[Row], trades: List[Row]
 ) -> Tuple[int, int, int, float, float]:
     """单标的敞口 = 买单量 - 卖单量
 
@@ -57,7 +57,7 @@ def calc_net_exposure(
     return buy_vol - sell_vol, buy_vol, sell_vol, buy_amt, sell_amt
 
 
-def _order_count_stats(orders: List[Order]) -> Tuple[int, int]:
+def _order_count_stats(orders: List[Row]) -> Tuple[int, int]:
     """委托笔数 + 待报/已报笔数"""
     total = len(orders)
     open_cnt = sum(
@@ -66,17 +66,17 @@ def _order_count_stats(orders: List[Order]) -> Tuple[int, int]:
     return total, open_cnt
 
 
-def _group_by_code(trades: List[Trade]) -> Dict[str, List[Trade]]:
+def _group_by_code(trades: List[Row]) -> Dict[str, List[Row]]:
     """trades 按 stock_code 分组"""
-    out: Dict[str, List[Trade]] = defaultdict(list)
+    out: Dict[str, List[Row]] = defaultdict(list)
     for t in trades:
         out[t.stock_code].append(t)
     return out
 
 
 def aggregate_by_stock(
-    trades: List[Trade],
-    orders: List[Order],
+    trades: List[Row],
+    orders: List[Row],
     positions: Dict[str, dict],
     fee_cfg: dict,
     include_unrealized: bool = True,
@@ -98,10 +98,10 @@ def aggregate_by_stock(
         按 abs(net_amount) 降序
         buy_commission = 当日买入佣金; day_fee = 买佣金 + 卖佣金 + 印花税 (当日全量费用)
     """
-    by_stock: Dict[str, List[Trade]] = defaultdict(list)
+    by_stock: Dict[str, List[Row]] = defaultdict(list)
     for t in trades:
         by_stock[t.stock_code].append(t)
-    by_stock_orders: Dict[str, List[Order]] = defaultdict(list)
+    by_stock_orders: Dict[str, List[Row]] = defaultdict(list)
     for o in orders:
         by_stock_orders[o.stock_code].append(o)
 
@@ -147,7 +147,7 @@ def aggregate_by_stock(
 
 
 def aggregate_by_day(
-    trades: List[Trade],
+    trades: List[Row],
     positions: Dict[str, dict],
     fee_cfg: dict,
 ) -> List[Dict]:
@@ -162,7 +162,7 @@ def aggregate_by_day(
         List[{trd_date, realized_pnl, buy_amount, sell_amount, trade_count, stock_count}]
         按 trd_date 升序
     """
-    by_day: Dict[str, List[Trade]] = defaultdict(list)
+    by_day: Dict[str, List[Row]] = defaultdict(list)
     for t in trades:
         by_day[t.trd_date].append(t)
 
@@ -204,7 +204,7 @@ def aggregate_by_day(
 def aggregate_summary(
     by_day: List[Dict],
     by_stock: List[Dict],
-    orders: List[Order],
+    orders: List[Row],
 ) -> Dict:
     """累计汇总
 
@@ -241,11 +241,11 @@ def aggregate_summary(
 
 
 def apply_user_def_filter(
-    orders: List[Order],
-    trades: List[Trade],
+    orders: List[Row],
+    trades: List[Row],
     user_def: str,
     db: Optional[Session] = None,
-) -> Tuple[List[Order], List[Trade]]:
+) -> Tuple[List[Row], List[Row]]:
     """按 user_def 过滤（空字符串 = 全部）
 
     撤单代行 order (user_def='CANCEL:{orig}') 永远不参与 day_pnl 计算.
