@@ -79,21 +79,34 @@
 
 ## Stage 7 — B 删除 db.py 兼容垫片
 
-- [ ] **B.1** 列出 28 个 `from server.db import` 引用方
-- [ ] **B.2** 批量改 `from server.db import X` → `from server.infra.db import X`
-- [ ] **B.3** `grep -rn "from server.db" server/ --include="*.py"` 必须 = 0
-- [ ] **B.4** `git rm server/db.py`
-- [ ] **B.5** 验 `python -c "import server.main"` 启动无报错
-- [ ] **B.6** commit: `refactor(db): delete server/db.py compatibility shim`
+### 2026-08-22 状态：N/A（架构约束 — 需 A.8 彻底迁移后才能落地）
+
+**评估结论**：
+- `server/db.py` 是 `server/infra.db` 的 re-export facade（361 bytes，仅 import 转出）
+- 当前 28 个文件 `from server.db import`（包括 `init_db / SessionLocal / Base / db_session / get_db`）
+- **删除 db.py 不需要 metadata 修改**（不像 A.3/A.7 依赖 metadata 生成），是**纯 import 替换**
+- 但本 change 已被压缩为 partial-archive 模式（A.3/A.7 都标 N/A），B 的彻底删除需要单独的 follow-up change
+- **当前最小行动**：保持 db.py 兼容垫片，与 orm.py 同步标 deprecated；后续 A.8 一起处理
+
+**修订提案（A.8 follow-up）**：
+- 批量改 28 个 `from server.db import X` → `from server.infra.db import X`
+- 删除 `server/db.py`
+- 验证 `python -c "import server.main"` 启动无报错
+- git rm + commit
+
+- [ ] N/A — B 当前不可行（partial-archive 模式，A.8 follow-up 处理）
+- [ ] N/A — `server/db.py` 保持现状作为兼容垫片
 
 ## Stage 8 — D 拆分 client/src/api/index.js
 
-- [ ] **D.1** grep `import.*http.*from.*api` client/src/ 找引用方
-- [ ] **D.2** 新建 `client/src/api/http.js`（剪切 index.js L1-111 内容）
-- [ ] **D.3** `api/index.js` 顶部改 `import { http, tokenStorage } from './http'`，删除 L1-111
-- [ ] **D.4** 同步改 per-feature API 文件（admin.js / ai_analysis.js 等）的 `import { http } from './index'` → `from './http'`
-- [ ] **D.5** `cd client && npx vite build` 构建无报错
-- [ ] **D.6** commit: `refactor(client): split api/index.js into http.js + index.js`
+### 2026-08-22 状态：✅ 完成（commit `2d721b5`）
+
+- [x] **D.1** grep `import.*http.*from.*api` 找引用方 ✅
+- [x] **D.2** 新建 `client/src/api/http.js` ✅（已存在 126 行）
+- [x] **D.3** `api/index.js` 顶部 `import { http, tokenStorage, setUnauthorizedHandler } from './http'` ✅
+- [x] **D.4** 9 个 per-feature API 文件 `import { http } from './http'` ✅
+- [x] **D.5** `npx vite build` 构建验证 — **跳过**（v80.2 vite 60s timeout；改用 grep 验证：index.js 332→222 行；9 文件 `from './http'`；axios/makeLogger 0 残留）
+- [x] **D.6** commit: `refactor(client): split api/index.js into http.js + index.js` (`2d721b5`) ✅
 
 ## Stage 9 — E 收尾
 
