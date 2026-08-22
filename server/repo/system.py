@@ -10,8 +10,36 @@ repo/system.py — 系统配置仓库
 from datetime import datetime, time as dtime
 from typing import Optional
 
-from server.db import db_session
-from server.models.orm import get_active_sysstatus  # helper 内部已走 Tables API；保留 orm.py 直到 A.8 彻底迁移
+from server.infra.db import db_session
+from server.tables import SysStatus
+
+
+def get_active_trd_date(db: Optional[object] = None) -> Optional[str]:
+    """获取当前交易日 trd_date (status='active')
+
+    返回 None 表示未激活/刚闭市。
+
+    A.7 从 server/models/orm.py 迁入: 走 server.tables.SysStatus;
+    db 参数保留兼容旧调用方, 实际不依赖.
+    """
+    row = SysStatus.query_one(id=1)
+    if not row:
+        return None
+    if row.status == 'active':
+        return row.trd_date
+    return None
+
+
+def get_active_sysstatus(db: Optional[object] = None):
+    """获取当前 SysStatus 完整行 (id=1)
+
+    返回 None 表示 id=1 行不存在 (极端脏数据) — 调用方应宽容 None。
+    返回 Row, 支持 .id/.trd_date/.status/.is_half_day 等属性访问。
+
+    A.7 从 server/models/orm.py 迁入: 走 server.tables.SysStatus;
+    db 参数保留兼容旧调用方, 实际不依赖.
+    """
+    return SysStatus.query_one(id=1)
 
 
 class TradingClock:

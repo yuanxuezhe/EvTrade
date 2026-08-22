@@ -14,10 +14,9 @@ from fastapi import HTTPException, Depends
 from typing import Optional
 from sqlalchemy.orm import Session
 
-from server.db import db_session
-from server.models.orm import get_active_trd_date, get_active_sysstatus  # helpers 内部已走 Tables API；保留 orm.py 直到 A.8 彻底迁移
+from server.infra.db import db_session
 from server.models.user import User
-from server.repo.system import TradingClock
+from server.repo.system import TradingClock, get_active_trd_date, get_active_sysstatus
 from server.auth.deps import get_current_user
 
 
