@@ -100,6 +100,9 @@ class Settings:
 
     # ---- RPC 行为 ----
     RPC_TIMEOUT: float = _env_float("EVTRADE_RPC_TIMEOUT", 30.0)  # 单次 call 超时
+    # 测试模式: 1=业务 RPC 调用不发真实请求, 直接返固定应答 (server/rpc/mock.py)
+    # 启动时定死 (防运行中误切导致单子静默不发); 仅供无柜台/RabbitMQ 的开发/演示环境
+    TEST_MODE: bool = _env_int("EVTRADE_TEST_MODE", 0) == 1
 
     # 下单时附带的 remark 备注（柜台透传字段，常用于区分下单来源）
     # 可通过 EVTRADE_ORDER_REMARK 环境变量覆盖
