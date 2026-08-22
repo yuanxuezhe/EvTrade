@@ -1,16 +1,16 @@
 # Tasks — RPC 测试模式（固定应答）
 
-## Stage 1 — 配置 + mock 模块
+## Stage 1 — mock 模块 + sys_config 开关
 
-- [ ] **1.1** `server/config.py`：`TEST_MODE: bool = _env_int("EVTRADE_TEST_MODE", 0) == 1`
-- [ ] **1.2** 新建 `server/rpc/mock.py`：`maybe_reply(func, **kw) -> dict | None`；`qry_ast` demo / `qry_ord|qry_mch|qry_pos` 空集 / `ord_stk` 动态 order_id / `cxl_ord` 成功
-- [ ] **1.3** 单测 `server/tests/test_rpc_mock.py`：mock 开关行为 + 应答结构
+- [x] **1.1** `server/rpc/mock.py`：`maybe_reply(func, **kw) -> dict | None`；`qry_ast` demo / `qry_ord|qry_mch|qry_pos` 空集 / `ord_stk` 动态 order_id / `cxl_ord` 成功；判定读 `sysconfig.get("rpc_test_mode", 0)`（每次调用 → 切换即时生效）
+- [x] **1.2** `server/infra/db.py` init_db 兜底 seed `rpc_test_mode=0`
+- [x] **1.3** 单测 `server/tests/test_rpc_mock.py`：开关行为/固定应答/order_id 递增/切换即时生效/短路不连
 
 ## Stage 2 — handler + 启动接线
 
-- [ ] **2.1** `handlers.py` 6 个入口 `maybe_reply` 短路
-- [ ] **2.2** `transport.py` `get_rpc_client()` 测试模式不 connect
-- [ ] **2.3** `main.py` `on_startup_rpc` 测试模式跳过连接 + 健康同步
+- [x] **2.1** `handlers.py` 6 个入口 `maybe_reply` 短路
+- [x] **2.2** `main.py` `on_startup_rpc` 启动时 `rpc_test_mode=1` 跳过连接 + 健康同步
+- [x] **2.3** `transport.py` `get_rpc_client()` 恢复始终 connect（运行时切换只影响 mock 判定，连接保持）
 
 ## Stage 3 — 验证 + 提交 + 归档
 

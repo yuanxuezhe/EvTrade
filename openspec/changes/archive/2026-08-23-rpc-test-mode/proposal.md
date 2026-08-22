@@ -6,7 +6,8 @@
 
 ## Design
 
-- **系统参数**：`EVTRADE_TEST_MODE=1`（env，`server/config.py` `settings.TEST_MODE`，默认关）——启动时在 `.env` 开启，与现有 config 分层一致。
+- **系统参数**：系统配置表 `sys_config`（user='0' `rpc_test_mode`，0=关/1=开），在 **SystemConfig 页随时切换、立即生效**（`maybe_reply` 每次调用读 sysconfig 缓存；`set_value` 同步 DB+缓存）。init_db 兜底 seed `rpc_test_mode=0`。
+  - ⚠️ **实施中从 env 改为 sys_config**（用户拍板：不要 EVTRADE_TEST_MODE，要运行时可切换）。`settings.TEST_MODE` 已移除，`get_rpc_client()` 恢复始终 connect（运行中切换只影响 mock 判定）。
 - **拦截点**：`server/rpc/handlers.py`（唯一业务 RPC 入口，KB 已约定"勿绕过 handlers 直接用 client.call"）。每个 handler 先 `maybe_reply(func, **kw)`，测试模式下直接返回已解析 dict `{code,msg,list}`。
 - **为何不在 `transport.RPClient.call()` 单点拦截**：需构造 MsgPacket 应答包，实测 msgpacket DLL 构造多结果集包（code/msg + 业务数据）会 segfault（build→encode→decode 往返单结果集可读、2 结果集崩溃）。handler 层 mock 返回解析后 dict，绕开 DLL 脆弱点。
 - **`server/rpc/mock.py`**（新，单一职责）：
@@ -20,13 +21,12 @@
 
 | 文件 | 改动 |
 |---|---|
-| `server/config.py` | `TEST_MODE` from `EVTRADE_TEST_MODE` |
-| `server/rpc/mock.py` | 新增：`maybe_reply` + 固定应答 + order_id 计数器 |
+| `server/rpc/mock.py` | 新增：`maybe_reply` + 固定应答 + order_id 计数器；读 `sysconfig.get("rpc_test_mode", 0)` |
 | `server/rpc/handlers.py` | 6 个入口加 `maybe_reply` 短路 |
-| `server/rpc/transport.py` | `get_rpc_client()` 测试模式不 connect |
-| `server/main.py` | `on_startup_rpc` 测试模式跳过连接 + 健康同步 |
-| `server/tests/test_rpc_mock.py` | 新增 mock 单测 |
-| KB `RPC通信/RPC客户端.md` | 补测试模式段 |
+| `server/main.py` | `on_startup_rpc` 启动时 `rpc_test_mode=1` 跳过连接 + 健康同步 |
+| `server/infra/db.py` | init_db 兜底 seed `rpc_test_mode=0` |
+| `server/tests/test_rpc_mock.py` | mock 单测（含开关即时生效） |
+| KB `RPC通信/RPC客户端.md` | 测试模式段（sys_config） |
 
 ## Backward Compatibility
 
@@ -43,7 +43,7 @@
 
 | # | 决策点 | 结果 |
 |---|---|---|
-| Q1 | 参数放 env 还是 sys_config | env `EVTRADE_TEST_MODE`（启动时定死，防运行中误切导致单子静默不发） |
+| Q1 | 参数放 env 还是 sys_config | **sys_config `rpc_test_mode`**（用户拍板：运行时可切换、立即生效；env 方案已废弃） |
 | Q2 | 拦截点 | handlers.py（handler 层 mock dict），非 transport.call() |
 | Q3 | 查询类应答 | 固定资产 demo / 空集，不造幻影数据 |
 
