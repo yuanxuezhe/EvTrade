@@ -20,7 +20,7 @@
 > 以下 13 个 Requirement 描述**旧网格策略引擎**（regime/grid），已随 commit `aa70dae` 从代码库删除：
 > 端点（`/api/strategy/*`）、引擎（`services/strategy/engine.py`）、4 张表（strategy / strategy_regime / strategy_grid / strategy_audit）、前端（`StrategyTrade.vue` / `strategy_update` WS 频道）全部下线。
 >
-> **保留历史正文的目的**：spec 演进史是"为什么这样决策"的证据（同 `docs/specs-history/` 思路）。阅读时请当作**已删除契约**，勿当作现行行为。
+> **保留历史正文的目的**：spec 演进史是"为什么这样决策"的证据（完整演进稿可查 git 历史）。阅读时请当作**已删除契约**，勿当作现行行为。
 
 ### REQ-STRAT-001: 策略 CRUD（已删除）
 
@@ -354,7 +354,7 @@
 
 > **v120 迁移（2026-08-09 strategy-exec-service）**：回测/实盘引擎已迁到独立服务 `strategy_exec/`（Backtrader 重构，基于 `bt.Cerebro`）。原 `server/strategy/runtime/` 目录已删除。引擎实现见 [`strategy-exec/spec.md`](../strategy-exec/spec.md) REQ-SE-003（引擎）/ REQ-SE-004（RabbitMQ 信号推送）/ REQ-SE-005（用户脚本接口）。本节仅保留 **EvTrade 侧仍相关**的契约：
 
-- 用户脚本接口 **BREAKING**：v90 `on_bar/on_tick/ctx.lib.doorder` 废弃，改为 Backtrader `ProjectStrategy.next()` + `self.buy_signal()/self.sell_signal()`（见 strategy-exec REQ-SE-005；迁移指南 `docs/strategy-migration-v90-to-bt.md`）
+- 用户脚本接口 **BREAKING**：v90 `on_bar/on_tick/ctx.lib.doorder` 废弃，改为 Backtrader `ProjectStrategy.next()` + `self.buy_signal()/self.sell_signal()`（见 strategy-exec REQ-SE-005；迁移指南可查 git 历史 `docs/strategy-migration-v90-to-bt.md`）
 - `live_signals` 环形缓冲（限 500 条，每 5s flush 到 DB）：由 strategy_exec `LiveRunner` 实现（`append_live_signals`）
 - 风险档位集成（`RiskChecker`，**仍 EvTrade 侧**）：单笔最大 / 当日笔数 / 单股仓位上限 / 最大回撤 — 触发即拒单
 - signal 消费 + 下单：EvTrade `server/services/strategy/signal_consumer.py` 订阅 signal → 调 `/api/orders/place`

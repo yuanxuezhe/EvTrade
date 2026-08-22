@@ -63,10 +63,11 @@
 
 ---
 
-## 🗺️ 文档目录双体系约定
+## 🗺️ 文档目录约定
 
-> **`openspec/`（活工作流）** 与 **`docs/`（静态沉淀）**是两套独立体系，**禁止合并**。
-> 详见 [`dev-process-control/spec.md` §"文档目录双体系约定"](./dev-process-control/spec.md)
+> 文档体系：**`openspec/`（能力级需求）** + **`知识库/`（实现级事实）**。
+> `docs/` 静态沉淀体系（specs-history、designs、字段级 API 契约）已删除，历史内容可查 git 历史。
+> 详见 [`dev-process-control/spec.md` §"文档目录约定"](./dev-process-control/spec.md)
 
 ### `openspec/` 体系（本目录）
 
@@ -77,23 +78,10 @@
 - `KNOWLEDGE_GAP_AUDIT.md` — 知识库审计
 - `AGENTS.md` — OpenSpec 工作流入口
 
-### `docs/` 体系（沉淀）
-
-- `index.md` — docs 体系导航
-- `xtquant-rpc.md` — QMT 柜台 RPC 字段级契约
-- `server-rest-api.md` — REST API 字段级契约
-- `ws-push.md` — WS 推送字段级契约
-- `msgpacket-python-api.md` — msgpacket Python 库 API 契约
-- `strategy_trading_guide.md` — 策略交易用户指南
-- `changelog/` — vX 变更日志
-- `specs-history/` — 阶段性设计（被 OpenSpec 接管前的完整 spec 演进）
-- `designs/` — 静态设计稿
-- `superpowers/` — 流程 / 模板
-
 **对照关系**：
 - `openspec/specs/` 描述"**能力级**契约"（REQ-NNN / Scenario 模式）
-- `docs/<X>.md` 描述"**字段级**契约"（具体接口参数 / 字段 / 错误码）
-- 两者并行存在，**不要重复**也不要**合并**
+- `知识库/` 描述"**实现级**事实"（模块 HOW、对应代码路径）
+- 字段级接口细节以能力级 spec（如 `rpc-protocol/`、`ws-protocol/`）与知识库后端文档为准
 
 ---
 
@@ -113,7 +101,7 @@ ls openspec/specs/<相关 cap>/spec.md
 # 3. 改 spec（如新能力 / 表结构变更）
 #    - capability spec: openspec/specs/<cap>/spec.md
 #    - 表结构: server/schema.yml + 跑 sync_schema.py apply
-#    - 字段级契约: docs/<X>.md
+#    - 实现细节同步: 知识库/ 对应文档
 
 # 4. 归档
 mv openspec/changes/<name> openspec/changes/archive/<date>-<name>
