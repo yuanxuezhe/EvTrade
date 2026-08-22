@@ -19,7 +19,7 @@ import pytest
 # mode=AUTO 自动检测 async test, 不需要 pytestmark (否则对 sync 测试警告)
 
 from server.db import SessionLocal
-from server.models.orm import Order
+from server.tables import Orders
 from server.services.push.ord import handle_ord_cfm
 
 
@@ -64,23 +64,21 @@ def fake_broadcast(monkeypatch):
 
 
 def _make_order(db, order_no="10000001", status="48"):
-    """直接 DB 插入一行 Order, 模拟阶段 A 完成后 DB 状态"""
-    o = Order(
-        trd_date="20260718",
-        order_no=order_no,
-        user_def="",
-        stock_code="600519.SH", order_type="23",
-        price_type=0, price=1800.0, volume=100,
-        traded_volume=0, traded_amount=0.0, avg_price=0.0,
-        cancelled_volume=0,
-        order_flag=0,
-        status=status, status_msg="未报" if status == "48" else "",
-        order_time="2026-07-18 09:30:00.000",
-        task_id=None, strategy_type=0,
-    )
-    db.add(o)
-    db.commit()
-    db.refresh(o)
+    """直接 DB 插入一行 Order, 模拟阶段 A 完成后 DB 状态
+
+    tables 层: Orders.upsert_one (复合 PK trd_date+order_no), 返回 Row
+    """
+    o = Orders.upsert_one({
+        "user_def": "",
+        "stock_code": "600519.SH", "order_type": "23",
+        "price_type": 0, "price": 1800.0, "volume": 100,
+        "traded_volume": 0, "traded_amount": 0.0, "avg_price": 0.0,
+        "cancelled_volume": 0,
+        "order_flag": 0,
+        "status": status, "status_msg": "未报" if status == "48" else "",
+        "order_time": "2026-07-18 09:30:00.000",
+        "task_id": None, "strategy_type": 0,
+    }, return_row=True, trd_date="20260718", order_no=order_no)
     return o
 
 

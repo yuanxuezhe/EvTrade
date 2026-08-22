@@ -27,7 +27,7 @@ from server.api.orders.place import _submit_rpc_async
 from server.api.orders import ord_stk as real_ord_stk
 from server.api.orders import ws_manager as real_ws_manager
 from server.db import SessionLocal
-from server.models.orm import Order, SysStatus
+from server.tables import Orders, SysStatus, T0Tasks
 from server.models.user import User
 from server.auth.security import hash_password, create_access_token
 
@@ -61,10 +61,12 @@ def trader(db):
     db.commit()
     db.refresh(u)
 
-    # 激活交易日（place.py 依赖 SysStatus active）
-    db.query(SysStatus).filter_by(status="active").delete()
-    db.add(SysStatus(status="active", trd_date="20260718"))
-    db.commit()
+    # 激活交易日（place.py 依赖 SysStatus active; sys_status 单行 id=1）
+    SysStatus.delete_one(id=1)
+    SysStatus.upsert_one({
+        "trd_date": "20260718",
+        "status": "active",
+    }, id=1)
 
     return {"id": u.id, "username": u.username}
 
@@ -134,24 +136,20 @@ def fake_broadcast(monkeypatch):
 def _make_order(db, user_id, order_no="10000001", status="48"):
     """直接 DB 插入一行 status=48 Order, 模拟阶段 A 完成后 DB 状态
 
-    注: Order ORM 无 user_id 字段 (按 trd_date + order_no 联合 PK), user_id 参数仅签名兼容.
+    注: orders 无 user_id 字段 (按 trd_date + order_no 联合 PK), user_id 参数仅签名兼容.
+    tables 层: Orders.upsert_one (复合 PK trd_date+order_no), 返回 Row.
     """
-    o = Order(
-        trd_date="20260718",
-        order_no=order_no,
-        user_def="",
-        stock_code="600519.SH", order_type="23",
-        price_type=0, price=1800.0, volume=100,
-        traded_volume=0, traded_amount=0.0, avg_price=0.0,
-        cancelled_volume=0,
-        order_flag=0,
-        status=status, status_msg="未报" if status == "48" else "",
-        order_time="2026-07-18 09:30:00.000",
-        task_id=None, strategy_type=0,
-    )
-    db.add(o)
-    db.commit()
-    db.refresh(o)
+    o = Orders.upsert_one({
+        "user_def": "",
+        "stock_code": "600519.SH", "order_type": "23",
+        "price_type": 0, "price": 1800.0, "volume": 100,
+        "traded_volume": 0, "traded_amount": 0.0, "avg_price": 0.0,
+        "cancelled_volume": 0,
+        "order_flag": 0,
+        "status": status, "status_msg": "未报" if status == "48" else "",
+        "order_time": "2026-07-18 09:30:00.000",
+        "task_id": None, "strategy_type": 0,
+    }, return_row=True, trd_date="20260718", order_no=order_no)
     return o
 
 
@@ -173,14 +171,11 @@ async def test_submit_rpc_success_updates_status_50_and_pushes(trader, fake_ord_
     #     必须新开一个 SessionLocal + 干净事务才能读到 commit 后的值.
     db.close()  # 关掉 fixture 的 transaction-bound session
     db.expire_all()
-    check_db = SessionLocal()
-    try:
-        updated = check_db.query(Order).filter_by(order_no=order.order_no).first()
-        assert updated.status == "50", f"status={updated.status} (expected 50)"
-        assert updated.order_id == "BROKER-OID-X"
-        assert updated.status_msg == "已报"
-    finally:
-        check_db.close()
+    _rows = Orders.query_by('order_no', order.order_no)
+    updated = _rows[0] if _rows else None
+    assert updated.status == "50", f"status={updated.status} (expected 50)"
+    assert updated.order_id == "BROKER-OID-X"
+    assert updated.status_msg == "已报"
 
     # ws push 验证: 阶段 B (status=50)
     push_payloads = [p for c, p in fake_broadcast.calls if c == "order_update"]
@@ -201,14 +196,11 @@ async def test_submit_rpc_broker_reject_updates_status_57_with_cancel_volume(tra
 
     db.close()  # 关掉 fixture 的 transaction-bound session
     db.expire_all()
-    check_db = SessionLocal()
-    try:
-        updated = check_db.query(Order).filter_by(order_no=order.order_no).first()
-        assert updated.status == "57"
-        assert updated.cancelled_volume == updated.volume  # R2a 抹平
-        assert "资金不足" in updated.status_msg
-    finally:
-        check_db.close()
+    _rows = Orders.query_by('order_no', order.order_no)
+    updated = _rows[0] if _rows else None
+    assert updated.status == "57"
+    assert updated.cancelled_volume == updated.volume  # R2a 抹平
+    assert "资金不足" in updated.status_msg
 
     push_payloads = [p for c, p in fake_broadcast.calls if c == "order_update"]
     last_push = push_payloads[-1]
@@ -226,14 +218,11 @@ async def test_submit_rpc_exception_updates_status_57_and_pushes(trader, fake_or
 
     db.close()  # 关掉 fixture 的 transaction-bound session
     db.expire_all()
-    check_db = SessionLocal()
-    try:
-        updated = check_db.query(Order).filter_by(order_no=order.order_no).first()
-        assert updated.status == "57"
-        assert "RPC 失败" in updated.status_msg
-        assert "broker RPC timeout 30s" in updated.status_msg
-    finally:
-        check_db.close()
+    _rows = Orders.query_by('order_no', order.order_no)
+    updated = _rows[0] if _rows else None
+    assert updated.status == "57"
+    assert "RPC 失败" in updated.status_msg
+    assert "broker RPC timeout 30s" in updated.status_msg
 
     push_payloads = [p for c, p in fake_broadcast.calls if c == "order_update"]
     last_push = push_payloads[-1]
@@ -271,23 +260,20 @@ async def test_submit_rpc_missing_order_logs_error_no_push(trader, fake_ord_stk,
 async def test_submit_rpc_payload_includes_task_id_and_strategy(trader, fake_ord_stk, fake_broadcast, db):
     """task_id + strategy_type 必须透传到 ws push (T0Trade filter/cache 列依赖)"""
     # 改 order 带 task_id + strategy_type=1
-    from server.models.orm import T0Task
-    db.query(T0Task).delete()
-    task = T0Task(
-        user_id=trader["id"], stock_code="600519.SH",
-        base_volume=0, target_volume=100,
-        coefficient=1.0, status="active",
-        created_trd_date="20260718",
-    )
-    db.add(task)
-    db.commit()
-    db.refresh(task)
+    # t0_tasks 自增 id → add_one 让 DB 生成; 清空用 delete_one 循环
+    for t in T0Tasks.query_all():
+        T0Tasks.delete_one(id=t.id)
+    task = T0Tasks.add_one({
+        "user_id": trader["id"], "stock_code": "600519.SH",
+        "base_volume": 0, "target_volume": 100,
+        "coefficient": 1.0, "status": "active",
+        "created_trd_date": "20260718",
+    })
 
     o = _make_order(db, trader["id"], order_no="10000005")
     o.task_id = task.id
     o.strategy_type = 1  # 快速做T
-    db.commit()
-    db.refresh(o)
+    o.update()  # Row.update(): 无参 WHERE pk + SET 全字段 (tables 层持久化)
 
     fake_ord_stk.set_ack({"code": 0, "list": [{"order_id": "OID-X"}]})
 

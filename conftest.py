@@ -1,27 +1,23 @@
 """
-conftest.py — pytest 全局配置 + 修复 Base 重复注册问题
+conftest.py — pytest 全局配置 + 裸名 import 兼容层
 
-问题背景：
-  server/test_*.py 大量用 `sys.path.insert(0, 'server/')` 后直接
-  `from db import Base` / `from models.orm import Order` 触发裸名 import。
-  但生产代码 `server/models/orm.py` 内部 `from server.db import Base`
-  走的是 `server.*` 限定名。两路 import 命中 orm.py 两次（裸名 vs
-  限定名是两个 sys.modules entry），`class Order(Base)` 被声明两次，
-  撞 SQLAlchemy `Table 'orders' is already defined for this MetaData instance`。
+问题背景（历史）：
+  legacy tests/ 套件大量用 `sys.path.insert(0, 'server/')` 后直接
+  `from db import Base` / `from models.orm import Order` 触发裸名 import，
+  与生产代码的 `server.*` 限定名 import 命中两个 sys.modules entry，
+  导致 ORM 声明基类重复注册。已解决方式为下方 sys.modules 裸名别名。
 
-解决：
-  1. 把项目根加 sys.path，让 `server.*` 包可被 import。
-  2. 预加载 `server.*` 模块到 sys.modules（带限定名）。
-  3. 把同一模块实例以裸名（`db` / `models.orm` / ...）也注册到
-     sys.modules，强制 test 文件的裸名 import 命中同一模块对象。
-
-这样无论 test 用哪种 import 风格，orm.py 只被加载一次，
-SQLAlchemy 声明基类只注册一次。
+现状（A.7 后）：
+  - `server/models/orm.py` 已删除；数据访问统一走 `server/tables/`。
+  - legacy tests/ 里 `from models.orm import ...` 的文件已无法收集
+    （orm.py 删除，这些文件本身已因引用已移除的符号而失败）。
+  - 本文件保留 sys.modules 裸名别名机制，供仍在用裸名 import
+    的 legacy 测试文件（`from db import` / `from models.user import` 等）。
 
 注意：
   - 本文件不动 test 文件本身（保持向后兼容）。
   - 也不动生产代码（生产代码用 `from server.X` 走限定名）。
-  - 跑测试时 `cd F:/EvTrade && pytest tests/`（testpaths = tests 已在 pytest.ini 收敛）。
+  - 跑测试时 `cd E:/EvTrade && pytest tests/`（testpaths = tests 已在 pytest.ini 收敛）。
 """
 import sys
 from pathlib import Path
@@ -81,7 +77,6 @@ if str(_ROOT) not in sys.path:
 
 # 2. 预加载 server.* 包内模块
 import server.db as _server_db
-import server.models.orm as _server_orm
 import server.models.user as _server_user
 import server.services.guards as _server_guards
 import server.services.reconcile as _server_reconcile
@@ -120,8 +115,7 @@ import server.api.auth as _server_api_auth
 #    `from db import X` 走裸名，强制命中同一模块对象
 _BARE_ALIASES = {
     "db": _server_db,
-    "models": sys.modules.get("server.models"),  # 由 _server_orm 加载时已存在
-    "models.orm": _server_orm,
+    "models": sys.modules.get("server.models"),  # 由 _server_user 加载时已存在
     "models.user": _server_user,
     "services": sys.modules.get("server.services"),
     # v13 layered-architecture: 旧 services.order_no/status/trading_clock alias 移除（迁 repo/）
