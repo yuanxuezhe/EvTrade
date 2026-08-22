@@ -51,6 +51,15 @@ EvTrade 与 QMT 柜台通过 RabbitMQ + msgpacket 二进制协议通信：一个
 - `ord_stk(stock_code, volume, price_type, price, order_type, ...)`：下单，remark 用 `settings.ORDER_REMARK`，携带 msgid_meta 供废单反查。
 - `cancel_order(...)`：撤单（本地生成 order_flag=1 撤单行，user_def="CANCEL:{orig}"）。
 
+### 测试模式（EVTRADE_TEST_MODE=1）
+
+无柜台/RabbitMQ 的开发/演示环境：业务 RPC 调用**不发真实请求**，由 `server/rpc/mock.py` 直接返回固定应答 dict。`config.settings.TEST_MODE` 从 `EVTRADE_TEST_MODE` env 读取，启动时定死（防运行中误切导致单子静默不发）。
+
+- `maybe_reply(func, **kw) -> dict | None`：TEST_MODE 关 → None（走真实链路）；开 → 固定应答。
+- 应答集：`qry_ast` 固定资产 demo；`qry_ord/qry_mch/qry_pos` 空集（不污染 DB）；`ord_stk` 动态 `order_id`（`TEST-<seq>` 进程内递增）；`cxl_ord` 成功空集。
+- 拦截在 handlers.py 6 个入口（不动 transport.call）；启动时 `on_startup_rpc` 跳过 RabbitMQ 连接 + 健康同步，`get_rpc_client()` 测试模式不 connect（完全离线可用）。
+- **限制**：只 mock RPC 请求应答，不模拟 broker 异步 push（ord_cfm/trd_cfm）——测试模式下单会停在 status=48（真实流程靠 ord_cfm push 推进到 50）。
+
 ## 依赖关系
 - 上游：api/orders、services/reconcile、rpc_health（资金同步）、strategy signal_consumer（服务 token 调本地 API 后走同一链路）
 - 下游：RabbitMQ（aio_pika connect_robust）、msgpacket 库、PushDispatcher → tables 落库 + ws_manager 广播
