@@ -38,10 +38,37 @@
 
 ## Stage 5 — A.3 metadata 注册源切换
 
-- [ ] **A.3.1** 改 `server/infra/db.py` L182 `from server.models import user, orm` → `import server.tables`
-- [ ] **A.3.2** 改 `server/alembic/env.py` L46 同上
-- [ ] **A.3.3** 验 `python -c "from server.infra.db import Base; print(len(Base.metadata.tables))"` > 0
-- [ ] **A.3.4** commit: `refactor(db): metadata registration source from orm.py to tables/`
+### 2026-08-22 状态：N/A（架构约束 — 需 generation script 修复后才能推进）
+
+**原提案评估结论（主 agent 二次核查 + subagent 探查）：**
+
+| 维度 | 评估 |
+|---|---|
+| **原方案** | `from server.models import user, orm` → `import server.tables`（alembic + infra/db.py 两处） |
+| **可行性** | ❌ **不可行** — TableBase 不继承 `declarative_base()`，是纯 Python 自实现基类（仅用 `sqlalchemy.text()` + raw SQL）。`import server.tables` 后 `Base.metadata.tables` 仍为 0 |
+| **实测数据** | `import server.tables` → `Base.metadata.tables = 0`；`import server.models.orm` → `Base.metadata.tables = 11` |
+| **alembic 现状** | 未安装（`ModuleNotFoundError: No module named 'alembic'`），仅 1 个 no-op baseline migration，alembic 流程实际上**死代码** |
+| **init_db() 现状** | `Base.metadata.create_all(bind=admin_engine)` — 必须依赖 ORM 注册到 metadata 才能建表 |
+| **schema 源头** | `server/schema.yml` 是 source of truth；`orm.py` + `tables/` 都是由 `scripts/sync_schema.py apply` 生成的派生代码 |
+
+**根因**：A.3 提案不可行**不是 Tables API 设计错**，而是 **`scripts/sync_schema.py` generation script 没有让生成的 tables/ 代码挂 metadata**。这是 generation script 的 gap，不是业务代码问题。
+
+**修订提案（A.3 重定位）**：
+
+目标不是"删 orm.py 改 import"，而是 **修复 `scripts/sync_schema.py` 让生成的 tables 代码同时挂 Base.metadata**：
+
+1. 修改 `scripts/sync_tables_from_schema.py`（或对应 generation script），在生成 `class Orders(TableBase)` 时同时添加 `__table__ = Table('orders', Base.metadata, Column(...))` 显式注册到 metadata
+2. 同步 `tables/__init__.py` 自动生成逻辑，保留 ORM 路径 OR 切换到 tables 路径
+3. 完成后，`import server.tables` 才能让 `Base.metadata.tables` 包含 11 张表，A.3 原提案才能落地
+4. **同时**：alembic 未安装，先 `pip install alembic` 或在 schema.yml apply 流程中删除 alembic 步骤（如果不再使用）
+
+**当前决策（2026-08-22）**：
+- A.3 标记 N/A
+- tasks.md 留作 future change（`2026-08-XX-schema-generation-tables-metadata`）
+- 本 change 跳过 A.3，进入 A.7 阶段（处理 import 残留 + 删 orm.py），但需保留 alembic 处理待 schema.yml generation 修复后
+
+- [ ] N/A — A.3 原方案在当前 generation script 下不可行；归档时记录为 future change 入口
+- [ ] N/A — `server/infra/db.py L182` + `server/alembic/env.py L46` 保持现状（`from server.models import user, orm`）直到 schema.yml generation 修复
 
 ## Stage 6 — A.7 删除 ORM 文件
 
