@@ -12,7 +12,7 @@
 - **为何不在 `transport.RPClient.call()` 单点拦截**：需构造 MsgPacket 应答包，实测 msgpacket DLL 构造多结果集包（code/msg + 业务数据）会 segfault（build→encode→decode 往返单结果集可读、2 结果集崩溃）。handler 层 mock 返回解析后 dict，绕开 DLL 脆弱点。
 - **`server/rpc/mock.py`**（新，单一职责）：
   - `maybe_reply(func, **kw) -> dict | None`：`TEST_MODE` 关 → None（走真实链路）；开 → 固定应答
-  - `qry_ast` → 固定资产 demo；`qry_ord/qry_mch/qry_pos` → 空集（不污染 DB）
+  - `qry_ast` → 固定资产 demo；`qry_pos` → demo 159992.SZ 持仓（关闭测试后真实对账覆盖）；`qry_ord/qry_mch` → 空集（委托/成交靠 push）
   - `ord_stk` → 动态 `order_id`（`TEST-<seq>` 进程内递增），使下单 status 48→50 端到端走通
   - `cxl_ord` → 成功空集
 - **启动**：`main.py on_startup_rpc` 测试模式跳过 RabbitMQ 连接 + 健康同步；`transport.get_rpc_client()` 测试模式不 connect（完全离线可用）。

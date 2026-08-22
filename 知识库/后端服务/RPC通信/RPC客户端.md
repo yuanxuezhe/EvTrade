@@ -56,7 +56,7 @@ EvTrade 与 QMT 柜台通过 RabbitMQ + msgpacket 二进制协议通信：一个
 无柜台/RabbitMQ 的开发/演示环境：业务 RPC 调用**不发真实请求**，由 `server/rpc/mock.py` 直接返回固定应答 dict。开关存在系统配置表（`sys_config` user='0' `rpc_test_mode`，0=关/1=开），可在 **SystemConfig 页随时切换、立即生效**（`maybe_reply` 每次调用读缓存，`set_value` 同步 DB+缓存）。init_db 兜底 seed `rpc_test_mode=0`。
 
 - `maybe_reply(func, **kw) -> dict | None`：`sysconfig.get("rpc_test_mode", 0)` 为真 → 固定应答；否则 None（走真实链路）。
-- 应答集：`qry_ast` 固定资产 demo；`qry_ord/qry_mch/qry_pos` 空集（不污染 DB）；`ord_stk` 动态 `order_id`（`TEST-<seq>` 进程内递增）；`cxl_ord` 成功空集。
+- 应答集：`qry_ast` 固定资产 demo；`qry_pos` demo 159992.SZ 持仓（对账可写入，关闭测试后真实对账覆盖回真实持仓）；`qry_ord/qry_mch` 空集（委托/成交靠 push 增量，不 mock）；`ord_stk` 动态 `order_id`（`TEST-<seq>` 进程内递增）；`cxl_ord` 成功空集。
 - 拦截在 handlers.py 6 个入口（不动 transport.call）。启动时 `on_startup_rpc` 若 `rpc_test_mode=1` 跳过 RabbitMQ 连接 + 健康同步（离线可用）；运行中切换只影响 mock 判定，连接保持/惰性建立。
 - **限制**：只 mock RPC 请求应答，不模拟 broker 异步 push（ord_cfm/trd_cfm）——测试模式下单会停在 status=48（真实流程靠 ord_cfm push 推进到 50）。
 

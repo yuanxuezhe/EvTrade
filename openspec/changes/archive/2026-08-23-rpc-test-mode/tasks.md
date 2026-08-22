@@ -2,7 +2,7 @@
 
 ## Stage 1 — mock 模块 + sys_config 开关
 
-- [x] **1.1** `server/rpc/mock.py`：`maybe_reply(func, **kw) -> dict | None`；`qry_ast` demo / `qry_ord|qry_mch|qry_pos` 空集 / `ord_stk` 动态 order_id / `cxl_ord` 成功；判定读 `sysconfig.get("rpc_test_mode", 0)`（每次调用 → 切换即时生效）
+- [x] **1.1** `server/rpc/mock.py`：`maybe_reply(func, **kw) -> dict | None`；`qry_ast` demo / `qry_pos` demo 159992.SZ / `qry_ord|qry_mch` 空集 / `ord_stk` 动态 order_id / `cxl_ord` 成功；判定读 `sysconfig.get("rpc_test_mode", 0)`（每次调用 → 切换即时生效）
 - [x] **1.2** `server/infra/db.py` init_db 兜底 seed `rpc_test_mode=0`
 - [x] **1.3** 单测 `server/tests/test_rpc_mock.py`：开关行为/固定应答/order_id 递增/切换即时生效/短路不连
 
