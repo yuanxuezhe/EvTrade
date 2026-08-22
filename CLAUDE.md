@@ -238,3 +238,4 @@ Vue3 + FastAPI 量化交易 Web 平台。**业务数据 MySQL 优先**（v4 改�
 - `archive/2026-08-08-structure-cleanup-no-logic-change`（partial, 后续转 `2026-08-22-structure-cleanup-remaining`）
 - `archive/2026-08-21-scriptdev-fix-compile`
 - `archive/2026-08-23-delete-orm-layer`（A.8：删 ORM 层，数据访问统一 tables/）
+- `archive/2026-08-23-script-visibility-toggle`（ScriptDev 脚本公开/私有开关）
