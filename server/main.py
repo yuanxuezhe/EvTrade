@@ -139,6 +139,11 @@ async def on_startup_rpc():
     if os.environ.get("PYTEST_CURRENT_TEST"):
         print("[INIT] pytest mode: skip RPC client")
         return
+    # 测试模式: 不连 RabbitMQ (业务 RPC 由 mock.py 固定应答, 无需真实链路)
+    from server.config import settings
+    if settings.TEST_MODE:
+        print("[INIT] TEST_MODE: skip RPC client (mock replies)")
+        return
     try:
         await get_rpc_client()
         # RPC 连接建立后启动资金定时同步 + 健康监测

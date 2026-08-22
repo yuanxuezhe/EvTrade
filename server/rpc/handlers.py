@@ -22,10 +22,14 @@ from server.rpc.parsers_business import (
     _parse_positions,
     _parse_trades,
 )
+from server.rpc.mock import maybe_reply
 
 
 async def qry_asset() -> Dict[str, Any]:
     """查询资金 qry_ast → {code, msg, list:[asset_dict]}"""
+    mock = maybe_reply("qry_ast")
+    if mock is not None:
+        return mock
     client = await get_rpc_client()
     pkt = await client.call("qry_ast")
     return _parse_asset(pkt)
@@ -33,6 +37,9 @@ async def qry_asset() -> Dict[str, Any]:
 
 async def qry_orders() -> Dict[str, Any]:
     """查询委托 qry_ord → {code, msg, list:[order_dict, ...]}"""
+    mock = maybe_reply("qry_ord")
+    if mock is not None:
+        return mock
     client = await get_rpc_client()
     pkt = await client.call("qry_ord")
     return _parse_orders(pkt)
@@ -40,6 +47,9 @@ async def qry_orders() -> Dict[str, Any]:
 
 async def qry_trades() -> Dict[str, Any]:
     """查询成交 qry_mch → {code, msg, list:[trade_dict, ...]}"""
+    mock = maybe_reply("qry_mch")
+    if mock is not None:
+        return mock
     client = await get_rpc_client()
     pkt = await client.call("qry_mch")
     return _parse_trades(pkt)
@@ -47,6 +57,9 @@ async def qry_trades() -> Dict[str, Any]:
 
 async def qry_positions() -> Dict[str, Any]:
     """查询持仓 qry_pos → {code, msg, list:[pos_dict, ...]}"""
+    mock = maybe_reply("qry_pos")
+    if mock is not None:
+        return mock
     client = await get_rpc_client()
     pkt = await client.call("qry_pos")
     return _parse_positions(pkt)
@@ -75,6 +88,9 @@ async def ord_stk(
         提供后 transport 层在收到 code!=0 应答时按 msgid 找到原 order_no 异步更新为废单。
         不提供时, 废单路径失效 (place.py 同步 await 路径仍会处理 code!=0 → status=57).
     """
+    mock = maybe_reply("ord_stk")
+    if mock is not None:
+        return mock
     client = await get_rpc_client()
     if remark is None:
         remark = settings.ORDER_REMARK
@@ -100,6 +116,9 @@ async def cancel_order(order_id: str) -> Dict[str, Any]:
     v__ (REQ-TRADE-033): 柜台 xtquant API 签名是 (acc, order_id) 二参,
     handler 内部不读任何额外字段. 服务端 RPC 层 packet 只含 order_id.
     """
+    mock = maybe_reply("cxl_ord")
+    if mock is not None:
+        return mock
     client = await get_rpc_client()
     pkt = await client.call(
         "cxl_ord",
