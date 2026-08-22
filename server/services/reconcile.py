@@ -21,10 +21,7 @@ from typing import Dict, Any, List
 from sqlalchemy.orm import Session
 
 from server.rpc.client import qry_positions, qry_asset
-from server.models.orm import (
-    Position, Asset,  # ORM-only: Position / Asset 保留老逻辑 (Position 行 insert/delete via db.add)
-)
-from server.tables import Positions, Assets, SysStatus, ReconcileReport
+from server.tables import Positions, Assets, SysStatus, ReconcileReport, QuoteSnapshots
 from server.repo.stocks import get_stock_scale  # cost_price 按 stock.scale 保留精度
 from server.services.push.helpers import _round_scale  # cost_price 按 scale 保留精度
 import json
@@ -151,7 +148,7 @@ async def do_reconcile(
         try:
             if reconcile_kind == 'init':
                 applied = _apply_broker_data(
-                    db, new_trd_date,
+                    new_trd_date,
                     positions_data, assets_data
                 )
             else:
@@ -197,7 +194,6 @@ async def do_reconcile(
 
 
 def _apply_broker_data(
-    db: Session,
     trd_date: str,
     positions_data: List[Dict],
     assets_data: List[Dict],
@@ -210,35 +206,35 @@ def _apply_broker_data(
     # Positions: 按 stock_code PK 全表覆盖
     # change consolidate-position-data-flow: parser 输出 dict 键名已与 Position ORM 列名对齐
     # (broker wire 字段 volume/avl_amt/avg_price/market_value 在 _parse_positions 边界已完成重命名/丢弃)
-    db.query(Position).delete()
+    # Tables API: 先按 PK 逐行删旧, 再 upsert 新数据 (每个调用独立 autocommit)
+    for p in Positions.query_all():
+        Positions.delete_one(stock_code=p.stock_code)
     for p in positions_data:
         stock_code = str(p.get('stock_code', ''))
         if not stock_code:
             continue
-        db.add(Position(
-            stock_code=stock_code,
-            stock_name=str(p.get('stock_name', '')),
-            last_vol=int(p.get('last_vol', 0) or 0),
-            avl_vol=int(p.get('avl_vol', 0) or 0),
-            vol=int(p.get('vol', 0) or 0),
-            cost_price=_round_scale(p.get('cost_price', 0), get_stock_scale(db, stock_code)),  # 按 scale 保留精度
-            synced_at=datetime.now(timezone.utc).replace(tzinfo=None),
-            synced_from='rpc_reconcile',
-        ))
+        Positions.upsert_one({
+            'stock_name': str(p.get('stock_name', '')),
+            'last_vol': int(p.get('last_vol', 0) or 0),
+            'avl_vol': int(p.get('avl_vol', 0) or 0),
+            'vol': int(p.get('vol', 0) or 0),
+            'cost_price': _round_scale(p.get('cost_price', 0), get_stock_scale(stock_code=stock_code)),  # 按 scale 保留精度
+            'synced_at': datetime.now(timezone.utc).replace(tzinfo=None),
+            'synced_from': 'rpc_reconcile',
+        }, stock_code=stock_code)
 
     # Assets: 初始化不同步资金 (由 rpc_health 定时 5s 同步)
     #   assets_data 为空时跳过, 不删除已有资产行
     if assets_data:
-        db.query(Asset).delete()
         a = assets_data[0]
-        db.add(Asset(
-            cash=float(a.get('cash', 0) or 0),
-            frozen_cash=float(a.get('frozen_cash', 0) or 0),
-            market_value=float(a.get('market_value', 0) or 0),
-            total_asset=float(a.get('total_asset', 0) or 0),
-            synced_at=datetime.now(timezone.utc).replace(tzinfo=None),
-            synced_from='rpc_reconcile',
-        ))
+        Assets.upsert_one({
+            'cash': float(a.get('cash', 0) or 0),
+            'frozen_cash': float(a.get('frozen_cash', 0) or 0),
+            'market_value': float(a.get('market_value', 0) or 0),
+            'total_asset': float(a.get('total_asset', 0) or 0),
+            'synced_at': datetime.now(timezone.utc).replace(tzinfo=None),
+            'synced_from': 'rpc_reconcile',
+        }, id=1)
 
     # 计算期初总资产 last_asset = 可用资金 + sum(持仓量 * 标的昨收盘)
     #   数据源:
@@ -246,27 +242,20 @@ def _apply_broker_data(
     #     - 持仓: 刚从 broker 同步来的 positions_data (用 last_vol 持仓量)
     #     - 昨收盘: quote_snapshots.prev_close 表 (broker sync 写入)
     #   last_asset 当天不变, 前端算当日盈亏 = 总资产(now) - last_asset
-    _update_last_asset(db)
-
-    db.commit()
+    _update_last_asset()
     return True
 
 
-def _update_last_asset(db: Session) -> None:
+def _update_last_asset() -> None:
     """计算并写入 assets.id=1 的 last_asset
 
     last_asset = cash + sum(positions.last_vol * positions.stock_code's prev_close)
 
-    注: positions_data 已经在 _apply_broker_data 内 UPDATE 进 positions 表 (commit 前)
+    注: positions_data 已经在 _apply_broker_data 内写入 positions 表 (已 autocommit)
        quote_snapshots.prev_close 由 broker qry_snapshots / qry_ast 同步写入
-       这里 db.query 直接读 (因为还没 commit, 但同一事务内可见)
     """
     try:
-        from server.models.orm import Asset, Position
-        from server.tables.quote_snapshots import QuoteSnapshots
-        from server.tables.base import TableBase
-
-        asset_row = db.query(Asset).filter(Asset.id == 1).first()
+        asset_row = Assets.query_one(id=1)
         if not asset_row:
             log.warning("reconcile: assets row not found, skip last_asset update")
             return
@@ -276,16 +265,18 @@ def _update_last_asset(db: Session) -> None:
         # SQL: SELECT p.last_vol, COALESCE(qs.prev_close, 0) FROM positions p
         #      LEFT JOIN quote_snapshots qs ON p.stock_code = qs.stock_code
         prev_close_sum = 0.0
-        for p in db.query(Position).all():
+        for p in Positions.query_all():
             v = float(p.last_vol or 0)
             if v <= 0:
                 continue
-            qs = db.query(QuoteSnapshots).filter(QuoteSnapshots.stock_code == p.stock_code).first()
+            qs_rows = QuoteSnapshots.query_by('stock_code', p.stock_code)
+            qs = qs_rows[0] if qs_rows else None
             prev = float(qs.prev_close or 0) if qs else 0.0
             prev_close_sum += v * prev
 
         last_asset = cash_now + prev_close_sum
-        asset_row.last_asset = last_asset
+        # 用 update_one 只写 last_asset (upsert 会把缺失列 auto-fill 成 0 覆盖真数据)
+        Assets.update_one({'last_asset': last_asset}, id=1)
         log.info(
             "reconcile: last_asset = %.2f (cash=%.2f + positions_prev_close_sum=%.2f)",
             last_asset, cash_now, prev_close_sum,
