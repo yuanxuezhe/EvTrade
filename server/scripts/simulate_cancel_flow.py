@@ -109,7 +109,6 @@ def setup_db():
         u = User(username=USERNAME, password_hash=hash_password(PASSWORD), role="trader")
         db.add(u)
         # 激活交易日 (v_next: sys_status 单行 id=1)
-        from server.models.orm import SysStatus as _Ss
         # 不再 DELETE WHERE trd_date; 改为 UPDATE id=1 行的 trd_date/status
         existing = SysStatus.query_one(id=1)
         if existing:

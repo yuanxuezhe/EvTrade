@@ -11,7 +11,7 @@ from datetime import datetime, time as dtime
 from typing import Optional
 
 from server.db import db_session
-from server.models.orm import get_active_sysstatus  # helper 内部已走 Tables API
+from server.models.orm import get_active_sysstatus  # helper 内部已走 Tables API；保留 orm.py 直到 A.8 彻底迁移
 
 
 class TradingClock:
