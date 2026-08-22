@@ -453,8 +453,20 @@ def _run_seed_cantrdstktypes_via_session(engine) -> None:
                 print("[init_db] seeded sys_config.cantrdstktypes=0,1")
             else:
                 print(f"[init_db] sys_config.cantrdstktypes 已存在 val={row[0]}, 跳过")
+            # RPC 测试模式 (server/rpc/mock.py): 0=关(默认) 1=开(不发真实请求, 固定应答)
+            rpc_row = conn.execute(text(
+                "SELECT cfg_val FROM sys_config WHERE `user`='0' AND cfg_key='rpc_test_mode' LIMIT 1"
+            )).first()
+            if rpc_row is None:
+                conn.execute(text(
+                    "INSERT INTO sys_config (`user`, cfg_key, cfg_val, `desc`, updated_at, updated_by) "
+                    "VALUES ('0', 'rpc_test_mode', '0', 'RPC 测试模式: 0=关 1=开(不发真实请求, mock 固定应答)', NOW(), 'system')"
+                ))
+                print("[init_db] seeded sys_config.rpc_test_mode=0")
+            else:
+                print(f"[init_db] sys_config.rpc_test_mode 已存在 val={rpc_row[0]}, 跳过")
     except Exception as e:
-        print(f"[init_db] seed cantrdstktypes WARN: {e}")
+        print(f"[init_db] seed cantrdstktypes/rpc_test_mode WARN: {e}")
 
 
 # _admin_engine 占位 (兼容旧引用)

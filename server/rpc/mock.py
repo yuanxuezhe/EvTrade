@@ -1,12 +1,13 @@
 """
 server/rpc/mock.py — 测试模式 RPC 固定应答
 
-`EVTRADE_TEST_MODE=1` 时, 业务 RPC 调用 (handlers.py 的 qry_*/ord_stk/cancel_order)
-**不发真实请求**, 由本模块直接返回固定应答 dict `{code, msg, list}`。
+sys_config `rpc_test_mode=1` (user='0', 系统配置表, 可在 SystemConfig 页随时切换)
+时, 业务 RPC 调用 (handlers.py 的 qry_*/ord_stk/cancel_order) **不发真实请求**,
+由本模块直接返回固定应答 dict `{code, msg, list}`。
 
 设计:
-- `maybe_reply(func, **kw) -> dict | None`: 测试模式关闭 → None (走真实链路);
-  开启 → 返回对应 func 的固定应答。
+- `maybe_reply(func, **kw) -> dict | None`: 每次调用读 sysconfig 判定,
+  开启 → 返回对应 func 的固定应答; 关闭 → None (走真实链路)。切换即时生效。
 - 查询类: `qry_ast` 固定资产 demo; `qry_ord/qry_mch/qry_pos` 空集 (不污染 DB)。
 - `ord_stk`: 动态 `order_id` (`TEST-<seq>` 进程内递增), 让调用方拿到真实格式的应答。
 - `cxl_ord`: 成功空集。
@@ -16,7 +17,15 @@ server/rpc/mock.py — 测试模式 RPC 固定应答
 """
 from typing import Any, Dict, Optional
 
-from server.config import settings
+from server.services import sysconfig
+
+# sys_config key: user='0', 值 '1'=测试模式开 / '0'=关 (默认关)
+CONFIG_KEY = "rpc_test_mode"
+
+
+def _is_test_mode() -> bool:
+    # 每次调用读缓存 (set_value 同步更新缓存 → 切换立即生效)
+    return bool(sysconfig.get(CONFIG_KEY, 0))
 
 # ord_stk mock order_id 计数器 (进程内递增, 重启归零; orders 无唯一约束, 不冲突)
 _ord_seq: int = 0
@@ -72,7 +81,7 @@ def maybe_reply(func: str, **kw) -> Optional[Dict[str, Any]]:
         func: 柜台渠道名 (qry_ast / qry_ord / qry_mch / qry_pos / ord_stk / cxl_ord)
         **kw: 调用参数 (mock 固定应答暂不依赖, 透传供将来按需定制)
     """
-    if not settings.TEST_MODE:
+    if not _is_test_mode():
         return None
     builder = _MOCK_BUILDERS.get(func)
     if builder is None:

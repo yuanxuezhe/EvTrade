@@ -1,42 +1,52 @@
 """
-test_rpc_mock.py — RPC 测试模式固定应答 (EVTRADE_TEST_MODE)
+test_rpc_mock.py — RPC 测试模式固定应答 (sys_config rpc_test_mode)
 
 覆盖 server/rpc/mock.py + handlers.py 短路:
-- TEST_MODE 关闭 → maybe_reply 返回 None (走真实链路)
-- TEST_MODE 开启 → 各 handler 返回固定应答, 且不调 get_rpc_client (不发请求)
+- rpc_test_mode=0 → maybe_reply 返回 None (走真实链路)
+- rpc_test_mode=1 → 各 handler 返回固定应答, 且不调 get_rpc_client (不发请求)
 - ord_stk mock order_id 进程内递增
+- 开关切换即时生效 (每次调用读 sysconfig 缓存)
 
-settings 是 frozen dataclass, 用 object.__setattr__ 绕过冻结 (测完恢复).
+测试用 monkeypatch 替换 sysconfig.get, 不碰 DB.
 """
 import pytest
 
-from server.config import settings
-from server.rpc.mock import maybe_reply
+from server.services import sysconfig
+from server.rpc.mock import maybe_reply, CONFIG_KEY
 from server.rpc import handlers
 
 
-def _set_test_mode(on: bool):
-    object.__setattr__(settings, "TEST_MODE", on)
-
-
 @pytest.fixture
-def test_mode():
-    """强制开启 TEST_MODE (不管 .env), 测完恢复原值"""
-    orig = settings.TEST_MODE
-    _set_test_mode(True)
+def test_mode(monkeypatch):
+    """模拟 rpc_test_mode=1 (不写 DB, 只替换 sysconfig.get)"""
+    def fake_get(key, default=None, user="0"):
+        return 1 if key == CONFIG_KEY else default
+    monkeypatch.setattr(sysconfig, "get", fake_get)
     yield
-    _set_test_mode(orig)
 
 
-def test_maybe_reply_off_returns_none():
-    """TEST_MODE 关闭 → maybe_reply 返回 None, 不短路"""
-    orig = settings.TEST_MODE
-    _set_test_mode(False)
-    try:
-        assert maybe_reply("qry_ast") is None
-        assert maybe_reply("ord_stk") is None
-    finally:
-        _set_test_mode(orig)
+def test_maybe_reply_off_returns_none(monkeypatch):
+    """rpc_test_mode=0 → maybe_reply 返回 None, 不短路"""
+    def fake_get(key, default=None, user="0"):
+        return default
+    monkeypatch.setattr(sysconfig, "get", fake_get)
+    assert maybe_reply("qry_ast") is None
+    assert maybe_reply("ord_stk") is None
+
+
+def test_toggle_takes_effect_immediately(monkeypatch):
+    """同进程内切开关即时生效 (每次调用读缓存)"""
+    state = {"on": False}
+
+    def fake_get(key, default=None, user="0"):
+        return 1 if (key == CONFIG_KEY and state["on"]) else default
+    monkeypatch.setattr(sysconfig, "get", fake_get)
+
+    assert maybe_reply("qry_ast") is None
+    state["on"] = True
+    assert maybe_reply("qry_ast")["code"] == 0
+    state["on"] = False
+    assert maybe_reply("qry_ast") is None
 
 
 def test_qry_asset_fixed_demo(test_mode):

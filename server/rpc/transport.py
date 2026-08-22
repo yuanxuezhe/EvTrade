@@ -568,10 +568,7 @@ async def get_rpc_client() -> RPClient:
     global _rpc_client
     if _rpc_client is None:
         _rpc_client = RPClient()
-        # 测试模式: 不连 RabbitMQ (handlers 短路到 mock, 无需真实连接)
-        from server.config import settings
-        if not settings.TEST_MODE:
-            await _rpc_client.connect()
+        await _rpc_client.connect()
     return _rpc_client
 
 
