@@ -41,9 +41,11 @@ if not DATABASE_URL.startswith("mysql"):
     # 兼容：如果没有环境变量，降级为空（离线模式用不到 URL）
     DATABASE_URL = ""
 
-# ─── 导入 ORM 模型注册 metadata ─────────────────────────────────
-# 这些 import 不实例化对象，只是让 declarative_base() 注册表定义
-from server.models import user, orm  # noqa: F401
+# ─── 导入表类注册 metadata ─────────────────────────────────
+# tables/ 是纯数据类 (不继承 Base); server.tables.metadata 在 import 时把表类
+# schema 转成 sqlalchemy.Table 注册进 Base.metadata (users 由 declarative User 注册)
+from server.models import user  # noqa: F401  # users declarative User 注册 metadata
+import server.tables.metadata  # noqa: F401  # tables/ → Base.metadata 注册
 from server.infra.db import Base  # declarative_base() 单例
 
 target_metadata = Base.metadata
