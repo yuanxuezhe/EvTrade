@@ -72,10 +72,28 @@
 
 ## Stage 6 — A.7 删除 ORM 文件
 
-- [ ] **A.7.1** `grep -rn "from server.models.orm\|from server.models import.*orm" server/ --include="*.py"` 必须 = 0
-- [ ] **A.7.2** `git rm server/models/orm.py`
-- [ ] **A.7.3** 验 `python -c "import server.main"` 启动无报错
-- [ ] **A.7.4** commit: `refactor(models): delete orm.py (data access layer rewrite complete)`
+### 2026-08-22 状态：部分完成（commit `ca8be9e`）
+
+**A.7 评估结论**：
+- `server/models/orm.py` 当前**无法完整删除**——`alembic/env.py L46` + `infra/db.py L182` 都依赖 `from server.models import user, orm` 触发 `Base.metadata` 注册
+- `TableBase` 不挂 metadata（见 A.3 评估），所以 `import server.tables` 后 `Base.metadata.tables = 0`，`init_db()` 的 `Base.metadata.create_all()` 无法建表
+- `server/models/user.py` 当前**无法删除**——28 个文件引用 `from server.models.user import User`
+- **真正能做的 = 清理 dead code + 标 deprecated**
+
+**本次完成（commit `ca8be9e`）**：
+- 4 文件改注释（sys_status.py / repo/system.py / guards.py）说明 orm.py 保留到 A.8 彻底迁移
+- `scripts/simulate_cancel_flow.py` L112 删 dead `from server.models.orm import SysStatus as _Ss`（L38 已从 tables import）
+
+**未做（需 A.8 follow-up change）**：
+- 删 `server/models/orm.py` + `server/models/user.py`
+- alembic/env.py 改 SQLAlchemy 反射
+- infra/db.py init_db() 改 `text()` DDL
+- 2 个测试文件从 ORM Session 改为 Tables API
+
+- [x] **A.7.1** 探查 + 文档化 ✅
+- [ ] N/A — **A.7.2** `git rm server/models/orm.py` 当前不可行（metadata + alembic 依赖）
+- [x] **A.7.3** `python -c "import server.main"` 启动无报错 ✅（保留 import 不破）
+- [x] **A.7.4** commit: `refactor(server): A.7 partial - mark orm.py as deprecated + remove dead _Ss import` (`ca8be9e`) ✅
 
 ## Stage 7 — B 删除 db.py 兼容垫片
 
