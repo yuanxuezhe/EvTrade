@@ -2,7 +2,7 @@
 
 A 股智能交易终端。Vue 3 + FastAPI + msgpacket RPC + XtQuant / QMT 柜台。
 
-- 后端业务数据本地 SQLite 优先（v4），下单 / 撤单 / 对账走 QMT 柜台 RPC。
+- 后端业务数据 MySQL（v4），下单 / 撤单 / 对账走 QMT 柜台 RPC。
 - 行情通过独立 `hqserver` WebSocket（:8765）FANOUT 推送。
 - 鉴权：JWT + RBAC（admin / trader / viewer）。
 - 开发流程：spec-driven（详见 [`openspec/AGENTS.md`](openspec/AGENTS.md)）。

@@ -12,7 +12,7 @@
 | 服务 | 技术栈 | 端口 | 职责 |
 |------|--------|------|------|
 | 前端 | Vue 3 + Element Plus + ECharts + Pinia | :50998 | 交易终端 UI |
-| 后端 | FastAPI + SQLite/MySQL + RabbitMQ | :8000 | 交易核心、鉴权、WebSocket 推送 |
+| 后端 | FastAPI + MySQL + RabbitMQ | :8000 | 交易核心、鉴权、WebSocket 推送 |
 | 行情 | hqserver（Rust） | :8765 | 实时行情 FANOUT 推送 |
 | 策略 | strategy_exec（Backtrader） | :8001 | 策略回测/实盘运行 |
 | 柜台 | QMT / XtQuant | — | 下单/撤单/持仓/行情源 |
@@ -248,7 +248,7 @@ E:/EvTrade/.venv/Scripts/python.exe -m pytest server/tests/test_script_strategy_
 
 **pytest 运行须知**：
 - 项目使用 `pytest.ini` 配置，`conftest.py` 中有 PYTEST_CURRENT_TEST 检测
-- pytest 模式下自动跳过 RPC 连接和 WS 启动（不需要真实 RabbitMQ/SQLite）
+- pytest 模式下自动跳过 RPC 连接和 WS 启动（不需要真实 RabbitMQ/MySQL）
 - 用项目 `.venv` 的 Python：`E:/EvTrade/.venv/Scripts/python.exe`
 - 不要跑全量测试浪费时间
 
@@ -337,7 +337,7 @@ FastAPI 中 `@router.delete("/{order_no}")` 对应 `DELETE` 方法，不是 `POS
 ### 7.4 测试中的 PYTEST_CURRENT_TEST
 
 pytest 模式下 `conftest.py` 会检测 `PYTEST_CURRENT_TEST` 环境变量，自动跳过 RPC/WS 启动。
-测试不需要真实的 RabbitMQ 或 SQLite 数据库。
+测试不需要真实的 RabbitMQ 或 MySQL 数据库。
 
 ### 7.5 strategy_exec 的 stale task 清理
 

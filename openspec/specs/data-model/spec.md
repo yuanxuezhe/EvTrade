@@ -1,4 +1,4 @@
-# data-model — MySQL 表结构知识库（v80.2 起 v14 sqlite→mysql）
+# data-model — MySQL 表结构知识库
 
 ## Purpose
 
@@ -7,7 +7,7 @@
 
 ORM 注释（`server/tables/<表名>.py` 自动生成）必须与本 spec 保持一致（diff 检查项之一）。
 
-> **历史注**：v14 之前项目用 SQLite，自 v20 起强制 MySQL-only。本 spec 早期版本描述 SQLite 时代，标题虽沿用旧名，但所有 schema 都已迁移到 MySQL。
+> v20 起强制 MySQL-only。所有 schema 已迁移到 MySQL（InnoDB + utf8mb4）。
 
 设计原则（v5 schema-refactor，v80.2 调整）：
 
@@ -64,7 +64,7 @@ ORM 注释（`server/tables/<表名>.py` 自动生成）必须与本 spec 保持
 | 17 | `order_no_seq` | 序列 | `id` 约束 | ✅ 单行 | `server/services/order_no.py` |
 
 > **变更说明**：
-> - v14 起从 SQLite 迁到 MySQL（v20 强制 MySQL-only）；本 spec 早期版本描述 SQLite 时代
+> - v14 起迁移到 MySQL（v20 强制 MySQL-only）
 > - v66 strategy_trade change：新增 `strategy` / `strategy_task` / `strategy_grid` / `strategy_regime` / `strategy_audit` 5 张策略表（**其中 4 张网格引擎表已随 v120.5 删除**）
 > - v90 script-strategy change（2026-08-01）：新增 `strategy_script` / `strategy_script_audit` 2 张脚本策略表 + 扩展 `strategy_task` 字段
 > - **v120.5 grid-engine-removal（2026-08-10）**：DROP `strategy` / `strategy_regime` / `strategy_grid` / `strategy_audit` / `stocks_legacy` 5 张表（migration `server/migrations/2026-08-10-drop-legacy-strategy-tables.py`，commit `aa70dae`）。网格引擎被脚本策略取代；schema.yml 同步移除 4 张表定义（19 → 15 张）
@@ -648,7 +648,6 @@ ORM 注释（`server/tables/<表名>.py` 自动生成）必须与本 spec 保持
 - **AND** `CREATE INDEX IF NOT EXISTS ix_t0_tasks_status_created ON t0_tasks(status, created_at)`
 - **AND** `CREATE INDEX IF NOT EXISTS ix_t0_tasks_user_status ON t0_tasks(user_id, status)`
 - **AND** MySQL：`CREATE TABLE IF NOT EXISTS ... ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`
-- **AND** SQLite：`CREATE TABLE IF NOT EXISTS ... `（SQLite 兼容模式用 text 类型替代 enum）
 
 #### Scenario: SQLAlchemy ORM 定义
 
@@ -697,7 +696,6 @@ class T0Task(Base):
 - **WHEN** migration 跑
 - **THEN** 先查 `INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME='orders' AND COLUMN_NAME='task_id'`
 - **AND** 已存在则跳过 ALTER；不存在则 ADD
-- **AND** SQLite 用 `PRAGMA table_info(orders)` 检测
 
 #### Scenario: task_id NULL 行为
 

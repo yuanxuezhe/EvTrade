@@ -35,8 +35,8 @@ git pull origin master
 
 ## 二、项目一句话
 
-Vue3 + FastAPI 量化交易 Web 平台。**业务数据本地 DB 优先**（v4 改造后）：
-- 委托/成交/持仓/资金：本地 SQLite 是展示源
+Vue3 + FastAPI 量化交易 Web 平台。**业务数据 MySQL 优先**（v4 改造后）：
+- 委托/成交/持仓/资金：MySQL 是展示源
 - 下单/撤单/对账：调 QMT 柜台 RPC
 - 行情：msgpacket RPC + RabbitMQ FANOUT → 独立 hqserver WebSocket
 
@@ -72,7 +72,7 @@ Vue3 + FastAPI 量化交易 Web 平台。**业务数据本地 DB 优先**（v4 �
 
 ## 四、约定（业务铁律）
 
-- **业务数据源（v4）**：本地 SQLite（orders/trades/positions/assets）是展示源；RPC 只用于下单/撤单/对账时的事实写入
+- **业务数据源（v4）**：MySQL（orders/trades/positions/assets）是展示源；RPC 只用于下单/撤单/对账时的事实写入
 - **下单流程**：本地 INSERT(status=48) → 调 ord_stk(remark=order_no) → 改 status=49/55 → WS 推
 - **推送流程**：4 类 push → push_handlers 写 DB → WS 推 Vue
 - **查询流程**：纯 DB SELECT，不调 RPC；按 trading_day 默认 = 激活日

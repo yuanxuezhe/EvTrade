@@ -203,7 +203,7 @@ WHERE pre_status IS NOT NULL;
 ALTER TABLE orders DROP COLUMN pre_status;
 ```
 
-或最简回滚：从 §3 "执行前" 备份的 sqlite 还原文件。
+或最简回滚：从 §3 "执行前" 备份的数据库还原文件。
 
 ## 7. 验收
 
