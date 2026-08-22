@@ -138,5 +138,6 @@ mv openspec/changes/<name> openspec/changes/archive/<date>-<name>
 | `2026-06-14-persistence-and-t0` | **✅ 已归档** | v4 实施完成：11 张表 + 屏障 + 日初对账 + T0 + 费率（详见 `archive/2026-06-14-persistence-and-t0/proposal.md`） |
 | `2026-08-23-delete-orm-layer` | **✅ 已归档** | A.8：删 server/models/ + server/db.py，User 全迁 tables.Users，metadata 由 tables/ 注册 21 表（详见 `archive/2026-08-23-delete-orm-layer/proposal.md`） |
 | `2026-08-23-script-visibility-toggle` | **✅ 已归档** | ScriptDev 脚本编辑补公开/私有开关（后端 REQ-STRAT-014 已就绪，前端缺口）（详见 `archive/2026-08-23-script-visibility-toggle/proposal.md`） |
+| `2026-08-23-rpc-test-mode` | **✅ 已归档** | RPC 测试模式：EVTRADE_TEST_MODE=1 时业务 RPC 不发真实请求，mock.py 固定应答（详见 `archive/2026-08-23-rpc-test-mode/proposal.md`） |
 
 详见 `openspec/changes/<name>/proposal.md`。
