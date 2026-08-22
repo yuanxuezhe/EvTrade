@@ -1,5 +1,5 @@
 <!--
-  StrategyOrderDetail.vue — 策略母单元数据 (v126, 子组件)
+  StrategyOrderDetail.vue — 策略母单元数据 (子组件)
 
   选中母单后展示元数据 (task_id / 策略名 / 标的 / 状态 / 启停时间 / 关闭时间 / 启动次数)
 -->

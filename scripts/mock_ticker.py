@@ -23,11 +23,11 @@ Mock ticker — 独立行情模拟工具
                                                                         ↓ 严格按订阅过滤
                                                                       frontend WS
 
-数据格式（与 `quant/quota.py:format_quote` 一致，2026-08-18 起经 UDP 直推 `hq/hqserverd`，不再走 RabbitMQ）：
+数据格式（与 `quant/quota.py:format_quote` 一致，经 UDP 直推 `hq/hqserverd`，不走 RabbitMQ）：
   - UDP datagram body: bytes（GBK 编码的 pipe-delimited 字符串）
   - 31 字段索引对应 server/services/strategy/quote_consumer.py:166-176
   - 每条 tick 可以是单行，也可以多条 tick 用 \\n 合并成一条消息
-    （2026-07-09 quote-batch-split: QMT publisher 现在用 \\n 合并）
+    （QMT publisher 用 \\n 合并）
 
 使用：
   python scripts/mock_ticker.py                       # 默认 5 tick/s, 默认股票池
@@ -38,7 +38,7 @@ Mock ticker — 独立行情模拟工具
   python scripts/mock_ticker.py --batch-size 5        # 每次合并 5 条 tick 发
   python scripts/mock_ticker.py --url amqp://192.168.10.2:5672/
 
-历史：2026-07-09 创建 — QMT publisher 不发数据期间，给前端行情页提供测试源。
+用途补充：QMT publisher 不发数据期间，给前端行情页提供测试源。
 """
 import argparse
 import asyncio
@@ -215,9 +215,9 @@ class MockTicker:
 
     async def _connect(self):
         """建立 RabbitMQ 长连接
-        2026-07-09 修正：publish 用 default exchange + routing_key=EvQuota（与上游 QMT publisher 一致）
-        之前 publish 到自建 FANOUT exchange quota.exchange 但 hqserver 已用 declare_queue
-        （passive=False），消息没进 EvQuota 队列（被另一个不存在的 exchange 收走）
+
+        publish 用 default exchange + routing_key=EvQuota（与上游 QMT publisher 一致，
+        消息才能进 hqserver 消费的 EvQuota 队列）
         """
         log.info("connecting to RabbitMQ: %s", self.url)
         self._connection = await aio_pika.connect_robust(self.url)
@@ -246,7 +246,7 @@ class MockTicker:
                 tick_lines.append(tick_bytes)
                 i += 1
 
-            # batch 合并（用 \n 分割，对应 2026-07-09 quote-batch-split）
+            # batch 合并（用 \n 分割，与 QMT publisher 的 batch 格式一致）
             if len(tick_lines) == 1:
                 body = tick_lines[0]
             else:

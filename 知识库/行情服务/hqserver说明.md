@@ -2,14 +2,14 @@
 
 ## 对应代码路径
 
-- `e:/EvTrade/hq/hqserverd/`（Rust 单文件 crate：行情消费 + WebSocket 直推路由器；2026-08-18 取代旧 `hq/hqserver.py`）
+- `e:/EvTrade/hq/hqserverd/`（Rust crate（多模块）：行情消费 + WebSocket 直推路由器）
 - `e:/EvTrade/hq/hqsuber.py`（**保留**：按标的订阅的 RabbitMQ 示例客户端，演示如何 bind `quota.broadcast.exchange`）
-- `e:/EvTrade/iquant/quota.py`（QMT publisher：每条 tick 一帧 UDP datagram，直推 hqserverd，不再走 MQ）
+- `e:/EvTrade/iquant/quota.py`（QMT publisher：tick 批量合并（`_buf` 累计 ≤ `QUOTA_BATCH_MAX`=50 条，',' join 为一帧）后 UDP datagram 直推 hqserverd，不再走 MQ）
 - 配置来源：`e:/EvTrade/server/.env`（与 EvTrade 主服务共享）
 
 ## 功能概述
 
-hqserverd 是 EvTrade 的**独立行情推送进程**（Rust tokio 单二进制，**2026-08-18 改写**）：
+hqserverd 是 EvTrade 的**独立行情推送进程**（Rust tokio 单二进制）：
 QMT publisher (`iquant/quota.py`) 通过 UDP（默认 `:9001`）直推每条 tick 给 hqserverd，
 经内部 tokio mpsc 缓冲与固定 worker 池拆分后，把每条 tick 以 JSON 帧
 `{"type":"quote", ...}` 广播给**所有**已连接的 WebSocket 客户端（前端行情页 + strategy_exec 实盘 LiveRunner）。
@@ -29,12 +29,12 @@ QMT publisher (`iquant/quota.py`) 通过 UDP（默认 `:9001`）直推每条 tic
 架构（hqserverd main.rs 编排）：
 
 ```
-QMT quota.py (asyncio UDP sendto)
-      ↓ UDP datagram: gbk 编码, "|" 分隔, 首字段 stock_code
+QMT quota.py (socket sendto)
+      ↓ UDP datagram: gbk 编码, 帧内 ',' 分隔多条 tick(≤50), 每条 '|' 分隔, 首字段 stock_code
 hqserverd 绑定 :9001 接收
       ↓ tokio mpsc (maxsize=5000, 天然背压)
 NUM_WORKERS 个 worker task (CPU 受控)
-      ↓ serde_json 序列化为 QuotePayload
+      ↓ 逐条拆 ',' 批次 → '|' 切字段 → serde_json 序列化为 QuotePayload
 WebSocket 服务 :8765 ──→ 前端 + strategy_exec LiveRunner
 ```
 
@@ -47,7 +47,7 @@ WebSocket 服务 :8765 ──→ 前端 + strategy_exec LiveRunner
 | `hqserverd/src/config.rs` | 环境变量解析（替代旧 `_env_*` 助手） |
 | `hqserverd/src/types.rs` | `QuotePayload` 数据类型 + serde JSON 序列化 |
 | `hqserverd/src/udp_receiver.rs` | UDP socket 收包 → 内部 mpsc |
-| `hqserverd/src/worker.rs` | N worker 解析 tick（按 `|` 切字段、调 WsHub） |
+| `hqserverd/src/worker.rs` | N worker 解析 tick（`,` 拆批次 → `|` 切字段、调 WsHub） |
 | `hqserverd/src/ws_server.rs` | WS 服务：注册/广播/keepalive |
 
 ## 核心实现
@@ -74,8 +74,8 @@ uv run python scripts/evctl.py start hqserver
 | 变量 | 默认值 | 说明 |
 |---|---|---|
 | `HQ_UDP_BIND` | `0.0.0.0:9001` | hqserverd UDP 监听地址（接收 quota.py） |
-| `QUOTA_UDP_HOST` | `192.168.1.20` | quota.py 推送的目标 IP（信息展示用，hqserverd 不主动连） |
-| `QUOTA_UDP_PORT` | `9001` | quota.py 推送的目标端口（信息展示用） |
+| `QUOTA_UDP_HOST` | `192.168.1.20` | quota.py 推送的目标 IP（hqserverd 仅日志展示用，不主动连） |
+| `QUOTA_UDP_PORT` | `9001` | quota.py 推送的目标端口（**仅 quota.py 侧读取**；hqserverd 的 `config.rs` 不解析此变量，实际监听口由 `HQ_UDP_BIND` 决定） |
 | `HQ_NUM_WORKERS` | `4` | worker task 数（防吃满单核 CPU） |
 | `HQ_MAX_QUEUE_SIZE` | `5000` | 内部 mpsc 缓冲上限（满则背压阻塞） |
 | `HQ_WS_HOST` | `0.0.0.0` | WS 监听地址 |
@@ -85,9 +85,9 @@ uv run python scripts/evctl.py start hqserver
 ### UDP 接收（udp_receiver.rs）
 
 - `tokio::net::UdpSocket::bind(HQ_UDP_BIND).await`，buf = `Vec<u8>` 64 KiB。
-- 每帧 datagram = 一条 tick（quota.py 现在不再做 `\n` batch 合并）。
-- 字节层不解析、整包入 mpsc；worker 侧做字段切分。
-- 通道满 → UDP sendto 由 OS socket buffer 兜底，再满 → quota.py 端 `transport.send` 抛错丢弃。
+- 每帧 datagram 可含**多条 tick**：quota.py 在 `_buf` 中累计 tick（阈值 `QUOTA_BATCH_MAX`=50 条）后 `b",".join` 成一帧再 `sendto`（旧 MQ 版的 `\n` 分隔已改为 `,`）。
+- 字节层不解析、整包入 mpsc；worker 侧做批次拆分与字段切分。
+- 通道满 → UDP sendto 由 OS socket buffer 兜底，再满 → quota.py 端 `sendto` 失败丢弃。
 - UDP 不做 ACK/重传；行情丢一两条对前端展示无影响。
 
 ### worker 池（worker.rs）
@@ -95,11 +95,12 @@ uv run python scripts/evctl.py start hqserver
 N 个 worker task 共享同一个 `Arc<Mutex<mpsc::Receiver<Vec<u8>>>>`，逐条消费：
 
 1. `decode_best_effort(pkt)`：优先严格 gbk（**注**：当前实现为 lossy utf-8，详见"已知限制"）；
-2. `body.split('|')` 切字段（首字段 = stock_code）；
-3. `QuotePayload::new(stock_code, fields, body)` 构造 payload（含 last_price 解析）；
-4. `serde_json::to_string(&payload)` 序列化为字符串；
-5. `hub.broadcast(text)` → WsHub 复制给所有客户端；
-6. `tokio::task::yield_now().await` 让出执行权（等价旧版 `await asyncio.sleep(0)`）。
+2. `body.split(',')` 先拆批次（v1.1 行情合并推送：一帧内 ',' 分隔 N 条 tick，向后兼容无 ',' 的单 tick；空段跳过）；
+3. 每条 tick 再 `split('|')` 切字段（首字段 = stock_code）；
+4. `QuotePayload::new(stock_code, fields, body)` 构造 payload（含 last_price 解析，取 fields[2]）；
+5. `serde_json::to_string(&payload)` 序列化为字符串；
+6. `hub.broadcast(text)` → WsHub 复制给所有客户端；
+7. `tokio::task::yield_now().await` 让出执行权（等价旧版 `await asyncio.sleep(0)`）。
 
 ### WebSocket 服务（ws_server.rs，:8765）
 

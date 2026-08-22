@@ -7,7 +7,7 @@ main.py — FastAPI app 入口（phase-2 拆分后）
 - 路由注册（public / protected / admin 三组）
 - /api/health
 - WebSocket 端点注册（实现在 server/ws/endpoint.py）
-- v10 增：root logger 显式设 INFO（server.interaction / uvicorn.* 都靠它）
+- root logger 显式设 INFO（server.interaction / uvicorn.* 都靠它）
 
 不在此处的逻辑：
 - DB seed 实现在 server/lifecycle/seed.py
@@ -22,15 +22,15 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from server.auth.deps import get_current_user
 from server.api import positions, holdings, orders, trades, asset, auth as auth_api, users as users_api
-from server.api import clock, fee_config, sysconfig as sysconfig_api  # v78: 统一配置
-from server.api import system as system_api  # v8: 系统级查询（active-day）
+from server.api import clock, fee_config, sysconfig as sysconfig_api  # 统一配置
+from server.api import system as system_api  # 系统级查询（active-day）
 from server.api import t0_stats, t0_aggregate
-from server.api import t0_tasks  # v18 change t0-task-management
+from server.api import t0_tasks  # change t0-task-management
 from server.api import script_strategy as script_strategy_api  # script-strategy change (新模块)
-from server.api import quote as quote_api  # 2026-07-09 quote-snapshot-subscribe
-from server.api import stocks as stocks_api  # v21 stock-info-crawler
-from server.api import stkpool as stkpool_api  # add-stkpool-module (v128)
-from server.api import sync as sync_api  # v21 stock-info-crawler
+from server.api import quote as quote_api  # quote 查询/订阅
+from server.api import stocks as stocks_api  # stock-info-crawler
+from server.api import stkpool as stkpool_api  # add-stkpool-module
+from server.api import sync as sync_api  # stock-info-crawler
 from server.api import ai_analysis as ai_analysis_api  # AI 分析 (invest-analyst skill 集成, 同步 PoC)
 from server.api.admin import sys_status as admin_sys_status, reconcile as admin_reconcile, session as admin_session
 from server.middleware.request_logging import RequestLoggingMiddleware
@@ -42,7 +42,7 @@ from server.services.strategy.quote_consumer import (
     get_quote_consumer, close_quote_consumer,
 )
 
-# v10 增: 显式配 root logger (server-interaction-logging REQ-LOG-005)
+# 显式配 root logger (server-interaction-logging REQ-LOG-005)
 #   uvicorn 启动时只给 uvicorn.* 配了 handler, root 默认 WARNING, INFO 被过滤
 #   清掉 uvicorn 已挂的 root handler, 再 basicConfig 设 root = INFO
 #   让 [front->svc] / [svc->rpc] 等自定义 logger 可见
@@ -61,7 +61,7 @@ logging.basicConfig(
 from server.utils import setup_file_logging  # noqa: E402  (依赖上面的 basicConfig)
 _log_dir = setup_file_logging()
 
-# v10 增: 禁用 uvicorn 原生 access log
+# 禁用 uvicorn 原生 access log
 #   重复打印 '127.0.0.1:NNNN - "GET /api/x HTTP/1.1" 200 OK' 格式
 #   已被 RequestLoggingMiddleware 的 [front<-svc] 替代
 logging.getLogger("uvicorn.access").disabled = True
@@ -105,7 +105,7 @@ register_ws_endpoint(app)
 # ---- Startup / Shutdown hooks ------------------------------------------
 @app.on_event("startup")
 async def on_startup_register_loop():
-    """v91.4: 把 main event loop 注册到 ws_manager, 让 sync 线程能 schedule broadcast"""
+    """把 main event loop 注册到 ws_manager, 让 sync 线程能 schedule broadcast"""
     import asyncio
     from server.ws.manager import ws_manager as _ws
     _ws._main_loop = asyncio.get_running_loop()
@@ -115,13 +115,12 @@ async def on_startup_register_loop():
 def on_startup():
     """DB 建表 + 默认账号 seed（实现见 server/lifecycle/seed.py）"""
     init_and_seed()
-    # v78: 启动时一次性加载 sysconfig 到 cache
+    # 启动时一次性加载 sysconfig 到 cache
     from server.services import sysconfig
     sysconfig.load_all()
     print(f"[INIT] sysconfig loaded: {len(sysconfig._cache)} users")
-    # v90: 去掉 stocks 内存 cache (前端 IndexedDB 负责缓存, 后端直查 DB)
 
-    # v120+ strategy-exec-service: stale task 清理由 strategy_exec 服务自行处理
+    # strategy-exec-service: stale task 清理由 strategy_exec 服务自行处理
     #  (启动时清理 progress > 5min 没更新的 task → 标 failed, EvTrade 仅做兜底)
     # 注: 原 sweep_stale_running_tasks 在 server/strategy/service.py, 已删
     # 新位置 strategy_exec/strategy_exec/data_access/strategy_task.py (Phase 2+ 实施)
@@ -136,13 +135,13 @@ def on_startup():
 @app.on_event("startup")
 async def on_startup_rpc():
     """启动 RPC 客户端（同时启动 reply 监听 + push 监听）。"""
-    # v20: pytest 跑 TestClient 时跳过 RPC 启动 (会尝试连真 RabbitMQ, SSL hang)
+    # pytest 跑 TestClient 时跳过 RPC 启动 (会尝试连真 RabbitMQ, SSL hang)
     if os.environ.get("PYTEST_CURRENT_TEST"):
         print("[INIT] pytest mode: skip RPC client")
         return
     try:
         await get_rpc_client()
-        # v99: RPC 连接建立后启动资金定时同步 + 健康监测
+        # RPC 连接建立后启动资金定时同步 + 健康监测
         from server.services.rpc_health import start_sync
         await start_sync()
     except Exception as e:
@@ -164,7 +163,7 @@ async def on_shutdown_rpc():
 
 @app.on_event("startup")
 async def on_startup_quote_consumer():
-    """启动 QuoteConsumer（2026-07-09 quote-always-on: 无条件启动，与策略引擎解耦）。
+    """启动 QuoteConsumer（无条件启动，与策略引擎解耦）。
 
     📌 行情 7×24 必需：Holdings/Positions/Trade 等所有页面的最新价/市值推送都靠 QuoteConsumer,
        与 STRATEGY_ENGINE_ENABLED 无关。
@@ -179,7 +178,7 @@ async def on_startup_quote_consumer():
         print(f"[INIT] quote consumer failed to start: {e}")
 
 
-# 2026-07-10 quote-cache: 启动后台 periodic flush task
+# 启动后台 periodic flush task (quote-cache)
 from server.cache.quote_cache_flusher import start_quote_cache_flusher  # noqa: E402
 
 _quote_cache_flusher_task = None  # type: ignore[var-annotated]
@@ -189,7 +188,7 @@ _quote_cache_flusher_task = None  # type: ignore[var-annotated]
 async def on_startup_quote_cache_flusher():
     """启动内存 quote_cache → MySQL 的周期 flush 后台 task。
 
-    📌 2026-07-10 quote-cache：tick 走 cache.set() 不再 await MySQL，
+    📌 tick 走 cache.set() 不再 await MySQL，
        持久化由本 task 每 60s（可配）批量回写。
     """
     global _quote_cache_flusher_task
@@ -209,7 +208,7 @@ async def on_shutdown_quote_consumer():
     except Exception as e:
         print(f"[SHUTDOWN] quote consumer close error: {e}")
 
-    # 2026-07-10 quote-cache: 停止 periodic flush task（task 内部 finally 会做最后 flush）
+    # 停止 periodic flush task（task 内部 finally 会做最后 flush）
     global _quote_cache_flusher_task
     if _quote_cache_flusher_task is not None and not _quote_cache_flusher_task.done():
         _quote_cache_flusher_task.cancel()
@@ -219,7 +218,7 @@ async def on_shutdown_quote_consumer():
             print(f"[SHUTDOWN] quote cache flusher cancel: {e}")
 
 
-# ---- v120+ strategy_exec_service (change 2026-08-09-strategy-exec-service) ----
+# ---- strategy_exec_service (change strategy-exec-service) ----
 # signal_consumer: 订阅 strategy.exchange → 收 signal → POST /api/orders/place
 
 @app.on_event("startup")
@@ -240,7 +239,7 @@ async def on_shutdown_signal_consumer():
         print(f"[SHUTDOWN] signal_consumer stop error: {e}")
 
 
-# ---- REQ-AUTH-IDLE-001 (2026-07-31): token session cache 后台 sweep ----
+# ---- REQ-AUTH-IDLE-001: token session cache 后台 sweep ----
 _auth_sweep_task = None  # type: ignore[var-annotated]
 
 
@@ -289,18 +288,18 @@ app.include_router(orders.router, prefix="/api/orders", tags=["orders"], depende
 app.include_router(sysconfig_api.router, prefix="/api/sysconfig", tags=["sysconfig"], dependencies=_AUTH)
 app.include_router(t0_stats.router, prefix="/api/orders", tags=["t0-stats"], dependencies=_AUTH)
 app.include_router(t0_aggregate.router, prefix="/api/orders", tags=["t0-aggregate"], dependencies=_AUTH)
-app.include_router(t0_tasks.router, prefix="/api/t0-tasks", tags=["t0-tasks"], dependencies=_AUTH)  # v18
+app.include_router(t0_tasks.router, prefix="/api/t0-tasks", tags=["t0-tasks"], dependencies=_AUTH)
 app.include_router(trades.router, prefix="/api/trades", tags=["trades"], dependencies=_AUTH)
 app.include_router(asset.router, prefix="/api/asset", tags=["asset"], dependencies=_AUTH)
 app.include_router(fee_config.router, prefix="/api/fee-config", tags=["fee-config"], dependencies=_AUTH)
-app.include_router(system_api.router, prefix="/api/system", tags=["system"], dependencies=_AUTH)  # v8
+app.include_router(system_api.router, prefix="/api/system", tags=["system"], dependencies=_AUTH)
 # script-strategy change (新模块): 前端编写 Python 脚本 + 回测 + 实盘
 app.include_router(script_strategy_api.router, prefix="/api/script-strategy", tags=["script-strategy"], dependencies=_AUTH)
-app.include_router(quote_api.router, prefix="/api/quote", tags=["quote"], dependencies=_AUTH)  # 2026-07-09
-# 2026-07-10 v21 stock-info-crawler: stocks 查询 + sync 管理
+app.include_router(quote_api.router, prefix="/api/quote", tags=["quote"], dependencies=_AUTH)
+# stocks 查询 + sync 管理 (stock-info-crawler)
 app.include_router(stocks_api.router, prefix="/api/stocks", tags=["stocks"], dependencies=_AUTH)
 app.include_router(stkpool_api.router, prefix="/api/stkpool", tags=["stkpool"], dependencies=_AUTH)  # add-stkpool-module
-# 2026-07-10 v21 stock-info-crawler: sync 管理 (admin only,内联守卫避免 _AUTH_ADMIN 未定义)
+# sync 管理 (admin only,内联守卫避免 _AUTH_ADMIN 未定义)
 app.include_router(sync_api.router, prefix="/api/sync", tags=["sync"], dependencies=[Depends(get_current_user)])
 # AI 分析 (PoC: 同步调用 invest-analyst demo 脚本, 单次 60-180s)
 #   前端 axios 调用: POST /api/ai/ai-analysis (baseURL=/api + router prefix=/ai + endpoint=/ai-analysis)

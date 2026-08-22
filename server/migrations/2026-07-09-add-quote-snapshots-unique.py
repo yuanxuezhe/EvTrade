@@ -17,7 +17,7 @@
 """
 import os
 import sys
-# 2026-07-10 fix: migration 脚本直接读 os.environ，与 infra/db.py 同问题
+# fix: migration 脚本直接读 os.environ，与 infra/db.py 同问题
 # 这里也 load_dotenv(server/.env) 拿到正确的 EVTRADE_DB_URL。
 try:
     from dotenv import load_dotenv
@@ -29,18 +29,18 @@ except ImportError:
 from sqlalchemy import create_engine, text, inspect
 from sqlalchemy.engine import Engine
 
-# ─────────────── URL 解析（v20 MySQL-only 永久标准 强制 EVTRADE_DB_URL） ───────────────
-# REQ-CFG-009 v20: SQLite fallback 永久下线；migration 脚本同样要求显式 EVTRADE_DB_URL。
+# ─────────────── URL 解析（MySQL-only 永久标准 强制 EVTRADE_DB_URL） ───────────────
+# REQ-CFG-009: SQLite fallback 永久下线；migration 脚本同样要求显式 EVTRADE_DB_URL。
 try:
     DATABASE_URL = os.environ["EVTRADE_DB_URL"]
 except KeyError:
     raise RuntimeError(
-        "EVTRADE_DB_URL is required (v20 MySQL-only permanent standard). "
+        "EVTRADE_DB_URL is required (MySQL-only permanent standard). "
         "Set it in server/.env, e.g. mysql+pymysql://EvTrade:p%40ssw0rd@127.0.0.1:33066/evtrade?charset=utf8mb4"
     )
 if not DATABASE_URL.startswith("mysql"):
     raise RuntimeError(
-        f"[migration] Only MySQL is supported (v20 permanent standard). Got: {DATABASE_URL[:80]!r}"
+        f"[migration] Only MySQL is supported (permanent standard). Got: {DATABASE_URL[:80]!r}"
     )
 ADMIN_URL = os.environ.get("EVTRADE_DB_ADMIN_URL", DATABASE_URL)
 if not ADMIN_URL.startswith("mysql"):
@@ -55,7 +55,7 @@ TABLE_NAME = "quote_snapshots"
 
 def _engine_dialect_name(engine: Engine) -> str:
     with engine.connect() as conn:
-        return conn.dialect.name  # 'mysql' (v20 永久标准唯一合法值)
+        return conn.dialect.name  # 'mysql' (永久标准唯一合法值)
 
 
 def table_exists(engine: Engine, table: str) -> bool:
@@ -85,7 +85,7 @@ def main():
                 print(f"[SKIP] {IDX_NAME} on {TABLE_NAME} already exists")
                 return
 
-            # ─── Step 3: 建唯一索引（v20 MySQL-only） ───
+            # ─── Step 3: 建唯一索引（MySQL-only） ───
             # MySQL 8 不支持 CREATE UNIQUE INDEX IF NOT EXISTS，但 INFORMATION_SCHEMA 已探测过
             conn.execute(text(
                 f"CREATE UNIQUE INDEX {IDX_NAME} ON {TABLE_NAME}(stock_code)"

@@ -1,5 +1,5 @@
 """
-transport.py — RPClient 传输骨架（simplify-rpc-transport-thin + layered-architecture v13）
+transport.py — RPClient 传输骨架（simplify-rpc-transport-thin + layered-architecture）
 
 职责（传输层本分）：
 - RPClient 类：维护 RabbitMQ 长连接、消息发布、in-flight pending futures
@@ -11,7 +11,7 @@ transport.py — RPClient 传输骨架（simplify-rpc-transport-thin + layered-a
 - push 业务编排已迁到 server/services/push/dispatcher.py（REQ-RPC-012）
 - push 行提取已迁到 server/rpc/parsers_push.py
 
-v13 分层改造：
+分层结构：
 - RPClient 继承自 server.infra.mq.MessageQueueClient（基类封装 aio_pika RMQ 长连接）
 - connect() 委托给 super().connect()（声明 exchange + req/reply/push 队列）
 - publish() 委托给 super().publish()（publisher confirm + timeout）
@@ -38,7 +38,7 @@ def _do_reply_update_sync(
     status_msg: str,
     flatten_cancelled: bool = False,
 ) -> Optional["Order"]:
-    """v91: 同步执行 RPC 应答 DB 写入 (统一 code=0 待报 / code!=0 废单).
+    """同步执行 RPC 应答 DB 写入 (统一 code=0 待报 / code!=0 废单).
 
     Args:
         status: 目标 status 码 ('49' 待报 / '57' 废单)
@@ -52,7 +52,7 @@ def _do_reply_update_sync(
     from server.tables import Orders
     order = Orders.query_one(trd_date=trd_date, order_no=order_no)
     if not order:
-        log.warning("v91 reply update: trd_date=%s order_no=%s not found in Orders", trd_date, order_no)
+        log.warning("reply update: trd_date=%s order_no=%s not found in Orders", trd_date, order_no)
         return None
     order.status = status
     order.status_msg = status_msg[:240] if status_msg else ""
@@ -60,13 +60,13 @@ def _do_reply_update_sync(
         order.cancelled_volume = order.volume or 0
     order.update(Orders, trd_date=trd_date, order_no=order_no)
     log.info(
-        "v91 reply order updated: trd_date=%s order_no=%s status=%s msg=%r",
+        "reply order updated: trd_date=%s order_no=%s status=%s msg=%r",
         trd_date, order_no, status, status_msg,
     )
     return order
 
 
-# v84: msgid → (order_no, trd_date, stock_code, created_at_ts)
+# msgid → (order_no, trd_date, stock_code, created_at_ts)
 # ord_stk 下单时写入, transport._handle_reply 收到 code!=0 应答时按 msgid 查找更新 Order.
 # TTL 60s 自动清理 (避免内存泄漏). 这是 fire-and-forget 防护机制:
 # 即使 place.py 同步 await 路径被中断/超时, 后续 broker 异步应答也能找到原 order_no 更新为废单.
@@ -75,7 +75,7 @@ _MSGID_ORDERNO_TTL_SEC = 60.0
 
 
 def _register_msgid_orderno(msg_id: str, order_no: str, trd_date: str, stock_code: str) -> None:
-    """v84: 下单时注册 msgid → (order_no, trd_date, stock_code) 映射."""
+    """下单时注册 msgid → (order_no, trd_date, stock_code) 映射."""
     if not msg_id or not order_no:
         return
     import time as _time
@@ -83,7 +83,7 @@ def _register_msgid_orderno(msg_id: str, order_no: str, trd_date: str, stock_cod
 
 
 def _lookup_msgid_orderno(msg_id: str) -> Optional[tuple]:
-    """v84: 应答时按 msgid 查 (order_no, trd_date, stock_code, ts). 命中后调用方负责清缓存."""
+    """应答时按 msgid 查 (order_no, trd_date, stock_code, ts). 命中后调用方负责清缓存."""
     if not msg_id:
         return None
     entry = _MSGID_ORDERNO_CACHE.get(msg_id)
@@ -98,12 +98,12 @@ def _lookup_msgid_orderno(msg_id: str) -> Optional[tuple]:
 
 
 def _evict_msgid_orderno(msg_id: str) -> None:
-    """v84: 显式清除 (成功应答后避免 cache 残留)."""
+    """显式清除 (成功应答后避免 cache 残留)."""
     _MSGID_ORDERNO_CACHE.pop(msg_id, None)
 
 
 async def _msgid_cache_gc_loop(interval_sec: float = 30.0) -> None:
-    """v84: 定期清理过期 cache (daemon task, 永不抛错)."""
+    """定期清理过期 cache (daemon task, 永不抛错)."""
     import time as _time
     while True:
         try:
@@ -113,11 +113,11 @@ async def _msgid_cache_gc_loop(interval_sec: float = 30.0) -> None:
             for k in expired:
                 _MSGID_ORDERNO_CACHE.pop(k, None)
             if expired:
-                log.debug("v84 msgid cache GC: evicted %d expired entries (remaining=%d)", len(expired), len(_MSGID_ORDERNO_CACHE))
+                log.debug("msgid cache GC: evicted %d expired entries (remaining=%d)", len(expired), len(_MSGID_ORDERNO_CACHE))
         except asyncio.CancelledError:
             break
         except Exception as e:
-            log.warning("v84 msgid cache GC loop error: %s", e)
+            log.warning("msgid cache GC loop error: %s", e)
 
 
 # ──────────────────────────── 协议常量 ────────────────────────────
@@ -196,7 +196,7 @@ class RPClient(MessageQueueClient):
         self._dispatcher = PushDispatcher(self)
         asyncio.ensure_future(self._listen_replies())
         asyncio.ensure_future(self._listen_pushs())
-        # v84: 启动 msgid cache GC daemon
+        # 启动 msgid cache GC daemon
         asyncio.ensure_future(_msgid_cache_gc_loop())
         log.info(
             "RPClient connected, listening on reply=%s push=%s (exchange=%s, confirms=on)",
@@ -248,7 +248,7 @@ class RPClient(MessageQueueClient):
                     msg_id, len(self.pending), list(self.pending.keys()),
                 )
 
-            # v84: ord_stk 应答且 code!=0 → 按 msgid 匹配 order_no 异步废单
+            # ord_stk 应答且 code!=0 → 按 msgid 匹配 order_no 异步废单
             # 设计: 错误码 != 0 → 缓存中按 msgid 找到原 order_no + trd_date, 更新委托为废单 + 错误信息
             #       错误码 == 0 → 不处理 (broker ord_cfm push 会异步更新真实状态)
             # 时序: place.py _submit_rpc_async 同步等 ack 已被改写跳过 code!=0 写, 所以不会双重更新
@@ -318,7 +318,7 @@ class RPClient(MessageQueueClient):
         可选参数：
           headers: 逗号分隔的字段名（如 "stock_code,volume,price"），用于带请求体的调用。
           values:  字段名 → 字符串值的 dict；会在 headers 设置后写入第一行。
-          msgid_meta (v84): dict 含 order_no / trd_date / stock_code。
+          msgid_meta: dict 含 order_no / trd_date / stock_code。
             msgid 生成后会自动注册到 _MSGID_ORDERNO_CACHE,
             后续 transport._handle_reply 收到 func=ord_stk 且 code!=0 应答时按 msgid 反查,
             找到原 order_no 异步更新为废单 + msg。code==0 时 cache 不清 (等 TTL GC)。
@@ -350,7 +350,7 @@ class RPClient(MessageQueueClient):
                 "MsgPacket 未生成 msgid，请检查 msgpacket 库版本是否支持自动 UUID"
             )
 
-        # v84: msgid_meta 预注册 → _MSGID_ORDERNO_CACHE (供 transport _handle_reply 反查)
+        # msgid_meta 预注册 → _MSGID_ORDERNO_CACHE (供 transport _handle_reply 反查)
         if msgid_meta:
             _register_msgid_orderno(
                 msg_id,
@@ -359,7 +359,7 @@ class RPClient(MessageQueueClient):
                 msgid_meta.get("stock_code", ""),
             )
             log.debug(
-                "v84 msgid registered: msgid=%s order_no=%s trd_date=%s stock_code=%s",
+                "msgid registered: msgid=%s order_no=%s trd_date=%s stock_code=%s",
                 msg_id,
                 msgid_meta.get("order_no", ""),
                 msgid_meta.get("trd_date", ""),
@@ -380,7 +380,7 @@ class RPClient(MessageQueueClient):
             log.debug("RPClient.call >>> wire:\n%s", req_dump)
 
         # publisher confirm（REQ-RPC-008）：等 broker ack，超时则清 pending + 抛错
-        # v10 增: 记 [svc->rpc] 调用日志 (server-interaction-logging REQ-LOG-003)
+        # 记 [svc->rpc] 调用日志 (server-interaction-logging REQ-LOG-003)
         from server.utils.logflow import DIR_SVC_TO_RPC, log_interaction
         log_interaction(
             DIR_SVC_TO_RPC,
@@ -396,7 +396,7 @@ class RPClient(MessageQueueClient):
             )
         except asyncio.TimeoutError:
             self.pending.pop(msg_id, None)
-            _evict_msgid_orderno(msg_id)  # v84: publish 超时清 cache
+            _evict_msgid_orderno(msg_id)  # publish 超时清 cache
             log.error(
                 "RPClient.call publish TIMEOUT func=%s msg_id=%s after %.1fs (broker no-ack?)",
                 func, msg_id, self._publish_confirm_timeout,
@@ -419,7 +419,7 @@ class RPClient(MessageQueueClient):
         except asyncio.TimeoutError:
             # 超时清理 pending，避免内存泄漏 + 防止后续应答误匹配
             self.pending.pop(msg_id, None)
-            _evict_msgid_orderno(msg_id)  # v84: wait_for 超时清 cache
+            _evict_msgid_orderno(msg_id)  # wait_for 超时清 cache
             log.warning(
                 "RPClient.call TIMEOUT func=%s msg_id=%s after %.1fs",
                 func, msg_id, timeout,
@@ -435,7 +435,7 @@ class RPClient(MessageQueueClient):
             )
             raise
 
-        # v10 增: 记 [svc<-rpc] reply 日志 (含 code / rows)
+        # 记 [svc<-rpc] reply 日志 (含 code / rows)
         self._log_reply(func, reply_pkt, msg_id)
 
         return reply_pkt
@@ -459,7 +459,7 @@ class RPClient(MessageQueueClient):
             pass  # 日志失败不影响业务
 
     async def _handle_ord_stk_reply(self, reply_pkt: "MsgPacket", msg_id: str) -> None:
-        """v91: 处理 ord_stk 应答 (统一以 ord_cfm 格式广播到前端).
+        """处理 ord_stk 应答 (统一以 ord_cfm 格式广播到前端).
 
         应答与委托确认推送格式统一 (用户需求):
           - code == 0 → 推 status=49 (待报) 给前端, 前端状态刷成待报
@@ -484,13 +484,13 @@ class RPClient(MessageQueueClient):
             entry = _lookup_msgid_orderno(msg_id)
             if not entry:
                 log.warning(
-                    "v91 ord_stk reply code=%s but msgid=%s NOT in cache (expired or never registered)",
+                    "ord_stk reply code=%s but msgid=%s NOT in cache (expired or never registered)",
                     code_int, msg_id,
                 )
                 return
             order_no, trd_date, stock_code, _ts = entry
 
-            # v91: 分两路径 - code=0 待报 / code!=0 废单
+            # 分两路径 - code=0 待报 / code!=0 废单
             if code_int == 0:
                 # code=0 → 待报 (49). 防状态倒退: 仅当前 status=48 时推进
                 # (broker ord_cfm 可能先到已推 50/55/56, 此时跳过避免覆盖)
@@ -498,13 +498,13 @@ class RPClient(MessageQueueClient):
                 cur = _Orders.query_one(trd_date=trd_date, order_no=order_no)
                 if cur and cur.status not in ('48', '49'):
                     log.info(
-                        "v91 ord_stk reply code=0 skip: order_no=%s current status=%s (broker ord_cfm 已先到, 不倒退)",
+                        "ord_stk reply code=0 skip: order_no=%s current status=%s (broker ord_cfm 已先到, 不倒退)",
                         order_no, cur.status,
                     )
                     _evict_msgid_orderno(msg_id)
                     return
                 log.info(
-                    "v91 ord_stk reply code=0 → 待报(49): msgid=%s order_no=%s trd_date=%s stock_code=%s",
+                    "ord_stk reply code=0 → 待报(49): msgid=%s order_no=%s trd_date=%s stock_code=%s",
                     msg_id, order_no, trd_date, stock_code,
                 )
                 loop = asyncio.get_event_loop()
@@ -514,7 +514,7 @@ class RPClient(MessageQueueClient):
             else:
                 # code!=0 → 废单 (57) + 抹平 cancelled_volume
                 log.warning(
-                    "v91 ord_stk JUNK detected: msgid=%s code=%s msg=%r order_no=%s trd_date=%s stock_code=%s",
+                    "ord_stk JUNK detected: msgid=%s code=%s msg=%r order_no=%s trd_date=%s stock_code=%s",
                     msg_id, code_int, ack_msg, order_no, trd_date, stock_code,
                 )
                 loop = asyncio.get_event_loop()
@@ -524,7 +524,7 @@ class RPClient(MessageQueueClient):
                 )
 
             # ws push 必须在主 event loop (run_in_executor 线程没有 loop)
-            # v84.3: 走 _broadcast_order_cfm helper 包装成 {type:'ord_cfm', channel, ts, data}
+            # 走 _broadcast_order_cfm helper 包装成 {type:'ord_cfm', channel, ts, data}
             #   前端 ws_dispatch.js t='ord_cfm' 才识别 (与 push/ord.py 推送同协议)
             if updated_order is not None:
                 try:
@@ -532,12 +532,12 @@ class RPClient(MessageQueueClient):
                     # _broadcast_order_cfm 内部用 asyncio.ensure_future, 在主 event loop 自动调度
                     _broadcast_order_cfm(updated_order, trace_id=msg_id)
                 except Exception as push_err:
-                    log.warning("v91 ws push failed: %s", push_err)
+                    log.warning("ws push failed: %s", push_err)
 
             # 显式清 cache (无论 DB 更新成功与否, 避免长期占用)
             _evict_msgid_orderno(msg_id)
         except Exception as e:
-            log.exception("v91 _handle_ord_stk_reply error: %s", e)
+            log.exception("_handle_ord_stk_reply error: %s", e)
 
     def _count_reply_rows(self, reply_pkt: MsgPacket) -> int:
         """估算 reply 第二结果集的 row 数（不强制解析，避免开销）。"""

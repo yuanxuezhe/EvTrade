@@ -38,7 +38,7 @@ from sqlalchemy import text, create_engine, inspect
 
 DATABASE_URL = os.environ.get("EVTRADE_DB_URL")
 if not DATABASE_URL:
-    raise RuntimeError("EVTRADE_DB_URL is required (v20 MySQL-only permanent standard).")
+    raise RuntimeError("EVTRADE_DB_URL is required (MySQL-only permanent standard).")
 if not DATABASE_URL.startswith("mysql"):
     raise RuntimeError(f"Only MySQL is supported. Got URL: {DATABASE_URL[:80]!r}")
 

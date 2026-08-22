@@ -1,5 +1,5 @@
 """
-server/services/script_strategy/strategy_order_lifecycle.py — 母单启停 (v126)
+server/services/script_strategy/strategy_order_lifecycle.py — 母单启停
 
 职责单一: 母单 start/stop + 转发 payload 构造 (与 strategy_orders.py 拆分, 行数约束).
 - start_strategy_order: 校验 + create_task(mode='live') + 改母单 status=running + 返回 forward_payload
@@ -180,7 +180,7 @@ def build_start_forward_payload(
 ) -> Dict[str, Any]:
     """构造 strategy_exec /internal/run-task payload (母单实盘路径).
 
-    关键字段 (v126):
+    关键字段:
     - mode='live'
     - task_id=live_task_id (strategy_task.id, 母单 active_task_id 指向它)
     - parent_task_id=order['task_id']  (母单对外编号, signal payload 透传到 signal_consumer)
@@ -194,8 +194,8 @@ def build_start_forward_payload(
         "stock_code": order["stock_code"],
         "mode": "live",
         "params": best_params,
-        "parent_task_id": order["task_id"],      # v126 母单归因
-        "strategy_name": strategy.get("name", ""),  # v126 子单 user_def
+        "parent_task_id": order["task_id"],      # 母单归因
+        "strategy_name": strategy.get("name", ""),  # 子单 user_def
     }
 
 

@@ -1,5 +1,5 @@
 """
-server/api/script_strategy/scripts.py — 脚本库端点 (v123)
+server/api/script_strategy/scripts.py — 脚本库端点
 
 REST 端点 (前缀 /api/script-strategy):
   GET    /scripts                list (含分页)
@@ -26,6 +26,46 @@ from server.api.script_strategy.schemas import ScriptCreate, ScriptOut, ScriptUp
 log = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+def _load_default_template() -> dict:
+    """提取默认模板加载逻辑, 供 GET /templates/default 和 POST /scripts/new 复用
+
+    读 strategy_exec/templates/default_bt_strategy.py, 解析 DEFAULT_BT_STRATEGY_CODE
+    和 DEFAULT_BT_STRATEGY_PARAMS_SCHEMA (ast.literal_eval), 失败时返回兜底 demo。
+    """
+    import os
+    _TEMPLATE_PATH = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))),
+        "strategy_exec", "strategy_exec", "templates", "default_bt_strategy.py",
+    )
+    code_str = "# DEFAULT_BT_STRATEGY_CODE not found"
+    params_schema: list = []
+    try:
+        with open(_TEMPLATE_PATH, "r", encoding="utf-8") as f:
+            src = f.read()
+        tree = ast.parse(src)
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Assign):
+                continue
+            for target in node.targets:
+                if not isinstance(target, ast.Name):
+                    continue
+                if target.id == "DEFAULT_BT_STRATEGY_CODE":
+                    code_str = ast.literal_eval(node.value)
+                elif target.id == "DEFAULT_BT_STRATEGY_PARAMS_SCHEMA":
+                    params_schema = ast.literal_eval(node.value)
+    except Exception as e:
+        log.warning("[template] 读 strategy_exec 模板失败: %s", e)
+        code_str = f"# 模板加载失败: {e}\n# 请检查 strategy_exec/templates/default_bt_strategy.py"
+    if not params_schema:
+        params_schema = [
+            {"key": "fast", "type": "int", "min": 3, "max": 30, "step": 1, "default": 5},
+            {"key": "slow", "type": "int", "min": 10, "max": 120, "step": 1, "default": 20},
+            {"key": "qty", "type": "int", "min": 100, "max": 10000, "step": 100, "default": 100},
+            {"key": "rsi_period", "type": "int", "min": 6, "max": 30, "step": 1, "default": 14},
+        ]
+    return {"code": code_str, "params_schema": params_schema}
 
 
 @router.get("/scripts", response_model=List[ScriptOut])
@@ -78,6 +118,27 @@ def create_script_endpoint(req: ScriptCreate, user: User = Depends(get_current_u
     return out
 
 
+@router.post("/scripts/new", response_model=ScriptOut, status_code=201)
+def new_script_endpoint(user: User = Depends(get_current_user)):
+    """自动命名创建脚本: new_strategy → new_strategy01 → new_strategy02 ...
+
+    前端"新建脚本"按钮直接调此端点, 点击即创建并在列表显示, 不等用户手动保存。
+    用默认模板代码填充, 用户创建后可自行编辑修改。
+    """
+    tpl = _load_default_template()
+    try:
+        out = svc.auto_create_script(
+            user_id=user.id,
+            code=tpl["code"],
+            params_schema=tpl["params_schema"],
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail={"code": "CREATE_FAILED", "msg": str(e)})
+    except Exception as e:
+        raise HTTPException(status_code=500, detail={"code": "INTERNAL", "msg": str(e)})
+    return out
+
+
 @router.put("/scripts/{script_id}", response_model=ScriptOut)
 def update_script_endpoint(
     script_id: str, req: ScriptUpdate, user: User = Depends(get_current_user),
@@ -103,56 +164,19 @@ def delete_script_endpoint(script_id: str, user: User = Depends(get_current_user
 def get_default_script_template():
     """给前端 ScriptDev.vue 编辑器作为初始内容
 
-    v120+ strategy-exec-service: 模板迁到 strategy_exec/templates/default_bt_strategy.py
+    模板位于 strategy_exec/templates/default_bt_strategy.py,
     读 strategy_exec 的默认 demo (避免重复实现, 单一事实源)
     """
-    import ast
-    import os
-    # strategy_exec/templates/default_bt_strategy.py 在 EvTrade 项目根下
-    _TEMPLATE_PATH = os.path.join(
-        os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))),
-        "strategy_exec", "strategy_exec", "templates", "default_bt_strategy.py",
-    )
-    code_str = "# DEFAULT_BT_STRATEGY_CODE not found"
-    params_schema: list = []
-    try:
-        with open(_TEMPLATE_PATH, "r", encoding="utf-8") as f:
-            src = f.read()
-        # 提取 DEFAULT_BT_STRATEGY_CODE / DEFAULT_BT_STRATEGY_PARAMS_SCHEMA
-        # schema 与代码同源解析 → 避免硬编码漂移导致 strict mode 不一致
-        tree = ast.parse(src)
-        for node in ast.walk(tree):
-            if not isinstance(node, ast.Assign):
-                continue
-            for target in node.targets:
-                if not isinstance(target, ast.Name):
-                    continue
-                if target.id == "DEFAULT_BT_STRATEGY_CODE":
-                    code_str = ast.literal_eval(node.value)
-                elif target.id == "DEFAULT_BT_STRATEGY_PARAMS_SCHEMA":
-                    params_schema = ast.literal_eval(node.value)
-    except Exception as e:
-        log.warning("[template] 读 strategy_exec 模板失败: %s", e)
-        code_str = f"# 模板加载失败: {e}\n# 请检查 strategy_exec/templates/default_bt_strategy.py"
-    if not params_schema:
-        # 兜底: 与模板 DEFAULT_BT_STRATEGY_PARAMS_SCHEMA 保持一致 (含 rsi_period)
-        params_schema = [
-            {"key": "fast", "type": "int", "min": 3, "max": 30, "step": 1, "default": 5},
-            {"key": "slow", "type": "int", "min": 10, "max": 120, "step": 1, "default": 20},
-            {"key": "qty", "type": "int", "min": 100, "max": 10000, "step": 100, "default": 100},
-            {"key": "rsi_period", "type": "int", "min": 6, "max": 30, "step": 1, "default": 14},
-        ]
-    return {"code": code_str, "params_schema": params_schema}
+    return _load_default_template()
 
 
 @router.post("/scripts/{script_id}/compile")
 def compile_script_endpoint(script_id: str, user: User = Depends(get_current_user)):
     """静态语法检查（仅 ast.parse，不回测）
 
-    2026-08-22 fix: svc.get_script() 返回 dict（_convert.py script_row_to_dict），
-    不是 SimpleNamespace。属性访问 .code 在真实环境会 AttributeError → 500。
-    改为 dict[key] 访问。subagent 测试用 SimpleNamespace mock 绕过了这个 bug，
-    真值需用真实 DB 验证。
+    svc.get_script() 返回 dict（_convert.py script_row_to_dict），
+    不是 SimpleNamespace。属性访问 .code 会 AttributeError → 500，
+    故用 dict[key] 访问。
     """
     out = svc.get_script(script_id, user.id, is_admin=(user.role == "admin"))
     if out is None:

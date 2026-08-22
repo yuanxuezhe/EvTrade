@@ -93,7 +93,7 @@ def _set_status(status: int, err_msg: str = "", status_msg: str = "") -> None:
 async def _get_pending_count() -> int:
     """获取 RPClient 当前在途（未应答）的 RPC 请求数量。
 
-    v128.3: 包 5s timeout — RabbitMQ channel 关闭 / 重连时, 内部属性读取
+    包 5s timeout — RabbitMQ channel 关闭 / 重连时, 内部属性读取
     偶发挂起, 防止 probe iteration 被拖死.
     """
     try:
@@ -109,7 +109,7 @@ async def _get_pending_count() -> int:
 async def _get_request_queue_depth() -> int:
     """取请求队列当前 message_count。失败时返回 0。
 
-    v128.3: get_rpc_client() + queue.declare() 各包 5s timeout,
+    get_rpc_client() + queue.declare() 各包 5s timeout,
     防 RabbitMQ 重连窗口 / channel 关闭时挂死 probe iteration.
     """
     try:
@@ -139,7 +139,7 @@ async def _get_request_queue_depth() -> int:
 async def _broadcast_rpc_status() -> None:
     """通过 system_update 通道推送当前 RPC 状态到前端。
 
-    v128.3: 包 2s timeout — 慢 WS 消费者 / 死连接未清理时, broadcast 可阻塞
+    包 2s timeout — 慢 WS 消费者 / 死连接未清理时, broadcast 可阻塞
     event loop 数秒; 超时仅记 WARN, 不打断 probe 循环.
     """
     payload = {
@@ -160,8 +160,8 @@ async def _broadcast_rpc_status() -> None:
 async def _broadcast_asset() -> None:
     """推送最新资产数据到前端（仅在探测成功时调用）。
 
-    v128.3: Assets.query_one 是同步 SQL, 原在 async 循环里直接调会阻塞 event loop;
-    改走 asyncio.to_thread + 包 2s broadcast timeout, 防止 probe iteration 拖死.
+    Assets.query_one 是同步 SQL, 走 asyncio.to_thread + 包 2s broadcast
+    timeout, 防止 probe iteration 拖死.
     """
     try:
         row = await asyncio.wait_for(
@@ -227,11 +227,11 @@ async def _probe_once() -> tuple:
         a = list_data[0]
         now = datetime.now(timezone.utc).replace(tzinfo=None)
         try:
-            # v129: last_asset (期初总资产, 日初 do_reconcile 写入, 当天不变) 必须保留。
+            # last_asset (期初总资产, 日初 do_reconcile 写入, 当天不变) 必须保留。
             #   assets.last_asset 在 MySQL 为 NOT NULL 且无默认值 (ORM default 仅 Python 侧) →
             #   upsert_one 缺该字段会补 0 并写进 ON DUPLICATE KEY UPDATE, 把 reconcile 写的值冲回 0,
             #   导致仪表盘趋势百分比 = 盈亏/1 显示天文数字。读现有值携带进 upsert。
-            #   (v128.3 起 Assets.query_one 走 to_thread, 避免阻塞 event loop)
+            #   (Assets.query_one 走 to_thread, 避免阻塞 event loop)
             existing = await asyncio.wait_for(
                 asyncio.to_thread(Assets.query_one, id=1),
                 timeout=2.0,

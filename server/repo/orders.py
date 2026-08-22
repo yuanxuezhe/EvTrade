@@ -1,17 +1,17 @@
 """
-repo/orders.py — orders 表仓库 + order_no_seq 表仓库 (v13 从 services/ 迁入, v80.3 迁移到 tables 层)
+repo/orders.py — orders 表仓库 + order_no_seq 表仓库
 
 包含:
-- 8 位订单序号生成器 (next_order_no / get_current_no / reset_to) — 旧 services/order_no.py
+- 8 位订单序号生成器 (next_order_no / get_current_no / reset_to)
 - broker xtconstant 字典 + 委托 status 推断 (ORDER_STATUS / TERMINAL_STATUSES /
-  is_cancellable / _status_msg / _infer_order_status / _get_active_trd_date) — 旧 services/order_status.py
-- v13 新增表级 CRUD 封装 (get_by_order_no / insert_pending_order / insert_cancel_row)
-- v80.3 迁移到 server/tables/ 层: 消除 ORM 依赖, 用 Orders.add_one / Orders.query_one / Orders.update_one 等标准接口
+  is_cancellable / _status_msg / _infer_order_status / _get_active_trd_date)
+- 表级 CRUD 封装 (get_by_order_no / insert_pending_order / insert_cancel_row)
+- DB 访问走 server/tables/ 层: 用 Orders.add_one / Orders.query_one / Orders.update_one 等标准接口
 
 规范: openspec/specs/rpc-protocol/spec.md REQ-RPC-009
       openspec/changes/2026-06-22-order-no-sqlite-compat (SQLite 3.21.0 兼容)
-      openspec/changes/2026-07-06-layered-architecture-and-strategy-master (v13 分层)
-      openspec/changes/2026-07-23-tables-codegen-and-orm-removal (v80.3 tables 层迁移)
+      openspec/changes/2026-07-06-layered-architecture-and-strategy-master (分层)
+      openspec/changes/2026-07-23-tables-codegen-and-orm-removal (tables 层)
 """
 from datetime import datetime
 from typing import Optional
@@ -28,13 +28,13 @@ from server.tables.reconcile_report import ReconcileReport
 
 
 # ================================================================
-# 8 位订单序号生成器 (v6 起 8 位单调递增; SQLite ≥ 3.21 三步分离)
+# 8 位订单序号生成器 (8 位单调递增; SQLite ≥ 3.21 三步分离)
 # ================================================================
 
 def next_seq(name: str, db=None) -> str:
-    """按 seq_name 分键的原子自增序号生成器 (v123 多生成器泛化).
+    """按 seq_name 分键的原子自增序号生成器.
 
-    旧 `next_order_no` 的 3 步分离方案 (SQLite ≥ 3.21 兼容) 按 `seq_name` 分键复用:
+    3 步分离方案 (SQLite ≥ 3.21 兼容), 按 `seq_name` 分键:
         1) INSERT IGNORE INTO order_no_seq (seq_name, last_value, updated_at) ...  # 兜底初始化
         2) UPDATE ... SET last_value = last_value + 1 WHERE seq_name = :name ...   # 自增
         3) SELECT last_value ...                                                  # 读出
@@ -73,20 +73,20 @@ def next_seq(name: str, db=None) -> str:
 def next_order_no(db=None) -> str:
     """原子自增, 返回 8 位数字字符串. 函数内自动 commit (破坏旧约定).
 
-    实现: 委托通用序号生成器 next_seq(db, 'order_no') — v123 多生成器泛化,
-    行为与旧实现完全一致 (order_no 生成器行初值 10000000, 每次 +1, 8 位上限).
+    实现: 委托通用序号生成器 next_seq(db, 'order_no'),
+    行为: order_no 生成器行初值 10000000, 每次 +1, 8 位上限.
 
     上限保护: 8 位数字最大 99999999, 达到上限时拒绝继续分配.
 
-    v80.3 迁移: OrderNoSeq.query_one 不会锁, 所以保留 SELECT FOR UPDATE 写法 (绕过
+    OrderNoSeq.query_one 不会锁, 所以保留 SELECT FOR UPDATE 写法 (绕过
     TableBase 标准方法). 函数内 commit, 调用方不需要再 commit.
-    db 参数保留 (兼容旧调用方: next_order_no(db)) — v80.3 实际不依赖 db.
+    db 参数保留 (兼容旧调用方: next_order_no(db)), 实际不依赖 db.
     """
     return next_seq('order_no', db)
 
 
 def get_current_no(db=None) -> int:
-    """查询当前序号 (不递增). v80.3: 用 OrderNoSeq.query_one. v123: 键改 seq_name='order_no'."""
+    """查询当前序号 (不递增). 用 OrderNoSeq.query_one, 键 seq_name='order_no'."""
     row = OrderNoSeq.query_one(seq_name='order_no')
     if not row:
         return 10000000
@@ -94,7 +94,7 @@ def get_current_no(db=None) -> int:
 
 
 def reset_to(db=None, value: int = 0) -> None:
-    """重置序号 (仅测试/迁移用). v80.3: 用 OrderNoSeq.update_one. v123: 键改 seq_name='order_no'."""
+    """重置序号 (仅测试/迁移用). 用 OrderNoSeq.update_one, 键 seq_name='order_no'."""
     OrderNoSeq.update_one(
         {"last_value": value, "updated_at": datetime.now()},
         seq_name='order_no',
@@ -102,7 +102,7 @@ def reset_to(db=None, value: int = 0) -> None:
 
 
 # ================================================================
-# broker xtconstant 字典 (v11, 1:1 对齐)
+# broker xtconstant 字典 (1:1 对齐)
 # 权威源: iquant/xtquant_api.py 第 130-200 行 / 280-340 行
 # ================================================================
 ORDER_STATUS = {
@@ -119,18 +119,16 @@ ORDER_STATUS = {
     "255": "未知",          # ORDER_UNKNOWN
 }
 
-# 终态集合 (v11: 含 broker 52=部成待撤, 删 broker 55=部成 PART_SUCC 非终态 - 与 broker 终态口径一致)
+# 终态集合 (与 broker 终态口径一致)
 # 含 broker 52 (部成待撤, 撤单过渡) + broker 53/54/56/57 (部成部撤/已撤/已成/废单)
 # 不含 broker 55 (PART_SUCC 部成, 可继续累计到 broker 56 已成)
 TERMINAL_STATUSES = ('52', '53', '54', '56', '57')
 
 
 def is_cancellable(code: str) -> bool:
-    """是否可撤单 (v91: 收紧到 已报 50 / 部成 55)
+    """是否可撤单 (仅 已报 50 / 部成 55)
 
-    v11 旧规则: (48, 49, 50) - 未报/待报/已报 都可撤. 但 48/49 时 broker order_id 尚未回报,
-                 撤单 RPC 无的放针, 实际撤不下来.
-    v91 新规则: (50, 55) - 仅 已报/部成 可撤
+    规则: (50, 55) - 仅 已报/部成 可撤
       - 48 未报 / 49 待报: broker order_id 未回报, 禁止撤单
       - 50 已报: broker 已接收, 可撤
       - 55 部成: 剩余未成交部分可撤
@@ -146,9 +144,9 @@ def _status_msg(status: str) -> str:
 
 
 def _infer_order_status(order, broker_status: Optional[str] = None) -> str:
-    """委托 status 本地推断 (v8 改: cancelled_volume 主轴 + v11 改: broker 码输出)
+    """委托 status 本地推断 (cancelled_volume 主轴 + broker 码输出)
 
-    v80.3: 参数 order 兼容 Order ORM 实例 和 server.tables.orders.Row (两者都支持
+    参数 order 兼容 Order ORM 实例 和 server.tables.orders.Row (两者都支持
     属性访问 .status / .traded_volume / .cancelled_volume / .volume).
 
     Args:
@@ -160,7 +158,7 @@ def _infer_order_status(order, broker_status: Optional[str] = None) -> str:
     Returns:
         推断后的 status: 50 / 53 / 54 / 55 / 56 (broker xtconstant 码全集)
 
-    规则 (v8 cancelled_volume 主轴 + v11 broker 码输出):
+    规则 (cancelled_volume 主轴 + broker 码输出):
       1. 当前 status 已是终态 (52/53/54/56/57, 不含 broker 55=部成 PART_SUCC 非终态) → 保持, 不再推断
          (避免 trd_cfm 累计覆盖 ord_cfm 写的撤单终态; broker 55=部成 仍可继续累计到 broker 56 已成)
       2. 撤单主轴 (cum_cancelled):
@@ -186,7 +184,7 @@ def _infer_order_status(order, broker_status: Optional[str] = None) -> str:
     cum_cancelled = order.cancelled_volume or 0
     vol = order.volume or 0
 
-    # 2. 撤单主轴 (v8 新增, 优先于 broker_status 判定)
+    # 2. 撤单主轴 (优先于 broker_status 判定)
     if cum_cancelled >= vol and vol > 0:
         return '54'  # broker 已撤: 撤单数 ≥ 委托数
     if cum_cancelled > 0 and cum > 0:
@@ -195,7 +193,7 @@ def _infer_order_status(order, broker_status: Optional[str] = None) -> str:
         return '54'  # 部分撤单 (无成交) → 视作 broker 已撤 (运营角度)
 
     # 3. broker 推了撤单类 status (兼容老 broker 协议, 无 cancelled_volume 字段时)
-    # v11: 触发码含 broker 51=已报待撤 (broker 撤单类全集: 51/52/53/54)
+    # 触发码含 broker 51=已报待撤 (broker 撤单类全集: 51/52/53/54)
     if broker_status and broker_status in ('51', '52', '53', '54'):
         if cum == 0:
             return '54'
@@ -203,7 +201,7 @@ def _infer_order_status(order, broker_status: Optional[str] = None) -> str:
             return '53'
         return '56'  # broker 已成, broker 撤单无意义
 
-    # 4. 累计推断 (v11 broker 码)
+    # 4. 累计推断 (broker 码)
     if cum == 0:
         return '50'  # broker 已报
     if cum < vol:
@@ -214,8 +212,8 @@ def _infer_order_status(order, broker_status: Optional[str] = None) -> str:
 def _get_active_trd_date(db=None) -> str:
     """获取当前激活交易日; 未激活则用 MAX(trd_date)
 
-    v80.4 简化: 用 SysStatus.query_one(id=1) + 全表扫描 Python max.
-    db 参数保留 (兼容旧调用方: _get_active_trd_date(db)) — v80.4 实际不依赖 db.
+    用 SysStatus.query_one(id=1) + 全表扫描 Python max.
+    db 参数保留 (兼容旧调用方: _get_active_trd_date(db)), 实际不依赖 db.
     """
     # sys_status 是单行配置, 主键查询
     ss = SysStatus.query_one(id=1)
@@ -239,13 +237,13 @@ def _get_active_trd_date(db=None) -> str:
 
 
 # ================================================================
-# v13 NEW: 表级 CRUD 封装 (orders 表) — v80.3 迁移到 Orders 标准方法
+# 表级 CRUD 封装 (orders 表) — 走 Orders 标准方法
 # ================================================================
 
 def get_by_order_no(db=None, trd_date: str = '', order_no: str = '') -> Optional[object]:
     """按 (trd_date, order_no) 复合主键查询 orders 行.
 
-    v80.3 迁移: 改用 Orders.query_one (复合主键). 返回 server.tables.orders.Row (非 ORM Order).
+    用 Orders.query_one (复合主键). 返回 server.tables.orders.Row (非 ORM Order).
     db 参数保留 (兼容旧调用方).
     """
     return Orders.query_one(trd_date=trd_date, order_no=order_no)
@@ -265,7 +263,7 @@ def insert_pending_order(
 ) -> object:
     """INSERT status=48 待报行 (place 第 3 步用; user_def 透传 = str(strategy.id) / 'T0' / 默认空).
 
-    v80.3 迁移: 改用 Orders.add_one. 返回 server.tables.orders.Row.
+    用 Orders.add_one. 返回 server.tables.orders.Row.
     db 参数保留 (兼容旧调用方: insert_pending_order(db, ...)).
     """
     from server.utils.time import format_ts  # 避免循环 import
@@ -282,7 +280,7 @@ def insert_pending_order(
         "traded_amount": 0.0,
         "avg_price": 0.0,
         "status": "48",
-        "status_msg": "待报",   # v84.3: 统一为"待报" (broker 异步反馈前)
+        "status_msg": "待报",   # 统一为"待报" (broker 异步反馈前)
         "order_time": format_ts(tz='local'),
     })
 
@@ -290,16 +288,16 @@ def insert_pending_order(
 def insert_cancel_row(
     db=None,
     *,
-    orig,                       # server.tables.orders.Row (v80.3)
+    orig,                       # server.tables.orders.Row
     cancel_order_no: str,
     raw_id: Optional[str] = None,
 ) -> object:
-    """INSERT cancel-row (v9 重构: order_flag=1, user_def='CANCEL:{orig.order_no}').
+    """INSERT cancel-row (order_flag=1, user_def='CANCEL:{orig.order_no}').
 
-    v13 加 raw_id 参数 (默认 None; DELETE 端点调用时传 orig.order_no).
+    raw_id 参数 (默认 None; DELETE 端点调用时传 orig.order_no).
     普通 strategy 委托的 raw_id 永远为 NULL (place 流程不调本函数).
 
-    v80.3 迁移: 改用 Orders.add_one. orig 现在是 Row (属性访问兼容).
+    用 Orders.add_one. orig 是 Row (属性访问兼容).
     返回 server.tables.orders.Row.
     db 参数保留 (兼容旧调用方).
     """
@@ -309,7 +307,7 @@ def insert_cancel_row(
         "order_no": cancel_order_no,
         "order_id": None,                     # broker 永远不报这个 row
         "user_def": "CANCEL:{}".format(orig.order_no),  # 关联: cancel → orig
-        "raw_id": raw_id,                     # ★ v13 NEW 字段写入
+        "raw_id": raw_id,                     # ★ raw_id 字段写入
         "stock_code": orig.stock_code,        # 镜像
         "order_type": orig.order_type,        # 镜像 23/24
         "price_type": orig.price_type,        # 镜像

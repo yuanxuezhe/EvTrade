@@ -1,5 +1,5 @@
 <!--
-  BatchTasksTable.vue — 批次内任务表格 (v123, 替代旧 SweepResultsTable)
+  BatchTasksTable.vue — 批次内任务表格 (替代旧 SweepResultsTable)
 
   前几列 = 参数动态列 (来自策略脚本 params_schema key), 后几列 = 结果列。
   Props:

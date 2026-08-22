@@ -3,10 +3,10 @@
 """
 2026-08-17-backfill-stocks-short-name.py — 回填 stocks.short_name 历史数据
 
-用户指令（2026-08-17）: "证券信息表 stocks 简称缺失，补充一下"
+用户指令: "证券信息表 stocks 简称缺失，补充一下"
 
 现状:
-  - stocks.short_name 列早已存在（v25 stocks-cache-and-short-name /
+  - stocks.short_name 列早已存在（stocks-cache-and-short-name /
     2026-07-12-add-short-name-to-stocks.py）, schema.yml 也有声明
   - 新增/编辑自动派生正常（repo.stocks.create_by_admin / update_by_admin
     内部调用 services.short_name.to_short_name）
@@ -28,7 +28,7 @@
 
 依赖:
   - server/services/short_name.py (REQ-STOCK-007 单一可信源)
-  - server/.env EVTRADE_DB_URL (v20 MySQL-only 强制)
+  - server/.env EVTRADE_DB_URL (MySQL-only 强制)
 
 用法:
     python3 server/migrations/2026-08-17-backfill-stocks-short-name.py
@@ -54,16 +54,16 @@ except ImportError:
 
 from sqlalchemy import text, create_engine  # noqa: E402
 
-# v20 MySQL-only 强制
+# MySQL-only 强制
 DATABASE_URL = os.environ.get("EVTRADE_DB_URL")
 if not DATABASE_URL:
     raise RuntimeError(
-        "EVTRADE_DB_URL is required (v20 MySQL-only permanent standard). "
+        "EVTRADE_DB_URL is required (MySQL-only permanent standard). "
         "Set it in server/.env"
     )
 if not DATABASE_URL.startswith("mysql"):
     raise RuntimeError(
-        f"Only MySQL is supported (v20 permanent standard). Got URL: {DATABASE_URL[:80]!r}"
+        f"Only MySQL is supported (permanent standard). Got URL: {DATABASE_URL[:80]!r}"
     )
 
 engine = create_engine(DATABASE_URL, pool_pre_ping=True)
@@ -102,7 +102,7 @@ def main() -> None:
     print(f"  db: {DATABASE_URL.split('@')[-1]}")
 
     with engine.begin() as conn:
-        # 1. 前置探测: stocks 表 + short_name 列都已存在（v25 留下的状态）
+        # 1. 前置探测: stocks 表 + short_name 列都已存在（先前迁移留下的状态）
         if not _table_exists(conn, "stocks"):
             raise RuntimeError(
                 "[migrate] stocks 表不存在,先跑 2026-07-10-create-stocks-table.py"

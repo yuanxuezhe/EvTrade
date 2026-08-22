@@ -1,7 +1,7 @@
 """
 ai_analysis.py - AI 分析 API（invest-analyst skill 集成）
 
-[v0] PoC 同步版：用户点按钮 → 后端 subprocess 跑
+[PoC 同步版] 用户点按钮 → 后端 subprocess 跑
   python3 ~/.hermes/skills/finance/invest-analyst/scripts/invest_analyst_demo.py
 → 解析 stdout JSON → 返回给前端表格。
 
@@ -36,7 +36,7 @@ import os
 import re
 import subprocess
 import time
-import asyncio  # 2026-08-20 fix: ai_analysis 走 asyncio.to_thread 防 event loop 阻塞
+import asyncio  # ai_analysis 走 asyncio.to_thread 防 event loop 阻塞
 from typing import List, Optional
 
 from fastapi import APIRouter
@@ -267,15 +267,15 @@ def _to_table_rows(report: dict) -> List[TableRow]:
 # ============================================================
 @router.post("/ai-analysis", response_model=AnalysisResponse)
 async def ai_analysis(req: AnalysisRequest):
-    """[v0] 同步 AI 分析 PoC。
+    """同步 AI 分析 PoC。
 
     已知限制：
     - 进程级串行锁（broker 限频 / 账号白名单）
     - 超时 240s；超时客户端需 reload 再问
     - 不做缓存、不做异步、不做权限分级（演示账号即可）
 
-    2026-08-20 修复: 把 _run_demo_script 丢到 asyncio.to_thread (线程池) ——
-    之前在 async def 里直接调 subprocess.run 会阻塞整个 event loop, 导致
+    _run_demo_script 丢到 asyncio.to_thread (线程池) ——
+    在 async def 里直接调 subprocess.run 会阻塞整个 event loop, 导致
     其他 UI 请求 (GET /api/positions 等) 在 ai_analysis 跑期间全部排队等待,
     表现"页面卡死/数据加载不出"。改用线程池后, 路由立刻返回 Future,
     FastAPI 在该线程内继续跑 subprocess.run, 不影响其他 async 路由。

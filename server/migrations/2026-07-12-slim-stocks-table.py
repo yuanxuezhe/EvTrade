@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-2026-07-12-slim-stocks-table.py — 瘦身 stocks 表 (v23 slim-stocks-table)
+2026-07-12-slim-stocks-table.py — 瘦身 stocks 表 (slim-stocks-table)
 
-用户指令（2026-07-12）: "证券信息表只保留证券代码，证券名称，板块，回转标志，
+用户指令: "证券信息表只保留证券代码，证券名称，板块，回转标志，
 最小买入数量，买卖单位2，修改表后优化代码适配"
 
 策略:
@@ -28,7 +28,7 @@
 用法:
     python3 server/migrations/2026-07-12-slim-stocks-table.py
 
-依赖: server/.env 含 EVTRADE_DB_URL (v20 MySQL-only 强制)
+依赖: server/.env 含 EVTRADE_DB_URL (MySQL-only 强制)
 """
 import os
 import sys
@@ -50,16 +50,16 @@ except ImportError:
 
 from sqlalchemy import text, create_engine
 
-# v20 MySQL-only 强制:显式读 EVTRADE_DB_URL
+# MySQL-only 强制:显式读 EVTRADE_DB_URL
 DATABASE_URL = os.environ.get("EVTRADE_DB_URL")
 if not DATABASE_URL:
     raise RuntimeError(
-        "EVTRADE_DB_URL is required (v20 MySQL-only permanent standard). "
+        "EVTRADE_DB_URL is required (MySQL-only permanent standard). "
         "Set it in server/.env"
     )
 if not DATABASE_URL.startswith("mysql"):
     raise RuntimeError(
-        f"Only MySQL is supported (v20 permanent standard). Got URL: {DATABASE_URL[:80]!r}"
+        f"Only MySQL is supported (permanent standard). Got URL: {DATABASE_URL[:80]!r}"
     )
 
 engine = create_engine(DATABASE_URL, pool_pre_ping=True)

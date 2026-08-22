@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-test_orders_e2e.py — orders API 端到端集成测试（v81.5 tables-migration）
+test_orders_e2e.py — orders API 端到端集成测试
 
 📖 详见 server/MIGRATION_GUIDE.md
 
@@ -151,7 +151,7 @@ def test_cancel_order(trader_token: str, order_no: str, trd_date: str) -> None:
         params={"trd_date": trd_date},
     )
     assert status == 200, f"DELETE -> HTTP {status}: {body}"
-    # v77 broker 异步模型: 即使 RPC 没回,本地 cancel-row 也会写入
+    # broker 异步模型: 即使 RPC 没回,本地 cancel-row 也会写入
     # 业务码可能是 0 (broker ack 0) 或 1 (broker 拒/异常) — 都算 DELETE 端点工作
     assert body.get("code") in (0, 1), body
     print(_ok(f"DELETE /api/orders/{order_no} -> HTTP 200, code={body.get('code')}, msg={body.get('msg')!r}"))
@@ -180,7 +180,7 @@ def test_orders_invalid_date_format(admin_token: str) -> None:
 
 
 def main() -> int:
-    print(_section("v81.5 orders API e2e"))
+    print(_section("orders API e2e"))
     print(f"BACKEND_URL={BACKEND_URL}")
 
     try:

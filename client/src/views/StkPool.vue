@@ -8,7 +8,7 @@
   - onMounted 拉主表, 自动选中第一条
   - watch(selectedPoolId) 触发明细查询, cleanup 避免 race
   - 主表空 → 右栏 "暂无池, 请新建"
-  - 添加股票用 StockCodePicker (v28 严格语义)
+  - 添加股票用 StockCodePicker (严格语义)
   - 明细行 stock_name 来自 useStocksStore.stockName(code)
   - 单一根 + dialog Teleport 到 body, 避免与 App.vue <Transition mode=out-in> 冲突
 -->
@@ -525,7 +525,7 @@ async function onSubmitBatchAdd() {
 
   batchSubmitting.value = true
   try {
-    // v128: 单次请求批量提交, 后端 INSERT IGNORE 幂等
+    // 单次请求批量提交, 后端 INSERT IGNORE 幂等
     const res = await stkpoolApi.detailAdd(selectedPoolId.value, batchSelected.value)
     if (unmounted) return
     const added = res?.added ?? batchSelected.value.length

@@ -188,7 +188,7 @@ def load_strategy_class(
         code: 用户脚本源码 (字符串)
         project_strategy_cls: 项目基类 (ProjectStrategy)
         expected_class_name: 期望类名 (默认: 找第一个 bt.Strategy 子类)
-        params_schema: 参数 schema (v121+, list[dict], 每个含 key/type/default/...).
+        params_schema: 参数 schema (list[dict], 每个含 key/type/default/...).
             None = 老行为, 不注入, 依赖代码里 cls.params = (...) 声明.
             非空 = strict fail-fast: 用 schema 覆盖 cls.params, 代码声明必须一致.
 
@@ -232,14 +232,14 @@ def load_strategy_class(
         if cls is None:
             raise ValueError("用户脚本未定义任何 ProjectStrategy 子类")
 
-    # ──── 5. (v121+) schema 注入: schema 是唯一契约, 覆盖 cls.params ────
+    # ──── 5. schema 注入: schema 是唯一契约, 覆盖 cls.params ────
     if params_schema is not None:
         cls = _inject_params_from_schema(cls, code, params_schema)
 
     return cls
 
 
-# ──── Schema 注入 helpers (v121+, 2026-08-10) ────
+# ──── Schema 注入 helpers ────
 # 决策: schema 是 params 的唯一真源, 代码里不应再写 params = (...).
 # loader 拿 schema 后覆盖 cls.params — 必须保持为 backtrader 可实例化的
 # Params 类 (AutoInfoClass 派生, callable), 实例化时 metabase.donew 执行
@@ -318,14 +318,14 @@ def _inject_params_from_schema(
 
     if declared and declared != schema_keys:
         # 只有当代码里实际声明了 params 才走 strict 比较.
-        # v121+ 目标态: 代码无 params tuple, schema 是唯一真源 → allowed (declared = ∅).
+        # 目标态: 代码无 params tuple, schema 是唯一真源 → allowed (declared = ∅).
         only_code = declared - schema_keys
         only_schema = schema_keys - declared
         raise ValueError(
             f"策略类声明的 params 与 schema 不一致 (strict mode):\n"
             f"  code 多出: {sorted(only_code) or '(无)'}\n"
             f"  schema 多出: {sorted(only_schema) or '(无)'}\n"
-            f"  v121+: schema 是唯一契约, 请同步代码里的 params = (...) 或调整 schema"
+            f"  schema 是唯一契约, 请同步代码里的 params = (...) 或调整 schema"
         )
 
     # 覆盖 cls.params — 必须保持为 backtrader 可实例化的 Params 类!

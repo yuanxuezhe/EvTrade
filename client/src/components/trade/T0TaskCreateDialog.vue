@@ -1,23 +1,23 @@
 <!--
-  T0TaskCreateDialog.vue — 新建 T0Task 弹窗 (v18 change t0-task-management, v26 universalize-stockcode-autocomplete, v55 external-stockcode + inline)
+  T0TaskCreateDialog.vue — 新建 T0Task 弹窗 (change t0-task-management / universalize-stockcode-autocomplete / external-stockcode + inline)
 
   Props:
     visible   (Boolean) — 双向绑定显示状态 (inline=true 时忽略)
     loading   (Boolean) — 提交 loading (外层 store 操作)
-    inline    (Boolean) — v55 新增: 不渲染外层 el-dialog，直接展示表单 (供其他组件嵌入 dialog body)
-    defaultStockCode (String) — 默认股票代码 (v26 新增, 从父组件当前 stockCode 带入)
-    externalStockCode (String) — v55 新增: 父组件外部传入的 stock_code (HoldingsPanel 选中后),
+    inline    (Boolean) — 不渲染外层 el-dialog，直接展示表单 (供其他组件嵌入 dialog body)
+    defaultStockCode (String) — 默认股票代码 (从父组件当前 stockCode 带入)
+    externalStockCode (String) — 父组件外部传入的 stock_code (HoldingsPanel 选中后),
                                   优先级高于 defaultStockCode. 变更时自动写 form.stock_code.
 
   Emits:
     submit(form)   — 用户点击创建 (外层调 store.createTask)
 
   注意：
-    - v26 删除 stockOptions prop (v18 旧设计, 从 holdings 取持仓股优先显示), 改用全市场 cache
+    - 无 stockOptions prop (不从 holdings 取持仓股优先显示), 改用全市场 cache
     - 校验：stock_code 必选、target_volume 必填且为整数
-    - v55: externalStockCode 优先级 defaultStockCode > externalStockCode (dialog 打开时); dialog 打开后 externalStockCode
+    - 优先级 defaultStockCode > externalStockCode (dialog 打开时); dialog 打开后 externalStockCode
       变化 → 立即写入 form (让 HoldingsPanel 单击能驱动表单)
-    - v55 inline=true 时: 跳过 el-dialog 包裹, 不处理 visible (父组件控制 dialog lifecycle),
+    - inline=true 时: 跳过 el-dialog 包裹, 不处理 visible (父组件控制 dialog lifecycle),
       表单 onSubmit 直接 emit submit, 不 emit update:visible; footer 按钮 "创建/取消" 仍展示
 -->
 <template>
@@ -154,17 +154,17 @@ import StockCodePicker from '../StockCodePicker.vue'
 const props = defineProps({
   visible: { type: Boolean, default: false },
   loading: { type: Boolean, default: false },
-  // v55 新增: true 时不渲染外层 el-dialog, 直接展示表单 (供其他组件嵌入 dialog body)
+  // true 时不渲染外层 el-dialog, 直接展示表单 (供其他组件嵌入 dialog body)
   inline: { type: Boolean, default: false },
-  // v26 新增: 从父组件带入默认股票代码 (替代 v18 的 stockOptions 持仓股优先)
+  // 从父组件带入默认股票代码 (不用 stockOptions 持仓股优先)
   defaultStockCode: { type: String, default: '' },
-  // v55 新增: 父组件外部传入 (HoldingsPanel @select-stock). 优先级高于 defaultStockCode.
+  // 父组件外部传入 (HoldingsPanel @select-stock). 优先级高于 defaultStockCode.
   //           dialog 打开时使用, dialog 打开后变化也立即同步到 form (单击驱动).
   externalStockCode: { type: String, default: '' }
 })
 const emit = defineEmits(['update:visible', 'submit', 'cancel'])
 
-// 表单初始值 (v55: externalStockCode 优先)
+// 表单初始值 (externalStockCode 优先)
 const initialForm = () => ({
   stock_code: props.externalStockCode || props.defaultStockCode || '',
   base_volume: 0,
@@ -200,7 +200,7 @@ function onOpen() {
 
 watch(() => props.visible, (v) => { if (v && !props.inline) onOpen() })
 
-// v55: 监听 externalStockCode 实时驱动 form (HoldingsPanel 单击后立即回填)
+// 监听 externalStockCode 实时驱动 form (HoldingsPanel 单击后立即回填)
 watch(() => props.externalStockCode, (v) => {
   if (v && v !== form.stock_code) {
     form.stock_code = v

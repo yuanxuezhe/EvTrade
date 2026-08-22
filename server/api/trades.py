@@ -1,23 +1,16 @@
 """
-trades.py — v5 重构版（schema refactor）
+trades.py — 成交列表查询
 
 成交回报由 trd_cfm push handler 写入 trades 表。
 GET /api/trades 纯读 DB，不调 RPC。
 
-v5 改动：
-- 移除 id 字段
-- TRD_DATE → trd_date
+查询语义：
 - 复合主键 (trd_date, trade_id)
-
-v10 改动（order-trade-query-by-trd-date）：
-- 新增 query 入参 start_date / end_date (区间模式: start_date <= trd_date <= end_date)
-- 缺省模式: trd_date = 激活日 (向后兼容)
-- 排序: created_at DESC → trade_time DESC, trade_id DESC
-  - trade_time 同秒时 trade_id 二级稳定排序
-
-v113 改动（startup-full-cache-pull）：
-- 新增 all=true (admin/trader 可用)
-  - 跳过 trd_date 默认值, 返所有 trades 行不限日期 (前端 startup 缓存用)
+- query 入参 start_date / end_date (区间模式: start_date <= trd_date <= end_date)
+- 缺省模式: trd_date = 激活日
+- all=true (admin/trader 可用): 跳过 trd_date 默认值, 返所有 trades 行不限日期
+  (前端 startup 缓存用)
+- 排序: trade_time DESC, trade_id DESC (trade_time 同秒时 trade_id 二级稳定排序)
 """
 from fastapi import APIRouter, Depends, Query
 from typing import Optional, List
@@ -41,7 +34,7 @@ class TradeOut(BaseModel):
     volume: int
     amount: float
     trade_time: str
-    trade_type: int = 0  # v9: 0=normal 1=cancel-fill (本地代理撤单成交行)
+    trade_type: int = 0  # 0=normal 1=cancel-fill (本地代理撤单成交行)
 
 
 class TradesListResponse(BaseModel):
@@ -62,8 +55,8 @@ async def list_trades(
         None, regex=r"^\d{8}$",
         description="结束交易日 YYYYMMDD（含）",
     ),
-    all: Optional[bool] = Query(False, description="v113: 返全部 trades 不限日期 (前端 startup 缓存)"),
-    limit: int = Query(2000, le=10000),  # v113: 默认 2000 (覆盖全量拉取上限)
+    all: Optional[bool] = Query(False, description="返全部 trades 不限日期（前端 startup 缓存）"),
+    limit: int = Query(2000, le=10000),  # 默认 2000 (覆盖全量拉取上限)
     user: User = Depends(get_current_user),
 ):
     """成交列表
@@ -74,12 +67,12 @@ async def list_trades(
     - 都不存在 → 走缺省模式 (trd_date = 激活日, 向后兼容)
     - 区间模式优先级高于 trd_date: start_date/end_date 存在时 trd_date 被忽略
 
-    排序: trade_time DESC, trade_id DESC (v10, trade_time 同秒时 trade_id 二级稳定)
+    排序: trade_time DESC, trade_id DESC (trade_time 同秒时 trade_id 二级稳定)
     """
     rows = Trades.query_all()
 
     if all:
-        # v113: startup 缓存模式 — 不过滤, 倒序取 limit
+        # startup 缓存模式 — 不过滤, 倒序取 limit
         rows = sorted(rows, key=lambda row: (row.trade_time, row.trade_id), reverse=True)[:limit]
     elif start_date or end_date:
         if start_date:
@@ -90,7 +83,7 @@ async def list_trades(
             rows = [row for row in rows if row.stock_code == stock_code]
         rows = sorted(rows, key=lambda row: (row.trade_time, row.trade_id), reverse=True)[:500]
     else:
-        trd = trd_date or resolve_default_trd_date(None)  # v113: 兼容 None
+        trd = trd_date or resolve_default_trd_date(None)  # 兼容 None
         rows = [row for row in rows if row.trd_date == trd]
         if stock_code:
             rows = [row for row in rows if row.stock_code == stock_code]

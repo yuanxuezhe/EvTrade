@@ -1,12 +1,12 @@
 <!--
-  ScriptTask.vue — 策略交易页 (v123 三层模型: script → strategy → strategy_task)
+  ScriptTask.vue — 策略交易页 (三层模型: script → strategy → strategy_task)
 
   两段式 UI:
     1. 顶部: 策略选择 / 新建 ({name, script_id, stock_code}, 标的必选)
     2. 批次列表 (batch_no/时间/mode/task_count/best) → 批次内任务表格 (动态参数列)
        → 点击任务行下方下钻详情 (BacktestForm / BatchTasksTable / TaskDetail 子组件)
 
-  v125: 策略模块纯回测 (无实盘)。他人公开策略只读精简 (无回测/批次入口), 公开/私有开关仅 owner。
+  策略模块纯回测 (无实盘)。他人公开策略只读精简 (无回测/批次入口), 公开/私有开关仅 owner。
   ws: 订阅 task_progress_update 实时刷新当前批次任务进度/状态。
 -->
 <template>
@@ -398,7 +398,7 @@ async function onStopTask() {
   }
 }
 
-// v124 重测: 批次无运行中/排队 task
+// 重测: 批次无运行中/排队 task
 function _canRetest(batch) {
   const running = (batch.task_count || 0) - (batch.finished_count || 0)
     - (batch.failed_count || 0) - (batch.abandoned_count || 0)

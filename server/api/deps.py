@@ -1,7 +1,7 @@
 """
 deps.py — FastAPI 依赖注入共享 helper
 
-v101 RPC 健康集中校验:
+RPC 健康集中校验:
 - 调 qry_* / place / cancel 等 RPC 的端点必须 Depends(require_rpc_ok)
 - qry_asset 不加 (它本身是 rpc_health 心跳探测, 加了会自检死锁)
 - 失败 → 503 + 统一文案直接返回前端, 不继续

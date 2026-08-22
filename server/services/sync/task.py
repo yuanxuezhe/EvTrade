@@ -1,5 +1,5 @@
 """
-services/sync/task.py — 单次同步任务 (v21 stock-info-crawler)
+services/sync/task.py — 单次同步任务
 
 封装:
 - job_id (UUID)

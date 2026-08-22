@@ -1,7 +1,7 @@
 """
-strategy_exec.engines.backtrader.sweep — 参数扫描引擎 (v123, strategy-batch-task-model)
+strategy_exec.engines.backtrader.sweep — 参数扫描引擎 (strategy-batch-task-model)
 
-v123 重写: EvTrade 在调用 strategy_exec 前已为批次预建好 task 行
+EvTrade 在调用 strategy_exec 前已为批次预建好 task 行
 (strategy_id + batch_no + params 已落库). strategy_exec 只负责:
 
   1. param_ranges 类型化展开组合 → 校验笛卡尔积大小 (软警告 64 / 硬拒绝 512)

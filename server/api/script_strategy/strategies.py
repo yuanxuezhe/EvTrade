@@ -1,5 +1,5 @@
 """
-server/api/script_strategy/strategies.py — 策略 CRUD + 回测批次 端点 (v123)
+server/api/script_strategy/strategies.py — 策略 CRUD + 回测批次 端点
 
 REST 端点 (前缀 /api/script-strategy):
   GET    /strategies                         策略列表
@@ -13,7 +13,7 @@ REST 端点 (前缀 /api/script-strategy):
   GET    /strategies/{strategy_id}/batches/{batch_no}/tasks  批次内任务表格数据
   POST   /strategies/{strategy_id}/batches/{batch_no}/retest  重测批次 (新 batch, 原批次废弃)
 
-v125: 策略模块纯回测, 无实盘。策略绑定标的 (stock_code), 回测/批次/重测仅 owner 可访问
+策略模块纯回测, 无实盘。策略绑定标的 (stock_code), 回测/批次/重测仅 owner 可访问
 (他人公开 → 403 BACKTEST_FORBIDDEN, 他人私有/不存在 → 404 NO_STRATEGY)。
 
 批次创建不执行; 运行时转发到独立服务 strategy_exec (8001), 202 Accepted 立即返回。
@@ -227,7 +227,7 @@ def batch_tasks_endpoint(
 async def retest_batch_endpoint(
     strategy_id: int, batch_no: int, user: User = Depends(get_current_user),
 ):
-    """重测批次 (v124): 按原批次配置重建新批次 (新 batch_no), 原批次 task 全部废弃,
+    """重测批次: 按原批次配置重建新批次 (新 batch_no), 原批次 task 全部废弃,
     转发 strategy_exec 重新执行。运行中的批次返回 409 拒绝。
     """
     log.info("[retest] user=%s strategy_id=%d batch_no=%d", user.username, strategy_id, batch_no)

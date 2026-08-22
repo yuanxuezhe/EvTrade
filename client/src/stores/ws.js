@@ -38,8 +38,8 @@ const log = makeLogger('ws')
 
 export const useWsStore = defineStore('ws', () => {
   // ws_heartbeat 持有连接 + 心跳, 业务分发通过 onMessage 回调注入
-  // 2026-07-09 quote-snapshot-subscribe: 暴露 sendToChannel（quoteStore.subscribe 用）
-  // 2026-07-14 fix-ws-reconnect-subscription: onConnected 回调在 ws 重连成功后强制重发 quote 订阅
+  // quote-snapshot-subscribe: 暴露 sendToChannel（quoteStore.subscribe 用）
+  // fix-ws-reconnect-subscription: onConnected 回调在 ws 重连成功后强制重发 quote 订阅
   const onConnected = (channel) => {
     if (channel !== 'quote_update') return
     // 动态 import 避免循环依赖（quote → ws_dispatch → ws → ws_heartbeat → ?）
@@ -53,7 +53,7 @@ export const useWsStore = defineStore('ws', () => {
   }
   const { connect, disconnect, connected, lastEvent, sendToChannel } = createWsManager(dispatchPayload, onConnected)
 
-  // v91.4: task 进度推送 (ScriptTask.vue 订阅)
+  // task 进度推送 (ScriptTask.vue 订阅)
   const lastTaskProgress = ref(null)
 
   return {

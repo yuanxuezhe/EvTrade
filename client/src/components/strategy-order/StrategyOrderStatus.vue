@@ -1,5 +1,5 @@
 <!--
-  StrategyOrderStatus.vue — 策略下单母单 状态徽章 (v126, 子组件)
+  StrategyOrderStatus.vue — 策略下单母单 状态徽章 (子组件)
 
   3 状态: stopped / running / closed
   颜色: stopped=info, running=success, closed=dark

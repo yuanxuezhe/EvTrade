@@ -3,7 +3,7 @@
 
 目的:
     删除 mas_v1 demo 脚本 code 里的 `params = (...)` 块.
-    v121+ 后 params 由 strategy_script.params_schema 唯一真源化, code 里再写
+    params 由 strategy_script.params_schema 唯一真源化, code 里再写
     `params = (...)` 会与 schema 比较, 反而触发 strict fail-fast.
 
 执行:
@@ -43,9 +43,9 @@ from sqlalchemy import text, create_engine
 
 DATABASE_URL = os.environ.get("EVTRADE_DB_URL")
 if not DATABASE_URL:
-    raise RuntimeError("EVTRADE_DB_URL is required (v20 MySQL-only permanent standard).")
+    raise RuntimeError("EVTRADE_DB_URL is required (MySQL-only permanent standard).")
 if not DATABASE_URL.startswith("mysql"):
-    raise RuntimeError(f"Only MySQL is supported (v20 permanent standard). Got URL: {DATABASE_URL[:80]!r}")
+    raise RuntimeError(f"Only MySQL is supported (permanent standard). Got URL: {DATABASE_URL[:80]!r}")
 
 engine = create_engine(DATABASE_URL, pool_pre_ping=True)
 

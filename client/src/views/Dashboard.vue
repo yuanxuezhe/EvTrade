@@ -110,7 +110,7 @@
               <span class="text-mono">{{ formatNumber(row.avl_vol) }}</span>
             </template>
           </el-table-column>
-          <!-- v12: today_buy/today_sell 列已删除 (add-manual-adjust-and-history-pages) -->
+          <!-- 无 today_buy/today_sell 列 (add-manual-adjust-and-history-pages) -->
         </el-table>
         <el-empty v-if="topPositions.length === 0" description="暂无持仓" :image-size="80" />
       </div>
@@ -164,7 +164,7 @@ import { useAssetStore } from '../stores/asset'
 import { useOrderStore } from '../stores/order'
 import { usePositionStore } from '../stores/position'
 import { useHoldingsStore } from '../stores/holdings'
-// v32: quoteStore 订阅下沉到 holdings store bootstrap 阶段, 此处不再需要 useQuoteStore
+// quoteStore 订阅在 holdings store bootstrap 阶段, 此处不需要 useQuoteStore
 import { useUiStore } from '../stores/ui'
 import { formatMoney, formatNumber, STATUS_LABEL, STATUS_TYPE } from '../utils/format'
 import { formatPrice } from '../composables/usePricePrecision'
@@ -175,7 +175,7 @@ const assetStore = useAssetStore()
 const orderStore = useOrderStore()
 const positionStore = usePositionStore()
 const holdingsStore = useHoldingsStore()
-// v32: quoteStore 订阅已下沉 holdings store, 此处不再需要
+// quoteStore 订阅在 holdings store, 此处不需要
 const uiStore = useUiStore()
 
 /**
@@ -195,7 +195,7 @@ const displayTotalAsset = computed(() => {
   return holdingsStore.liveTotalAsset || holdingsStore.cachedAsset.total_asset
     || assetStore.asset.total_asset || 0
 })
-// v110: 可用资金 (available 字段) — 优先读 available, 缺失时回退 cash
+// 可用资金 (available 字段) — 优先读 available, 缺失时回退 cash
 const displayCash = computed(() =>
   holdingsStore.cachedAsset.available ?? assetStore.asset.available
   ?? holdingsStore.cachedAsset.cash ?? assetStore.asset.cash ?? 0
@@ -217,11 +217,10 @@ const recentOrders = computed(() =>
     .slice(0, 6)
 )
 
-// v114: 当日盈亏 = 总资产(now) - last_asset — 已废弃 (2026-08-13 用户口径改分母)
-// REQ-FE-535 (2026-08-13 修正): 趋势百分比分母 = 前一日总资产 = 总资产 − 当日盈亏,
-//   不再依赖 last_asset (rpc_health 曾把它冲回 0 导致除 1 天文数字)
+// REQ-FE-535: 趋势百分比分母 = 前一日总资产 = 总资产 − 当日盈亏,
+//   不依赖 last_asset (rpc_health 可把它冲回 0 导致除 1 天文数字)
 
-// v114.2: 今日盈亏卡片 = 当日盈亏汇总 (Σ positions[].day_pnl)
+// 今日盈亏卡片 = 当日盈亏汇总 (Σ positions[].day_pnl)
 //   day_pnl 由 holdings store 行情推送驱动重算写入行字段, 此处只合计 (无行情 → 该行不计入)
 const dayPnlTotal = computed(() => {
   const ps = holdingsStore.positions || []
@@ -250,7 +249,7 @@ const dayPnlPercent = computed(() => {
   if (base <= 0) return null
   return (v / base) * 100
 })
-// 总资产卡趋势 = 同一今日收益率 (2026-08-13 口径)
+// 总资产卡趋势 = 同一今日收益率
 const todayPnLPercent = computed(() => dayPnlPercent.value)
 
 const orderStats = computed(() => {
@@ -275,7 +274,7 @@ const orderStats = computed(() => {
     },
     {
       key: 'pending',
-      label: '已报/待报',   // v84.3: 48 待报 (broker 反馈前), 49 备, 50 已报 (broker 反馈后)
+      label: '已报/待报',   // 48 待报 (broker 反馈前), 49 备, 50 已报 (broker 反馈后)
       color: '#5fa8ff',
       statuses: ['50', '49', '48']
     },
@@ -353,7 +352,7 @@ const assetChartOption = computed(() => {
 })
 
 onMounted(async () => {
-  // Dashboard 数据获取（v8: 委托/成交由 holdings bootstrap 统一加载, ws push 增量更新）
+  // Dashboard 数据获取（委托/成交由 holdings bootstrap 统一加载, ws push 增量更新）
   //   - 资金/持仓/委托/成交：App 启动时 holdings store 已 bootstrap,这里只做兜底
   //   - 持仓 top 5：从 holdings.positions 读（统一来源）
   await assetStore.fetchAsset()
@@ -361,9 +360,9 @@ onMounted(async () => {
   if (!holdingsStore.bootstrapped) {
     holdingsStore.bootstrap()
   }
-  // v32+: 持仓 quote 订阅下沉到 holdings store bootstrap 阶段,
+  // 持仓 quote 订阅在 holdings store bootstrap 阶段,
   //   无需 Dashboard 重复 watch (避免幽灵订阅 + 双发)
-  // v114.2: 当日盈亏 recompute 由 holdings store 行情推送驱动, 仪表盘只读 positions[].day_pnl
+  // 当日盈亏 recompute 由 holdings store 行情推送驱动, 仪表盘只读 positions[].day_pnl
 })
 </script>
 

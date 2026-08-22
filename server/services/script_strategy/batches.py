@@ -1,13 +1,12 @@
 """
-server/services/script_strategy/batches.py — 回测批次 + 聚合查询 (v123)
+server/services/script_strategy/batches.py — 回测批次 + 聚合查询
 
 职责单一: 围绕 `strategy_task` 的批次操作。
 - create_backtest_batch: 单次=1 行 task, 扫描=param_ranges 展开 N 行 task, 统一 task_batch 序号
 - list_batches / list_batch_tasks: 虚拟 GROUP BY batch_no 聚合 (无批头表)
 
 不执行运行时; 由 api 层转发 strategy_exec, 完成后 strategy_exec 回写 best_params。
-
-v125: 策略模块纯回测, 实盘/黑盒跟随移除 (Part 2 另行设计)。
+策略模块纯回测, 无实盘/黑盒跟随。
 """
 from datetime import datetime
 from typing import Any, Dict, List, Optional
@@ -44,7 +43,7 @@ def create_backtest_batch(
 
     不执行, 由 api 层转发 strategy_exec; 完成后 strategy_exec 按 metric 回写 best_params。
 
-    v125 绑定标的: 策略有绑定 stock_code 时优先用它 (请求提供且不一致 → STOCK_MISMATCH);
+    绑定标的: 策略有绑定 stock_code 时优先用它 (请求提供且不一致 → STOCK_MISMATCH);
     存量 NULL 行回退请求的 stock_code。
 
     Returns:
@@ -68,8 +67,8 @@ def create_backtest_batch(
     if not backtest_start_date or not backtest_end_date:
         raise StrategyError("MISSING_DATES", "回测必须指定 backtest_start_date / backtest_end_date")
 
-    # v125 绑定标的: 策略有绑定 → 必须用它 (提供且不一致 → STOCK_MISMATCH);
-    # 存量 NULL 行回退请求的 stock_code (旧行为)
+    # 绑定标的: 策略有绑定 → 必须用它 (提供且不一致 → STOCK_MISMATCH);
+    # 存量 NULL 行回退请求的 stock_code
     bound = sd.get("stock_code")
     if bound:
         if stock_code and stock_code != bound:
@@ -141,7 +140,7 @@ def list_batches(
     Raises:
         StrategyError: BACKTEST_FORBIDDEN / NO_STRATEGY (非 owner/admin)
 
-    v124 批次重测: 被重测替代的批次全部 task status='abandoned' → 不再计入
+    批次重测: 被重测替代的批次全部 task status='abandoned' → 不计入
     finished/failed/best; 批次行标 abandoned=True + abandoned_count。
     """
     from server.tables import StrategyTask
@@ -226,11 +225,11 @@ def _reconstruct_ranges(combos: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any
 def retest_batch(
     strategy_id: int, batch_no: int, user_id: int, is_admin: bool = False,
 ) -> Dict[str, Any]:
-    """重测批次 (v124): 按原批次配置重建新批次, 原批次全部 task 置 'abandoned' 废弃.
+    """重测批次: 按原批次配置重建新批次, 原批次全部 task 置 'abandoned' 废弃.
 
     语义:
     - 新 batch_no = next_seq(task_batch); 新 task 沿用原 task 的 params/标的/区间/周期
-    - 排序指标 metric 从原批次 task 读取 (v124 起落库, 老批次回填 'sharpe')
+    - 排序指标 metric 从原批次 task 读取 (老批次回填 'sharpe')
     - 原批次 task 全部 status → 'abandoned' (不再计入 finished/failed/best)
     - sweep 批次: param_ranges 由 task params 去重重建, 供 API 层转发 strategy_exec
 

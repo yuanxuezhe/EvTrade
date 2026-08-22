@@ -1,5 +1,5 @@
 /**
- * auth_idb.js — token & user 持久化到 IndexedDB（v119 新增）
+ * auth_idb.js — token & user 持久化到 IndexedDB
  *
  * 用途:
  *   - 登录成功后把 token + user 写入 IDB, 浏览器刷新 / 重开 tab 后自动恢复

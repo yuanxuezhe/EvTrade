@@ -4,7 +4,7 @@ import { api } from '../api'
 import { useHoldingsStore } from './holdings'
 
 /**
- * 持仓 store Pinia facade（v8 单源架构）
+ * 持仓 store Pinia facade（单源架构）
  *
  * 真实数据在 holdings.positions；本 store 通过 computed 暴露持仓列表，
  * view 层继续用 usePositionStore().positions 不变。

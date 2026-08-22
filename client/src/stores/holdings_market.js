@@ -31,7 +31,7 @@ export function createMarketComputeds(positions, cachedAsset, getQuoteStore) {
     for (const p of positions.value) {
       const price = q.getLastPrice(p.stock_code)
       if (price != null) {
-        // v32: 与 getMarketValue 对齐 — 用 vol (PositionOut.vol)
+        // 与 getMarketValue 对齐 — 用 vol (PositionOut.vol)
         sum += price * (Number(p.vol) || 0)
         withQuote++
       }
@@ -66,7 +66,7 @@ export function createMarketComputeds(positions, cachedAsset, getQuoteStore) {
   function getMarketValue(p) {
     const price = getLivePrice(p.stock_code)
     if (price == null) return null
-    // v32: 与 getProfit/getReturnRate 对齐 — 持仓用 vol, 不是 volume (后端 PositionOut.vol)
+    // 与 getProfit/getReturnRate 对齐 — 持仓用 vol, 不是 volume (后端 PositionOut.vol)
     return price * (Number(p.vol) || 0)
   }
 

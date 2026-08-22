@@ -239,15 +239,15 @@ class {cls}(TableBase):
 def render_init(schemas: List[Dict]) -> str:
     """生成 server/tables/__init__.py 导出所有表类 + base 公共 helper.
 
-    v130 修复: 之前只导出 TableBase, Row, get_conn, 漏了 get_engine, transaction,
-    aggregate, scalar_query, exec_sql — 导致 gen_tables 后 server/api/users.py 等
+    base helper 必须全量导出 (TableBase / Row / get_conn / get_engine / transaction /
+    aggregate / scalar_query / exec_sql) — 漏导出会让 server/api/users.py 等
     `from server.tables import aggregate` 报 ImportError → backend 起不来.
 
     base helper 列表跟 server/tables/base.py 实际定义保持一致, 缺一个加一个.
     """
     lines = [
         '"""',
-        'server/tables/__init__.py — 统一导出所有表类 (v80.2 自动生成)',
+        'server/tables/__init__.py — 统一导出所有表类（自动生成）',
         '',
         '⚠️ 不要手动修改本文件 — 重新跑 scripts/gen_tables.py 自动更新',
         '"""',
@@ -268,7 +268,7 @@ def render_init(schemas: List[Dict]) -> str:
 
 # ────────────────────────── main ──────────────────────────
 def main():
-    ap = argparse.ArgumentParser(description="v80.2 tables code generator")
+    ap = argparse.ArgumentParser(description="tables code generator")
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=33066)
     ap.add_argument("--user", default="EvTrade")

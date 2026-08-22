@@ -7,7 +7,7 @@
 
 ## 功能概述
 
-WSManager 维护两类索引：按频道的连接表 `active_connections`（channel → Set[WebSocket]），以及 2026-07-09/07-10 引入的 pattern 订阅双向索引（`subscription_index`: pattern → Set[ws]，`subscriber_index`: ws → Set[pattern]）。行情推送按"子串匹配"过滤订阅者，业务频道（订单/成交/持仓等）走全 channel 广播。单连接订阅上限 200，防恶意超大订阅。
+WSManager 维护两类索引：按频道的连接表 `active_connections`（channel → Set[WebSocket]），以及 pattern 订阅双向索引（`subscription_index`: pattern → Set[ws]，`subscriber_index`: ws → Set[pattern]）。行情推送按"子串匹配"过滤订阅者，业务频道（订单/成交/持仓等）走全 channel 广播。单连接订阅上限 200，防恶意超大订阅。
 
 ## 文件清单
 | 代码文件 | 作用 |
@@ -22,10 +22,10 @@ WSManager 维护两类索引：按频道的连接表 `active_connections`（chan
 |------|------|
 | order_update | 委托状态推送（ord_cfm） |
 | trade_update | 成交回报（trd_cfm） |
-| position_update | 持仓推送（v118：broker pos_push 是持仓唯一数据源） |
+| position_update | 持仓推送（broker pos_push 是持仓唯一数据源） |
 | quote_update | 行情快照/tick |
-| system_update | 系统级事件（v117 日初成功 system_status_change；对账/切日扩展位） |
-| task_progress_update | v91.4 回测/live task 进度（ScriptTask.vue 详情实时刷新） |
+| system_update | 系统级事件（日初成功 system_status_change；对账/切日扩展位） |
+| task_progress_update | 回测/live task 进度（ScriptTask.vue 详情实时刷新） |
 
 另有 `sync_update` 频道（endpoint.py 中 admin 鉴权 + crawler 推送），不在 manager 初始化字典内，靠 `connect()` 的 setdefault 动态建。
 
@@ -49,7 +49,7 @@ def match_pattern(stock_code: str, pattern: str) -> bool:
 - `unsubscribe(websocket, patterns) -> Set[str]`：只移除已订阅项；倒排索引空集合时删除 key。
 - `clear_ws(websocket) -> None`：ws 断开时清其全部 pattern。
 - `get_subscribers(stock_code) -> Set[WebSocket]`：遍历所有 pattern 跑 match_pattern，命中合并 ws 集合（pattern 数量一般不大，线性可接受）。
-- `get_subscribed_patterns(websocket) -> Set[str]`：查 ws 订阅集合（2026-07-10 由 get_subscribed_codes 更名）。
+- `get_subscribed_patterns(websocket) -> Set[str]`：查 ws 订阅集合。
 
 ### 广播
 - `async broadcast(channel, message: dict, trace_id=None)`
@@ -59,8 +59,12 @@ def match_pattern(stock_code: str, pattern: str) -> bool:
 - `async broadcast_to_stock(stock_code, message, channel='quote_update', trace_id=None) -> int`
   - `get_subscribers(stock_code)` 取子集；零订阅者直接返回 0（避免广播风暴）。
   - 逐个 send_json 统计 delivered；失败连接 `clear_ws()` + 移出频道；返回成功推送数。
+- `async broadcast_batch(ticks: List[dict], channel='quote_update', trace_id=None) -> int`（quote-batch-flush）
+  - 1 个 ws frame 装 N 个 tick：输入 ticks 按 stock_code 去重建索引，payload 形如 `{type:quote_batch, channel, data:{ticks:[...]}}`。
+  - 遍历频道内活跃 ws，按其订阅 pattern（子串匹配）过滤出各自命中的 tick 子集，逐个推送；无订阅/无命中的 ws 跳过。
+  - 失败连接 `clear_ws()` + 移出频道；返回成功推送的连接数。
 
-### _main_loop 线程调度（v91.4）
+### _main_loop 线程调度
 main.py startup 把主 event loop 写入 `ws_manager._main_loop`。sync 线程（如 quote_consumer 的回调线程）无自己的 loop，需要推送时通过该引用向主 loop schedule broadcast 协程，保证 send_json 都在主 loop 执行。
 
 ### 单例

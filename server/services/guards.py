@@ -1,14 +1,13 @@
 """
-guards.py — 屏障层（v_next: SysStatus 单行宽表, id=1）
+guards.py — 交易屏障层（SysStatus 单行宽表, id=1）
 
 - require_trading_day: 未做日初 → 503 TRADING_DAY_NOT_INIT
 - require_trading_session: 非交易时段 → 503 OUTSIDE_TRADING_SESSION
 - require_trader: 角色校验（直接复用 auth.deps）
 - require_admin: admin 角色校验
 
-v_next (2026-07-22): sys_status 改为单行宽表 (id=1)
-  - SysStatus 不再有 "status='active'" 多行概念; 改用 SysStatus.id=1 单行
-  - 切日判定: id=1 行的 status 字段 + trd_date 字段
+sys_status 为单行宽表 (id=1): 无 "status='active'" 多行概念;
+切日判定看 id=1 行的 status 字段 + trd_date 字段。
 """
 from datetime import datetime
 from fastapi import HTTPException, Depends
@@ -25,7 +24,7 @@ from server.auth.deps import get_current_user
 def resolve_active_trd_date(db: Session) -> Optional[str]:
     """返回当前激活的交易日 (8 位数字字符串)，未激活返回 None
 
-    v_next: SysStatus 单行 (id=1), 通过 ORM helper 实现。
+    SysStatus 单行 (id=1), 通过 ORM helper 实现。
     """
     return get_active_trd_date(db)
 
@@ -33,13 +32,13 @@ def resolve_active_trd_date(db: Session) -> Optional[str]:
 def resolve_default_trd_date(db: Session) -> str:
     """默认查询日期：已激活 → active.trd_date，否则 MAX(trd_date)，否则今日
 
-    v_next: 已激活判定走 SysStatus 单行 (id=1)。
+    已激活判定走 SysStatus 单行 (id=1)。
     """
     trd = get_active_trd_date(db)
     if trd:
         return trd
     # 兜底：取本地表 MAX
-    # v5 schema 注意：positions 是当前快照（按 stock_code 唯一），无 trd_date 列，
+    # 注意：positions 是当前快照（按 stock_code 唯一），无 trd_date 列，
     # 不能进这个循环。其余 3 张表都有 trd_date。
     from sqlalchemy import text
     for table in ("orders", "trades", "reconcile_report"):
@@ -50,7 +49,7 @@ def resolve_default_trd_date(db: Session) -> str:
 
 
 async def require_trading_day() -> str:
-    """v3+v4 屏障：未做日初 → 拒绝下单/撤单（但不影响查询）
+    """交易屏障：未做日初 → 拒绝下单/撤单（但不影响查询）
 
     返回的 trd_date 通过 Depends 注入到 handler 的 trd_date 参数。
     """
@@ -69,7 +68,7 @@ async def require_trading_day() -> str:
 
 
 async def require_trading_session() -> None:
-    """v4 屏障：非交易时段 → 拒绝下单/撤单"""
+    """屏障：非交易时段 → 拒绝下单/撤单"""
     if not TradingClock.is_in_trading_session():
         win = TradingClock.get_session_window()
         raise HTTPException(
@@ -84,7 +83,7 @@ async def require_trading_session() -> None:
 
 
 def require_trader(current_user: User = Depends(get_current_user)) -> User:
-    """v4 屏障：只有 trader/admin 角色可下单/撤单
+    """屏障：只有 trader/admin 角色可下单/撤单
 
     直接复用 auth.deps.get_current_user 取用户对象。
     返回 User 而非 str，方便 handler 取 username。
@@ -98,7 +97,7 @@ def require_trader(current_user: User = Depends(get_current_user)) -> User:
 
 
 def require_admin(current_user: User = Depends(get_current_user)) -> User:
-    """v4 屏障：admin 角色校验（日初处理用）"""
+    """屏障：admin 角色校验（日初处理用）"""
     if current_user.role != 'admin':
         raise HTTPException(
             status_code=403,

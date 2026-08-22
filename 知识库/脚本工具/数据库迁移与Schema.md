@@ -60,7 +60,7 @@ uv run python scripts/sync_schema.py apply                 # yml → DB（建表
 uv run python scripts/sync_schema.py apply --strict        # apply 前先 diff，有 drift 拒绝执行
 ```
 
-- DB 连接取 `EVTRADE_DB_URL` 环境变量（自动加载 `server/.env.gs` 或 `server/.env`）
+- DB 连接取 `EVTRADE_DB_URL` 环境变量（自动加载 `server/.env`，不存在则回退项目根 `.env`）
 - apply 能力范围：CREATE TABLE / ADD COLUMN / MODIFY COLUMN（仅类型变化时）/ CREATE INDEX；**不支持删列删表**（diff 会报 REMOVE 但 apply 不执行）
 - `evctl.py start backend` 前置体检只调 `diff`（DIFF-ONLY），不自动 apply
 
@@ -95,7 +95,7 @@ uv run python scripts/run_all_migrations.py   # 全量跑（先打印各表行�
 
 `server/alembic/` 只有 1 个 baseline 快照（`2026_08_06-84ea41eb1f25_baseline_current_schema_snapshot.py`）。项目**实际迁移流程不走 Alembic**，而是 schema.yml + sync_schema + server/migrations 的自研链路；Alembic 目录是历史引入的骨架，`sync_schema.py export` 会排除 `alembic_version` 表。
 
-### 改表标准流程（v130+ Schema Governance）
+### 改表标准流程（Schema Governance）
 
 1. dev 库直接改（或手改 `server/schema.yml`）→ `python scripts/sync_schema.py export` 把变更写回 yml
 2. `python scripts/sync_schema.py diff` 确认变更面

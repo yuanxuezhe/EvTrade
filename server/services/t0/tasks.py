@@ -14,22 +14,18 @@ t0_tasks.py — T0Task 业务逻辑层 (REQ-TRADE-013 ~ 015 + 017)
 - 旧 user_def='T0' AND task_id=NULL 的单保持兼容：通过 get_task_stats?include_legacy=true 聚合
 - 持仓/资产前置校验走 REQ-TRADE-010 同款 409 Conflict
 
-v81 tables-migration (本版本):
-- 删 sqlalchemy.orm.Session 依赖
-- db.query(T0Task).filter().first()       → T0Tasks.query_one(**pk)
-- db.query(T0Task).filter().all() + .count()→ T0Tasks.query_all() + 内存过滤
-- db.add(task); db.commit(); db.refresh()   → T0Tasks.add_one({...}) 返回 Row
-- t.x = val; db.commit()                    → row.x = val; row.update(T0Tasks, **pk)
-- db.query(Order/Trade/Position/Asset/QuoteSnapshot) → Orders/Trades/Positions/Assets/QuoteSnapshots.query_*
-- 复合过滤 (status + stock_code + days) → query_all() + 内存 Python 过滤 (v80.5 设计)
-- db.query(...).update({...}) 改 orders.task_id → SQL UPDATE 走 transaction()
+DB 访问走 tables 层 (T0Tasks/Orders/Trades/Positions/Assets/QuoteSnapshots):
+- 单条/全表查询走 query_one / query_all / query_by, 复合过滤 (status + stock_code + days)
+  走 query_all() + 内存 Python 过滤
+- 写走 add_one / update_one / delete_one
+- db.query(...).update({...}) 改 orders.task_id 的场景走 SQL UPDATE + transaction()
 
-v127.2 (2026-08-12) 修 68s 阻塞:
+性能 (避免 68s 阻塞):
 - list_tasks / list_overview / list_overview_by_stock 走批量预取
   (1 次 Orders IN + 1 次 Trades IN + 1 次 QuoteSnapshots IN + 1 次 Positions IN),
-  替代原来对每个 task 各自 N 次 round-trip (其中 Trades.query_all() 是全表扫描)
-- aggregate_task_stats 接受可选 _prefetched, 单 task 调用时仍走原路径
-- 新增 TableBase.query_by_in (单字段 IN 查询 helper) 替代 .filter(M.field.in_(v))
+  不对每个 task 各自 N 次 round-trip (Trades.query_all() 是全表扫描)
+- aggregate_task_stats 接受可选 _prefetched, 单 task 调用时走 query_by 路径
+- TableBase.query_by_in (单字段 IN 查询 helper) 做 IN 过滤
 """
 from datetime import datetime
 from typing import Any, Dict, List, Optional
@@ -81,7 +77,7 @@ def create_task(
         raise ValueError("coefficient 必须在 [0, 10]")
 
     if not created_trd_date:
-        # v81: SysStatus 单行 (id=1) — 走 tables/* 全局 engine, 不需要 Session
+        # SysStatus 单行 (id=1) — 走 tables/* 全局 engine, 不需要 Session
         created_trd_date = _get_active_trd_date_tables()
         if not created_trd_date:
             created_trd_date = datetime.now().strftime("%Y%m%d")
@@ -116,9 +112,6 @@ def list_tasks(
     trader 仅看自己的 task (user_id 过滤); admin 看所有
     按 created_at DESC 排序
     每行附带 summary: {task_net_volume, realized_pnl, unrealized_pnl, position_vol}
-
-    v81 tables-migration:
-      原 q.filter().order_by().all() → T0Tasks.query_all() + 内存 Python 过滤 + 倒序
     """
     if user_id_kw is not None and not user_id:
         user_id = user_id_kw
@@ -158,8 +151,6 @@ def get_task_detail(
     is_admin: bool = False,
 ) -> Optional[Dict]:
     """获取 task 详情. 无权限或不存在返回 None.
-
-    v81 tables-migration: db.query(T0Task).filter(id==).first() → T0Tasks.query_one(id=...)
     """
     t = T0Tasks.query_one(id=task_id)
     if not t:
@@ -182,8 +173,6 @@ def update_task(
     status: Optional[str] = None,
 ) -> Optional[Any]:
     """更新 task. status 仅允许 active ↔ closed 切换 (archived 由 DELETE 路径产生).
-
-    v81 tables-migration: t.x = val; db.commit() → row.x = val; row.update(T0Tasks, id=...)
     """
     t = T0Tasks.query_one(id=task_id)
     if not t:
@@ -228,10 +217,6 @@ def delete_task(
 ) -> bool:
     """删除 task. active/closed 可删 (误建可立即删); archived 视为长期记录不允许硬删.
     同时 set orders.task_id = NULL.
-
-    v81 tables-migration:
-      原 db.query(Order).filter(task_id==).update({task_id: None}) → SQL UPDATE 走 transaction()
-      原 db.delete(t); db.commit() → T0Tasks.delete_one(id=...)
     """
     t = T0Tasks.query_one(id=task_id)
     if not t:
@@ -258,8 +243,6 @@ def archive_task(
     is_admin: bool = False,
 ) -> Optional[Any]:
     """归档 task. closed → archived 状态切换.
-
-    v81 tables-migration: t.status = 'archived'; db.commit() → T0Tasks.update_one({status: 'archived'}, id=...)
     """
     t = T0Tasks.query_one(id=task_id)
     if not t:
@@ -372,10 +355,6 @@ def close_task(
 
     Returns:
         {'task': dict, 'balance_result': Dict}
-
-    v81 tables-migration:
-      原 db.commit() → T0Tasks.update_one({...}, id=...)
-      原 db.refresh(t) → 已被 update_one 内置回读替代
     """
     t = T0Tasks.query_one(id=task_id)
     if not t:
@@ -410,16 +389,10 @@ def aggregate_task_stats(
 ) -> Dict:
     """task 维度统计: realized + unrealized + win_rate + trading_days + daily[]
 
-    v62 (REQ-TRADE-022): realized_pnl 算法改为按 Order 委托口径
+    realized_pnl 算法按 Order 委托口径 (REQ-TRADE-022):
       - 已成交部分: 用 Order.price (委托价)
       - 未成交部分: 买入用 ask1_price (卖一价), 卖出用 bid1_price (买一价)
       - 配平后: (avg_sell - avg_buy) * paired_vol - fee - tax
-
-    v81 tables-migration:
-      原 db.query(Order).filter(task_id==).all() → Orders.query_by('task_id', task_id) + 内存过滤
-      原 db.query(Trade).filter(order_no.in_()).all() → Trades.query_by('order_no', ...) + 内存过滤
-      原 db.query(QuoteSnapshot).filter_by().order_by().first() → QuoteSnapshots.query_by() + 内存排序
-      原 db.query(Position).filter_by(stock_code=...).first() → Positions.query_by('stock_code', ...)
     """
     t = T0Tasks.query_one(id=task_id)
     if not t:
@@ -428,15 +401,15 @@ def aggregate_task_stats(
     fee_cfg = get_fee_config()
     prefetched = _prefetched or _prefetch_task_stats([t])
 
-    # v62: 取 task 内所有 Order (跨日累积, 不限 trd_date)
+    # 取 task 内所有 Order (跨日累积, 不限 trd_date)
     orders = prefetched['orders'].get(t.id, [])
 
-    # v62: 取最新 ask1/bid1 (兜底配平价)
+    # 取最新 ask1/bid1 (兜底配平价)
     snap = prefetched['snapshots'].get(t.stock_code)
     ask1 = float(snap.ask1_price or 0) if snap and snap.ask1_price else 0.0
     bid1 = float(snap.bid1_price or 0) if snap and snap.bid1_price else 0.0
 
-    # v62: 按 Order 委托口径算 effective buy/sell vol + amt
+    # 按 Order 委托口径算 effective buy/sell vol + amt
     eff_buy_vol, eff_buy_amt = 0, 0.0
     eff_sell_vol, eff_sell_amt = 0, 0.0
     for o in orders:
@@ -467,7 +440,7 @@ def aggregate_task_stats(
                 eff_sell_amt += fill_price * unfilled
                 eff_sell_vol += unfilled
 
-    # v62: 配平后算 realized
+    # 配平后算 realized
     paired_vol = min(eff_buy_vol, eff_sell_vol)
     total_realized = 0.0
     total_commission = 0.0
@@ -481,7 +454,7 @@ def aggregate_task_stats(
         total_commission = _q2(commission)
         total_stamp_tax = _q2(stamp_tax)
 
-    # v62: 按日分组 (daily) — 保留旧逻辑做时间序列展示
+    # 按日分组 (daily) — 做时间序列展示
     order_no_set = {o.order_no for o in orders if o.traded_volume and int(o.traded_volume) > 0}
     trades = prefetched['trades'].get(t.id, [])
 
@@ -542,7 +515,7 @@ def aggregate_task_stats(
         cum += d['realized_pnl']
         d['cum_pnl'] = _q2(cum)
 
-    # unrealized (v62 沿用旧逻辑: 净敞口 × 最新价差)
+    # unrealized (净敞口 × 最新价差)
     task_net_volume = _calc_task_net_volume_from_orders(orders)
     pos = prefetched['positions'].get(t.stock_code)
     cost_basis = float(pos.cost_price) if pos else 0.0
@@ -597,8 +570,6 @@ def list_overview(
     is_admin: bool = False,
 ) -> Dict:
     """整体做T收益: 跨所有 task 聚合 summary.
-
-    v81 tables-migration: T0Tasks.query_all() + 内存过滤 user_id/status
     """
     rows = T0Tasks.query_all(order="asc")
     if not is_admin:
@@ -765,13 +736,11 @@ def _calc_task_net_volume(task_id: int) -> int:
 
 def _last_price(stock_code: str, fallback: float = 0.0) -> float:
     """取最新价 (走 quote_snapshots 表; 无则 fallback).
-
-    v81 tables-migration: QuoteSnapshots.query_by('stock_code', ...) + 内存按 ts desc 取第一条
     """
     snaps = QuoteSnapshots.query_by('stock_code', stock_code)
     if not snaps:
         return fallback
-    # 内存按 ts 倒序取最新一条 (v81 数据量小, 全表排序 OK)
+    # 内存按 ts 倒序取最新一条 (数据量小, 全表排序 OK)
     snap = sorted(snaps, key=lambda s: (s.ts or ""), reverse=True)[0]
     if snap and float(snap.last_price or 0) > 0:
         return float(snap.last_price)
@@ -795,12 +764,11 @@ def _balance_reason(task_net: int, pos_vol: int, target: int, action: str) -> st
     return f"需{direction} (净敞口 {task_net}, 持仓 {pos_vol}, 目标 {target})"
 
 
-def _compute_summary(*args, **kwargs) -> Dict:  # noqa: ARG001 — v81 兼容
+def _compute_summary(*args, **kwargs) -> Dict:  # noqa: ARG001 — 双签名兼容
     """task 摘要 (轻量, 用于列表).
 
-    v81 tables-migration:
-      - 接受 (task) 或 (db, task) 双签名 (兼容 api 层历史调用)
-      - 接受 Row 或 duck-typed obj (含 .id 即可)
+    - 接受 (task) 或 (db, task) 双签名 (兼容 api 层调用)
+    - 接受 Row 或 duck-typed obj (含 .id 即可)
     """
     # 解析参数: 支持 _compute_summary(task) / _compute_summary(db, task)
     task: Any = None
@@ -825,11 +793,11 @@ def _compute_summary(*args, **kwargs) -> Dict:  # noqa: ARG001 — v81 兼容
 
 
 def _task_to_dict(t: Any) -> Dict:
-    """v81: Row.to_dict() 替代 ORM column dict."""
+    """Row.to_dict() 替代 ORM column dict."""
     if hasattr(t, 'to_dict'):
         return t.to_dict()
     return {c.name: getattr(t, c.name) for c in t.__table__.columns}
 
 
-# ───────────────────── v81 兼容: api 层仍传 db=Session (本服务忽略) ─────────────────────
+# ───────────────────── 兼容: api 层仍传 db=Session (本服务忽略) ─────────────────────
 # 服务层不再需要 db 参数 (tables 用全局 engine). 占位 db=None 以兼容 api 层过渡调用.

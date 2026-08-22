@@ -3,12 +3,12 @@ import { http } from './index'
 
 /**
  * stocks API 客户端
- * v25 stocks-cache-and-short-name: 真分页 page/page_size + total + short_name
+ * 真分页 page/page_size + total + short_name
  *
  * 端点：
  * - GET    /api/stocks              列表(真分页 + 服务端筛选)
  * - GET    /api/stocks/{code}       详情
- * - PATCH  /api/stocks/{code}       admin 编辑 (v22, v23, v25 字段同步)
+ * - PATCH  /api/stocks/{code}       admin 编辑
  *
  * 注意：/api/stocks 真分页响应含 {code, msg, list, total, page, page_size}
  *  http 拦截器默认会把 res.data 解包为 list（丢 total）
@@ -70,7 +70,7 @@ export const stocksApi = {
   },
 
   /**
-   * 全量证券信息 (v90 前端 IndexedDB 首次/同步缓存用, 不分页)
+   * 全量证券信息 (前端 IndexedDB 首次/同步缓存用, 不分页)
    * 1 次拉完所有 stocks 行 (to_dict 全 9 字段)
    * @returns {Promise<{list: Array, total: number}>}
    */
@@ -115,7 +115,7 @@ export const stocksApi = {
   },
 
   /**
-   * admin 添加证券 (v46 stock-info-create, REQ-STOCK-006)
+   * admin 添加证券 (stock-info-create, REQ-STOCK-006)
    * @param {Object} payload 8 字段: stock_code(必填) + stock_name(必填) + 可选 sector/short_name/is_t0_able/min_buy_qty/trade_unit
    * @returns {Promise<Object>} 新插入的完整 stock
    *   错误处理: 409 (重复) / 422 (字段校验失败) 由调用方 catch

@@ -1,5 +1,5 @@
 """
-api/sysconfig.py — 统一配置 CRUD (v78)
+api/sysconfig.py — 统一配置 CRUD
 
 端点:
 - GET    /api/sysconfig                  列出配置 (admin 看全部, 普通用户看自己的 + 继承的默认)

@@ -1,16 +1,14 @@
 """
 strategy — quote_consumer 后端 WS 客户端（行情快照 + 前端推送）
 
-v124 (2026-08-10): 删除旧策略引擎耦合 — 移除 StrategyEngine / T0StrategyEngine /
-load_engines / evaluate_tick / subscribe_strategy (旧 regime-grid 引擎已下线,
-strategy 表已删)。保留核心职责:
+核心职责:
 - 连接 hqserver WebSocket (默认 ws://127.0.0.1:8765)
 - 解析 tick → 写 quote_cache (内存快照, 持久化由 main.py periodic flush task 负责)
 - broadcast_to_stock 推前端 WS /ws/quote_update (行情面板实时刷新)
 
-v131 (2026-08-19): quote_consumer 内合并 (quote-batch-flush)
+批量 flush (quote-batch-flush):
 - 累积 tick 入 buffer 后 flush 触发: 50 条 OR 1 秒 (双阈值)
-- v131.1: 不做股票级去重 - 同窗口内同股票多 tick 全部保留 (用户要求看到每一根 tick)
+- 不做股票级去重 - 同窗口内同股票多 tick 全部保留 (用户要求看到每一根 tick)
 - 前端 ws payload 格式不变 (单 tick), 但 1 个 ws frame 装 N 条 tick
 - 仍走 broadcast_to_stock 按订阅过滤 (前端 ws payload 格式不变)
 
@@ -25,10 +23,10 @@ import logging
 import time
 from typing import Dict, Optional, List
 
-from server.cache.quote_cache import get_quote_cache as _get_quote_cache  # 2026-07-10 quote-cache
-from server.ws.manager import ws_manager  # change ws-quote-fanout: 让前端 /ws/quote_update 也能收到 tick
+from server.cache.quote_cache import get_quote_cache as _get_quote_cache
+from server.ws.manager import ws_manager  # 让前端 /ws/quote_update 也能收到 tick
 
-# 2026-07-10 quote-cache: 模块级 cache 单例
+# 模块级 cache 单例
 quote_cache = _get_quote_cache()
 
 log = logging.getLogger(__name__)
@@ -56,8 +54,8 @@ class QuoteConsumer:
         self._ws = None
         self._last_tick_ts: Optional[float] = None
         self._tick_count: int = 0
-        # v131 quote-batch-flush: 累积 N tick 后 flush 触发 (50条 / 1秒)
-        # v131.1: 不去重, 同股票多 tick 全部保留
+        # 批量 flush: 累积 N tick 后 flush 触发 (50条 / 1秒)
+        # 不去重, 同股票多 tick 全部保留
         from server.config import settings
         self._batch_max: int = settings.QUOTE_BATCH_MAX
         self._batch_flush_ms: int = settings.QUOTE_BATCH_FLUSH_MS
@@ -72,7 +70,7 @@ class QuoteConsumer:
         """入口：启动主循环（永久直到 stop）"""
         log.info("quote_consumer starting: url=%s batch_max=%d flush_ms=%d",
                  self.url, self._batch_max, self._batch_flush_ms)
-        # v131: 启动定时 flush 后台 task (1秒兜底, 防止慢市累计)
+        # 启动定时 flush 后台 task (1秒兜底, 防止慢市累计)
         self._flusher_task = asyncio.ensure_future(self._flusher_loop())
         await self._main_loop()
 
@@ -86,7 +84,7 @@ class QuoteConsumer:
                 await self._flusher_task
             except asyncio.CancelledError:
                 pass
-        # v131: final flush 确保最后一批不丢
+        # final flush 确保最后一批不丢
         await self._flush_batch()
         if self._ws is not None:
             try:
@@ -124,7 +122,7 @@ class QuoteConsumer:
         delay = self.RECONNECT_INITIAL
         while not self._stop.is_set():
             try:
-                # 2026-07-09 fix: ping_interval=15s 主动 ping, ping_timeout=60s 给足行情低谷容错
+                # ping_interval=15s 主动 ping, ping_timeout=60s 给足行情低谷容错
                 self._ws = await connect(self.url, ping_interval=15, ping_timeout=60)
                 log.info("quote_consumer connected: %s", self.url)
                 return
@@ -248,9 +246,9 @@ class QuoteConsumer:
         }
 
     async def _fanout_tick(self, tick: dict) -> None:
-        """v131 quote-batch-flush: 写 cache + 入 batch buffer (不去重)
+        """写 cache + 入 batch buffer (不去重)
 
-        - v131.1: 不做股票级去重, 同股票多 tick 全部入 buffer
+        - 不做股票级去重, 同股票多 tick 全部入 buffer
         - 50 条 OR 1 秒触发 flush (双阈值)
         - 仍走 broadcast_to_stock 按订阅过滤 (前端 ws payload 格式不变)
         """
@@ -277,7 +275,7 @@ class QuoteConsumer:
     async def _flush_batch(self) -> None:
         """取出 buffer 内全部 tick (按订阅过滤) 并广播。
 
-        v131.1 不去重: buffer 内 N 条 tick 可能同股票多次, 全部推到 ws (1 个 frame 装 N 个 tick dict)。
+        不去重: buffer 内 N 条 tick 可能同股票多次, 全部推到 ws (1 个 frame 装 N 个 tick dict)。
         """
         async with self._batch_lock:
             if not self._batch_buf:
@@ -297,7 +295,7 @@ class QuoteConsumer:
                   len(ticks), delivered)
 
     async def _flusher_loop(self) -> None:
-        """v131 定时 flush 后台 task: 防止慢市累积超 1 秒
+        """定时 flush 后台 task: 防止慢市累积超 1 秒
 
         每 self._batch_flush_ms/2 ms 检查一次 (100ms 间隔, 1s flush 上限误差 ±100ms)
         """

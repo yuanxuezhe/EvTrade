@@ -1,5 +1,5 @@
 """
-server/api/script_strategy/forward.py — 转发 strategy_exec 的 HTTP helpers (v123)
+server/api/script_strategy/forward.py — 转发 strategy_exec 的 HTTP helpers
 
 职责单一: 把已落库的 task / 批次 payload 转发到 strategy_exec (8001) 异步执行。
 - _forward_run_task: 单任务运行 (回测/实盘) → /internal/run-task

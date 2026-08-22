@@ -1,11 +1,11 @@
 """
-repo/system.py — 系统配置仓库（v13 从 services/trading_clock.py 迁入）
+repo/system.py — 系统配置仓库
 
 包含：
 - TradingClock 类（缓存 sysconfig.trdtime 60s；半天/全天判断；is_in_trading_session 协程安全）
-- sys_status 单行表 (v_next); fee_config/reconcile_config/trading_session 已并入 sysconfig
+- sys_status 单行表; fee_config/reconcile_config/trading_session 已并入 sysconfig
 
-规范：openspec/changes/2026-07-06-layered-architecture-and-strategy-master (v13 分层)
+规范：openspec/changes/2026-07-06-layered-architecture-and-strategy-master (分层)
 """
 from datetime import datetime, time as dtime
 from typing import Optional
@@ -15,7 +15,7 @@ from server.models.orm import SysStatus, get_active_sysstatus
 
 
 class TradingClock:
-    """交易时段缓存 + 半天判断 (v_next: 改读 sysconfig.trdtime)
+    """交易时段缓存 + 半天判断 (读 sysconfig.trdtime)
 
     - 内部存 _sessions: list[(time, time)] (从 sysconfig 解析)
     - 缓存 60s, is_in_trading_session 协程安全
@@ -85,7 +85,7 @@ class TradingClock:
 
     @classmethod
     def seconds_until_session(cls):
-        """距下一交易时段开始的秒数 (v_next: 兼容原 clock API)
+        """距下一交易时段开始的秒数 (兼容 clock API)
 
         Returns:
             int: 距 next_session_start 的秒数; 若 next_session_start 为 None (今日已结束), 返回 None

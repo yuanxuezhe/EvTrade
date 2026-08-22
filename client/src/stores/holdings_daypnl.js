@@ -1,5 +1,5 @@
 /**
- * holdings_daypnl.js — 当日盈亏 recompute 工厂 (v114.2: store 驱动, 无轮询)
+ * holdings_daypnl.js — 当日盈亏 recompute 工厂 (store 驱动, 无轮询)
  *
  * Why:
  *   - 当日盈亏权威在 holdings store: 行情推送驱动逐笔重算, 写入 positions[].day_pnl

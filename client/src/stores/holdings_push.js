@@ -7,9 +7,9 @@
  * 调用者：holdings.js 内部 createPushHandlers({...refs, log, getQuoteStore, recomputeStatus, positionCodes}) → { applyXxx }
  *
  * 3 个入口（与 ws_dispatch.js 协议对齐）:
- *   applyOrderPush    — ws._onOrderCfm 调（含 v8 trd_date 守门、v9 cancel-row 短路、
+ *   applyOrderPush    — ws._onOrderCfm 调（含 trd_date 守门、cancel-row 短路、
  *                                          change system-delegation-price-fill-calc: metaMerge/cancel-row 反抹平）
- *   applyTradePush    — ws._onTradeCfm 调（含 v8 trd_date 守门、v9 trade_type 区分、
+ *   applyTradePush    — ws._onTradeCfm 调（含 trd_date 守门、trade_type 区分、
  *                                          change system-delegation-price-fill-calc: 独立累计 + 反向更新 order；
  *                                          change consolidate-position-data-flow: trade_type=1 cancel-trade 跳过日志标 ok）
  *   applyQuote        — ws._onQuote 调（按 positionCodes 白名单过滤）
@@ -27,16 +27,15 @@ import {
   todayYYYYMMDD,
   recomputeStatus,
   normalizeTrade,
-  // v78.3 (REQ-TRADE-032): 不再 import recomputeOrderFromTrade — 后端 ord_cfm 一次写入委托累计, 前端不二次累计
+  // REQ-TRADE-032: 不 import recomputeOrderFromTrade — 后端 ord_cfm 一次写入委托累计, 前端不二次累计
   metaMerge,
   flattenCancelledByRow
 } from './holdings_helpers'
 import { saveOrder, saveTrade } from './holdings_idb'
 import { useT0Stats } from '../composables/useT0Stats'
-import { statusRank } from '../utils/format'  // v90: 状态阶段守门
-// v12: IDB 写通 — ws push 时 fire-and-forget 写 IDB (不阻塞 push)
-// v13: 改复合 key 单行存 (saveOrder/saveTrade 替代 saveOrdersForDate/saveTradesForDate),
-//      O(1) idbPut, 不再读全量 / 写全量
+import { statusRank } from '../utils/format'  // 状态阶段守门
+// IDB 写通 — ws push 时 fire-and-forget 写 IDB (不阻塞 push)
+// 复合 key 单行存 (saveOrder/saveTrade), O(1) idbPut, 不读全量 / 写全量
 
 /**
  * 创建 3 个 ws push handler
@@ -49,7 +48,7 @@ export function createPushHandlers(deps) {
   // 注: consolidate-position-data-flow 后, ws 不再触发 positions / cachedAsset 写。
   //      positions 仍保留引用作为 createPushHandlers 入参 (兼容未来扩展), 但本工厂不读它。
 
-  // v13: IDB 单行写 helper（fire-and-forget, 不阻塞 push）
+  // IDB 单行写 helper（fire-and-forget, 不阻塞 push）
   //   复合 key 维度: 每次 push 单独写 1 行 (O(1) idbPut), 不再扫全量
   //   间接改 orders 时也单行写, 不再写全量数组
   function _persistOrder(order) {
@@ -66,35 +65,35 @@ export function createPushHandlers(deps) {
   }
 
   /** ws._onOrderCfm 调用：合并委托 + 写日志
-   *  v6: 匹配键用 order_no（本地 8 位序号 PK），order_id 可能为 null
+   *  匹配键用 order_no（本地 8 位序号 PK），order_id 可能为 null
    *      收到推送时调前端 inferOrderStatus 防御性重算 status
-   *  v8: 守门 = (activeTrdDate, order_no)
+   *  守门 = (activeTrdDate, order_no)
    *      - 推送 row.trd_date != activeTrdDate → 忽略（broker 偶尔推老委托的历史变更）
    *      - activeTrdDate == null（降级）→ 放行（log warn）
    *      - 已有订单的 trd_date 也要守门（防止 push 覆盖跨日缓存）
-   *  v9: cancel-row (order_flag=1) 短路 recomputeStatus
+   *  cancel-row (order_flag=1) 短路 recomputeStatus
    *      - cancel-row volume=0,traded_volume=0,会被推算成 50(已报 broker xtconstant)污染显示
    *      - cancel-row 由 DELETE 端点写好 status(54=broker 已撤 / 57=broker 废单),前端只 merge 不重算
    *  change system-delegation-price-fill-calc:
    *      - 普通 row: 调 metaMerge(row, ref) 仅覆盖 PK + 元数据, ref 累计字段保留
    *      - cancel-row: 写 cancel-row 自身 + 调 flattenCancelledByRow 反向抹平原委托 cancelled_volume
-   *  v13: 返回 final status (普通 row = merged.status, cancel-row = row.status)
+   *  返回 final status (普通 row = merged.status, cancel-row = row.status)
    *      供 ws_dispatch._onOrderCfm 调 _notifyOrder 时用 (避免用 broker.status 与表格显示不一致)
    *      - 守门 / 跳过路径返 null (调用方不发通知)
    *  @returns {string|null} final status 码, 跳过返 null
    */
   function applyOrderPush(row, action /* 'open' | 'update' | 'status' */) {
     if (!row || !row.order_no) return null
-    // v8 激活日守门
+    // 激活日守门
     if (activeTrdDate.value && row.trd_date && row.trd_date !== activeTrdDate.value) {
       log('warn', '交易', 'ws', `委托推送忽略: trd_date=${row.trd_date} != active=${activeTrdDate.value} (${row.stock_code} ${row.order_no})`)
       return null
     }
-    // v9 短路: cancel-row (order_flag=1) 不走 metaMerge（其 status 由 DELETE 端点写死, 不重算）
+    // 短路: cancel-row (order_flag=1) 不走 metaMerge（其 status 由 DELETE 端点写死, 不重算）
     if (Number(row.order_flag) === 1) {
       const idx = orders.value.findIndex((o) => o.order_no === row.order_no)
       const ref = idx >= 0 ? orders.value[idx] : null
-      // v90: 状态阶段守门 - 倒退则丢弃 (不更新不弹窗)
+      // 状态阶段守门 - 倒退则丢弃 (不更新不弹窗)
       if (ref) {
         const curRank = statusRank(ref.status)
         const newRank = statusRank(row.status)
@@ -124,7 +123,7 @@ export function createPushHandlers(deps) {
     const idx = orders.value.findIndex((o) => o.order_no === row.order_no)
     const ref = idx >= 0 ? orders.value[idx] : null
     const merged = metaMerge(row, ref)
-    // v90: 状态阶段守门 - new_rank < current_rank 视为倒退, 丢弃 (不更新不弹窗)
+    // 状态阶段守门 - new_rank < current_rank 视为倒退, 丢弃 (不更新不弹窗)
     //   防止 broker 重推旧状态导致表格倒着刷 (如已成 56 回已报 50)
     //   new_rank >= current_rank 放行 (含 rank 3 并行: 51 撤单中 <-> 55 部成 互不倒退)
     if (ref) {
@@ -142,7 +141,7 @@ export function createPushHandlers(deps) {
       orders.value.unshift(merged)
       log('info', '交易', 'ws', `新委托: ${merged.stock_code} ${merged.order_type === '23' ? '买' : '卖'} ${merged.volume}@${merged.price}`)
     }
-    // v13: IDB 单行写 (复合 key 维度, O(1) idbPut)
+    // IDB 单行写 (复合 key 维度, O(1) idbPut)
     _persistOrder(merged)
     // change t0-trade-polish-bundle (commit 3): 委托推送使该标的 t0Stats 缓存失效
     //   下次 useT0Stats.getStats(stock_code) → cache miss → fetch 新值
@@ -151,9 +150,9 @@ export function createPushHandlers(deps) {
   }
 
   /** ws._onTradeCfm 调用
-   *  v8: 守门 = (activeTrdDate, trade_id) → 推送 row.trd_date != active 忽略
+   *  守门 = (activeTrdDate, trade_id) → 推送 row.trd_date != active 忽略
    *      成交按 trade_id 唯一, trd_date 是额外维度
-   *  v9: 透传 trade_type 字段 (0=normal 1=cancel-fill),日志区分
+   *  透传 trade_type 字段 (0=normal 1=cancel-fill),日志区分
    *  change system-delegation-price-fill-calc:
    *      - amount = price × volume (本地算, 不信任 broker.traded_amount)
    *      - 按 trade_id 去重 (已有则跳过)
@@ -161,7 +160,7 @@ export function createPushHandlers(deps) {
    */
   function applyTradePush(row) {
     if (!row || !row.trade_id) return
-    // v8 激活日守门
+    // 激活日守门
     if (activeTrdDate.value && row.trd_date && row.trd_date !== activeTrdDate.value) {
       log('warn', '交易', 'ws', `成交推送忽略: trd_date=${row.trd_date} != active=${activeTrdDate.value} (${row.stock_code})`)
       return
@@ -186,9 +185,9 @@ export function createPushHandlers(deps) {
       volume: row.volume
     })
     trades.value.unshift(newTrade)
-    // v13: IDB 单行写 (复合 key 维度, O(1) idbPut)
+    // IDB 单行写 (复合 key 维度, O(1) idbPut)
     _persistTrade(newTrade)
-    // v78.3 (REQ-TRADE-032): 委托累计 (traded_volume/avg_price/traded_amount) 由后端 ord_cfm 一次写入
+    // (REQ-TRADE-032): 委托累计 (traded_volume/avg_price/traded_amount) 由后端 ord_cfm 一次写入
     //   broker 推完整成交数量+成交均价 → 后端 ord.py 用 broker.traded_volume/traded_price 直接覆盖 Order 表
     //   前端 applyTradePush 不再调 recomputeOrderFromTrade 二次累计 (避免与后端覆盖冲突)
     //   当 trd_cfm 先到 ord_cfm 后到: 表格列在 trd_cfm 后暂时显示旧累计, ord_cfm 后到会自动刷新
@@ -215,7 +214,7 @@ export function createPushHandlers(deps) {
     }
   }
 
-  /** v95: ws._onTradeCfm 调用 — 后端 trd_cfm payload.data.position 携带最新 Position 行.
+  /** ws._onTradeCfm 调用 — 后端 trd_cfm payload.data.position 携带最新 Position 行.
    *   前端按 stock_code find → 整条 ref 替换 (不 spread/merge/计算).
    *   这是 "前端 dumb, 完全依赖后端权威" 的统一规则
    *   (与 applyOrderPush 不同: 委托 metaMerge 保留 ref 累计字段,
@@ -253,7 +252,7 @@ export function createPushHandlers(deps) {
     if (!row || !row.stock_code) return
     const idx = positions.value.findIndex((p) => p.stock_code === row.stock_code)
     if (idx >= 0) {
-      positions.value[idx] = row  // v95: 整条 ref 替换, 不 spread
+      positions.value[idx] = row  // 整条 ref 替换, 不 spread
       log('info', '持仓', 'ws', `持仓刷新: ${row.stock_code} vol=${row.vol} avl=${row.avl_vol} cost=${row.cost_price}`)
     } else {
       _queueNewPosition(row)  // 批量合并: 100ms 静默窗口后一次 flush
@@ -268,7 +267,7 @@ export function createPushHandlers(deps) {
     q.update({
       stock_code: row.stock_code,
       last_price: row.last_price,
-      // v114.3: 转发 snapshot (含 prev_close), 与 ws_dispatch._onQuote 一致 —
+      // 转发 snapshot (含 prev_close), 与 ws_dispatch._onQuote 一致 —
       //   当日盈亏 calcDayPnl 依赖 prev_close, 缺则 null
       snapshot: row.snapshot,
       fields: row.fields,

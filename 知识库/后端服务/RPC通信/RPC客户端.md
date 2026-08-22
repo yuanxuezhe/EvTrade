@@ -37,12 +37,12 @@ EvTrade 与 QMT 柜台通过 RabbitMQ + msgpacket 二进制协议通信：一个
 - `async connect()`：幂等守卫（已连接跳过）；基类声明 exchange + 三队列 + bind；构造 PushDispatcher；起 3 个协程：`_listen_replies`、`_listen_pushs`、`_msgid_cache_gc_loop`。publisher confirm 开启。
 - `async call(func, timeout=None, headers=None, values=None, msgid_meta=None) -> MsgPacket`
   1. timeout 缺省取 `settings.RPC_TIMEOUT`（30s）；pending ≥ MAX_PENDING 抛 RuntimeError。
-  2. 构造 MsgPacket + msgid；msgid_meta（order_no/trd_date/stock_code）注册进 `_MSGID_ORDERNO_CACHE`（v84 废单反查，TTL 60s，GC 协程 30s 周期）。
+  2. 构造 MsgPacket + msgid；msgid_meta（order_no/trd_date/stock_code）注册进 `_MSGID_ORDERNO_CACHE`（废单反查，TTL 60s，GC 协程 30s 周期）。
   3. 记 `[svc->rpc]` 日志（trace_id=msgid）→ `publish(wire, routing_key=QUEUE_REQ, timeout=5s confirm)`；confirm 超时清 pending/cache 抛 RuntimeError。
   4. `await asyncio.wait_for(future, timeout)` 等应答；超时清 pending + `[svc<-rpc] TIMEOUT` warning 并 re-raise。
   5. 收到后 `_log_reply` 记 `[svc<-rpc] reply func=... code=... rows=...`。
-- reply listener：`_handle_reply(wire)` decode → `_clean_id(msgid)` 匹配 pending future set_result；未匹配记 warning（列出等待中的 msgid）。func=ord_stk 时额外走 `_handle_ord_stk_reply`（v91）：code=0 → 状态 48 才推进到 49"待报"（防倒退，ord_cfm 可能先到）；code≠0 → 更新为 57 废单 + 抹平 cancelled_volume；DB 写 `run_in_executor`，完成后 `_broadcast_order_cfm` 推前端（与 push 同协议 `{type:'ord_cfm',...}`）。
-- push listener：decode → 取 func → 委托 `PushDispatcher.dispatch(pkt, func, mt, wire_len)`。路由表 `_PUSH_CHANNEL = {"ord_cfm": "order_update", "trd_cfm": "trade_update", "pos_push": "position_update"}`（v118 pos_push 为持仓唯一数据源；xtquant 协议无 pos_cfm/ast_cfm）。
+- reply listener：`_handle_reply(wire)` decode → `_clean_id(msgid)` 匹配 pending future set_result；未匹配记 warning（列出等待中的 msgid）。func=ord_stk 时额外走 `_handle_ord_stk_reply`：code=0 → 状态 48 才推进到 49"待报"（防倒退，ord_cfm 可能先到）；code≠0 → 更新为 57 废单 + 抹平 cancelled_volume；DB 写 `run_in_executor`，完成后 `_broadcast_order_cfm` 推前端（与 push 同协议 `{type:'ord_cfm',...}`）。
+- push listener：decode → 取 func → 委托 `PushDispatcher.dispatch(pkt, func, mt, wire_len)`。路由表 `_PUSH_CHANNEL = {"ord_cfm": "order_update", "trd_cfm": "trade_update", "pos_push": "position_update"}`（pos_push 为持仓唯一数据源；xtquant 协议无 pos_cfm/ast_cfm）。
 - 单例：`get_rpc_client()` 懒建 + connect；`close_rpc_client()` 关连接置 None。main.py startup/shutdown 管理。
 
 ### handlers.py 业务入口

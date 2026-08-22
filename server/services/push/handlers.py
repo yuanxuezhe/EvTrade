@@ -26,12 +26,12 @@ from server.services.push.helpers import _float, _int, _str
 from server.utils.time import _utcnow  # bugfix: was wrongly imported from helpers (never existed there)
 from server.services.push.ord import handle_ord_cfm
 from server.services.push.trd import handle_trd_cfm
-from server.services.push.pos import handle_pos_push   # v118: pos_push 推送处理
+from server.services.push.pos import handle_pos_push   # pos_push 推送处理
 
 log = logging.getLogger(__name__)
 
-# 2 类 push → handler 路由表 (change consolidate-position-data-flow)
-# v118: 新增 pos_push 路由 (持仓变化推送, broker 直接刷新本地 + 推前端)
+# push → handler 路由表 (ord_cfm / trd_cfm 两类 broker push;
+# pos_push 为持仓变化推送, broker 直接刷新本地 + 推前端)
 HANDLERS = {
     "ord_cfm": handle_ord_cfm,
     "trd_cfm": handle_trd_cfm,

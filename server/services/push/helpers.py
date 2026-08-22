@@ -32,9 +32,8 @@ def _round_scale(v: Any, scale: Any = 2, default: float = 0.0) -> float:
     """按证券 scale 保留价格小数位 (round).
 
     scale 来源: stocks.scale (A股=2 / ETF=3, admin 可配 0-6, 缺省 2).
-    v130+ 持仓 cost_price 口径: 按标的 scale 保留精度, 与 ord/place/trd 现有
+    持仓 cost_price 口径: 按标的 scale 保留精度, 与 ord/place/trd
     按 scale round 的写法对齐 (round(x, scale) + scale>6 兜底 2).
-    取代旧 _round4 (固定 4 位, 2026-08-12 cost-price-scale 淘汰).
     """
     try:
         s = int(scale or 2)
@@ -77,9 +76,9 @@ def _order_to_out_dict(order) -> Optional[dict]:
         "status": _str(order.status),
         "status_msg": _str(order.status_msg or ''),
         "order_time": _str(order.order_time or ''),
-        # v63: task_id 字段 (供 T0Trade 委托筛选, 之前为 null)
+        # task_id 字段 (供 T0Trade 委托筛选)
         "task_id": _int(order.task_id) if order.task_id is not None else None,
-        # v66: strategy_type 字段 (REQ-TRADE-026; 0=普通单 1=快速做T)
+        # strategy_type 字段 (REQ-TRADE-026; 0=普通单 1=快速做T)
         #   兜底 0: 历史单 ORM 列刚加, query 出 None 也按 0 处理
         "strategy_type": _int(order.strategy_type) if order.strategy_type is not None else 0,
     }
@@ -104,7 +103,7 @@ def _trade_to_out_dict(trade) -> Optional[dict]:
 
 
 def _position_to_out_dict(pos) -> Optional[dict]:
-    """v95: ORM Position → PositionOut 兼容 dict（WS 推送 position_update 用）
+    """ORM Position → PositionOut 兼容 dict（WS 推送 position_update 用）
 
     设计: 全量行推送, 前端按 stock_code 整条 ref 替换 (不做 spread/merge/累计).
           前端 dumb layer, 完全依赖后端权威 vol/avl_vol/cost_price.

@@ -12,7 +12,7 @@
           @keyup.enter="onRefresh"
           @clear="onRefresh"
         />
-        <!-- v121: 板块从字典下拉改成字符串子串匹配 (避开"字典太多"问题) -->
+        <!-- 板块用字符串子串匹配 (避开"字典太多"问题) -->
         <el-input
           v-model="filters.sector"
           placeholder="板块子串匹配（例: 消费、银行）"
@@ -31,8 +31,8 @@
           <el-option label="支持 T+0" :value="true" />
           <el-option label="不支持 T+0" :value="false" />
         </el-select>
-        <!-- v120: 证券类型筛选 (0=股票 / 1=ETF)
-             关键修复: :value 用 'stock'/'etf' 字符串 (避开 number 0 falsy 陷阱),
+        <!-- 证券类型筛选 (0=股票 / 1=ETF)
+             :value 用 'stock'/'etf' 字符串 (避开 number 0 falsy 陷阱),
              onRefresh 内部用 STKTYPE_MAP 转回 0/1 传给后端 -->
         <el-select
           v-model="filters.stktype"
@@ -213,13 +213,13 @@ const rootStyle = computed(() => ({ '--oplog-extra': uiStore.oplogExpanded ? '26
 
 const store = useStocksStore()
 
-// 筛选 (v120 新增 stktype: ''=全部 / 'stock'=股票 / 'etf'=ETF)
+// 筛选 (含 stktype: ''=全部 / 'stock'=股票 / 'etf'=ETF)
 //   用 string 而非 number 0/1, 避免 Element Plus 2.x 把 :value="0" 当 falsy 跳过导致筛选无效
 //   onRefresh 里 STKTYPE_VALUE_MAP 转回 0/1 传给后端
 const filters = reactive({ keyword: '', sector: '', is_t0_able: null, stktype: '' })
 const STKTYPE_VALUE_MAP = { stock: 0, etf: 1 }
 
-// v121: sector 从字典下拉改为字符串子串匹配, sectorOptions computed 已删除
+// sector 用字符串子串匹配, 无 sectorOptions computed
 
 // ==================== 行内编辑状态 ====================
 const rows = ref([])
@@ -368,7 +368,7 @@ async function onCreateSave() {
 }
 
 async function onRefresh() {
-  // v120 fix: 任一非 keyword 筛选条件有值, 全部走后端分页 (后端可正确处理 AND)
+  // 任一非 keyword 筛选条件有值, 全部走后端分页 (后端可正确处理 AND)
   //   - 之前 searchCache 分支会被 keyword 一家独吞, 出现"切 stktype 但表格还是 keyword 搜索结果"
   //   - 现在统一走后端, keyword 也透传给后端 (server 也支持 stock_code/name/short_name substring)
   const kw = (filters.keyword || '').trim()
@@ -377,7 +377,7 @@ async function onRefresh() {
   const hasOtherFilter = !!filters.sector || filters.is_t0_able != null || stktypeNum !== undefined
   if (kw && !hasOtherFilter) {
     const matches = store.searchCache(kw, 10000)
-    const sec_q = (filters.sector || '').trim().toLowerCase()  // v121: substring
+    const sec_q = (filters.sector || '').trim().toLowerCase()  // substring 匹配
     const filtered = matches.filter((s) => {
       if (sec_q && !(s.sector || '').toLowerCase().includes(sec_q)) return false
       if (filters.is_t0_able != null && Boolean(s.is_t0_able) !== Boolean(filters.is_t0_able)) return false

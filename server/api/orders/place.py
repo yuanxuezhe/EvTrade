@@ -1,26 +1,22 @@
 """
 place.py — POST /api/orders/place 下单端点
 
-v77 (REQ-TRADE-028) 两阶段下单架构:
+两阶段下单架构 (REQ-TRADE-028):
 - 阶段 A: DB INSERT status=48 未报 → ws push + 立即 HTTP 应答 (含 status=48 OrderOut)
 - 阶段 B: RPC 后台 task → DB UPDATE status=50/57 + ws push
   - RPC 成功 (ack.code==0): UPDATE status=50 + 写 broker_order_id + ws push
   - RPC 失败 (ack.code!=0): UPDATE status=57 + cancelled_volume=volume + ws push
   - RPC 异常 (timeout/broker down): UPDATE status=57 + ws push (status_msg="RPC 超时/异常: ...")
 
-设计意图 (v77 变更前为同步阻塞):
-- 旧: DB INSERT → RPC 阻塞 → DB UPDATE → ws push → HTTP 应答. broker 慢 → 应答慢 → 前端等.
-- 新: DB INSERT → ws push status=48 → 立即 HTTP 应答. RPC 后台 fire-and-forget.
+设计意图:
+- DB INSERT → ws push status=48 → 立即 HTTP 应答. RPC 后台 fire-and-forget.
   - 前端拿到 status=48 立即渲染 "待回报"; ws 后续推 status=50/57 覆盖
   - broker 慢/超时不影响 HTTP 应答 (axios 15s timeout 仍兜底)
   - RPC 异常吞掉会丢委托, 必须 try/except + ws push + log.exception
 
-v81 tables-migration:
-- 删 Depends(get_db) × 2 (endpoint + _submit_rpc_async)
-- 删 server.models.orm.Order / SysStatus / get_active_trd_date ORM 调用
 - DB I/O 全部走 server.tables.* (Orders.add_one / Orders.query_one / Orders.update_one / T0Tasks.query_one)
-- 交易日改用 server.repo.orders._get_active_trd_date (已迁到 tables 层)
-- 插入 + 更新改为 Row 风格: obj.x = val; obj.update(Orders, **pk)
+- 交易日走 server.repo.orders._get_active_trd_date (tables 层)
+- 插入 + 更新为 Row 风格: obj.x = val; obj.update(Orders, **pk)
 
 依赖 (late import 拿 patched symbol 用于 monkeypatch 测试):
 - from server.api.orders import ord_stk, ws_manager
@@ -34,7 +30,7 @@ from fastapi import Depends, HTTPException
 from server.auth.deps import get_current_user
 from server.models.user import User
 from server.services.guards import require_trader, require_trading_day, require_trading_session
-from server.api.deps import require_rpc_ok  # v101: RPC 健康统一 deps (替换 v99 内联)
+from server.api.deps import require_rpc_ok  # RPC 健康统一 deps
 from server.repo.orders import (
     _get_active_trd_date,
     insert_pending_order,
@@ -42,15 +38,14 @@ from server.repo.orders import (
 )
 from server.utils.time import format_ts
 from server.services.t0 import calc_net_amount, calc_t0_volume, get_fee_config
-from server.repo.stocks import GetStockInfo  # v80.1: 统一证券信息入口
-from server.services.sysconfig import get_cantrd_stktypes  # v80
+from server.repo.stocks import GetStockInfo  # 统一证券信息入口
+from server.services.sysconfig import get_cantrd_stktypes
 from server.tables import Orders, T0Tasks
 from server.api.orders.schemas import (
     PlaceOrderRequest,
     PlaceOrderResponse,
     _to_order_out,
 )
-# 删 _order_to_out_dict import (v84.3 用 _broadcast_order_cfm helper)
 
 log = logging.getLogger(__name__)
 
@@ -61,11 +56,11 @@ def register_place(router):
     @router.post("/place", response_model=PlaceOrderResponse,
                  dependencies=[Depends(require_trader), Depends(require_trading_day),
                                Depends(require_trading_session),
-                               Depends(require_rpc_ok)])  # v101: 替换 v99 内联 check_ok
+                               Depends(require_rpc_ok)])
     async def place_order(req: PlaceOrderRequest, user: User = Depends(get_current_user)):
-        """下单（v77 两阶段：DB 写入立即应答，RPC 后台异步回报）
+        """下单（两阶段：DB 写入立即应答，RPC 后台异步回报）
 
-        v81 tables-migration: 删 Depends(get_db), 全部走 server.tables.*
+        全部走 server.tables.*
         """
         # Late import 拿 patched symbol（test_orders_api.py monkeypatch 路径）
         from server.api.orders import ord_stk, ws_manager
@@ -73,10 +68,10 @@ def register_place(router):
         if req.order_type not in ("23", "24"):
             raise HTTPException(status_code=400, detail={"code": "BAD_ORDER_TYPE", "msg": "order_type 必须 23(买) 24(卖)"})
 
-        # v101: RPC 健康检查已通过 Depends(require_rpc_ok) 在路由层拦截 (替换 v99 内联)
+        # RPC 健康检查已通过 Depends(require_rpc_ok) 在路由层拦截
 
-        # v80: stktype 可交易校验 + 价格按 stock.scale 四舍五入
-        # v80.1: 用 GetStockInfo() 一次性拿 stktype + scale
+        # stktype 可交易校验 + 价格按 stock.scale 四舍五入
+        # 用 GetStockInfo() 一次性拿 stktype + scale
         info = GetStockInfo(req.stock_code)
         stktype = info["stktype"]
         allowed = get_cantrd_stktypes(user="0")
@@ -92,8 +87,8 @@ def register_place(router):
         if req.price is not None and req.price > 0:
             req.price = round(float(req.price), scale)
 
-        # 1. 取交易日 + order_no（v7：幂等改由 order_no 单调递增保证）
-        #    v_next: SysStatus 单行 (id=1). v81 tables-migration: 走 repo helper
+        # 1. 取交易日 + order_no（幂等由 order_no 单调递增保证）
+        #    SysStatus 单行 (id=1), 走 repo helper
         trd_date = _get_active_trd_date()
         if not trd_date:
             raise HTTPException(
@@ -114,8 +109,8 @@ def register_place(router):
         fee_cfg = get_fee_config()
         gross, net = calc_net_amount(req.price, adjusted, fee_cfg, direction)
 
-        # 3.5 v18: 若带 task_id, 验证 task 归属 + active (避免跨用户误绑定)
-        #    v81 tables-migration: T0Tasks.query_one(id=...) 替代 db.query(T0Task).filter_by(id=...).first()
+        # 3.5 若带 task_id, 验证 task 归属 + active (避免跨用户误绑定)
+        #    T0Tasks.query_one(id=...)
         if req.task_id is not None:
             task = T0Tasks.query_one(id=req.task_id)
             if not task or task.user_id != user.id or task.status != "active":
@@ -131,7 +126,7 @@ def register_place(router):
                 )
 
         # 4. INSERT status=48（未报）
-        #    v81 tables-migration: 用 insert_pending_order (Orders.add_one 封装), 返回 Row
+        #    走 insert_pending_order (Orders.add_one 封装), 返回 Row
         order_no = next_order_no()
         order = insert_pending_order(
             trd_date=trd_date,
@@ -143,24 +138,24 @@ def register_place(router):
             price=req.price,
             volume=adjusted,
         )
-        # v66/v18: 补全 task_id + strategy_type (insert_pending_order 通用, 不含这俩)
-        #   v126 母单路径: signal_consumer 传 req.task_id=strategy_order.task_id,
+        # 补全 task_id + strategy_type (insert_pending_order 通用, 不含这俩)
+        #   母单路径: signal_consumer 传 req.task_id=strategy_order.task_id,
         #   req.strategy_type=2 (signal_consumer 已校验 parent_task_id 非空).
         if req.task_id is not None or req.strategy_type:
             order.task_id = req.task_id
             order.strategy_type = req.strategy_type
             order.update(Orders, trd_date=trd_date, order_no=order_no)
 
-        # 5. v77: 阶段 A — 立即 ws push status=48 (前端立即显示 "待报")
-        #   v84.3: 走统一 _broadcast_order_cfm helper (包装 type='ord_cfm' + channel + data),
+        # 5. 阶段 A — 立即 ws push status=48 (前端立即显示 "待报")
+        #   走统一 _broadcast_order_cfm helper (包装 type='ord_cfm' + channel + data),
         #          与 push/dispatcher.py 推送同协议, 前端 ws_dispatch 才能识别.
         from server.services.push.order_broadcast import _broadcast_order_cfm as _oc_broadcast
         try:
             _oc_broadcast(order, trace_id=order_no)
         except Exception as e:
-            log.warning("v84.3 ws push (status=48) failed: %s", e)
+            log.warning("ws push (status=48) failed: %s", e)
 
-        # 6. v77: 阶段 B — RPC 后台 task (fire-and-forget)
+        # 6. 阶段 B — RPC 后台 task (fire-and-forget)
         #   asyncio.create_task 不会阻塞 HTTP 应答; broker 慢/超时不影响前端.
         #   关键: task 内 late import 拿 patched ord_stk/ws_manager (test_orders_api.py monkeypatch).
         #   trd_date/order_no 捕获到闭包 (闭包避免 Row detached 问题).
@@ -168,11 +163,11 @@ def register_place(router):
         _captured_trd_date = trd_date
         asyncio.create_task(_submit_rpc_async(order_no, _captured_trd_date))
 
-        # 7. v77: 立即 HTTP 应答 (含 status=48 OrderOut)
-        #   code=0 表示"DB 写入成功, RPC 已调度" (前端 v77 兼容: 此时代码=48 委托还未被 broker 确认)
+        # 7. 立即 HTTP 应答 (含 status=48 OrderOut)
+        #   code=0 表示"DB 写入成功, RPC 已调度" (此时代码=48 委托还未被 broker 确认)
         #   msg 明确告知前端 "DB 已写入, broker 回报中" 区别于 code=1 broker 拒单.
         return PlaceOrderResponse(
-            code=0, msg="DB 已写入, broker 回报中 (v77 异步模式)",
+            code=0, msg="DB 已写入, broker 回报中 (异步模式)",
             order=_to_order_out(order),
             list=[_to_order_out(order)],
             broker_order_id="",  # broker 回报后由 _submit_rpc_async 写入, 后续 ws push 推送
@@ -183,23 +178,22 @@ def register_place(router):
 
 async def _submit_rpc_async(order_no: str, trd_date: str):
     """
-    v84 重构: RPC 异步执行函数 (阶段 B 后台 task)
+    RPC 异步执行函数 (阶段 B 后台 task)
 
-    关键变化 (v84):
+    关键机制:
       - 下单时传 msgid_meta (order_no + trd_date + stock_code), 让 transport._MSGID_ORDERNO_CACHE
         按 msgid 注册. 应答到达时按 msgid 反查 → 异步废单.
       - code == 0: 不处理 (broker ord_cfm push 会异步推真实 broker_order_id + status=50).
-        ❗ 旧逻辑(code==0 同步写 status=50) 被废除: 因为应答包中 broker_order_id 此时空,
-        真正的 broker_order_id 在 broker 异步推送的 ord_cfm 包里才有.
+        应答包中 broker_order_id 此时空, 真正的 broker_order_id 在 broker 异步推送的 ord_cfm 包里才有.
       - code != 0: 也不在 place.py 处理, 由 transport 层 _handle_ord_stk_reply_junk 接管.
         因为 cache 已注册, transport 按 msgid 反查 → 异步废单 + status_msg + ws push.
       - RPC 异常 (publish/wait_for 超时): 兜底写 status=57 + msg (transport cache 已 evict).
       - ord_cfm / trd_cfm push: 由 handle_ord_cfm / handle_trd_cfm 处理真实 broker 状态.
 
     流程:
-      1. v81 tables-migration: Orders.query_one (自带引擎)
+      1. Orders.query_one (自带引擎)
       2. late import 拿 patched ord_stk/ws_manager (monkeypatch 测试兼容)
-      3. 调 broker ord_stk, 传 msgid_meta (v84)
+      3. 调 broker ord_stk, 传 msgid_meta
       4. ack 已收到: 不写 Order (transport 接管 code!=0; code==0 由 ord_cfm 推)
       5. 异常: 兜底写 status=57 + msg
       6. log.exception 永远记
@@ -208,16 +202,15 @@ async def _submit_rpc_async(order_no: str, trd_date: str):
     # 关键: task 内 late import 取 module-level ord_stk/ws_manager (monkeypatch 兼容)
     from server.api.orders import ord_stk, ws_manager
     from server.services.push.order_broadcast import _broadcast_order_cfm
-    # 删 _order_to_out_dict import (v84.3 用 _broadcast_order_cfm helper 替代)
 
     try:
-        # v81 tables-migration: Orders.query_one (复合 PK) 替代 db.query(Order).filter_by(...).first()
+        # Orders.query_one (复合 PK)
         order = Orders.query_one(trd_date=trd_date, order_no=order_no)
         if not order:
             log.error("_submit_rpc_async: trd_date=%s order_no=%s not found", trd_date, order_no)
             return
 
-        # v84: 构建 msgid_meta 让 transport._handle_reply 按 msgid 接管废单路径
+        # 构建 msgid_meta 让 transport._handle_reply 按 msgid 接管废单路径
         msgid_meta = {
             "order_no": order.order_no,
             "trd_date": trd_date,
@@ -234,7 +227,7 @@ async def _submit_rpc_async(order_no: str, trd_date: str):
             )
         except Exception as e:
             log.exception("place_order RPC failed: stock=%s order_no=%s", order.stock_code, order_no)
-            # v84: transport cache 已被 _evict_msgid_orderno 清掉 (call() 超时路径),
+            # transport cache 已被 _evict_msgid_orderno 清掉 (call() 超时路径),
             # 这里必须兜底写废单 (否则订单卡在 status=48)
             order.status = "57"  # broker JUNK 废单
             order.status_msg = "RPC 失败: {}".format(e)
@@ -242,10 +235,10 @@ async def _submit_rpc_async(order_no: str, trd_date: str):
             try:
                 _broadcast_order_cfm(order, trace_id=order_no)
             except Exception as push_err:
-                log.warning("v84.3 ws push (RPC exception path) failed: %s", push_err)
+                log.warning("ws push (RPC exception path) failed: %s", push_err)
             return
 
-        # v84: 不解 ack.code, 不写 Order (broker ord_cfm push 会异步处理真实状态)
+        # 不解 ack.code, 不写 Order (broker ord_cfm push 会异步处理真实状态)
         #      transport._handle_ord_stk_reply_junk 已在另一个线程处理了 code!=0 废单路径
         #      code==0 应答: broker_order_id 此时空, ord_cfm 异步推来时才有
         try:
@@ -253,7 +246,7 @@ async def _submit_rpc_async(order_no: str, trd_date: str):
         except (TypeError, ValueError):
             ack_code = -1
         log.info(
-            "v84 _submit_rpc_async: order_no=%s ack received (code=%s). " +
+            "_submit_rpc_async: order_no=%s ack received (code=%s). " +
             "code=0 → wait broker ord_cfm push; code!=0 → transport cache write handled.",
             order_no, ack_code,
         )

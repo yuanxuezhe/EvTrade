@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-2026-07-10-create-stocks-table.py — 创建 stocks 表 (v21 stock-info-crawler)
+2026-07-10-create-stocks-table.py — 创建 stocks 表 (stock-info-crawler)
 
 字段来源:东方财富 API,管理员通过 /admin/sync 手动触发同步。
 DDL 幂等(CREATE TABLE IF NOT EXISTS),重复运行安全。
@@ -9,7 +9,7 @@ DDL 幂等(CREATE TABLE IF NOT EXISTS),重复运行安全。
 用法:
     python3 server/migrations/2026-07-10-create-stocks-table.py
 
-依赖: server/.env 含 EVTRADE_DB_URL (v20 MySQL-only 强制)
+依赖: server/.env 含 EVTRADE_DB_URL (MySQL-only 强制)
 """
 import os
 import sys
@@ -31,16 +31,16 @@ except ImportError:
 
 from sqlalchemy import text
 
-# v20 MySQL-only 强制:显式读 EVTRADE_DB_URL
+# MySQL-only 强制:显式读 EVTRADE_DB_URL
 DATABASE_URL = os.environ.get("EVTRADE_DB_URL")
 if not DATABASE_URL:
     raise RuntimeError(
-        "EVTRADE_DB_URL is required (v20 MySQL-only permanent standard). "
+        "EVTRADE_DB_URL is required (MySQL-only permanent standard). "
         "Set it in server/.env"
     )
 if not DATABASE_URL.startswith("mysql"):
     raise RuntimeError(
-        f"Only MySQL is supported (v20 permanent standard). Got URL: {DATABASE_URL[:80]!r}"
+        f"Only MySQL is supported (permanent standard). Got URL: {DATABASE_URL[:80]!r}"
     )
 
 from sqlalchemy import create_engine

@@ -39,7 +39,7 @@ async def verify_internal_token(x_internal_token: Optional[str] = Header(None)) 
 |---|---|---|
 | `task_id` | int ≥1 | 任务 ID（EvTrade 已预建 strategy_task 行） |
 | `user_id` | int ≥0 | 用户 ID |
-| `strategy_id` | int ≥1 | 任务归属策略（v123 best_params 回写目标） |
+| `strategy_id` | int ≥1 | 任务归属策略（best_params 回写目标） |
 | `script_id` | str 1~64 | strategy_script.id |
 | `stock_code` | str 1~16 | 标的代码 |
 | `mode` | `^(backtest\|live)$` | 运行模式 |
@@ -48,8 +48,8 @@ async def verify_internal_token(x_internal_token: Optional[str] = Header(None)) 
 | `backtest_end_date` | `^\d{8}$` 可选 | 回测结束日（回测模式必填） |
 | `period` | `^(1d\|1m\|5m\|15m\|30m\|60m)$` 可选 | K 线周期 |
 | `fields` | str 可选 | his_hq 请求字段 |
-| `parent_task_id` | int ≥1 可选 | v126 母单归因（signal_consumer 写 orders.task_id） |
-| `strategy_name` | str ≤255 可选 | v126 子单 user_def |
+| `parent_task_id` | int ≥1 可选 | 母单归因（signal_consumer 写 orders.task_id） |
+| `strategy_name` | str ≤255 可选 | 子单 user_def |
 
 处理流程：
 
@@ -58,7 +58,7 @@ async def verify_internal_token(x_internal_token: Optional[str] = Header(None)) 
 
 响应 `RunTaskResponse`：`{"task_id": n, "status": "accepted", "msg": "task n (mode) started in background"}`。
 
-后台函数 `_run_backtest_background` 用 `asyncio.to_thread(run_backtest, ...)` 跑同步回测；异常时 `update_task_status(task_id, "failed", error_msg=...)`；v123 起传 `update_strategy_best=True`（单次回测成功后 params 回写 `strategy.best_params`）。
+后台函数 `_run_backtest_background` 用 `asyncio.to_thread(run_backtest, ...)` 跑同步回测；异常时 `update_task_status(task_id, "failed", error_msg=...)`；传 `update_strategy_best=True`（单次回测成功后 params 回写 `strategy.best_params`）。
 
 ### POST /internal/stop-task
 
@@ -85,7 +85,7 @@ async def verify_internal_token(x_internal_token: Optional[str] = Header(None)) 
 
 请求 `ProgressRequest`：`{"task_id": int, "progress": dict}` → 写 `update_task_progress`。Phase 2 起一般不用（strategy_exec 引擎直接写 DB），保留兼容。响应 `ProgressResponse`：`{"ok": true, "task_id": n}`；写失败 → 500 `PROGRESS_WRITE_FAILED`。
 
-### POST /internal/run-sweep-task（202，v123 批次扫描）
+### POST /internal/run-sweep-task（202，批次扫描）
 
 请求 `RunSweepTaskRequest`：
 

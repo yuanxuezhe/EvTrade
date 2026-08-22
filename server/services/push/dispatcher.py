@@ -95,11 +95,11 @@ class PushDispatcher:
         active_trd_date: Optional[str],
         push_trace: str,
     ) -> None:
-        """trd_cfm：广播成交 + 同步委托状态 + position_update (v95+).
+        """trd_cfm：广播成交 + 同步委托状态 + position_update.
 
-        v95: trd_cfm 同时携带最新 Position 行 (handler_result["position"]),
-             拆出独立 broadcast 到 position_update 频道, 让前端整条替换.
-             trade_type=1 (cancel-trade) 时 position 字段为 None, 不推送.
+        trd_cfm 同时携带最新 Position 行 (handler_result["position"]),
+        拆出独立 broadcast 到 position_update 频道, 让前端整条替换.
+        trade_type=1 (cancel-trade) 时 position 字段为 None, 不推送.
 
         内部调用 ws_manager.broadcast 返回 coroutine，
         用 asyncio.ensure_future 调度，不阻塞后续行的处理。
@@ -111,7 +111,7 @@ class PushDispatcher:
 
         trade_data = handler_result["trade"]
         order_data = handler_result.get("order")
-        position_data = handler_result.get("position")  # v95: 新增字段
+        position_data = handler_result.get("position")
 
         trade_payload = _log_push_broadcast(
             channel, trade_data, ts, func, active_trd_date, push_trace,
@@ -124,7 +124,7 @@ class PushDispatcher:
             )
             asyncio.ensure_future(ws_manager.broadcast("order_update", order_payload, trace_id=push_trace))
 
-    # v95: 持仓更新随 trd_cfm payload 一起走, 前端 _onTradeCfm 内部
+    # 持仓更新随 trd_cfm payload 一起走, 前端 _onTradeCfm 内部
     #   检测 payload.data.position 后调 applyPositionUpdate (整条 ref 替换).
     #   dispatchPayload 用 payload.type='trd_cfm' 路由, 不再单独推 channel.
     #   trade_type=1 (cancel-trade) 时 position 字段为 None, 前端跳过.
@@ -141,7 +141,7 @@ class PushDispatcher:
     ) -> None:
         """ord_cfm / trd_cfm：用 handler 结果或 fallback 行数据广播。
 
-        v78 (REQ-TRADE-029): handler_result is None → 直接跳过 ws 广播.
+        (REQ-TRADE-029): handler_result is None → 直接跳过 ws 广播.
         这是 "已报后续不处理" 的另一半 — handler 已决定不再处理, dispatcher 不 fallback
         enriched_row (否则会发空变更, 前端无意义重复刷新).
 
@@ -150,7 +150,7 @@ class PushDispatcher:
         """
         from server.ws.manager import ws_manager
 
-        # v78: handler 显式 None → 跳过广播 (避免 ws 噪声)
+        # handler 显式 None → 跳过广播 (避免 ws 噪声)
         if handler_result is None:
             return
 

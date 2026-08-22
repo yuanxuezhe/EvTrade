@@ -1,5 +1,5 @@
 <!--
-  StrategyOrderList.vue — 策略母单列表 (v126, 子组件)
+  StrategyOrderList.vue — 策略母单列表 (子组件)
 
   列表: task_id / 策略名 / 标的 / 状态徽章 / run_count / 子单数 / 操作按钮
   选中行联动子单面板 (emit 'select')

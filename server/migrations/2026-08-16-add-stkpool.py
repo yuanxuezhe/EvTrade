@@ -32,9 +32,9 @@ from sqlalchemy import text, create_engine, inspect  # noqa: E402
 
 DATABASE_URL = os.environ.get("EVTRADE_DB_URL")
 if not DATABASE_URL:
-    raise RuntimeError("EVTRADE_DB_URL is required (v20 MySQL-only permanent standard).")
+    raise RuntimeError("EVTRADE_DB_URL is required (MySQL-only permanent standard).")
 if not DATABASE_URL.startswith("mysql"):
-    raise RuntimeError(f"Only MySQL is supported (v20 permanent standard). Got URL: {DATABASE_URL[:80]!r}")
+    raise RuntimeError(f"Only MySQL is supported (permanent standard). Got URL: {DATABASE_URL[:80]!r}")
 
 engine = create_engine(DATABASE_URL, pool_pre_ping=True)
 
@@ -118,7 +118,7 @@ def ensure_stkpool_unique_name(conn) -> None:
 
 
 def main() -> None:
-    print("[start] add stkpool module (v128, 证券池)")
+    print("[start] add stkpool module (证券池)")
     print(f"  db: {DATABASE_URL.split('@')[-1] if DATABASE_URL else 'NONE'}")
 
     with engine.begin() as conn:
@@ -156,7 +156,7 @@ def main() -> None:
         print(f"    {'[OK]' if cascade_ok else '[MISS]'} FK stkpooldetail.id -> stkpool.id ON DELETE CASCADE")
 
     engine.dispose()
-    print("\n[DONE] v128 证券池迁移完成")
+    print("\n[DONE] 证券池迁移完成")
 
 
 if __name__ == "__main__":

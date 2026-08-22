@@ -42,8 +42,7 @@ def get_task(task_id: int) -> Optional[Dict[str, Any]]:
         if row is None:
             return None
         d = dict(row)
-        # JSON 字段解析
-        # v123: strategy_task 已删 best_params 列 (best 写 strategy.best_params)
+        # JSON 字段解析 (strategy_task 无 best_params 列, best 写 strategy.best_params)
         for f in ("params", "backtest_result", "positions", "live_signals", "progress", "fields"):
             if d.get(f):
                 try:
@@ -231,8 +230,8 @@ def write_audit(
         return result.lastrowid or 0
 
 
-# ──── v123+ batch helpers (strategy-batch-task-model) ────
-# v123: EvTrade 在调用 strategy_exec 前已为批次预建好 strategy_task 行
+# ──── batch helpers (strategy-batch-task-model) ────
+# EvTrade 在调用 strategy_exec 前已为批次预建好 strategy_task 行
 # (单次=1 行 / 扫描=N 行, 共享 strategy_id + batch_no, params 已落库).
 # strategy_exec 只负责: 按 (strategy_id, batch_no) 读批次内任务 → 跑 backtest →
 # 批次完成后把 best 写回 strategy.best_params. 不再自建 task / summary task.
@@ -266,7 +265,7 @@ def get_batch_tasks(strategy_id: int, batch_no: int) -> List[Dict[str, Any]]:
 
 
 def update_strategy_best_params(strategy_id: int, best_params: Optional[Dict[str, Any]]) -> bool:
-    """v123: 批次/单次回测完成后写 strategy.best_params.
+    """批次/单次回测完成后写 strategy.best_params.
 
     Args:
         strategy_id: strategy 表主键

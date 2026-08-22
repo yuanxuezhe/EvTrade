@@ -8,7 +8,7 @@ do_reconcile(reconcile_kind='init') 把本地全量持仓快照 (2197 只 ≈ �
 reconcile_report.local_positions_json。历史 DB 列容量不足 → 溢出。
 orm.py / schema.yml 已声明 LONGTEXT, 本迁移仅对齐 DB 实际列。
 
-实际 DB 前态存在两处漂移 (2026-08-12 排查):
+实际 DB 前态存在两处漂移:
   evtrade_dev: varchar(255)  (比 TEXT 更小, 之前守卫 REFUSE 拒绝处理 → init 仍 500)
   evtrade:     text          (上限 64KB, 亦不足)
 
@@ -45,7 +45,7 @@ from sqlalchemy import text, create_engine, inspect
 
 DATABASE_URL = os.environ.get("EVTRADE_DB_URL")
 if not DATABASE_URL:
-    raise RuntimeError("EVTRADE_DB_URL is required (v20 MySQL-only permanent standard).")
+    raise RuntimeError("EVTRADE_DB_URL is required (MySQL-only permanent standard).")
 if not DATABASE_URL.startswith("mysql"):
     raise RuntimeError(f"Only MySQL is supported. Got URL: {DATABASE_URL[:80]!r}")
 

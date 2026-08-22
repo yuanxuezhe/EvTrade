@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-test_users_e2e.py — Users API 端到端集成测试（v81 tables-migration）
+test_users_e2e.py — Users API 端到端集成测试
 
 📖 详见 server/MIGRATION_GUIDE.md 与 server/api/users.py
 

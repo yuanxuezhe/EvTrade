@@ -1,5 +1,5 @@
 """
-api/sync.py — 同步任务管理 REST 端点 (v21 stock-info-crawler)
+api/sync.py — 同步任务管理 REST 端点
 
 端点:
 - POST   /api/sync/stocks          启动同步任务 (admin only)
@@ -68,7 +68,7 @@ async def get_sync_status():
 
 
 async def _get_all_stock_codes() -> List[str]:
-    """获取全市场股票代码列表(v21 简化实现)
+    """获取全市场股票代码列表
 
     策略:
     1. 从 positions 表读已持仓(真实数据)
@@ -77,13 +77,13 @@ async def _get_all_stock_codes() -> List[str]:
     本次实现:从 positions 读 + 返回内置常用代码 20 只(避免一开始就爬 5400 只耗时)
     """
     try:
-        # v81.4 tables-migration: 直接走 Positions.query_all() 取 stock_code 字段
+        # 直接走 Positions.query_all() 取 stock_code 字段
         # (Rows = [{stock_code, stock_name, ...}], 只取 stock_code 字段即可)
         position_codes = [r.stock_code for r in Positions.query_all()]
     except Exception:
         position_codes = []
 
-    # v24: 优先用 sina_list 拉沪深京 A 股全市场 (~5529 只) ,
+    # 优先用 sina_list 拉沪深京 A 股全市场 (~5529 只) ,
     #       合并 positions 表持仓代码 (交易过的小盘股兜底, 可能不在 sina 当前列表)
     #       builtin 兜底列表被 sina 完整覆盖 (都是大盘股, sina 必有)
     from server.crawler.sources.sina_list import fetch_all_a_codes

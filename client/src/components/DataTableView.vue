@@ -33,13 +33,13 @@
   暴露方法 (ref 可调, 透传到内部 el-table):
     - clearSelection / toggleRowSelection(row, selected) / toggleAllSelection / setCurrentRow / clearSort
 
-  v3 改进:
-    - 新增 loading prop / selection 列 / @selection-change / ref 方法暴露
-    - 修复 rowKey prop 声明未绑定到 el-table 的潜在 bug
+  其他要点:
+    - loading prop / selection 列 / @selection-change / ref 方法暴露
+    - rowKey prop 绑定到 el-table
     - height 支持 '' 禁用固定高 (配合 max-height)
-    - 新增 border/rowClassName/cellClassName/size props
+    - border/rowClassName/cellClassName/size props
     - 默认排序: 无用户排序时也做 defaultSort 排序(不依赖 el-table 内置)
-    - slot 简化: 所有列统一 column-{key} slot
+    - 所有列统一 column-{key} slot
     - 列默认 sortable="custom", 可 sortable: false 关闭
     - columns 支持 vBind 属性合并 (COL.NUMBER 等常量)
 -->

@@ -1,7 +1,7 @@
 # 快速做T（T0Trade）
 
 ## 对应代码路径
-- `client/src/views/T0Trade.vue`（~55K 行，全前端最大页面）
+- `client/src/views/T0Trade.vue`（~1290 行 / 58KB，全前端最大页面）
 - `client/src/composables/useT0*.js`（11 个组合函数）
 - `client/src/lib/t0-calc.js`
 - `client/src/stores/t0_tasks.js`、`api/t0_tasks.js`、`api/t0_stats.js`
@@ -24,10 +24,11 @@ T0 日内回转交易工作台：T0 任务创建与管理、全局配比模式�
 
 ## 核心实现
 
-### 全局配置行（v57/v109/v127）
-- `globalMode: 'pct' | 'qty'` 互斥单选（ui store）
-- pct 模式：globalPctInput 百分数（25 = 25%，计算 /100），基数取 holdings 实时持仓
+### 全局配置行
+- `globalMode: 'pct' | 'qty' | 'amount'` 三选一（页面本地 ref，非 ui store）
+- pct 模式：globalPctInput 百分数（25 = 25%，计算 /100）；买入 base = 可用金额/最新价，卖出 base = 持仓基数
 - qty 模式：globalQtyInput 股数
+- amount 模式（globalAmountInput 元）：金额÷最新价 → 股数 → trade_unit 取整
 - 数量计算：按 mode × 输入 + trade_unit 整手取整 + ≥ min_buy_qty
 - 价格类型：PriceTypeInput numeric（默认市价 44）
 
@@ -38,11 +39,11 @@ T0 日内回转交易工作台：T0 任务创建与管理、全局配比模式�
 
 ### 委托表（下半区）
 - 实时按 task_id 过滤 `holdings.orders`，order_time desc
-- v126 防御：排除 `strategy_type=2`（策略母/子单，由 StrategyOrder 展示）
-- 撤单白名单：仅 已报(50)/部成(55)（v74/v91）
-- 状态文案：utils/format.js STATUS_LABEL（v63 统一）
+- 防御性排除 `strategy_type=2`（策略母/子单，由 StrategyOrder 展示）
+- 撤单白名单：仅 已报(50)/部成(55)
+- 状态文案：utils/format.js STATUS_LABEL（统一）
 
-### TDZ 陷阱（v75 教训）
+### TDZ 陷阱
 taskRows 必须在 watch 之前定义，否则 setup 抛 ReferenceError 整页白屏。
 
 ## 依赖关系

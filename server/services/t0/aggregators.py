@@ -7,7 +7,7 @@ t0_aggregators.py — T0 聚合函数
 - aggregate_by_day: 按日聚合
 - aggregate_summary: 累计 + 胜率 + 回报率
 - apply_user_def_filter: 按 user_def 标签过滤
-- resolve_t0_user_defs: 解析 user_def 标签（含 T0 策略单）— task 8 (strategy_trade)
+- resolve_t0_user_defs: 解析 user_def 标签（含 T0 策略单）
 """
 from collections import defaultdict
 from typing import Dict, List, Optional, Set, Tuple
@@ -248,7 +248,7 @@ def apply_user_def_filter(
 ) -> Tuple[List[Order], List[Trade]]:
     """按 user_def 过滤（空字符串 = 全部）
 
-    v130.2: 撤单代行 order (user_def='CANCEL:{orig}') 永远不参与 day_pnl 计算.
+    撤单代行 order (user_def='CANCEL:{orig}') 永远不参与 day_pnl 计算.
       原因: xtquant 撤单时 broker 会推回"撤单反向 trade" (trade_id 以 CANCEL- 开头),
       这些 trade 跟真交易无法区分, 但 order_type / price 跟原单反向. 把这些 trade 算入
       buy/sell 会虚增当日盈亏 (历史 bug: 159992.SZ 撤单 trade 让 day_pnl 虚高 4800).
@@ -268,7 +268,7 @@ def apply_user_def_filter(
     Returns:
         (filtered_orders, filtered_trades)
     """
-    # v130.2: 收集所有撤单代行 order_no (user_def='CANCEL:...'), 这些 order 对应的 trade 永远不算
+    # 收集所有撤单代行 order_no (user_def='CANCEL:...'), 这些 order 对应的 trade 永远不算
     cancel_order_nos = {o.order_no for o in orders if (o.user_def or '').startswith('CANCEL:')}
     if not user_def:
         f_orders = orders
@@ -285,7 +285,7 @@ def apply_user_def_filter(
 
 
 def resolve_t0_user_defs(db: Session, user_def: str) -> Optional[Set[str]]:
-    """解析 user_def 标签，扩展支持 T0 策略单（change strategy_trade task 8）
+    """解析 user_def 标签，扩展支持 T0 策略单
 
     Args:
         db: SQLAlchemy session
@@ -300,6 +300,6 @@ def resolve_t0_user_defs(db: Session, user_def: str) -> Optional[Set[str]]:
     if not user_def:
         return None
     if user_def == 'T0':
-        # v124: 旧 strategy 表 (type='t0' 策略) 已删除, 不再有 t0 策略 id 可匹配
+        # 旧 strategy 表 (type='t0' 策略) 已删除, 不再有 t0 策略 id 可匹配
         return {'T0'}
     return {user_def}

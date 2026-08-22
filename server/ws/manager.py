@@ -1,30 +1,29 @@
 from fastapi import WebSocket
 from typing import Dict, Set, Optional, Iterable, List
 
-# v10 增: WS 广播日志 (server-interaction-logging REQ-LOG-003)
+# WS 广播日志 (server-interaction-logging REQ-LOG-003)
 #   顶层 import 走 lazy (在 broadcast 函数内), 避免触发 logflow 的循环链
 #   实际上 ws.manager 不在循环链上, 但保持一致风格
 #
-# 2026-07-09 quote-snapshot-subscribe:
-#   - 加 subscription_index (stock_code -> set[ws]) + subscriber_index (ws -> set[stock_code])
+# 订阅模型:
+#   - subscription_index (pattern -> set[ws]) + subscriber_index (ws -> set[pattern])
 #   - subscribe() / unsubscribe() / clear_ws() 管理订阅
 #   - broadcast() 兼容老 channel-level 推送（legacy 兜底）
 #   - broadcast_to_stock(stock_code, message) 只推订阅者；零订阅者时返回 False（兼容策略）
 #   - get_subscribers_count(stock_code) 用于 health log / metrics
 #
-# 2026-07-10 quote-pattern-subscribe:
-#   - 订阅条件统一走 "子串匹配": pattern in stock_code
+# 订阅条件统一走 "子串匹配": pattern in stock_code
 #   - pattern = ''  → 任意代码（空字符串是所有字符串的子串，永远 True）
 #   - pattern = 'SZ' → 包含 'SZ' 的代码（000001.SZ / 600000.SZ 全部 SZ 市场）
 #   - pattern = 'SH' → 包含 'SH' 的代码
 #   - pattern = '000001' → 包含 '000001' 的代码（SH/SZ 双边）
 #   - pattern = '000001.SZ' → 完整子串匹配
-#   - 数据结构升级: subscription_index 由 Dict[code, Set[ws]] 改为 Dict[pattern, Set[ws]]
-#     （pattern 不再展开为具体 stock_code, 节省内存 + 支持灵活匹配）
+#   - subscription_index 为 Dict[pattern, Set[ws]]
+#     （pattern 不展开为具体 stock_code, 节省内存 + 支持灵活匹配）
 
 
 def match_pattern(stock_code: str, pattern: str) -> bool:
-    """2026-07-10 quote-pattern-subscribe: 子串匹配规则
+    """子串匹配规则
 
     设计原则: 一行规则统一所有 case
       - 空字符串 pattern = '' 永远匹配 (空串是任何字符串的子串)
@@ -48,21 +47,19 @@ class WSManager:
         self.active_connections: Dict[str, Set[WebSocket]] = {
             "order_update": set(),
             "trade_update": set(),
-            # v118: 重新启用 position_update channel — broker pos_push 推送
-            #   (consolidate-position-data-flow 已废弃; pos_push 是 v118 后持仓唯一数据源)
+            # position_update channel — broker pos_push 推送
+            #   (consolidate-position-data-flow 已废弃; pos_push 是持仓唯一数据源)
             "position_update": set(),
             "quote_update": set(),
             # change 2026-07-15-system-init-broadcast: 系统级事件频道
-            #   - 日初成功 → system_status_change (v117)
+            #   - 日初成功 → system_status_change
             #   - (后续) 对账失败 / 切日失败等扩展位
             #   - 与 push 事件频道并列，但触发源是 init_trading_day 业务接口而非 broker push
             "system_update": set(),
-            # v91.4: 回测 / live task 进度推送 (ScriptTask.vue 详情实时刷新)
+            # 回测 / live task 进度推送 (ScriptTask.vue 详情实时刷新)
             "task_progress_update": set(),
         }
-        # 2026-07-09 quote-snapshot-subscribe:
-        #   stock_code -> Set[WebSocket]：倒排索引（订阅了此 code 的 ws 集合）
-        # 2026-07-10 quote-pattern-subscribe: 改为 pattern -> Set[ws]
+        #   pattern -> Set[WebSocket]：倒排索引（订阅了此 pattern 的 ws 集合）
         #   pattern 可以是: 具体 stock_code ('000001.SZ') / 市场 ('SZ') / 片段 ('000001') / '' (全市场)
         self.subscription_index: Dict[str, Set[WebSocket]] = {}
         #   WebSocket -> Set[stock_code]：正向索引（此 ws 订阅的所有 pattern，clear 时用）
@@ -71,19 +68,19 @@ class WSManager:
     async def connect(self, websocket: WebSocket, channel: str, token: Optional[str] = None):
         await websocket.accept()
         self.active_connections.setdefault(channel, set()).add(websocket)
-        # 2026-07-09: 新 ws 默认无订阅（按 Q2A：默认不收，等用户触发订阅）
+        # 新 ws 默认无订阅（按 Q2A：默认不收，等用户触发订阅）
         self.subscriber_index.setdefault(websocket, set())
 
     def disconnect(self, websocket: WebSocket, channel: str):
         if channel in self.active_connections:
             self.active_connections[channel].discard(websocket)
-        # 2026-07-09: 同步清理订阅索引（避免 ws 关闭后成为"幽灵订阅者"）
+        # 同步清理订阅索引（避免 ws 关闭后成为"幽灵订阅者"）
         self.clear_ws(websocket)
 
-    # ─────────────── 订阅管理（2026-07-09 新增） ───────────────
+    # ─────────────── 订阅管理 ───────────────
 
     def subscribe(self, websocket: WebSocket, patterns: Iterable[str]) -> Set[str]:
-        """订阅一组 patterns（2026-07-10 升级: pattern 化），返回成功订阅的集合
+        """订阅一组 patterns，返回成功订阅的集合
 
         pattern 规则（统一走子串匹配）:
           - ''     → 全市场（空字符串是任何字符串的子串）
@@ -119,7 +116,7 @@ class WSManager:
         return pats
 
     def unsubscribe(self, websocket: WebSocket, patterns: Iterable[str]) -> Set[str]:
-        """取消订阅一组 patterns（2026-07-10 升级），返回成功取消的集合"""
+        """取消订阅一组 patterns，返回成功取消的集合"""
         pats = set()
         for p in patterns:
             if isinstance(p, str):
@@ -153,7 +150,7 @@ class WSManager:
                     del self.subscription_index[p]
 
     def get_subscribers(self, stock_code: str) -> Set[WebSocket]:
-        """查 stock_code 的当前订阅者集合（2026-07-10 升级: 遍历 pattern）
+        """查 stock_code 的当前订阅者集合（遍历 pattern 匹配）
 
         遍历所有 pattern, 对每个 pattern 跑 match_pattern(code, pattern),
         命中则合并该 pattern 对应的 ws 集合
@@ -165,7 +162,7 @@ class WSManager:
         return result
 
     def get_subscribed_patterns(self, websocket: WebSocket) -> Set[str]:
-        """查 ws 的当前订阅 pattern 集合（2026-07-10 重命名: 之前叫 get_subscribed_codes）"""
+        """查 ws 的当前订阅 pattern 集合"""
         return set(self.subscriber_index.get(websocket, set()))
 
     # ─────────────── 广播（兼容老路径 + 新路径） ───────────────
@@ -173,13 +170,13 @@ class WSManager:
     async def broadcast(self, channel: str, message: dict, trace_id: Optional[str] = None):
         """全 channel 广播（老路径，向所有 ws conn 推）
 
-        📌 2026-07-09 兼容性：
+        📌 兼容性：
            - 仍保留供 quote_consumer 老 fallback 调用
            - 新前端订阅模式应走 broadcast_to_stock
         """
         if channel not in self.active_connections:
             return
-        # v10 增: 记 [front<-svc] ws broadcast 日志
+        # 记 [front<-svc] ws broadcast 日志
         #   trace_id: 上游 push / RPC reply 传下来, 让 [svc<-rpc] push + [front<-svc] ws 配对
         from server.utils.logflow import DIR_SVC_TO_FRONT, log_interaction
         clients = len(self.active_connections[channel])
@@ -216,7 +213,7 @@ class WSManager:
     ) -> int:
         """按 stock_code 推给订阅者；返回实际推送成功的连接数
 
-        📌 2026-07-09 quote-snapshot-subscribe:
+        📌 按订阅推送:
            - 倒排索引查 stock_code 的 ws 子集
            - 失败 ws 自动清理订阅索引（防止幽灵订阅）
            - 与 broadcast() 共享同一组 active_connections（同一 ws conn）
@@ -254,7 +251,7 @@ class WSManager:
         channel: str = "quote_update",
         trace_id: Optional[str] = None,
     ) -> int:
-        """v131 quote-batch-flush: 1 个 ws frame 装 N 个 tick (按订阅过滤)
+        """批量推送: 1 个 ws frame 装 N 个 tick (按订阅过滤)
 
         - 输入: ticks = [{stock_code, last_price, snapshot, fields, body}, ...]
         - 输出: 1 个 payload = {type:quote_batch, channel:quote_update, ticks:[...]}

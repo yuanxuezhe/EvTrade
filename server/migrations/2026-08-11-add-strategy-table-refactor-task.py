@@ -44,9 +44,9 @@ from sqlalchemy import text, create_engine, inspect
 
 DATABASE_URL = os.environ.get("EVTRADE_DB_URL")
 if not DATABASE_URL:
-    raise RuntimeError("EVTRADE_DB_URL is required (v20 MySQL-only permanent standard).")
+    raise RuntimeError("EVTRADE_DB_URL is required (MySQL-only permanent standard).")
 if not DATABASE_URL.startswith("mysql"):
-    raise RuntimeError(f"Only MySQL is supported (v20 permanent standard). Got URL: {DATABASE_URL[:80]!r}")
+    raise RuntimeError(f"Only MySQL is supported (permanent standard). Got URL: {DATABASE_URL[:80]!r}")
 
 engine = create_engine(DATABASE_URL, pool_pre_ping=True)
 
@@ -111,12 +111,12 @@ def create_strategy_table(conn) -> None:
 
 def add_task_columns(conn) -> None:
     if not _column_exists(conn, "strategy_task", "strategy_id"):
-        conn.execute(text("ALTER TABLE strategy_task ADD COLUMN strategy_id INT NULL COMMENT '→ strategy.strategy_id (v123)'"))
+        conn.execute(text("ALTER TABLE strategy_task ADD COLUMN strategy_id INT NULL COMMENT '→ strategy.strategy_id'"))
         print("  ✓ added strategy_task.strategy_id")
     else:
         print("  ⏭ strategy_task.strategy_id exists, skip")
     if not _column_exists(conn, "strategy_task", "batch_no"):
-        conn.execute(text("ALTER TABLE strategy_task ADD COLUMN batch_no INT NULL COMMENT '回测/实盘批次号 (v123, 序号表 task_batch)'"))
+        conn.execute(text("ALTER TABLE strategy_task ADD COLUMN batch_no INT NULL COMMENT '回测/实盘批次号 (序号表 task_batch)'"))
         print("  ✓ added strategy_task.batch_no")
     else:
         print("  ⏭ strategy_task.batch_no exists, skip")

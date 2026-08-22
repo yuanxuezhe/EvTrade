@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-sync_schema_to_target.py — 把 dev 库的表结构同步到 prod 库 (v130+).
+sync_schema_to_target.py — 把 dev 库的表结构同步到 prod 库.
 
 设计目标:
   解决"在 evtrade_dev 开发, 切到 evtrade 跑 → 表结构不一致 → 500"的根因.

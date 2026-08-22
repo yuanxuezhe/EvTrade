@@ -1,12 +1,12 @@
 /**
- * holdings_idb.js — 当日 orders / trades IDB 持久化（v14: 修升级回调 store 缺失）
+ * holdings_idb.js — 当日 orders / trades IDB 持久化
  *
  * 用途：
  *   - 解决"Today's Orders 页面 F5 后空白等待"痛点
  *   - bootstrap() 命中 IDB 时立刻回填 Pinia（200ms 内显示），不去拉 RPC
  *   - ws push 时 fire-and-forget 写 IDB（不阻塞 event loop）
  *
- * 设计 (v13 复合 key):
+ * 设计 (复合 key):
  *   - DB schema v3, 2 个 object store: `orders` / `trades`
  *   - key = 复合 PK 字符串:
  *       orders  → `${trd_date}:${order_no}`        (镜像 server/models/orm.py:Order PK)
@@ -16,17 +16,14 @@
  *   - 跨日清理由 loadXxxForDate / clearDate 内部按 prefix 扫描（IDB 无原生 prefix scan）
  *   - 写失败一律 log.warn，**不抛**（critical path 不被 IDB 卡住）
  *
- * v12 → v13 schema 迁移:
- *   - v12 key = trd_date, value = array（不兼容 v13 复合 key 维度）
- *   - 升级 onUpgrade 回调: 删旧 store, 由 openDB 自动重建
+ * 旧 schema 迁移 (key = trd_date, value = array):
+ *   - 不兼容复合 key 维度; 升级 onUpgrade 回调: 删旧 store, 由 openDB 自动重建
  *   - IDB 是 cache, 丢旧数据可接受（bootstrap 重新拉 RPC 写回）
  *
- * v13 → v14 fix: 升级回调 deleteObjectStore 后漏 createObjectStore
- *   - 原 bug: `oldV < 2` 时, openDB 在 onupgradeneeded **先**自动按 storeNames 创建缺失 store,
- *     用户回调**后**无条件 deleteObjectStore; fresh install (oldV=0) 也满足 `< 2`,
- *     结果 v2 DB store 全部缺失 → `_loadByDate` 报 "object stores was not found".
- *   - 修复: deleteObjectStore 后**立刻**显式 createObjectStore (覆盖 fresh install + v12 升级两条路径).
- *   - DB_VERSION bump: 2 → 3, 让已损坏的 v2 (store 缺失) DB 触发 onupgradeneeded self-heal.
+ * 升级回调注意: deleteObjectStore 后必须**立刻**显式 createObjectStore
+ *   - 否则 openDB 在 onupgradeneeded 先自动创建、用户回调后无条件 delete,
+ *     fresh install (oldV=0) 也满足删除条件 → store 全部缺失 →
+ *     `_loadByDate` 报 "object stores was not found".
  *   - change fix-idb-store-missing-on-upgrade
  *
  * 调用者：
@@ -34,10 +31,9 @@
  *   - holdings_push.js：applyOrderPush/applyTradePush 末尾调 saveOrder/saveTrade（fire-and-forget）
  *   - 不被 view 引用，view 仅读 Pinia (useHoldingsStore)
  *
- * change optimize-push-data-flow (v13)
+ * change optimize-push-data-flow
  *   - IDB 改复合 key 存（每行单 key, 镜像 DB PK 结构）
- *   - 删 v12 的 saveOrdersForDate / saveTradesForDate（trd_date 单 key 全量）
- *   - 改 saveOrder(order) / saveTrade(trade) 单行 API
+ *   - saveOrder(order) / saveTrade(trade) 单行 API
  *   - 跨日清理走 idbGetAllKeys 扫描 + filter
  */
 import { openDB, idbGet, idbPut, idbDelete, idbGetAllKeys, idbClear, idbGetAll } from '../utils/idb'
@@ -82,12 +78,12 @@ function _isKeyOfDate(key, trdDate) {
  * 初始化（首次调为后续 get/put 打开 DB）。
  * 多次调用复用同一 connection；IDB API 不可用（Node / SSR）时 reject。
  *
- * v12 → v13 升级：删旧 v12 store (key = trd_date, value = array),
- * 删完**显式重建** v13 复合 key store (v14 fix 修复了 delete 后漏 create 的 bug).
+ * 旧 schema 升级: 删旧 store (key = trd_date, value = array),
+ * 删完**显式重建**复合 key store (delete 后漏 create 会导致 store 缺失).
  *
- * v13 → v14 fix: openDB 包装会在 onupgradeneeded 里按 storeNames 自动 create
+ * openDB 包装会在 onupgradeneeded 里按 storeNames 自动 create
  * 缺失 store, 但用户回调 `if (oldV < 2)` 在 fresh install (oldV=0) 路径下
- * 也会匹配, 把刚创建的 store 立刻删掉. v14 在 delete 后显式 create 兜底.
+ * 也会匹配, 把刚创建的 store 立刻删掉. 故 delete 后显式 create 兜底.
  *
  * @returns {Promise<IDBDatabase>}
  */
@@ -99,7 +95,7 @@ export function initIDB() {
     DB_VERSION,
     [STORE_ORDERS, STORE_TRADES, STORE_POSITIONS],
     (db, oldV) => {
-      // v12 → v13 升级: 删旧 store (复合 key 维度不兼容, IDB 是 cache 丢可接受)
+      // 旧 schema 升级: 删旧 store (复合 key 维度不兼容, IDB 是 cache 丢可接受)
       if (oldV < 2) {
         if (db.objectStoreNames.contains(STORE_ORDERS)) {
           db.deleteObjectStore(STORE_ORDERS)
@@ -108,15 +104,14 @@ export function initIDB() {
           db.deleteObjectStore(STORE_TRADES)
         }
       }
-      // v14 fix: delete 后**显式重建** (覆盖 fresh install + v12 升级 + 已损坏 v2 三条路径)
+      // delete 后**显式重建** (覆盖 fresh install + 升级 + 已损坏 DB 三条路径)
       if (!db.objectStoreNames.contains(STORE_ORDERS)) {
         db.createObjectStore(STORE_ORDERS)
       }
       if (!db.objectStoreNames.contains(STORE_TRADES)) {
         db.createObjectStore(STORE_TRADES)
       }
-      // v4: 新增 positions store (keyPath = stock_code, 支持 inline key bulkSave)
-      // v5: positions store 重建为 keyPath = 'stock_code' (v4 版本无 keyPath, bulkSave 报错)
+      // positions store (keyPath = stock_code, 支持 inline key bulkSave)
       if (oldV < 5) {
         if (db.objectStoreNames.contains(STORE_POSITIONS)) {
           db.deleteObjectStore(STORE_POSITIONS)
@@ -182,7 +177,7 @@ async function _loadByDate(storeName, trdDate) {
 }
 
 /**
- * v113: 加载某 store 全部 row (不限日期, 跨所有交易日)
+ * 加载某 store 全部 row (不限日期, 跨所有交易日)
  *   - 启动一次性 cache pull 用: orders/trades IDB 全量读出到内存
  * @returns {Promise<Array|null>}
  */
@@ -222,7 +217,7 @@ function _clone(obj) {
 /**
  * 保存单笔委托到 IDB（fire-and-forget；失败 warn 不抛）
  *
- * v13 复合 key: key = `${trd_date}:${order_no}`
+ * 复合 key: key = `${trd_date}:${order_no}`
  *
  * @param {Object} order  OrderOut
  */
@@ -247,14 +242,14 @@ export function loadOrdersForDate(trdDate) {
 }
 
 /**
- * v113: 加载 IDB 中全部 orders (跨所有交易日) — 启动一次性缓存用
+ * 加载 IDB 中全部 orders (跨所有交易日) — 启动一次性缓存用
  */
 export function loadAllOrders() {
   return _loadAll(STORE_ORDERS)
 }
 
 /**
- * v113: 加载 IDB 中全部 trades (跨所有交易日)
+ * 加载 IDB 中全部 trades (跨所有交易日)
  */
 export function loadAllTrades() {
   return _loadAll(STORE_TRADES)
@@ -263,7 +258,7 @@ export function loadAllTrades() {
 /**
  * 保存单笔成交到 IDB（fire-and-forget；失败 warn 不抛）
  *
- * v13 复合 key: key = `${trd_date}:${order_no}:${trade_id}`
+ * 复合 key: key = `${trd_date}:${order_no}:${trade_id}`
  *
  * @param {Object} trade  TradeOut
  */

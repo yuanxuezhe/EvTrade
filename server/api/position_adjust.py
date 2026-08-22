@@ -1,5 +1,5 @@
 """
-position_adjust.py — 持仓调平 API（v12 新增）
+position_adjust.py — 持仓调平 API
 
 端点：PUT /api/positions/{stock_code}/adjust
 - admin 鉴权

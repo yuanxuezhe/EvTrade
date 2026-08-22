@@ -1,5 +1,5 @@
 """
-server/tables/base.py — 通用 MySQL 表基类 (v80.2 架构调整)
+server/tables/base.py — 通用 MySQL 表基类
 
 设计目标:
 - 每个 mysql 表对应 server/tables/<表名>.py 一个文件
@@ -25,7 +25,7 @@ server/tables/base.py — 通用 MySQL 表基类 (v80.2 架构调整)
   返回 List[Row] 不带行号
 
 连接:
-  复用 server.infra.db.get_engine() (现有 v20 MySQL-only 引擎)
+  复用 server.infra.db.get_engine() (MySQL-only 引擎)
   不引入新的连接池, 不影响现有业务代码
 """
 from __future__ import annotations
@@ -52,18 +52,18 @@ def get_engine():
 class Row:
     """一行记录的轻量字典类 — 支持属性访问 + 字典访问 + 注释 + 用户伪代码风格
 
-    v81.11 增强:
+    增强:
     - __init__(**kw) 支持关键字实例化, 字段缺失用 __defaults__ 填默认
     - _owner_class 指向所属 TableBase 子类 (query_one 时绑定)
     - update() 无参调用: 自动用 _owner_class + self._data, WHERE PK + SET 全字段 (除 PK)
 
     Examples:
-        # 旧用法 (v80 兼容)
+        # 旧用法
         row = Order.query_one(trd_date='20260722', order_no='10000048')
         row.price = 11.0
         row.update(Orders, trd_date='20260722', order_no='10000048')  # 兼容
 
-        # 新用法 (v81.11 用户伪代码)
+        # 新用法 (用户伪代码)
         obj = Users(username='alice')           # 类实例化, 缺字段自动补默认
         Users.add_one(obj)                      # 接 Row
         obj = Users.query_one(id=1)
@@ -95,7 +95,7 @@ class Row:
         self._data = base
         self._comments = comments or {}
 
-    # v81.11: 无参 update (user-style pseudo code)
+    # 无参 update (user-style pseudo code)
     def update(self, cls=None, **filters) -> int:
         """Row.update()  无参自动 PK WHERE + 全字段 SET (除 PK).
 
@@ -109,14 +109,14 @@ class Row:
 
         返回受影响行数 (int).
         """
-        # 模式 1: v81 兼容 - 显式 cls + filters
+        # 模式 1: 兼容 - 显式 cls + filters
         if cls is not None:
             pk_fields = set(getattr(cls, '__pk_fields__', ['id']))
             clean_data = {k: v for k, v in self._data.items() if k not in pk_fields}
             n = cls.update_one(clean_data, return_rowcount=True, **filters)
             # update_one 默认返回 Row. 这里拿 rowcount.
             # 简化: 不调 update_one, 直接跑 UPDATE
-        # 模式 2: v81.11 无参 - 用 self._owner_class
+        # 模式 2: 无参 - 用 self._owner_class
         owner = cls or self._owner_class
         if owner is None:
             raise ValueError(
@@ -150,7 +150,7 @@ class Row:
             self._data[k] = v
         return res.rowcount
 
-    # v81.11: Row.delete() 便捷 - 用 _owner_class + self PK
+    # Row.delete() 便捷 - 用 _owner_class + self PK
     def delete(self) -> bool:
         """Row.delete() 自动用 _owner_class + self PK DELETE.
 
@@ -174,7 +174,7 @@ class Row:
         except KeyError:
             raise AttributeError(f"Row has no field {name!r}")
 
-    # 属性设置 (v81: 用户伪代码风格: row.xx = new_val 直接生效到 _data)
+    # 属性设置 (用户伪代码风格: row.xx = new_val 直接生效到 _data)
     def __setattr__(self, name: str, value: Any) -> None:
         if name in ("_data", "_comments", "_owner_class"):
             super().__setattr__(name, value)
@@ -214,7 +214,7 @@ class Row:
     def to_dict(self) -> Dict[str, Any]:
         return dict(self._data)
 
-    # v81: 对象.Update — 把当前 _data 全部字段写回数据库
+    # 对象.Update — 把当前 _data 全部字段写回数据库
     def save(self) -> None:
         """Row.Update(): 把 _data 全部字段 UPDATE 到 DB.
 
@@ -238,7 +238,7 @@ class Row:
             "推荐 api 层直接用表类.update_one({...}) 模式."
         )
 
-    # v81.11 老 update 已迁移到 L99 (无参自动 PK WHERE)
+    # 老 update 已迁移到 update() (无参自动 PK WHERE)
 
     @property
     def comments(self) -> Dict[str, str]:
@@ -257,7 +257,7 @@ class TableBase:
 
     子类可选定义:
       __auto_increment_pk__: str     # 自增主键字段名 (Add 时不回填, 只 insert)
-      __defaults__: dict             # v81.11: 字段默认值 (类实例化时填到 Row _data)
+      __defaults__: dict             # 字段默认值 (类实例化时填到 Row _data)
 
     5 个核心类方法:
       query_one(**pk)            # 按主键查, 返回 Row (绑定 _owner_class)
@@ -266,7 +266,7 @@ class TableBase:
       delete_one(**pk)           # DELETE
       query_all(order, page, page_size)  # 分页
 
-    v81.11: __call__(**kw) 工厂 — 显式实例化 Row 时自动用 __defaults__ 填字段
+    __call__(**kw) 工厂 — 显式实例化 Row 时自动用 __defaults__ 填字段
         Users(username='alice')                 # 等同 Row(_owner_class=Users, username='alice')
         Users.add_one(user_row)                 # 接 Row
         user_row.update()                       # 无参 WHERE PK + SET 全字段
@@ -280,9 +280,9 @@ class TableBase:
 
     # 子类可选覆盖
     __auto_increment_pk__: Optional[str] = None
-    __defaults__: Dict[str, Any] = {}  # v81.11: 字段默认 (cls(**kw) 时填)
+    __defaults__: Dict[str, Any] = {}  # 字段默认 (cls(**kw) 时填)
 
-    # v81.11: __new__ 拦截类实例化 — Users(...) 自动返回 Row + 默认值
+    # __new__ 拦截类实例化 — Users(...) 自动返回 Row + 默认值
     def __new__(cls, *args, **kw):
         """类实例化 = 生成绑定到本类的 Row + 用 __defaults__ 填默认.
 
@@ -304,7 +304,7 @@ class TableBase:
         if not cls.__pk_fields__:
             raise NotImplementedError(f"{cls.__name__}.__pk_fields__ not set")
 
-    # v81.10: 查 INFORMATION_SCHEMA 获取 NOT NULL 无 default 列 (cache 加速)
+    # 查 INFORMATION_SCHEMA 获取 NOT NULL 无 default 列 (cache 加速)
     _required_columns_cache = {}
 
     @classmethod
@@ -335,7 +335,7 @@ class TableBase:
             )
         return {pk: kwargs[pk] for pk in cls.__pk_fields__}
 
-    # ──────────────── 字段过滤查询 (v80.9 新增) ────────────────
+    # ──────────────── 字段过滤查询 ────────────────
 
     @classmethod
     def query_by(cls, field: str = None, value=None,
@@ -453,7 +453,7 @@ class TableBase:
 
     @classmethod
     def _row_from_mapping(cls, mapping) -> Row:
-        """SQLAlchemy RowMapping / dict → Row (v81.11: 自动绑 _owner_class)"""
+        """SQLAlchemy RowMapping / dict → Row (自动绑 _owner_class)"""
         d = dict(mapping)
         return Row(d, comments=cls.__fields__, _owner_class=cls)
 
@@ -501,7 +501,7 @@ class TableBase:
     def add_one(cls, obj) -> Row:
         """INSERT 一行, 返回带完整数据 + PK 的 Row.
 
-        v81.11: 接 Row 或 dict 两种模式:
+        接 Row 或 dict 两种模式:
             Row 模式: o = Users(username='x'); Users.add_one(o)
             dict 模式: Users.add_one({'username':'x'})    # 仍兼容
 
@@ -514,7 +514,7 @@ class TableBase:
         """
         cls._validate_subclass()
 
-        # v81.11: 接 Row / dict 双模式
+        # 接 Row / dict 双模式
         if isinstance(obj, Row):
             row = obj
             # 自动绑 owner (如果 Row 没绑)
@@ -532,7 +532,7 @@ class TableBase:
         if not data:
             raise ValueError(f"{cls.__name__}.add_one: data 不能为空")
 
-        # v81.11: PK 跳过 AUTO_INCREMENT (让 DB 生成), 复合 PK 字段保留
+        # PK 跳过 AUTO_INCREMENT (让 DB 生成), 复合 PK 字段保留
         # 跳过 Row 内部字段 (_owner_class/_data/_comments 这些不可能进 data, 但保险)
         data_out = {}
         for k, v in data.items():
@@ -542,7 +542,7 @@ class TableBase:
                 continue  # AUTO_INCREMENT, 让 DB 生成
             data_out[k] = v
 
-        # v81.10: 自动填充 NOT NULL 无 default 列 (MySQL strict mode)
+        # 自动填充 NOT NULL 无 default 列 (MySQL strict mode)
         for col_name, col_type in cls._get_required_columns():
             if col_name not in data_out:
                 if "datetime" in col_type or "timestamp" in col_type:
@@ -564,7 +564,7 @@ class TableBase:
         sql = text(f"INSERT INTO `{cls.__tablename__}` ({col_list}) VALUES ({val_list})")
         with engine.begin() as conn:
             conn.execute(sql, data_out)
-            # v81.10: INSERT 后 SELECT * 回填完整 Row
+            # INSERT 后 SELECT * 回填完整 Row
             pk_dict = {k: data_out[k] for k in cls.__pk_fields__ if k in data_out}
             if len(pk_dict) == len(cls.__pk_fields__):
                 sel_sql = "SELECT * FROM `" + cls.__tablename__ + "` WHERE " + \
@@ -576,7 +576,7 @@ class TableBase:
             # 兜底: AUTO_INCREMENT
             if cls.__auto_increment_pk__:
                 last_id = conn.execute(text("SELECT LAST_INSERT_ID() AS id")).scalar()
-                # v92 fix: SELECT * 回填完整 Row (nullable 字段如 t0_tasks.closed_at
+                # SELECT * 回填完整 Row (nullable 字段如 t0_tasks.closed_at
                 # 不会在 data_out 里, 直接返回会 AttributeError)
                 sel_sql = (
                     "SELECT * FROM `" + cls.__tablename__ + "` WHERE `" +
@@ -649,7 +649,7 @@ class TableBase:
     def upsert_one(cls, data: Dict[str, Any], *, return_row: bool = False, **pk) -> Optional[Row]:
         """按主键 UPSERT 一行 (MySQL: INSERT ... ON DUPLICATE KEY UPDATE).
 
-        v110 通用方法, 替代先 add_one 再 update_one 的两段写法 (rpc 同步资金等场景)。
+        替代先 add_one 再 update_one 的两段写法 (rpc 同步资金等场景)。
 
         Args:
             data: 要写入的字段 (PK 列从 **pk 自动注入或 data 含 PK)
@@ -758,7 +758,7 @@ class TableBase:
 
     @classmethod
     def query_all(cls, order: str = "asc") -> List[Row]:
-        """查询所有数据 (v80.5: 彻底简化 — 取消分页, 直接全表).
+        """查询所有数据 (取消分页, 直接全表).
 
         数据量小 (用户偏好: '直接查全部, 有过滤条件的, 前端过滤').
 
@@ -827,7 +827,7 @@ def get_conn():
         conn.close()
 
 
-# ──────────────────────────── v80.9 增强 ────────────────────────────
+# ──────────────────────────── 增强 API ────────────────────────────
 
 @contextmanager
 def transaction():

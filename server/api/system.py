@@ -1,5 +1,5 @@
 """
-system.py — 系统级查询接口（v8 新增）
+system.py — 系统级查询接口
 
 GET /api/system/active-day
   返回当前激活交易日。返回标准 RPC 格式 {code, msg, list}：

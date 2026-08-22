@@ -1,5 +1,5 @@
 <!--
-  TaskDetail.vue — 任务详情面板 (v123, 从旧 ScriptTask 抽取)
+  TaskDetail.vue — 任务详情面板 (从旧 ScriptTask 抽取)
 
   展示单个 strategy_task 的回测/实盘详情: 摘要 → 回测结果 → 最佳参数 →
   权益曲线 → 执行详情子 Tab (信号流 / 进度 / 交易明细 / 执行日志)。
@@ -255,7 +255,7 @@
           </template>
         </el-table-column>
         <el-table-column label="价格" prop="price" width="80">
-          <!-- v2026-08-17: 改用 formatPrice 按 task.stock_code 精度补 0 (替代硬编码 toFixed(4)) -->
+          <!-- 用 formatPrice 按 task.stock_code 精度补 0 (不用硬编码 toFixed(4)) -->
           <template #default="{ row }"><span v-if="row.price !== undefined">{{ formatPrice(row.price, props.task?.stock_code) }}</span></template>
         </el-table-column>
         <el-table-column label="详情" prop="msg" min-width="300" />

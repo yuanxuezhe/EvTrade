@@ -74,8 +74,8 @@ const route = useRoute()
 const uiStore = useUiStore()
 const authStore = useAuthStore()
 
-// v13 trade-page-redesign-v2: pendingCount badge 删除
-//   旧实现读 holdings.orders + 老本地 status 码 (pre-existing bug, 'pending'/'partial' 不在 broker 字典)
+// 无 pendingCount badge (change trade-page-redesign-v2)
+//   badge 读本地 status 码 ('pending'/'partial' 不在 broker 字典, 有 bug)
 //   替代: AppHeader 已有总持仓 badge; ws push 实时反映 status 变化
 const menuItems = computed(() => {
   const base = [
@@ -90,9 +90,9 @@ const menuItems = computed(() => {
     // script-strategy change: 2 个新入口 (前端写脚本 + 跑任务)
     { path: '/script-dev', label: '策略开发', icon: EditPen },
     { path: '/script-task', label: '策略运行', icon: DataLine },
-    // v126: 策略下单母单 (实盘下单入口)
+    // 策略下单母单 (实盘下单入口)
     { path: '/strategy-order', label: '策略下单', icon: DataAnalysis },
-    // v21 stock-info-crawler: 基础信息分类 (admin-trader 共享入口)
+    // change stock-info-crawler: 基础信息分类 (admin-trader 共享入口)
     { divider: true, label: '基础信息' },
     { path: '/admin/stock-config', label: '证券信息', icon: DataBoard },
     // add-stkpool-module: 证券池 (与"证券信息"同级别顶级项, 紧跟其后, auth 通用鉴权)

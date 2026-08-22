@@ -6,7 +6,7 @@
  *
  * 包含：
  *   parseAsset — 解包 api.getAsset() 响应（拦截器可能解到 list 或 单对象）
- *   recomputeStatus — v8 委托 status 防御性重算 helper
+ *   recomputeStatus — 委托 status 防御性重算 helper
  *   _now_hms — HH:MM:SS 字符串
  *   _today_yyyymmdd — 今日 YYYYMMDD 字符串
  *
@@ -33,16 +33,16 @@ export function parseAsset(resp) {
   if (!a) return null
   return {
     cash: Number(a.cash) || 0,
-    available: Number(a.available) || Number(a.cash) || 0,  // v110: available 透传 (兼容 v110 前的 api 响应无该字段)
+    available: Number(a.available) || Number(a.cash) || 0,  // available 透传 (兼容旧 api 响应无该字段)
     frozen_cash: Number(a.frozen_cash) || 0,
     market_value: Number(a.market_value) || 0,
     total_asset: Number(a.total_asset) || 0,
-    last_asset: Number(a.last_asset) || 0   // v114: 期初总资产 (早上 init 锁定)
+    last_asset: Number(a.last_asset) || 0   // 期初总资产 (早上 init 锁定)
   }
 }
 
 /**
- * v8 增: 委托 status 防御性重算 helper
+ * 委托 status 防御性重算 helper
  *   - 入参 row (任意对象,只要含 volume/traded_volume/cancelled_volume 可选)
  *   - 返回新对象(不可变),status = inferOrderStatus({...row}, null)
  *   - 不传 brokerStatus: 完全按 traded_volume / cancelled_volume / volume 推断
@@ -74,7 +74,7 @@ export function nowHMS() {
     .map((n) => String(n).padStart(2, '0')).join(':')
 }
 
-// v7 增: 跟后端 trd_date 格式对齐 (YYYYMMDD)
+// 跟后端 trd_date 格式对齐 (YYYYMMDD)
 export function todayYYYYMMDD() {
   const d = new Date()
   return [d.getFullYear(), d.getMonth() + 1, d.getDate()]

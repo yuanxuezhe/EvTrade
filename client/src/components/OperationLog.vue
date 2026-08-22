@@ -228,7 +228,7 @@ defineExpose({ toggle, collapsed })
   right: 0;
   bottom: 0;
   z-index: 90;
-  /* v115: 改走 var(--bg-elevated), 暗色模式下不再死白 (与卡片/对话框/表格同源变量) */
+  /* 改走 var(--bg-elevated), 暗色模式下不再死白 (与卡片/对话框/表格同源变量) */
   background: var(--bg-elevated);
   border-top: 1px solid var(--border-base);
   box-shadow: 0 -2px 12px rgba(0, 0, 0, 0.08);
@@ -353,7 +353,7 @@ defineExpose({ toggle, collapsed })
 .oplog-body {
   border-top: 1px solid var(--border-light);
   padding: var(--space-2) var(--space-4) var(--space-3);
-  /* v115: 同上, 跟随主题 */
+  /* 同上, 跟随主题 */
   background: var(--bg-elevated);
   animation: slideDown 0.18s ease-out;
 }

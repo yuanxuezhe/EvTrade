@@ -43,7 +43,7 @@ class SignalConsumer:
         self._consumer_tag: Optional[str] = None
         self._processed_trace_ids: Set[str] = set()
         self._last_prune = datetime.now()
-        # service token — 走 EvTrade JWT, 由 /grant (v92) 生成的永久 token
+        # service token — 走 EvTrade JWT, 由 /grant 生成的永久 token
         self._service_token: Optional[str] = None
         self._http_client: Optional[httpx.AsyncClient] = None
         self._stopped = False
@@ -159,13 +159,13 @@ class SignalConsumer:
             payload.get("price", 0), payload.get("volume", 0), trace_id,
         )
 
-        # v126 母单归因: parent_task_id + strategy_name 从 payload 读
+        # 母单归因: parent_task_id + strategy_name 从 payload 读
         parent_task_id = payload.get("parent_task_id")
         strategy_name = payload.get("strategy_name", "") or ""
 
         # 决策 (D): live signal 缺 parent_task_id → INVALID_PARENT_TASK 业务错, ack 不重试
         #   母单路径必带 parent_task_id; 缺字段说明 signal 链路被破坏.
-        #   历史 v66/v123 signal (无 mode 字段) 仍走原路径 — 下面条件: mode=='live' 才有此校验.
+        #   无 mode 字段的 signal 走原路径 — 仅 mode=='live' 才有此校验.
         if mode == "live" and parent_task_id is None:
             log.error(
                 "[signal_consumer] live signal missing parent_task_id: trace=%s task=%d (INVALID_PARENT_TASK, ack no retry)",
@@ -180,11 +180,11 @@ class SignalConsumer:
         if parent_task_id is not None:
             order_task_id = int(parent_task_id)
             order_user_def = strategy_name
-            order_strategy_type = 2  # v126 策略下单
+            order_strategy_type = 2  # 策略下单 (母单)
         else:
             order_task_id = None
             order_user_def = ""
-            order_strategy_type = 1  # v66+ 默认
+            order_strategy_type = 1  # 默认 (无母单路径)
 
         # 转下单参数
         order_type = "23" if signal_type == "BUY" else "24"
@@ -200,8 +200,8 @@ class SignalConsumer:
                     "volume": payload.get("volume"),
                     "remark": f"strategy-{payload.get('task_id')}-{trace_id[:8]}",
                     "strategy_type": order_strategy_type,
-                    "task_id": order_task_id,           # v126: 母单 → strategy_order.task_id; 旧 → None
-                    "user_def": order_user_def,         # v126: 母单 → strategy_name; 旧 → ''
+                    "task_id": order_task_id,           # 母单 → strategy_order.task_id; 无母单 → None
+                    "user_def": order_user_def,         # 母单 → strategy_name; 无母单 → ''
                 },
             )
             self._mark_processed(trace_id)

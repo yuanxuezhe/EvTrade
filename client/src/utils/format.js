@@ -21,12 +21,10 @@ export function formatNumber(val) {
   return n.toLocaleString('zh-CN')
 }
 
-// v2026-08-17: 删除旧的 formatPrice(val, decimals=2) — 它硬截 2 位, 会把 9.000 显示成 9.00,
-//   跟 "证券代码 3 位精度按精度补 0" 需求相反.
-//   价格统一走 `composables/usePricePrecision.js` 的 formatPrice(price, stockCode),
+// 价格格式化统一走 `composables/usePricePrecision.js` 的 formatPrice(price, stockCode),
 //   按 stockScale(code) 精度补 0. 这里只保留金额/最新价工具 (formatMoney / formatPriceAuto).
 
-// v33.1.2: 价格智能格式化 — 保留最多 4 位有效小数, 去尾 0 (0.0039 → "0.0039", 12.5 → "12.5", 12.00 → "12")
+// 价格智能格式化 — 保留最多 4 位有效小数, 去尾 0 (0.0039 → "0.0039", 12.5 → "12.5", 12.00 → "12")
 // 用于最新价/卖一价/买一价 sub 标签, 避免 0.0039 被 formatMoney 截成 "0.00"
 export function formatPriceAuto(val) {
   const n = Number(val)
@@ -95,7 +93,7 @@ export function priceTypeLabel(p) {
 }
 
 /**
- * 委托 status —— broker xtconstant 字典（v11 align-status-codes-to-xtconstant）
+ * 委托 status —— broker xtconstant 字典（change align-status-codes-to-xtconstant）
  *  48 ORDER_UNREPORTED        未报
  *  49 ORDER_WAIT_REPORTING    待报
  *  50 ORDER_REPORTED          已报
@@ -108,12 +106,12 @@ export function priceTypeLabel(p) {
  *  57 ORDER_JUNK              废单
  * 255 ORDER_UNKNOWN           未知
  *
- * 与后端 `server/services/order_status.py:_infer_order_status` 推断规则一致（v11 全部 broker 码）。
- * 视图层（Trade.vue / Orders.vue）按 broker xtconstant 字典分组，不再用本地推断码。
- * v11 删除旧 14 个英文 fall-back 兼容 key（grep 0 处外部引用）。
+ * 与后端 `server/services/order_status.py:_infer_order_status` 推断规则一致（全部 broker 码）。
+ * 视图层（Trade.vue / Orders.vue）按 broker xtconstant 字典分组，不用本地推断码。
+ * 不提供旧 14 个英文 fall-back 兼容 key（grep 0 处外部引用）。
  */
 export const STATUS_LABEL = {
-  '48':  '待报',   // v84.3: 与后端一致 (broker 反馈前)
+  '48':  '待报',   // 与后端一致 (broker 反馈前)
   '49':  '待报',
   '50':  '已报',
   '51':  '已报待撤',
@@ -128,7 +126,7 @@ export const STATUS_LABEL = {
 
 /** Element Plus tag type (颜色) */
 export const STATUS_TYPE = {
-  '48':  'info',// v84.3 待报
+  '48':  'info',// 待报
   '49':  'info',      // 待报
   '50':  'primary',   // 已报
   '51':  'warning',   // 已报待撤
@@ -142,7 +140,7 @@ export const STATUS_TYPE = {
 }
 
 /**
- * v90: 委托状态阶段 rank (订单生命周期单调递增)
+ * 委托状态阶段 rank (订单生命周期单调递增)
  * 用于前端 ws 推送守门: new_rank >= current_rank 才更新+弹窗, 防止状态倒退
  *
  * 阶段划分 (broker xtconstant 码):
@@ -163,14 +161,14 @@ export const STATUS_RANK = {
   '53': 5,  '54': 5,  '56': 5,  '57': 5,  '255': 5,
 }
 
-/** v90: 取状态阶段 rank; 未知状态返 0 (放行, 不阻塞首次写入) */
+/** 取状态阶段 rank; 未知状态返 0 (放行, 不阻塞首次写入) */
 export function statusRank(s) {
   return STATUS_RANK[String(s)] ?? 0
 }
 
 /** 状态色调分组：pending=等待中, working=进行中, done=终态成功, terminal=终态撤销/废单 */
 export const STATUS_TONE = {
-  '48':  'pending',// v84.3 待报
+  '48':  'pending',// 待报
   '49':  'pending',  // 待报
   '50':  'working',  // 已报
   '51':  'working',  // 已报待撤 (撤单过渡)
@@ -185,7 +183,7 @@ export const STATUS_TONE = {
 
 /** 状态对应的 Element Plus 图标组件名 */
 export const STATUS_ICON_NAME = {
-  '48':  'Clock',// v84.3 待报
+  '48':  'Clock',// 待报
   '49':  'Clock',             // 待报
   '50':  'Promotion',          // 已报
   '51':  'Loading',           // 已报待撤
@@ -200,7 +198,7 @@ export const STATUS_ICON_NAME = {
 
 /** 是否需要脉冲动画（48/49/50/51/52/55 等仍可能在变化的中间态） */
 export const STATUS_PULSE = {
-  '48':  true,// v84.3 待报
+  '48':  true,// 待报
   '49':  true,    // 待报
   '50':  true,    // 已报
   '51':  true,    // 已报待撤
@@ -229,7 +227,7 @@ export const STATUS_OPTIONS = [
 ]
 
 /**
- * 委托 status 终态集合（v11 broker xtconstant 字典）
+ * 委托 status 终态集合（broker xtconstant 字典）
  * 与后端 `server/services/order_status.py:TERMINAL_STATUSES` 一致
  *
  * 包含: broker 52 (部成待撤, 撤单过渡) + broker 53/54/56/57 (部成部撤/已撤/已成/废单)
@@ -238,10 +236,10 @@ export const STATUS_OPTIONS = [
 export const TERMINAL_STATUSES = new Set(['52', '53', '54', '56', '57'])
 
 /**
- * 委托 status 本地推断（前端镜像后端 _infer_order_status, v11 broker 码输出）
+ * 委托 status 本地推断（前端镜像后端 _infer_order_status, broker 码输出）
  * 与 `server/services/order_status.py:_infer_order_status` 逐行一致
  *
- * 规则 (v8 cancelled_volume 主轴 + v11 broker 码输出):
+ * 规则 (cancelled_volume 主轴 + broker 码输出):
  *   1. 当前 status 已是终态 (52/53/54/55/56/57) → 保持
  *   2. 撤单主轴 (cum_cancelled):
  *      - cum_cancelled >= vol                 → 54 (broker 已撤)
@@ -251,7 +249,7 @@ export const TERMINAL_STATUSES = new Set(['52', '53', '54', '56', '57'])
  *      - cumulative = 0          → 54 (broker 已撤)
  *      - 0 < cumulative < volume → 53 (broker 部成部撤)
  *      - cumulative = volume     → 56 (broker 已成)
- *   4. 累计推断 (v11 broker 码)
+ *   4. 累计推断 (broker 码)
  *      - cumulative = 0          → 50 (broker 已报)
  *      - 0 < cumulative < volume → 55 (broker 部成)
  *      - cumulative = volume     → 56 (broker 已成)
@@ -270,14 +268,14 @@ export function inferOrderStatus(order, brokerStatus = null) {
   const cumCancelled = Number(order?.cancelled_volume) || 0
   const vol = Number(order?.volume) || 0
 
-  // 2. 撤单主轴（v8 新增, 优先于 broker_status 判定）
+  // 2. 撤单主轴（优先于 broker_status 判定）
   if (cumCancelled >= vol && vol > 0) return '54'  // broker 已撤
   if (cumCancelled > 0 && cum > 0) return '53'      // broker 部成部撤
   if (cumCancelled > 0 && cum === 0) return '54'    // broker 已撤 (部分撤单无成交)
 
-  // 3. broker 推了撤单类 status (v11: 含 broker 51 已报待撤)
-  // v94 (REQ-TRADE-035): 废单 57 直接保留 — broker 拒单不可能有任何成交/撤单,
-  //   之前 fall-through 到第 4 段会被错判成 '50' 已报
+  // 3. broker 推了撤单类 status (含 broker 51 已报待撤)
+  // REQ-TRADE-035: 废单 57 直接保留 — broker 拒单不可能有任何成交/撤单,
+  //   fall-through 到第 4 段会被错判成 '50' 已报
   if (brokerStatus && String(brokerStatus) === '57') return '57'
   if (brokerStatus && ['51', '52', '53', '54'].includes(String(brokerStatus))) {
     if (cum === 0) return '54'      // broker 已撤
@@ -285,7 +283,7 @@ export function inferOrderStatus(order, brokerStatus = null) {
     return '56'                      // broker 已成
   }
 
-  // 4. 累计推断 (v11 broker 码)
+  // 4. 累计推断 (broker 码)
   if (cum === 0) return '50'        // broker 已报
   if (cum < vol) return '55'        // broker 部成
   return '56'                        // broker 已成

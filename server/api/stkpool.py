@@ -52,7 +52,7 @@ class StkpoolUpdate(BaseModel):
 class StkpoolDetailAdd(BaseModel):
     """POST /api/stkpool/{pool_id}/detail body
 
-    v128: 支持批量 — stock_codes 用逗号分隔多个代码
+    支持批量 — stock_codes 用逗号分隔多个代码
     容量: max_length=10_000_000 (≈ 100万只股票)
     """
     stock_codes: str = Field(
@@ -123,7 +123,7 @@ def list_detail(pool_id: int):
 
 @router.post("/{pool_id}/detail", status_code=201)
 def add_detail(pool_id: int, payload: StkpoolDetailAdd):
-    """POST /api/stkpool/{pool_id}/detail — 加明细 (v128 支持批量)
+    """POST /api/stkpool/{pool_id}/detail — 加明细 (支持批量)
 
     body: {"stock_codes": "600519.SH,000001.SZ"}
 

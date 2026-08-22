@@ -1,10 +1,8 @@
 """
-holdings.py — v5 重构版（schema refactor）
+holdings.py
 
 持仓精简视图（与 /api/positions 共享同一张 positions 表，但字段裁剪为 6 列）
 GET /api/holdings 纯读 DB，不调 RPC。
-
-v5 改动：字段同步重命名
 """
 from fastapi import APIRouter, Depends
 from typing import List, Optional
@@ -37,7 +35,7 @@ async def list_holdings(
     stock_code: Optional[str] = None,
     db: Session = Depends(get_db),
 ):
-    """读本地 positions 表（v81.4 tables-migration: 走 Positions.*）"""
+    """读本地 positions 表（走 Positions.*）"""
     # Positions.__pk_fields__ = ('stock_code',) → 默认按 stock_code 升序
     if stock_code:
         rows = Positions.query_by("stock_code", stock_code)

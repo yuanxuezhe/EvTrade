@@ -1,5 +1,5 @@
 /**
- * useT0DayPnl.js — 当日盈亏数据 + 计算 (v114.2: 去轮询, holdings store 驱动)
+ * useT0DayPnl.js — 当日盈亏数据 + 计算 (无轮询, holdings store 驱动)
  *
  * Why:
  *   - 当日盈亏权威在 holdings store: quote-tick 重算写入 positions[].day_pnl,

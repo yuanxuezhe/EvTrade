@@ -1,5 +1,5 @@
 """
-server/services/script_strategy/params.py — param_ranges 类型驱动展开 (v123 D5)
+server/services/script_strategy/params.py — param_ranges 类型驱动展开
 
 职责单一: 把参数扫描请求 (param_ranges) 按脚本 params_schema 类型展开成组合。
 - int/float: start..end 步进 step 含端点 (未对齐 step 的 end 不包含)

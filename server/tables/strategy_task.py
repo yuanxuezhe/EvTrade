@@ -56,8 +56,8 @@ class StrategyTask(TableBase):
         'execution_service': '执行服务标识 (evtrade / strategy_exec)',
         'execution_pid': 'strategy_exec 进程 pid (用于排查)',
         'version': '乐观锁 (UPDATE WHERE version 等于当前值)',
-        'strategy_id': '→ strategy.strategy_id (v123)',
-        'batch_no': '回测/实盘批次号 (v123, 序号表 task_batch)',
+        'strategy_id': '→ strategy.strategy_id',
+        'batch_no': '回测/实盘批次号 (序号表 task_batch)',
         'metric': '批次排序指标 (sweep top1 选择, 重测还原用)',
         'backtest_metric_value': '单 run 指标值 (sharpe→total_return→pnl/initial_cash)'
     }

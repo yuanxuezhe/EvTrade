@@ -1,5 +1,5 @@
 <!--
-  CodeEditor.vue — CodeMirror 6 封装的 Python 代码编辑器 (2026-08-20 / v2 2026-08-21)
+  CodeEditor.vue — CodeMirror 6 封装的 Python 代码编辑器
 
   设计目标:
     - 替换 ScriptDev.vue 内裸 textarea, 获得语法高亮 / 自动缩进 / 括号匹配
@@ -9,10 +9,10 @@
     - 支持只读 (readOnly)
     - 主题: one-dark (与原 textarea 黑色风格一致)
 
-  v2 修复:
-    - 把所有 import 的 codemirror 扩展提升到 script setup 顶层 (静态 import, 不再闭包陷阱)
-    - 把 readOnly 编辑性配置改成单一 EditorView.editable.of (React 风格)
-    - 改用 simple ref 跟踪 EditorView, 避免 shallowRef 引用问题
+  实现要点:
+    - 所有 codemirror 扩展在 script setup 顶层静态 import (避免闭包陷阱)
+    - readOnly 用单一 EditorView.editable.of 控制 (React 风格)
+    - 用 simple ref 跟踪 EditorView
     - modelValue 同步逻辑: 直接 dispatch transaction with setContents (而不是 replace range)
 
   Props:

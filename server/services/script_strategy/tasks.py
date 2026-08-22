@@ -2,7 +2,8 @@
 server/services/script_strategy/tasks.py — Task CRUD + 信号/审计读取
 
 任务创建仍在 EvTrade (直接读写 strategy_task 表); 运行/停止已转发到
-独立服务 strategy_exec (2026-08-09), 本模块不启动任何引擎线程。
+独立服务 strategy_exec,
+本模块不启动任何引擎线程。
 """
 from datetime import datetime
 from typing import Any, Dict, List, Optional
@@ -24,7 +25,7 @@ def list_tasks(
 ) -> List[Dict[str, Any]]:
     """列 task (含 filter)
 
-    v123 filter:
+    filter:
     - strategy_id: 限定策略
     - limit: 默认 50, 上限 200 (endpoint 层强制)
     """
@@ -72,13 +73,13 @@ def create_task(
     fields: Optional[str] = None,
     mode: Optional[str] = None,
     batch_no: Optional[int] = None,
-    status: str = "queued",  # v123 状态机: queued → running → finished / failed / stopped / abandoned
+    status: str = "queued",  # 状态机: queued → running → finished / failed / stopped / abandoned
     metric: Optional[str] = None,  # 批次排序指标 (sweep top1 选择, 重测还原用)
 ) -> Dict[str, Any]:
-    """创建任务 (v123: 挂 strategy_id, 可带 batch_no).
+    """创建任务 (挂 strategy_id, 可带 batch_no).
 
     创建不立即执行; 由 backtest/retest 端点转发 strategy_exec 后异步运行。
-    批次任务由 batches.create_backtest_batch 复用本函数 (v125 纯回测)。
+    批次任务由 batches.create_backtest_batch 复用本函数。
 
     Raises:
         ValueError: 策略不存在 / 权限
@@ -97,7 +98,7 @@ def create_task(
         "batch_no": batch_no,
         "description": description,
         "stock_code": stock_code,
-        "mode": mode,            # 创建时即定 mode (v125 纯回测: 仅 backtest)
+        "mode": mode,            # 创建时即定 mode (纯回测: 仅 backtest)
         "status": status,
         "params": json_dumps(params),
         "period": period or "1d",

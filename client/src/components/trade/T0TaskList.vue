@@ -1,5 +1,5 @@
 <!--
-  T0TaskList.vue — T0Task 列表 + 操作按钮（v18 change t0-task-management）
+  T0TaskList.vue — T0Task 列表 + 操作按钮（change t0-task-management）
 
   Props:
     visible (Boolean) — 控制面板是否可见（默认 true，T0Trade 中内嵌）
@@ -132,7 +132,7 @@ const emit = defineEmits(['create', 'close', 'select'])
 const store = useT0TasksStore()
 const loading = computed(() => store.loading)
 const tasks = computed(() => store.tasks)
-// 后端 OverviewResponse 字段是扁平 total_realized_pnl/active_task_count/avg_win_rate (v18)
+// 后端 OverviewResponse 字段是扁平 total_realized_pnl/active_task_count/avg_win_rate
 const overview = computed(() => store.overviewData || {})
 
 const filteredTasks = computed(() => {

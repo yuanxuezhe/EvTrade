@@ -1,5 +1,5 @@
 """
-server/api/script_strategy/tasks.py — 任务端点 (v123)
+server/api/script_strategy/tasks.py — 任务端点
 
 REST 端点 (前缀 /api/script-strategy):
   GET    /tasks                  list (可按 strategy_id 过滤)
@@ -10,7 +10,7 @@ REST 端点 (前缀 /api/script-strategy):
   GET    /tasks/{id}/signals     信号流 + 进度时间轴
   GET    /tasks/{id}/audit       永久 audit
 
-v123: 任务创建统一走 /strategies/{id}/backtest (single/sweep) (v125 纯回测, /live 已删),
+任务创建统一走 /strategies/{id}/backtest (single/sweep; 纯回测, 无 /live),
 不再有 POST /tasks 与 /tasks/{id}/run(/run-sweep)。
 脚本端点见 scripts.py; 策略/回测见 strategies.py。
 """
@@ -34,13 +34,13 @@ router = APIRouter()
 def list_tasks_endpoint(
     status_filter: Optional[str] = Query(None, alias="status"),
     mode_filter: Optional[str] = Query(None, alias="mode"),
-    strategy_id: Optional[int] = Query(None, description="v123: 限定策略 ID"),
+    strategy_id: Optional[int] = Query(None, description="限定策略 ID"),
     limit: int = Query(50, ge=1, le=200, description="最大返回数 (默认 50, 上限 200)"),
     user: User = Depends(get_current_user),
 ):
     """列 task
 
-    v123 filter:
+    filter:
     - strategy_id: 限定策略
     - limit: 默认 50, 上限 200
     """
@@ -62,7 +62,7 @@ def get_task_endpoint(task_id: int, user: User = Depends(get_current_user)):
 
 @router.post("/tasks/{task_id}/stop")
 async def stop_task_endpoint(task_id: int, user: User = Depends(get_current_user)):
-    """停止任务 (v120+: 转发到 strategy_exec)"""
+    """停止任务 (转发到 strategy_exec)"""
     from datetime import datetime
 
     from server.config import settings
@@ -123,7 +123,7 @@ def get_task_signals_endpoint(
     """返任务的信号流 + 进度时间轴
 
     回测模式: 从 backtest_result.signal_log 返
-    v125 纯回测后 live_signals 为遗留读路径 (仅存量实盘任务)
+    live_signals 为遗留读路径 (仅存量实盘任务)
     """
     out = svc.get_task_signals(task_id, user.id, user.role == "admin",
                                 type_filter=type_filter, limit=limit)

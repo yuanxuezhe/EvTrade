@@ -39,14 +39,14 @@ def iso(v) -> Optional[str]:
 def script_row_to_dict(row) -> Dict[str, Any]:
     d = getattr(row, "_data", {})
     return {
-        "id": d.get("id"),  # v90+ str (用户自命名)
+        "id": d.get("id"),  # str (用户自命名)
         "user_id": d.get("user_id"),
         "name": d.get("name", ""),
         "code": d.get("code", ""),
         "params_schema": json_loads(d.get("params_schema"), default=[]),
         "description": d.get("description", ""),
         "status": d.get("status", "active"),
-        "is_public": bool(d.get("is_public", 0)),  # v90+
+        "is_public": bool(d.get("is_public", 0)),  # 脚本可见性
         "created_at": iso(d.get("created_at")),
         "updated_at": iso(d.get("updated_at")),
     }
@@ -60,8 +60,8 @@ def strategy_row_to_dict(row) -> Dict[str, Any]:
         "script_id": d.get("script_id"),
         "name": d.get("name", ""),
         "status": d.get("status", "draft"),
-        "is_public": bool(d.get("is_public", 0)),  # v125 显式可见性
-        "stock_code": d.get("stock_code"),          # v125 绑定标的
+        "is_public": bool(d.get("is_public", 0)),  # 显式可见性
+        "stock_code": d.get("stock_code"),          # 绑定标的
         "best_params": json_loads(d.get("best_params")),
         "created_at": iso(d.get("created_at")),
         "updated_at": iso(d.get("updated_at")),
@@ -128,7 +128,7 @@ def task_row_to_dict(row) -> Dict[str, Any]:
 def _extract_metric_value(backtest_result: Optional[Dict[str, Any]], metric: str = "sharpe") -> Optional[float]:
     """从 backtest_result 提取 metric_value (前端展示 + 批次 best 排序用).
 
-    v123 移除了 sweep summary task, 每行 task 直接携带自身 backtest_result:
+    每行 task 直接携带自身 backtest_result:
     - 优先所选 metric 字段 (sharpe/total_return/calmar)
     - 回退 sharpe → total_return → pnl/initial_cash
     """

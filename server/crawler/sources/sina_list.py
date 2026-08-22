@@ -1,7 +1,7 @@
 """
-crawler/sources/sina_list.py - 新浪 A 股全市场代码列表抓取 (v24 full-a-share-sync)
+crawler/sources/sina_list.py - 新浪 A 股全市场代码列表抓取
 
-数据源契约 (REQ-STOCK-004 v24):
+数据源契约 (REQ-STOCK-004):
 - 端点: https://vip.stock.finance.sina.com.cn/quotes_service/api/json_v2.php/Market_Center.getHQNodeData
 - 参数: node=hs_a (沪深京 A 股全市场)
        page=1..56
@@ -11,14 +11,14 @@ crawler/sources/sina_list.py - 新浪 A 股全市场代码列表抓取 (v24 full
     "symbol": "sh600519",
     "name":   "贵州茅台",
   }]
-- 实际总量: ~5560 只 (2026-07-12 实测 page=1~56 有效,page=57+ 返 [])
+- 实际总量: ~5560 只 (实测 page=1~56 有效,page=57+ 返 [])
 
 代码转换 (新浪 -> EvTrade):
   sh600519  -> 600519.SH
   sz000001  -> 000001.SZ
   bj920169  -> 920169.BJ
 
-缓存策略 (REQ-STOCK-004 v24):
+缓存策略 (REQ-STOCK-004):
 - 路径: data/all_a_codes.json (项目根 data/ 目录)
 - 格式: {"fetched_at": "2026-07-12T11:30:00Z", "codes": ["600519.SH", ...]}
 - TTL: 24 小时 (TTL_SINA_CACHE_HOURS)

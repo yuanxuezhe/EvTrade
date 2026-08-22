@@ -56,7 +56,7 @@ export function roundToLot(vol, lotSize = DEFAULT_LOT_SIZE) {
 
 
 /**
- * 配平量计算 (M-008 v3 + t0-balance 合并语义):
+ * 配平量计算 (M-008 + t0-balance 合并语义):
  *   need = 当前持仓 + 今日净买入 (今日买 - 今日卖)
  *     正数 → 需买入 (建仓/补仓)
  *     负数 → 需卖出 (锁仓)
@@ -156,11 +156,11 @@ export function resolvePriceTypeCode(priceType) {
 }
 
 
-// ============== v54 quick-t0-revamp: 做T盈亏/敞口/期初配额/做T收益率/配平对手盘价 ==============
+// ============== quick-t0-revamp: 做T盈亏/敞口/期初配额/做T收益率/配平对手盘价 ==============
 //
 // 背景: 用户反馈 T0Trade.vue 4 类问题 — 做T盈亏口径错位 / 配平价格档错位 / 可买可卖基数错 / 价格 2 位精度硬卡
 // 落点: 本文件新增 5 纯函数, T0Trade.vue 主表重做时调用, 不依赖 store
-// change: 2026-07-16-quick-t0-revamp, REQ-FE-220
+// change quick-t0-revamp, REQ-FE-220
 
 
 /**
@@ -168,10 +168,10 @@ export function resolvePriceTypeCode(priceType) {
  * = SUM(卖出成交 vol*price) - SUM(买入成交 vol*price)
  * = stats.today_sell_amount - stats.today_buy_amount
  *
- * 与 v6 realized_pnl (基于 cost_basis + 费用) **语义不同**:
+ * 与后端 realized_pnl (基于 cost_basis + 费用) **语义不同**:
  *   - t0 PnL: 纯流量差 (trader 直觉)
  *   - realized_pnl: 持仓视角已实现 (含成本基准 + 交易费用)
- * 两者共存, 前端用 t0 PnL 做"做T盈亏"列, 后端 realized_pnl 仍按 v6 给 Dashboard/Trade 用
+ * 两者共存, 前端用 t0 PnL 做"做T盈亏"列, 后端 realized_pnl 给 Dashboard/Trade 用
  *
  * @param {{today_buy_amount?: number, today_sell_amount?: number}} stats — t0-stats/{code} 单条
  * @returns {number} 做T盈亏 (正数=盈利, 负数=亏损, 0/NaN/缺字段 → 0)
@@ -334,7 +334,7 @@ export function calcDayPnl({
 
 // ============== 浮动盈亏 (扣费, 对齐当日盈亏口径) ==============
 //
-// change floating-pnl-fee (2026-08-12): 浮动盈亏从裸价差 (现价−成本)×量 改为扣费版。
+// change floating-pnl-fee: 浮动盈亏从裸价差 (现价−成本)×量 改为扣费版。
 // 费用 = 当日盈亏的 day_fee (后端 t0-exposure 按**当日实际买卖成交金额**聚合:
 //   买佣金(今日买入额) + 卖佣金(今日卖出额) + 印花税, aggregators.py:123)。
 // 前端不做二次费率逻辑 (REQ-FE-533) — 直接扣后端 day_fee, 与当日盈亏费用完全一致,

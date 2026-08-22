@@ -1,5 +1,5 @@
 /**
- * tableColumns.js — 通用 el-table-column 列样式常量 (v69 抽出)
+ * tableColumns.js — 通用 el-table-column 列样式常量
  *
  * 设计目标:
  *   - 把"列类型 + 宽度 + 对齐 + 文本类"的样板抽出来, 表格模板只写业务 prop/label

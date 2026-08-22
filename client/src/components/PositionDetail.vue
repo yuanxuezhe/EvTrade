@@ -68,7 +68,7 @@
           </div>
         </el-tab-pane>
         <el-tab-pane label="表格" name="table">
-          <!-- v73: 6 列接入 COL 常量 -->
+          <!-- 6 列接入 COL 常量 -->
           <el-table :data="orderTradeList" size="small" style="width: 100%" max-height="400">
             <el-table-column prop="time" label="时间" v-bind="COL.TIME" />
             <el-table-column prop="type" label="类型" width="100">
@@ -128,7 +128,7 @@ const orderTradeList = computed(() => {
       time: order.order_time,
       type: '委托',
       order_type: order.order_type,
-      stock_code: order.stock_code,  // v82: 用于 formatPrice 按 scale 补 0
+      stock_code: order.stock_code,  // 用于 formatPrice 按 scale 补 0
       volume: order.volume,
       price: order.price,
       status: STATUS_LABEL[order.status] || order.status,
@@ -143,7 +143,7 @@ const orderTradeList = computed(() => {
       time: trade.trade_time,
       type: '成交',
       order_type: trade.order_type,
-      stock_code: trade.stock_code,  // v82: 用于 formatPrice 按 scale 补 0
+      stock_code: trade.stock_code,  // 用于 formatPrice 按 scale 补 0
       volume: trade.volume,
       price: trade.price,
       status: '-',
@@ -155,7 +155,7 @@ const orderTradeList = computed(() => {
 })
 
 const profit = computed(() => {
-  // v12: today_buy/today_sell 已从 Position 移除 (add-manual-adjust-and-history-pages)
+  // today_buy/today_sell 不在 Position 中 (add-manual-adjust-and-history-pages)
   // T+0 做T收益: 直接由 trades 自身聚合 (买/卖均价差 × 配对量)
   if (!props.position) return 0
 

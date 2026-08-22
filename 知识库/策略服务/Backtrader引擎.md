@@ -5,11 +5,11 @@
 - `e:/EvTrade/strategy_exec/strategy_exec/engines/backtrader/adapter.py`（ProjectStrategy 基类）
 - `e:/EvTrade/strategy_exec/strategy_exec/engines/backtrader/backtest.py`（回测引擎）
 - `e:/EvTrade/strategy_exec/strategy_exec/engines/backtrader/live.py`（实盘引擎）
-- `e:/EvTrade/strategy_exec/strategy_exec/engines/backtrader/sweep.py`（参数扫描引擎，v123）
+- `e:/EvTrade/strategy_exec/strategy_exec/engines/backtrader/sweep.py`（参数扫描引擎）
 
 ## 功能概述
 
-engines/backtrader/ 是策略执行核心：用户脚本继承 `ProjectStrategy`（bt.Strategy 子类），通过 `buy_signal()/sell_signal()` 推送信号；backtest.py 同步跑完整回测并落库；live.py 以 LiveRunner 常驻订阅行情 WS 逐 bar 驱动 `next()`；sweep.py 按 v123 批次模型并发跑多组参数回测并回写最优参数。
+engines/backtrader/ 是策略执行核心：用户脚本继承 `ProjectStrategy`（bt.Strategy 子类），通过 `buy_signal()/sell_signal()` 推送信号；backtest.py 同步跑完整回测并落库；live.py 以 LiveRunner 常驻订阅行情 WS 逐 bar 驱动 `next()`；sweep.py 按批次模型并发跑多组参数回测并回写最优参数。
 
 ## 文件清单
 
@@ -31,7 +31,7 @@ engines/backtrader/ 是策略执行核心：用户脚本继承 `ProjectStrategy`
 - `notify_signal_published(signal_id, ok)`：可选回调（用户可 override）。
 - `get_position() -> int` / `get_cash() -> float`：查 Backtrader broker 状态。
 
-类属性 `_task_id/_user_id/_script_id/_task_mode/_parent_task_id/_strategy_name` 由引擎在 addstrategy 前通过 `_set_task_meta(task_id, user_id, script_id, mode, parent_task_id, strategy_name)` 注入（v126 增加母单归因两字段）。`_bar_time()` 返当前 bar 时间 `YYYYMMDDHHMMSS`。
+类属性 `_task_id/_user_id/_script_id/_task_mode/_parent_task_id/_strategy_name` 由引擎在 addstrategy 前通过 `_set_task_meta(task_id, user_id, script_id, mode, parent_task_id, strategy_name)` 注入（含母单归因两字段）。`_bar_time()` 返当前 bar 时间 `YYYYMMDDHHMMSS`。
 
 `_publish()` 关键线程问题：回测跑在 `asyncio.to_thread` 中，Backtrader `next()` 是同步代码；publish 是 async → 用 `asyncio.run_coroutine_threadsafe(coro, publisher.loop)` 投递到 publisher connect 时绑定的主 loop，`future.result(timeout=10)` 同步等待；publisher 未连接时退回 `asyncio.run(coro)` best-effort。失败抛 `SignalPublishError` → 返 None。
 
@@ -52,8 +52,8 @@ def run_backtest(task_id, user_id, script_id, stock_code, params, bars,
 7. `backtest_result` dict 落库（契约对齐前端 ScriptTask.vue）：
    - 顶层：`pnl / pnl_pct / final_value / initial_cash / bars_count / sharpe / signal_log / total_bars / execution_log`
    - `best`：`{pnl, pnl_pct(小数), win_rate, trades_count, trades, equity_curve, signal_log, progress_log}`（pnl_pct/win_rate 存小数，前端 ×100）
-8. `_update_task_results(...)` 上下文管理器：直接 SQL 乐观锁（version 字段）写 `backtest_result/pnl/trades_count/backtest_metric_value`，冲突重试 3 次；随后 `update_task_status(task_id, "finished", finished_at=...)`（v123 终态统一 `finished`）。
-9. v123：`update_strategy_best=True` 且成功 → `update_strategy_best_params(strategy_id, params)` 回写 `strategy.best_params`（扫描批次内为 False，由 sweep 统一写）。
+8. `_update_task_results(...)` 上下文管理器：直接 SQL 乐观锁（version 字段）写 `backtest_result/pnl/trades_count/backtest_metric_value`，冲突重试 3 次；随后 `update_task_status(task_id, "finished", finished_at=...)`（终态统一 `finished`）。
+9. `update_strategy_best=True` 且成功 → `update_strategy_best_params(strategy_id, params)` 回写 `strategy.best_params`（扫描批次内为 False，由 sweep 统一写）。
 
 `_metric_value_from_result`：提取展示指标（sharpe → total_return → pnl/initial_cash 回退），语义与 server `services/script_strategy/_convert.py` 的 `_extract_metric_value` 一致，规避 MySQL 1038 排序内存错误。
 
@@ -79,7 +79,7 @@ def run_backtest(task_id, user_id, script_id, stock_code, params, bars,
 
 `_LiveRunnerManager` 模块级单例 `_manager`：按 task_id 注册表。`start_live_runner(...)` 读脚本后创建 runner 并注册；`stop_live_runner(task_id)`、`is_running(task_id)`、`stop_all_live_runners()`（应用关闭用）。
 
-### sweep.py — 参数扫描（v123 strategy-batch-task-model）
+### sweep.py — 参数扫描（strategy-batch-task-model）
 
 约定：EvTrade 调用前已为批次预建好 strategy_task 行（strategy_id + batch_no + params 落库），strategy_exec 不自建 task / summary task。
 

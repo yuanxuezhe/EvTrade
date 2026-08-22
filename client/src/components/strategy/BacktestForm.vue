@@ -1,11 +1,11 @@
 <!--
-  BacktestForm.vue — 策略回测表单 (v123, 替代旧 SweepForm)
+  BacktestForm.vue — 策略回测表单 (替代旧 SweepForm)
 
   职责: 让用户配置一次回测 (单次 / 参数扫描), 类型驱动渲染 params_schema。
   Props:
     - schema: Array<{key, type, min, max, step, default, values}>  脚本 params_schema
     - visible: Boolean  抽屉显隐
-    - stockCode: String  策略绑定标的 (v125, 只读展示; 空 → 存量 NULL 策略, 用输入框兜底)
+    - stockCode: String  策略绑定标的 (只读展示; 空 → 存量 NULL 策略, 用输入框兜底)
   Emits:
     - update:visible(Boolean)
     - submit({ mode, stock_code, backtest_start_date, backtest_end_date,
@@ -154,7 +154,7 @@ import { ElMessage } from 'element-plus'
 const props = defineProps({
   schema: { type: Array, default: () => [] },
   visible: { type: Boolean, default: false },
-  stockCode: { type: String, default: '' },  // v125 策略绑定标的 (只读展示)
+  stockCode: { type: String, default: '' },  // 策略绑定标的 (只读展示)
 })
 const emit = defineEmits(['update:visible', 'submit'])
 
@@ -259,7 +259,7 @@ function onSubmit() {
     backtest_end_date: dateRange.value[1],
     period: period.value,
   }
-  // v125: 标的由策略绑定; 仅存量 NULL 策略用输入兜底
+  // 标的由策略绑定; 仅存量 NULL 策略用输入兜底
   if (stock_code.value) payload.stock_code = stock_code.value
   if (mode.value === 'single') {
     payload.params = { ...singleParams.value }

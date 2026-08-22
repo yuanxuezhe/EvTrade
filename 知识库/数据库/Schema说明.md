@@ -2,14 +2,14 @@
 
 ## 对应代码路径
 
-- `server/schema.yml`（983 行，数据库结构单一真相源）
+- `server/schema.yml`（1016 行，数据库结构单一真相源）
 - `server/tables/*.py`（gen_tables.py 生成的表访问类，一表一文件）
 - `scripts/sync_schema.py` / `scripts/gen_tables.py`（同步与生成工具，详见《脚本工具/数据库迁移与Schema》）
 - `openspec/specs/data-model/spec.md`（能力级 spec）
 
 ## 功能概述
 
-EvTrade 全部 20 张业务表的结构说明：表名、主键、关键列、用途；以及加表/改字段的完整操作步骤。MySQL（utf8mb4/InnoDB），schema 以 `server/schema.yml` 为权威，代码访问层为 `server/tables/` 动态 ORM。
+EvTrade 全部 21 张业务表的结构说明：表名、主键、关键列、用途；以及加表/改字段的完整操作步骤。MySQL（utf8mb4/InnoDB），schema 以 `server/schema.yml` 为权威，代码访问层为 `server/tables/` 动态 ORM。
 
 ## 文件清单（全部表，按 schema.yml 顺序）
 
@@ -22,9 +22,11 @@ EvTrade 全部 20 张业务表的结构说明：表名、主键、关键列、�
 | `positions` | `stock_code` | `stock_name/last_vol/avl_vol/vol/cost_price/synced_at` | 持仓（每股票一行） |
 | `quote_snapshots` | `id`（自增） | `stock_code/last_price/open/high/low/prev_close/volume/amount/bid1-5_price_vol/ask1-5_price_vol/ts` | 行情快照落库（quote_cache 周期 flush）；索引 ts、(stock_code,ts) |
 | `reconcile_report` | `trd_date, mode, created_at` | `diffs_json/broker_asset_json/local_asset_json/broker_positions_json/local_positions_json/rpc_status` | 日初对账报告（LargeText 存 JSON） |
+| `stkpool` | `id`（自增） | `name/remark/created_at` | 证券池主表 |
+| `stkpooldetail` | `id, stock_code` | （仅 PK 两列）；索引 id | 证券池明细（share PK id + stock_code） |
 | `stocks` | `stock_code` | `stock_name/sector/is_t0_able/min_buy_qty/trade_unit/short_name/stktype/scale` | 全 A 股基础信息（爬虫同步） |
 | `strategy` | `strategy_id`（自增） | `user_id/script_id/name/status/is_public/stock_code/best_params(JSON)/t0_params(JSON)` | 策略定义；索引 (user_id,script_id) |
-| `strategy_order` | `id`（自增） | `task_id/user_id/strategy_id/stock_code/status/active_task_id/run_count` | v126 策略下单母单（可重复启停，子单按 parent_task_id 归因） |
+| `strategy_order` | `id`（自增） | `task_id/user_id/strategy_id/stock_code/status/active_task_id/run_count` | 策略下单母单（可重复启停，子单按 parent_task_id 归因） |
 | `strategy_script` | `user_id, id` | `name/code(LargeText)/params_schema(JSON)/description/status/is_public` | 用户 Python 策略源码 + 参数 schema；索引 (user_id,status) |
 | `strategy_script_audit` | `id`（BIGINT 自增） | `task_id/stime/trd_date/phase/trigger_type/stock_code/price/volume/indicators/state/order_no/payload` | 策略执行审计流水（JSON 多列）；索引 (task_id,created_at)、(task_id,trd_date) |
 | `strategy_task` | `id`（自增） | `user_id/stock_code/mode/status/params(JSON)/backtest_result(JSON)/pnl/live_signals/progress/execution_service/strategy_id/batch_no/metric/backtest_metric_value/version` | 回测/实盘任务运行态 + 结果；索引 user_status、mode、(strategy_id,batch_no,status) |
@@ -33,7 +35,7 @@ EvTrade 全部 20 张业务表的结构说明：表名、主键、关键列、�
 | `t0_tasks` | `id`（自增） | `user_id/stock_code/base_volume/target_volume/coefficient/status/created_trd_date` | T0 做T任务；索引 user_status、(status,created_at)、stock_code |
 | `token_sessions` | `token_hash` | `user_id/role/created_at/last_seen_at` | JWT 会话缓存（跨 worker 共享，重启即清空）；索引 user、last_seen |
 | `trades` | `trd_date, order_no, trade_id` | `stock_code/order_type/price/volume/amount/trade_time/trade_type` | 成交回报；索引 order_no、(trd_date,stock_code) |
-| `users` | （空，无声明主键） | `username/password_hash/email/role/is_active/must_change_password/last_login_at` | 用户与 RBAC 角色 |
+| `users` | `id`（自增） | `username/password_hash/email/full_name/role/is_active/must_change_password/last_login_at` | 用户与 RBAC 角色 |
 
 ## 核心实现
 

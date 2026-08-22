@@ -4,14 +4,14 @@ import { stocksApi } from '../api'
 import { openDB, idbPut, idbGetAll } from '../utils/idb'
 
 /**
- * 股票基础信息 store (v97 IndexedDB per-stock key 重构)
+ * 股票基础信息 store (IndexedDB per-stock key)
  *
- * v97 核心改造:
- *   - IDB key: 'all' -> stock_code, value -> 单个 stock object
+ * IDB per-stock key 设计:
+ *   - IDB key: stock_code, value = 单个 stock object
  *   - 读: getAll() 全量秒载 Map; 按 code 直接 idbGet(code) 单条 O(1)
  *   - 写: 逐条 put(stock, stock_code); upsertLocal 单条 put 不需全量覆盖
  *
- * v90 保留:
+ * cache 加载:
  *   - cacheMap: reactive(new Map())  O(1) 查找
  *   - initCache() + refreshCache() 1 次 /stocks/all
  *   - 启动顺序: loadFromIDB() 秒载 Map -> 后台 refreshCache() 静默更新
@@ -30,7 +30,7 @@ import { openDB, idbPut, idbGetAll } from '../utils/idb'
  *   - stockName(code) / stockScale(code) / stockStktype(code): 签名不变, 内部改 Map.get
  */
 const IDB_DB_NAME = 'stocks'
-const IDB_STORE = 'stocks'  // v97: key = stock_code, value = stock object
+const IDB_STORE = 'stocks'  // key = stock_code, value = stock object
 
 export const useStocksStore = defineStore('stocks', () => {
   // ==================== 状态 ====================
@@ -75,12 +75,12 @@ export const useStocksStore = defineStore('stocks', () => {
 
   /**
    * 启动时从 IDB 加载到 Map (秒开, F5 不再拉后端)
-   * v97: IDB key = stock_code, value = stock object, 用 getAll 一次性读出
+   * IDB key = stock_code, value = stock object, 用 getAll 一次性读出
    */
   async function loadFromIDB() {
     try {
       const db = await openDB(IDB_DB_NAME, 2, [IDB_STORE], (db, oldV) => {
-        // v97 migration: delete old v1 'kv' store if exists
+        // migration: 删旧 'kv' store if exists
         if (oldV < 2 && db.objectStoreNames.contains('kv')) {
           db.deleteObjectStore('kv')
         }
@@ -101,7 +101,7 @@ export const useStocksStore = defineStore('stocks', () => {
   }
 
   /**
-   * 全量写回 IDB (v97: refreshCache 用, clear + 逐条 put)
+   * 全量写回 IDB (refreshCache 用, clear + 逐条 put)
    * upsertLocal 走 _persistSingleStock 单条写, 不走全量
    */
   async function _persistIDB() {
@@ -131,7 +131,7 @@ export const useStocksStore = defineStore('stocks', () => {
   /**
    * 全量拉取并落 IDB (首次 / 手动刷新用)
    * 调 GET /api/stocks/all 1 次拿全量, 覆盖 Map + IDB
-   * v97: IDB key = stock_code, 逐条 put
+   * IDB key = stock_code, 逐条 put
    */
   async function refreshCache() {
     if (cacheLoading.value) return
@@ -187,7 +187,7 @@ export const useStocksStore = defineStore('stocks', () => {
    * @returns {Array} 候选 stock 列表
    */
   function searchCache(query, limit = 50) {
-    // v113: 空 query 也返结果 (默认弹全量前 limit 条, 鼓励用户看到列表选)
+    // 空 query 也返结果 (默认弹全量前 limit 条, 鼓励用户看到列表选)
     const q = (query || '').trim().toLowerCase()
     if (!q) {
       // 全量返回前 limit 条 (按 stock_code 排序保证稳定)
@@ -201,7 +201,7 @@ export const useStocksStore = defineStore('stocks', () => {
       const name = (s.stock_name || '').toLowerCase()
       const short = (s.short_name || '').toLowerCase()
       let score = 0
-      // v98+: 三列都改 substring (用户: 输入证券代码/名称/简称任一子串即命中)
+      // 三列都 substring 匹配 (输入证券代码/名称/简称任一子串即命中)
       if (code.startsWith(q)) score = Math.max(score, 3)        // 代码前缀优先
       else if (code.includes(q)) score = Math.max(score, 2)     // 代码包含次之
       if (short.startsWith(q)) score = Math.max(score, 2)       // 简称前缀次之
@@ -276,7 +276,7 @@ export const useStocksStore = defineStore('stocks', () => {
   }
 
   /**
-   * 按 stock_code 查名称 (v90 改 Map.get, O(1))
+   * 按 stock_code 查名称 (Map.get, O(1))
    * 返回 null 表示查不到/缓存未加载; 调用方决定占位字符串
    */
   function stockName(code) {
@@ -286,7 +286,7 @@ export const useStocksStore = defineStore('stocks', () => {
   }
 
   /**
-   * v80: 按 stock_code 查价格小数位精度 (scale)
+   * 按 stock_code 查价格小数位精度 (scale)
    * 返回 number (默认 2); cache miss 返回 2 兜底
    */
   function stockScale(code) {
@@ -300,7 +300,7 @@ export const useStocksStore = defineStore('stocks', () => {
   }
 
   /**
-   * v80: 按 stock_code 查证券类型 stktype (0=股票 1=ETF)
+   * 按 stock_code 查证券类型 stktype (0=股票 1=ETF)
    * 返回 number (默认 0); cache miss 返回 0 兜底
    */
   function stockStktype(code) {
@@ -311,24 +311,24 @@ export const useStocksStore = defineStore('stocks', () => {
     return Number(t) || 0
   }
 
-  // ==================== 添加 (v46 stock-info-create) ====================
+  // ==================== 添加 (stock-info-create) ====================
 
   const createLoading = ref(false)
 
   /**
    * 本地 Map + IDB 同步 upsert (CRUD 成功后调用)
-   * v97: 单条 put, 不需全量覆盖
+   * 单条 put, 不需全量覆盖
    * @param {Object} stock 完整 stock dict (含 stock_code)
    */
   function upsertLocal(stock) {
     if (!stock || !stock.stock_code) return
     cacheMap.set(stock.stock_code, stock)
-    // v97: 单条写 IDB, 不触发全量 clear+rewrite
+    // 单条写 IDB, 不触发全量 clear+rewrite
     _persistSingleStock(stock.stock_code, stock)
   }
 
   /**
-   * 单条写入 IDB (v97: upsertLocal 用, 避免全量覆盖)
+   * 单条写入 IDB (upsertLocal 用, 避免全量覆盖)
    */
   async function _persistSingleStock(code, stock) {
     try {
@@ -409,8 +409,8 @@ export const useStocksStore = defineStore('stocks', () => {
 
   return {
     // state
-    cache,            // v90: computed -> Array.from(cacheMap.values())
-    cacheMap,         // v90: 新增, O(1) 查找
+    cache,            // computed -> Array.from(cacheMap.values())
+    cacheMap,         // O(1) 查找
     cacheLoading,
     cacheLoaded,
     cacheProgress,
@@ -425,9 +425,9 @@ export const useStocksStore = defineStore('stocks', () => {
     editLoading,
     createLoading,
     // actions
-    initCache,        // v90: 替代 loadCache
-    refreshCache,     // v90: 新增, 手动同步缓存
-    loadFromIDB,      // v90: 新增, 启动秒载
+    initCache,        // 启动入口: IDB 秒载, 空则首次拉
+    refreshCache,     // 手动同步缓存
+    loadFromIDB,      // 启动秒载
     searchCache,
     fetchPage,
     setPage,
@@ -436,7 +436,7 @@ export const useStocksStore = defineStore('stocks', () => {
     closeEdit,
     saveEdit,
     createStock,
-    upsertLocal,      // v90: 新增, CRUD 后同步 Map + IDB
+    upsertLocal,      // CRUD 后同步 Map + IDB
     stockName,
     stockScale,
     stockStktype,

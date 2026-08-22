@@ -1,5 +1,5 @@
 """
-2026-07-08-add-t0-tasks.py — v18 增量迁移 (idempotent, MySQL-only v20)
+2026-07-08-add-t0-tasks.py — 增量迁移 (idempotent, MySQL-only)
 
 变更：
 1. 新建表 t0_tasks (REQ-TRADE-013):
@@ -30,18 +30,18 @@ import sys
 from sqlalchemy import create_engine, text, inspect
 from sqlalchemy.engine import Engine
 
-# ─────────────── URL 解析（v20 MySQL-only 永久标准 强制 EVTRADE_DB_URL） ───────────────
-# REQ-CFG-009 v20: SQLite fallback 永久下线；migration 脚本同样要求显式 EVTRADE_DB_URL。
+# ─────────────── URL 解析（MySQL-only 永久标准 强制 EVTRADE_DB_URL） ───────────────
+# REQ-CFG-009: SQLite fallback 永久下线；migration 脚本同样要求显式 EVTRADE_DB_URL。
 try:
     DATABASE_URL = os.environ["EVTRADE_DB_URL"]
 except KeyError:
     raise RuntimeError(
-        "EVTRADE_DB_URL is required (v20 MySQL-only permanent standard). "
+        "EVTRADE_DB_URL is required (MySQL-only permanent standard). "
         "Set it in server/.env, e.g. mysql+pymysql://EvTrade:p%40ssw0rd@127.0.0.1:33066/evtrade?charset=utf8mb4"
     )
 if not DATABASE_URL.startswith("mysql"):
     raise RuntimeError(
-        f"[migration] Only MySQL is supported (v20 permanent standard). Got: {DATABASE_URL[:80]!r}"
+        f"[migration] Only MySQL is supported (permanent standard). Got: {DATABASE_URL[:80]!r}"
     )
 ADMIN_URL = os.environ.get("EVTRADE_DB_ADMIN_URL", DATABASE_URL)
 if not ADMIN_URL.startswith("mysql"):
@@ -52,7 +52,7 @@ if not ADMIN_URL.startswith("mysql"):
 
 def _engine_dialect_name(engine: Engine) -> str:
     with engine.connect() as conn:
-        return conn.dialect.name  # 'mysql' (v20 永久标准唯一合法值)
+        return conn.dialect.name  # 'mysql' (永久标准唯一合法值)
 
 
 def table_exists(engine: Engine, table: str) -> bool:
@@ -115,9 +115,9 @@ def main():
             # ─── Step 4: 加 orders.task_id 索引 (幂等) ───
             _create_index_safe(conn, admin_engine, "orders", "ix_orders_task_id", "task_id")
 
-            # ─── Step 5: 补 t0_tasks.updated_at 列 (幂等, v18 fix) ───
+            # ─── Step 5: 补 t0_tasks.updated_at 列 (幂等, fix) ───
             # 原 commit 2 migration 漏了 updated_at, 但 spec §12 状态流转要求有
-            # v20 起: updated_at 已合进 Step 1 CREATE TABLE, 此分支仅兜底历史 MySQL 库
+            # updated_at 已合进 Step 1 CREATE TABLE, 此分支仅兜底历史 MySQL 库
             if column_exists(admin_engine, "t0_tasks", "updated_at"):
                 print("[SKIP] t0_tasks.updated_at already exists")
             else:

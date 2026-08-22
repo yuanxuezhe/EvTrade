@@ -6,13 +6,11 @@ query.py — GET /api/orders 和 GET /api/orders/history 委托查询端点
 - GET /            : 委托列表，按 trd_date 默认 = 激活日
 - GET /history     : 任意交易日历史（admin 也用）
 
-v81 tables-migration:
-- 删 Depends(get_db) × 2 + sqlalchemy.orm.Session + server.db.get_db
-- db.query(Order).filter(Order.x == v) → Orders.query_by('x', v) (单字段)
+- 单字段查询走 Orders.query_by('x', v)
 - 复合条件 (start_date/end_date + stock_code + status) → Orders.query_all() + 内存过滤
-  (v80.5 设计原则: 数据量小, 区间 API 不支持, 走全表 + Python 过滤)
-- db.query(...).count() → aggregate('orders', 'COUNT', '*', where=..., params=...)
-- db.query(...).order_by(desc(Order.order_time)).offset().limit() → 内存排序 + 切片
+  (数据量小, 区间 API 不支持, 走全表 + Python 过滤)
+- count 走 aggregate('orders', 'COUNT', '*', where=..., params=...)
+- 排序 + 分页 → 内存排序 + 切片
 """
 from typing import Optional
 
@@ -20,7 +18,7 @@ from fastapi import Depends, Query
 
 from server.auth.deps import get_current_user
 from server.models.user import User
-from server.repo.orders import _get_active_trd_date  # v81: tables-backed helper
+from server.repo.orders import _get_active_trd_date  # tables-backed helper
 from server.api.orders.schemas import ListOrdersResponse, _to_order_out
 from server.tables import Orders
 from server.tables.base import aggregate
@@ -28,7 +26,7 @@ from server.tables.base import aggregate
 
 def _filter_orders(rows, trd_date=None, start_date=None, end_date=None,
                    stock_code=None, status=None):
-    """复合过滤 + 排序 + 切片 helper (v81 tables-migration 内存过滤模式)
+    """复合过滤 + 排序 + 切片 helper (内存过滤模式)
 
     Args:
         rows: List[Row] (Orders.query_all() 默认按 (trd_date, order_no) 升序)
@@ -38,7 +36,7 @@ def _filter_orders(rows, trd_date=None, start_date=None, end_date=None,
     Returns:
         (filtered_total, sorted_desc_rows)
 
-    v113 移除 task_id 入参 (前端纯缓存筛选, 后端不再接 task_id 参数)
+    无 task_id 入参 (前端纯缓存筛选, 后端不接 task_id 参数)
     """
     # 区间 / 单日过滤 (按用户伪代码语义: 区间优先于 trd_date)
     if start_date or end_date:
@@ -70,7 +68,7 @@ def register_query(router):
     async def list_orders(
         stock_code: Optional[str] = None,
         status: Optional[str] = None,
-        all: Optional[bool] = Query(False, description="v113: 返全部 orders 不限日期 (前端 startup 缓存)"),
+        all: Optional[bool] = Query(False, description="返全部 orders 不限日期（前端 startup 缓存）"),
         trd_date: Optional[str] = Query(None, description="8 位数字 YYYYMMDD，缺省 = 激活日"),
         start_date: Optional[str] = Query(
             None, regex=r"^\d{8}$",
@@ -80,39 +78,38 @@ def register_query(router):
             None, regex=r"^\d{8}$",
             description="结束交易日 YYYYMMDD（含）",
         ),
-        limit: int = Query(2000, le=10000),  # v113: 1k -> 2k (前端 startup 缓存 / 跨日管理)
+        limit: int = Query(2000, le=10000),  # 默认 2k (前端 startup 缓存 / 跨日管理)
         offset: int = 0,
         user: User = Depends(get_current_user),
     ):
         """委托列表（纯 DB）
 
-        v113 过滤语义升级：
+        过滤语义：
         - all=true → 跳日期过滤返所有 (前端 startup 一次性缓存)
         - start_date/end_date 任一存在 → 走区间模式（start_date <= trd_date <= end_date）
         - 都不存在 → 走缺省模式（trd_date = 激活日，向后兼容）
         - 区间模式优先级高于 trd_date：start_date/end_date 存在时 trd_date 被忽略
 
-        v113 注: task_id 过滤由前端纯缓存层做 (不消耗后端), 避免 API 膨胀
+        注: task_id 过滤由前端纯缓存层做 (不消耗后端), 避免 API 膨胀
 
-        v81 tables-migration: 删 Depends(get_db), 改 Orders.query_all() + 内存过滤
+        走 Orders.query_all() + 内存过滤
         """
-        # 缺省模式：trd_date 显式给则用，否则激活日 (v_next: SysStatus 单行 id=1)
-        # v113: all=true 跳过 trd_date 默认
+        # 缺省模式：trd_date 显式给则用，否则激活日 (SysStatus 单行 id=1)
+        # all=true 跳过 trd_date 默认
         if all is False and not (start_date or end_date) and not trd_date:
             trd_date = _get_active_trd_date()
 
-        # v81: Orders.query_all() 按 (trd_date, order_no) 升序全表 → 内存过滤
+        # Orders.query_all() 按 (trd_date, order_no) 升序全表 → 内存过滤
         all_rows = Orders.query_all()
         filtered = _filter_orders(
             all_rows,
-            trd_date=None if all else trd_date,  # v113: all=true 不过滤 trd_date
+            trd_date=None if all else trd_date,  # all=true 不过滤 trd_date
             start_date=start_date,
             end_date=end_date,
             stock_code=stock_code,
             status=status,
-            # v113: 删除 task_id 过滤 (前端纯缓存处理, 不消耗后端)
         )
-        # v113: all=true 时放宽 limit 上限到 1w
+        # all=true 时放宽 limit 上限到 1w
         effective_limit = min(limit, 10000) if all else min(limit, 500)
         total = len(filtered)
         # offset / limit 切片
@@ -133,7 +130,7 @@ def register_query(router):
     ):
         """任意交易日历史委托（admin 也用）
 
-        v81 tables-migration: 改 Orders.query_all() + 内存过滤
+        走 Orders.query_all() + 内存过滤
         """
         all_rows = Orders.query_all()
         filtered = _filter_orders(

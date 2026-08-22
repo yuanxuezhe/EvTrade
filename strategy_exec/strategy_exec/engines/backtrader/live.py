@@ -104,8 +104,8 @@ class LiveRunner:
         params: Dict[str, Any],
         code: str,
         params_schema: Optional[List[Dict[str, Any]]] = None,
-        parent_task_id: Optional[int] = None,   # v126 母单归因
-        strategy_name: str = "",                 # v126 子单 user_def
+        parent_task_id: Optional[int] = None,   # 母单归因
+        strategy_name: str = "",                 # 子单 user_def
     ) -> None:
         self.task_id = task_id
         self.user_id = user_id
@@ -302,8 +302,8 @@ async def start_live_runner(
     script_id: str,
     stock_code: str,
     params: Dict[str, Any],
-    parent_task_id: Optional[int] = None,   # v126 母单归因
-    strategy_name: str = "",                 # v126 子单 user_def
+    parent_task_id: Optional[int] = None,   # 母单归因
+    strategy_name: str = "",                 # 子单 user_def
 ) -> LiveRunner:
     """启动一个 live runner (EvTrade 转发调)"""
     script_row = get_script(user_id, script_id)

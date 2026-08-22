@@ -1,7 +1,7 @@
 <!--
   TodayOrdersPanel.vue — 今日委托 / 今日成交 双 tab mini 面板 (统一 DataTableView)
 
-  v30.1 tab 修复 + DataTableView 迁移:
+  双 tab 结构 (统一 DataTableView):
     tab=委托 (orders) — DataTableView + 撤单按钮
     tab=成交 (trades) — DataTableView + 金额本地计算
 -->

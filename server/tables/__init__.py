@@ -1,5 +1,5 @@
 """
-server/tables/__init__.py — 统一导出所有表类 (v80.2 自动生成)
+server/tables/__init__.py — 统一导出所有表类（自动生成）
 
 ⚠️ 不要手动修改本文件 — 重新跑 scripts/gen_tables.py 自动更新
 """

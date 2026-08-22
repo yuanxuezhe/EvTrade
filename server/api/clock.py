@@ -9,7 +9,7 @@ from fastapi import APIRouter
 from server.db import SessionLocal
 from server.repo.system import TradingClock
 from server.services.guards import resolve_default_trd_date, resolve_active_trd_date
-from server.services import sysconfig  # v78: 交易时段配置
+from server.services import sysconfig  # 交易时段配置
 
 router = APIRouter()
 
@@ -39,7 +39,7 @@ async def get_trading_clock():
         initialized = active_trd is not None
         default_trd = resolve_default_trd_date(db)
         is_in = TradingClock.is_in_trading_session()
-        # v78: 优先读 sysconfig.trdtime, 回退 TradingClock 默认值
+        # 优先读 sysconfig.trdtime, 回退 TradingClock 默认值
         trdtime_raw = sysconfig.get_raw("trdtime", user="0") or "093000-113000;130000-153000"
         sessions = _parse_trdtime(trdtime_raw)
         win = {"morning": sessions[0] if len(sessions) >= 1 else {"start": "00:00:00", "end": "11:30:00"},

@@ -1,12 +1,11 @@
 import { http } from './index'
 
 // ============================================================
-// 管理 API（v4 系统初始化 + 对账 + 时段 + 费率）
+// 管理 API（系统初始化 + 对账 + 时段 + 费率）
 // 后端路由前缀: /api/admin/*  /api/fee-config
 // ============================================================
 
-// 系统状态管理（含交易日）
-// v5 schema refactor: trading_day → sys_status
+// 系统状态管理（含交易日, sys_status）
 export const sysStatusApi = {
   // 当前激活交易日
   async current() {
@@ -50,7 +49,7 @@ export const reconcileApi = {
     const res = await http.get('/admin/reconcile/reports', { params })
     return res.data
   },
-  // 单个报告（v5: 复合主键 (trd_date, mode, created_at)）
+  // 单个报告（复合主键 (trd_date, mode, created_at)）
   async getReport(trdDate, mode, createdAt) {
     const res = await http.get(
       `/admin/reconcile/reports/${encodeURIComponent(trdDate)}/${encodeURIComponent(mode)}/${encodeURIComponent(createdAt)}`

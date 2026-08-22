@@ -1,8 +1,8 @@
 """
 Auth API: login, current user info, change password.
 
-v81 tables-migration (strict user-pseudocode 风格):
-  - ORM 残留全部清掉: 无 Depends(get_db), 无 sqlalchemy.orm.Session, 无 server.db.get_db.
+tables API 访问风格 (strict user-pseudocode):
+  - 无 Depends(get_db), 无 sqlalchemy.orm.Session, 无 server.db.get_db.
   - 严格按 MIGRATION_GUIDE.md:
       单字段非主键查 → Users.query_by('username', form.username, limit=1)
       主键查       → Users.query_one(id=...)
@@ -80,7 +80,7 @@ class UserInfoResponse(BaseModel):
 
 
 class ChangePasswordRequest(BaseModel):
-    # v_next: 不限制旧密码 / 新密码长度 — 用户可自由修改
+    # 不限制旧密码 / 新密码长度 — 用户可自由修改
     new_password: str
 
 
@@ -101,9 +101,7 @@ async def login(
     run_in_threadpool 把 bcrypt 扔到 anyio threadpool，不阻塞 event loop 与
     DB session 释放。
 
-    v81 tables-migration (严格伪代码):
-      原: db.query(User).filter(User.username == ...).first()
-      改: Users.query_by('username', form.username, limit=1)
+    登录查询走 Users.query_by('username', form.username, limit=1)。
     """
     matched = Users.query_by("username", form.username, limit=1)
     user = matched[0] if matched else None
@@ -130,7 +128,7 @@ async def login(
     # REQ-AUTH-IDLE-001: token 注册到 session cache (10min idle + restart 失效)
     session.register_token(token, user_id=user.id, role=user.role)
     user_dict = _row_to_user_dict(user)
-    # v_next: 系统级开关 — 关掉后首次登录不再强制改密
+    # 系统级开关 — 关掉后首次登录不再强制改密
     from server.services.sysconfig import get
     required = bool(get("must_change_password_required", 1))
     user_dict["must_change_password_required"] = required
@@ -146,7 +144,7 @@ async def login(
 
 @router.get("/me", response_model=UserInfoResponse)
 def me(current_user=Depends(get_current_user)):
-    # v81: current_user 仍可能来自 deps.get_current_user 的 ORM User;
+    # current_user 仍可能来自 deps.get_current_user 的 ORM User;
     # _row_to_user_dict 用 getattr 兼容两者.
     return UserInfoResponse(**_row_to_user_dict(current_user))
 
@@ -156,9 +154,7 @@ def update_profile(
     payload: UpdateProfileRequest,
     current_user=Depends(get_current_user),
 ):
-    """v81 tables-migration:
-      原: db.commit() / db.refresh()
-      改: Users.update_one({...}, id=current_user.id)
+    """profile 更新走 Users.update_one({...}, id=current_user.id)
     注意: current_user 兼容期仍是 ORM User, ORM 属性赋值 + Users.update_one(dict)
     是无 ORM 残留的合法迁移模式 (update_one 走主键 UPDATE, 不需要 db.commit).
     """
@@ -169,7 +165,7 @@ def update_profile(
         data["full_name"] = payload.full_name.strip() or None
     if data:
         Users.update_one(data, id=current_user.id)
-        # 回读 (原 db.refresh(current_user) 等价)
+        # 回读最新行
         refreshed = Users.query_one(id=current_user.id)
         if refreshed is not None:
             current_user = refreshed
@@ -219,10 +215,6 @@ async def change_password(
 
     初始化时 admin 密码是 admin/admin123 (seed.py), 用户可自由修改, 不加任何限制。
     hash_password rounds=12 更慢 (~300ms)，必走 threadpool。
-
-    v81 tables-migration:
-      原: current_user.password_hash = ... ; db.commit()
-      改: Users.update_one({...}, id=current_user.id)  # 无 ORM 残留, 主键 UPDATE
     """
     new_hash = await run_in_threadpool(hash_password, payload.new_password)
     Users.update_one(
@@ -239,7 +231,7 @@ async def change_password(
 def heartbeat(current_user=Depends(get_current_user)):
     """token keepalive: 前端每 N 分钟调用一次, 重置 last_seen_at
 
-    REQ-AUTH-IDLE-001 (2026-08-04 追加):
+    REQ-AUTH-IDLE-001:
     - idle 超 10min token 失效
     - 前端静止时如不发请求, token 会过期
     - 解决: 前端每 5 分钟调一次 /heartbeat, 让 token touch

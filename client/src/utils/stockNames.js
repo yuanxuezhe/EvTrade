@@ -1,5 +1,5 @@
 /**
- * 证券名称查表 util（v32 优化：name 不返后端，前端查 stocks cache 补）
+ * 证券名称查表 util（name 不返后端，前端查 stocks cache 补）
  *
  * 数据流:
  *   后端 (holdings / orders / trades API) 不再返回证券名称

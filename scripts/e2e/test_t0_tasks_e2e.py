@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-test_t0_tasks_e2e.py — T0Task 端到端集成测试（v18 change t0-task-management）
+test_t0_tasks_e2e.py — T0Task 端到端集成测试（change t0-task-management）
 
 📖 详见 `openspec/changes/2026-07-08-t0-task-management/` spec
 
@@ -44,7 +44,7 @@ def _c(code, s):
     return s
 def _ok(s): return _c("32", f"✓ {s}")
 def _fail(s): return _c("31", f"✗ {s}")
-def _skip(s): return _c("33;2", f"⏸ {s}")  # v20: yellow
+def _skip(s): return _c("33;2", f"⏸ {s}")  # yellow
 def _section(s): return _c("1;36", f"\n=== {s} ===")
 
 # ──────────────────── HTTP helpers ────────────────────
@@ -125,7 +125,7 @@ def test_task_crud(tok: str):
         "stock_code": "600519.SH",
         "base_volume": 100,
         "target_volume": 300,
-        "note": "v18 e2e smoke",
+        "note": "e2e smoke",
     }
     r = _req("POST", "/api/t0-tasks", body=create_body, token=tok, expect=201)
     task_id = r["id"]
@@ -186,7 +186,7 @@ def test_balance_and_stats(tok: str, task_id: int):
 # ============ Stage 4: orders/place 带 task_id 校验 ============
 
 def _is_in_trading_session(tok: str) -> bool:
-    """v20: 检查当前是否在交易时段 (用于 skip 时段敏感测试).
+    """检查当前是否在交易时段 (用于 skip 时段敏感测试).
     返回 True = 在交易时段 (可以测) / False = 收市 (跳过)"""
     try:
         r = _req("GET", "/api/admin/trading-session", token=tok)
@@ -205,7 +205,7 @@ def _is_in_trading_session(tok: str) -> bool:
 def test_place_task_id_validation(tok: str, task_id: int):
     section("Place order task_id validation")
 
-    # v20: 收市后下单必失败 (require_trading_session), 这 2 个测试是时段敏感
+    # 收市后下单必失败 (require_trading_session), 这 2 个测试是时段敏感
     if not _is_in_trading_session(tok):
         check("INVALID_TASK → 400 (skip: 收市)", True, skip=True)
         check("TASK_STOCK_MISMATCH → 400 (skip: 收市)", True, skip=True)

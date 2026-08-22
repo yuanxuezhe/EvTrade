@@ -104,8 +104,8 @@ def _vite_cmd():
 def _hqserverd_cmd():
     """构造 hqserverd (Rust 二进制) 启动命令。
 
-    2026-08-18: 取代旧的 `python -u hq/hqserver.py` (aio_pika + websockets)。
-    新链路: QMT quota.py (UDP 推送) -> hqserverd (UDP 收 + WS 推前端)。
+    取代旧的 `python -u hq/hqserver.py` (aio_pika + websockets)。
+    链路: QMT quota.py (UDP 推送) -> hqserverd (UDP 收 + WS 推前端)。
 
     选择顺序:
       1. 若 HQSERVERD_BIN 环境变量指向具体二进制, 优先使用 (生产部署常用)
@@ -133,7 +133,7 @@ def _hqserverd_cmd():
 def _strategy_exec_cmd():
     """构造 strategy_exec 的启动命令 (从 .env 加载环境变量).
 
-    v120+: strategy_exec 复用 EvTrade 根 .venv (dependencies 在根 pyproject.toml)
+    strategy_exec 复用 EvTrade 根 .venv (dependencies 在根 pyproject.toml)
     sys.executable = 根 .venv/bin/python
 
     注意: 必须用 dict(os.environ) 拷贝, 不能用 copy.copy (Windows 上 _Environ
@@ -170,12 +170,12 @@ SERVICES = {
     'backend': Service(
         'backend', BACKEND_PORT,
         PROJECT_ROOT,
-        # ws_ping 探测阈值放宽 (2026-08-10 ws-keepalive-ping-slack):
+        # ws_ping 探测阈值放宽 (ws-keepalive-ping-slack):
         #   uvicorn 默认 ws_ping_timeout=20s 太紧 — 浏览器 quote_update 全市场订阅时
         #   渲染 backpressure 使 native pong 延迟 ~20-30s, 探测误断 1011 keepalive ping timeout,
         #   前端每 ~2.3min 重连。对齐 hq/hqserver.py 既有 ping_timeout=60 先例。
         #   保留探测 (真正死连接 60s 内仍被踢), 仅放宽 pong 容忍窗口。
-        # v128.4 单进程: 删 --workers 4, dict + RLock 跨线程共享 (见 server/auth/session.py),
+        # 单进程部署: 不加 --workers, dict + RLock 跨线程共享 (见 server/auth/session.py),
         #   WS event loop 统一, DB 池单进程承担 (见 server/infra/db.py 默认值上调).
         [sys.executable, '-u', '-m', 'uvicorn', 'server.main:app',
          '--host', '0.0.0.0', '--port', str(BACKEND_PORT),
@@ -190,7 +190,7 @@ SERVICES = {
     'hqserver': Service(
         'hqserver', HQSERVER_PORT,
         os.path.join(PROJECT_ROOT, 'hq'),
-        # 2026-08-18: hqserver 改写为 Rust 二进制 (hq/hqserverd), 不再依赖 Python
+        # hqserver 为 Rust 二进制 (hq/hqserverd), 不再依赖 Python
         #   + aio_pika + websockets, 而是 UDP 收 QMT 推送 + WS 推前端。
         #   cwd 切到 hq/hqserverd/, 让 .env 等相对路径生效 (本服务目前只用 env)。
         #   dev: cargo run; release: 直接执行 target/release/hqserverd[.exe]
@@ -211,10 +211,10 @@ SERVICES = {
 }
 
 VALID_ACTIONS = ['start', 'stop', 'restart', 'status', 'logs']
-# v118: broker 加入服务表 — 但 DEFAULT_SERVICES 默认跳过 (xtquant 模块依赖 QMT 客户端环境)
+# broker 在服务表中但 DEFAULT_SERVICES 默认跳过 (xtquant 模块依赖 QMT 客户端环境)
 #   用户可显式 `uv run python scripts/evctl.py start broker` / restart broker 启动
 DEFAULT_SERVICES = ['backend', 'frontend', 'hqserver', 'strategy_exec']
-OPTIONAL_SERVICES = ['broker']   # v118: 需要 xtquant 本地模块, 默认不启动
+OPTIONAL_SERVICES = ['broker']   # 需要 xtquant 本地模块, 默认不启动
 
 # ============================================================================
 # 输出辅助 (无 ANSI 颜色, 跨平台一致)
@@ -671,9 +671,9 @@ def start_hqserver():
 
 
 def _pre_schema_check():
-    """启动 backend 前 reconcile DB ↔ yml (v130+ schema 治理).
+    """启动 backend 前 reconcile DB ↔ yml (schema 治理).
 
-    v130.1 改为 DIFF-ONLY: 只跑 `sync_schema.py diff` 报告 drift, 不自动 apply.
+    DIFF-ONLY: 只跑 `sync_schema.py diff` 报告 drift, 不自动 apply.
     历史教训:
       - apply 会跑 gen_tables.py, 而 gen_tables 读 INFORMATION_SCHEMA.COLUMNS.COLUMN_KEY
         在某些 MySQL 环境下永远返 '' → 生成的 server/tables/users.py __pk_fields__=() →

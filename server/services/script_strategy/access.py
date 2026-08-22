@@ -1,5 +1,5 @@
 """
-server/services/script_strategy/access.py — 策略可见性/权限判定 (v125)
+server/services/script_strategy/access.py — 策略可见性/权限判定
 
 职责单一: 显式 is_public 判定, 替代旧的"派生自公开脚本即放行"隐式规则。
 - strategy_is_public / public_view: 策略是否公开 + 他人公开策略的精简视图
@@ -7,9 +7,9 @@ server/services/script_strategy/access.py — 策略可见性/权限判定 (v125
 - resolve_strategy: 解析策略 → owner/admin 返回完整行; 他人仅公开返回; 他人私有/不存在 → None
 - require_backtest_access: 回测/批次/重测的严格 owner 门禁
   (他人公开 → BACKTEST_FORBIDDEN; 他人私有/不存在 → NO_STRATEGY, 不泄漏存在性)
-- require_strategy_order_access: 母单 owner 门禁 (v126, 三档: owner 通行 / 他人公开 403 / 不存在 404)
+- require_strategy_order_access: 母单 owner 门禁 (三档: owner 通行 / 他人公开 403 / 不存在 404)
 
-策略模块 = 纯回测 (v125): 实盘入口已通过母单 (strategy_order) 重启 (v126)。
+策略模块 = 纯回测: 实盘入口已通过母单 (strategy_order) 重启。
 """
 from typing import Any, Dict, Optional
 
@@ -68,7 +68,7 @@ def require_backtest_access(strategy_id: int, user_id: int, is_admin: bool = Fal
 
 
 def require_strategy_order_access(strategy_id: int, user_id: int, is_admin: bool = False):
-    """母单门禁 (v126): 仅策略 owner/admin 可建/启停母单.
+    """母单门禁: 仅策略 owner/admin 可建/启停母单.
 
     与 require_backtest_access 行为一致 — 母单是本人对本人策略的实盘操作,
     他人公开策略不可被代建/代启 (公开 = 仅回测参考, 不含实盘托管).

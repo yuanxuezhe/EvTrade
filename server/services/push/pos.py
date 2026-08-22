@@ -1,18 +1,18 @@
 """
-push/pos.py — v118 pos_push 处理
+push/pos.py — pos_push 处理
 
 broker 端 position_callback 推送 pos_push 事件 (xtquant 协议):
   stock_code, last_vol, volume, avl_amt, avg_price
 
-设计 (v118 后):
+设计:
   - pos_push 是持仓数据的唯一权威源
-  - trd_cfm 不再处理持仓 (仅写 trades + orders)
-  - reconcile 不再覆盖持仓 (仅初始化时用 qry_positions 同步)
+  - trd_cfm 不处理持仓 (仅写 trades + orders)
+  - reconcile 不覆盖持仓 (仅初始化时用 qry_positions 同步)
 
-行为 (v128.1 2026-08-12):
-  - broker 端已做去重, server 不再做 diff 判断 — 任何 pos_push 进来都直接
+行为:
+  - broker 端已做去重, server 不做 diff 判断 — 任何 pos_push 进来都直接
     upsert DB 并返回 PositionOut 给 dispatcher 广播 position_update
-  - init reconcile 窗口仍由 suppress_pos_push() context manager 抑制
+  - init reconcile 窗口由 suppress_pos_push() context manager 抑制
     (覆盖 qry_positions 等待 + 全表覆盖窗口, 避免 init 后 push 洪峰)
 """
 from typing import Any, Dict, Optional
@@ -47,7 +47,7 @@ class suppress_pos_push:
 
 
 def handle_pos_push(db, row: Dict[str, Any], ts: str) -> Optional[Dict[str, Any]]:
-    """处理 pos_push 推送 (v118: 持仓变化直接覆盖本地; v128.1: 无 server 端去重)
+    """处理 pos_push 推送 (持仓变化直接覆盖本地; 无 server 端去重)
 
     broker 端已做去重, 本函数只负责 upsert DB + 返回广播 payload.
     broker wire 字段 (xtquant 协议):
@@ -74,7 +74,7 @@ def handle_pos_push(db, row: Dict[str, Any], ts: str) -> Optional[Dict[str, Any]
 
     if pos is None:
         # 新建 Position (broker 已经看到持仓, 本地没有)
-        # v118: 不需要 reconcile 兜底, 直接由 pos_push 驱动创建
+        # 不需要 reconcile 兜底, 直接由 pos_push 驱动创建
         new_row = Positions.add_one({
             'stock_code': stock_code,
             'stock_name': '',     # 持仓变化推送不带名称, 名称由 stocks 表 lookup
@@ -83,7 +83,7 @@ def handle_pos_push(db, row: Dict[str, Any], ts: str) -> Optional[Dict[str, Any]
             'avl_vol': avl_vol,
             'cost_price': cost_price,
             'synced_at': _utcnow(),
-            'synced_from': 'pos_push',   # v118: 标识来源
+            'synced_from': 'pos_push',   # 标识来源
         })
         return {"position": _position_to_out_dict(new_row)}
 
@@ -94,7 +94,7 @@ def handle_pos_push(db, row: Dict[str, Any], ts: str) -> Optional[Dict[str, Any]
         'avl_vol': avl_vol,
         'cost_price': cost_price,
         'synced_at': _utcnow(),
-        'synced_from': 'pos_push',   # v118
+        'synced_from': 'pos_push',
     }, stock_code=stock_code)
 
     # 重新查一次返回最新行 (确保返回给前端的字段值与 DB 一致)

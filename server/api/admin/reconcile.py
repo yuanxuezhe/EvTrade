@@ -1,19 +1,13 @@
 """
-admin/reconcile.py — v5 重构版（schema refactor）
+admin/reconcile.py
 
 GET  /api/admin/reconcile/config      → 读对账配置
 PATCH /api/admin/reconcile/config      → 改 auto_reconcile
 GET  /api/admin/reconcile/reports      → 历史报告列表（90 天）
 GET  /api/admin/reconcile/reports/{trd_date}/{mode}/{created_at} → 单个报告详情
 
-v5 改动：
 - ReconcileReport 复合主键 (trd_date, mode, created_at)
-- 响应中 id 字段改为 created_at 时间戳
-- TRD_DATE → trd_date
-
-v81.4 改动（tables-migration）：
-- 散落的 db.query(ReconcileReport) 改走 server.tables.ReconcileReport
-- 复合主键查询用 query_one(trd_date=..., mode=..., created_at=...)
+- 复合主键查询走 server.tables.ReconcileReport.query_one(trd_date=..., mode=..., created_at=...)
 - 范围查询 (created_at >= cutoff) 走 server.tables.get_conn() 原生 SQL（API 不支持范围）
 """
 from datetime import datetime, timedelta, timezone
@@ -51,7 +45,7 @@ class ReconcileConfigUpdate(BaseModel):
 
 
 class ReconcileReportSummary(BaseModel):
-    """v5: id 字段改为 created_at 时间戳（Report 复合主键含 created_at）"""
+    """id 字段为 created_at 时间戳（Report 复合主键含 created_at）"""
     created_at: str
     trd_date: str
     mode: str
@@ -60,7 +54,7 @@ class ReconcileReportSummary(BaseModel):
 
 @router.get("/config", response_model=ReconcileConfigOut)
 async def get_config(db: Session = Depends(get_db), _=Depends(require_admin)):
-    """v78: 读 sysconfig cache (auto_reconcile + auto_use_broker_data)"""
+    """读 sysconfig cache (auto_reconcile + auto_use_broker_data)"""
     auto = sysconfig.get("auto_reconcile", False, user="0")
     broker = sysconfig.get("auto_use_broker_data", 1, user="0")
     if auto is None or broker is None:
@@ -78,7 +72,7 @@ async def update_config(
     req: ReconcileConfigUpdate,
     admin_user: User = Depends(require_admin),
 ):
-    """v78: 写 sysconfig.user='0'"""
+    """写 sysconfig.user='0'"""
     if req.auto_reconcile is not None:
         sysconfig.set_value("0", "auto_reconcile", "1" if req.auto_reconcile else "0",
                             "自动对账开关 (0=人工/1=自动)", admin_user.username)
@@ -97,7 +91,7 @@ async def update_config(
 @router.get("/reports", response_model=List[ReconcileReportSummary])
 async def list_reports(db: Session = Depends(get_db), _=Depends(require_admin)):
     cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=REPORT_RETENTION_DAYS)
-    # v81.4 tables-migration: 走 tables 层 get_conn() 原生 SQL
+    # 走 tables 层 get_conn() 原生 SQL
     #   (ReconcileReport.query_by/query_by_fields 仅支持等值过滤, 不支持 created_at >= 范围)
     sql = (
         "SELECT created_at, trd_date, mode, rpc_status FROM `reconcile_report` "
@@ -133,7 +127,7 @@ async def get_report(
             status_code=400,
             detail={"code": "BAD_CREATED_AT", "msg": f"created_at 解析失败: {created_at}"}
         )
-    # v81.4 tables-migration: 走 ReconcileReport.query_one (复合主键)
+    # 走 ReconcileReport.query_one (复合主键)
     r = ReconcileReport.query_one(trd_date=trd_date, mode=mode, created_at=ts)
     if not r:
         raise HTTPException(status_code=404, detail={"code": "NOT_FOUND", "msg": f"报告 {trd_date}/{mode}@{created_at} 不存在"})

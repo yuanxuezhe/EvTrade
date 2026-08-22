@@ -1,5 +1,5 @@
 /**
- * t0_tasks.js — T0Task REST API 客户端（v18 change t0-task-management）
+ * t0_tasks.js — T0Task REST API 客户端（change t0-task-management）
  *
  * 📖 详见 `openspec/specs/trading/spec.md` §REQ-TRADE-013~018
  *
@@ -13,7 +13,7 @@
  *   POST   /t0-tasks/{id}/close         一键平仓到 base_volume
  *   GET    /t0-tasks/{id}/stats         详细统计（含 daily / by_stock）
  *
- *   注: v55.1 起删除 POST /t0-tasks/{id}/balance（前端在 T0Trade.vue 直接读 holdings.orders 算差值 + 调 /orders/place 下市价单）
+ *   注: 无 POST /t0-tasks/{id}/balance 端点（前端在 T0Trade.vue 直接读 holdings.orders 算差值 + 调 /orders/place 下市价单）
  */
 import { http } from './index'
 

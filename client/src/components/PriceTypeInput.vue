@@ -1,17 +1,15 @@
 <!--
-  PriceTypeInput.vue — 委托价格 + 价格类型 组合组件 (v33.1, 改造为 StockCodePicker 风格)
+  PriceTypeInput.vue — 委托价格 + 价格类型 组合组件 (StockCodePicker 风格)
 
-  沿用 v28 StockCodePicker (.scp- 前缀) 视觉骨架 (实测贴一起, baseline 对齐), 改前缀 pti-:
+  沿用 StockCodePicker (.scp- 前缀) 视觉骨架 (实测贴一起, baseline 对齐), 改前缀 pti-:
   - 左 50% el-input (类型 number, 无 controls): 输入价格 (FIX_PRICE 启用; 市价/最新价 只读)
   - 右 50% el-select: 价格类型 (限价/最新价/市价)
   - 默认 PriceType.FIX_PRICE (11 = 限价)
 
-  用户反馈 v33 上线后样式丑 ("委托价格组件很丑"), 原因:
-    - 用了 el-input-number 自带 +/- controls → "上下箭头" 与 StockCodePicker 风格不一致
-    - 高度 / line-height / border-radius 与左侧 StockCodePicker 不一致
-  修复 (v33.1):
-    - 左改用 el-input + type=number + 自定义精度 (无 controls)
-    - 全部 CSS 完全镜像 v28 .scp- 骨架 (baseline 对齐, 1px 衔接, box-shadow 同色)
+  设计要点:
+    - 左侧用 el-input + type=number + 自定义精度 (无 +/- controls, 与 StockCodePicker 风格一致)
+    - 全部 CSS 完全镜像 .scp- 骨架 (baseline 对齐, 1px 衔接, box-shadow 同色)
+    - 高度 / line-height / border-radius 与左侧 StockCodePicker 一致
 
   Props:
     - price      (Number|String) : v-model:price
@@ -76,7 +74,7 @@ const props = defineProps({
   width: { type: [String, Number], default: '100%' },
   inputRatio: { type: Number, default: 1 },
   nameRatio: { type: Number, default: 1 },
-  // v82: 证券代码 — 用于按 scale 四舍五入价格
+  // 证券代码 — 用于按 scale 四舍五入价格
   stockCode: { type: String, default: '' },
 })
 
@@ -106,7 +104,7 @@ const defaultPlaceholder = computed(() =>
   props.priceType === PriceType.FIX_PRICE ? '输入价格' : '行情价(自动)'
 )
 
-// 宽度/占比计算 — 完全复用 scp 模式 (v28-2)
+// 宽度/占比计算 — 完全复用 scp 模式
 const wrapperStyle = computed(() => {
   const w = typeof props.width === 'number' ? `${props.width}px` : props.width
   return { width: w }
@@ -124,25 +122,22 @@ const priceInputStyle = computed(() => ({
 }))
 
 const selectBoxStyle = computed(() => ({
-  flex: `0 0 calc(${100 - inputBasisPercent.value}% + 1px)`, // v28-8: 多吃 1px 抵消左 wrapper inset shadow
+  flex: `0 0 calc(${100 - inputBasisPercent.value}% + 1px)`, // 多吃 1px 抵消左 wrapper inset shadow
   width: `calc(${100 - inputBasisPercent.value}% + 1px)`,
   minWidth: 0,
 }))
 
 // el-input type=number 输入处理
 //
-// v107.2 (2026-08-17): 统一价格输入 UX 契约
+// 统一价格输入 UX 契约
 //   1. input 时: 按 stockScale 截断小数位 (超位即切尾, 输不进去)
 //   2. input 时: 不补 0 / 不 toFixed (避免光标跳转)
 //   3. blur 时:  按 stockScale toFixed 补 0 留盘 (与 formatPrice 显示口径一致)
-//   与 v82 el-input-number + :precision 组件语义一致, 适用于 type="number" 这种无内置 precision 的场景.
-//
-// 历史踩坑:
-//   v106: emit "1.00" 字符串 → el-input v-model 转 Number 后变 1 → 输入流被锁死, "输 1.2 变 1.002"
-//   v107: emit 原 Number → emit 0.7 → el-input 强写 "0.7" → 中间态 "0.70" 被吞, "0 打不出来"
-//   v107.1: emit 原字符串 → 解除光标锁定, 但出现 "0.7018" 不规范值也会保留
-//   v107.2 (当前): emit 原字符串 + 按 scale 截断小数 → 输 "0.70" 截到 3 位仍是 "0.70" (合法),
+//   与 el-input-number + :precision 组件语义一致, 适用于 type="number" 这种无内置 precision 的场景.
+//   emit 策略: emit 原字符串 + 按 scale 截断小数 → 输 "0.70" 截到 3 位仍是 "0.70" (合法),
 //     输 "0.7018" → 截到 "0.701" (超 3 位即切), 输 "0.7" 原样保留, blur 时再补 0.
+//   注意: emit "1.00" 字符串会被 el-input v-model 转 Number 后变 1 → 输入流锁死;
+//   emit 原 Number 则 el-input 强写会吞中间态 "0.70"; 纯 emit 原字符串会保留不规范值.
 //
 // scale 来源: stocksStore.stockScale(props.stockCode)
 //   股票 (000001.SZ): scale=2
@@ -177,7 +172,7 @@ function onPriceInput(v) {
   emit('update:price', s)
 }
 
-// v107.2: 失焦统一按 scale 落盘 + 非数字清空
+// 失焦统一按 scale 落盘 + 非数字清空
 //   输入过程中已 emit 原字符串 + 超位截断, 不再干预; 失焦时一次性按 scale toFixed 补 0 留盘
 //   例: scale=3, "0.7"  → 0.700 (toFixed 补 0); "0.70" → 0.700; "0.701" → 0.701
 function onPriceBlur() {
@@ -198,7 +193,7 @@ function onPriceBlur() {
 </script>
 
 <style scoped>
-/* === v33.1: 完全镜像 v28 StockCodePicker 视觉骨架 ===
+/* === 完全镜像 StockCodePicker 视觉骨架 ===
    - 两段贴一起, 1px 衔接, 同色 box-shadow
    - 整体高度 33px, line-height 30px
    - 字号 13px (与 scp tag-text 字号一致)
@@ -224,7 +219,7 @@ function onPriceBlur() {
     width: 100%;
 }
 
-/* v28-19/20: 强制 .el-input 从 inline-flex 改 flex, 消除 baseline 偏移 1.30px
+/* 强制 .el-input 从 inline-flex 改 flex, 消除 baseline 偏移 1.30px
    仅 default size — small 下 inline-flex 即可, 不需要这个 hack (el-input 自身会管) */
 .pti-wrapper:not(.is-small) .pti-el-input :deep(.el-input) {
     display: flex !important;
@@ -267,7 +262,7 @@ function onPriceBlur() {
     box-shadow: 0 0 0 1px var(--el-color-primary, #409eff) inset !important;
 }
 
-/* v33.1: 隐藏浏览器原生 number input 的上下箭头 spinners (Chrome/Safari/Firefox/Edge) */
+/* 隐藏浏览器原生 number input 的上下箭头 spinners (Chrome/Safari/Firefox/Edge) */
 .pti-el-input :deep(.el-input__inner) {
     appearance: textfield !important; /* Firefox */
 }
@@ -281,7 +276,7 @@ function onPriceBlur() {
     -moz-appearance: textfield !important; /* Firefox */
 }
 
-/* v28-17: 强制 inner line-height: 30px 跟 placeholder 对齐
+/* 强制 inner line-height: 30px 跟 placeholder 对齐
    仅 default size — small 让 Element Plus 的小尺寸 token 自己决定 (避免比 el-input-number 高出 9px) */
 .pti-wrapper:not(.is-small) .pti-el-input :deep(.el-input__inner) {
     line-height: 30px !important;
@@ -294,9 +289,9 @@ function onPriceBlur() {
     box-sizing: border-box;
     display: flex;
     align-items: stretch;
-    margin-left: -1px; /* v28-8: 抵消左 wrapper 的 inset shadow 1px, 与右侧左边界对齐 */
+    margin-left: -1px; /* 抵消左 wrapper 的 inset shadow 1px, 与右侧左边界对齐 */
     position: relative;
-    left: 1px; /* v28-8: 让 select-box 实际边界与左 input 内边界对齐, 视觉无缝 */
+    left: 1px; /* 让 select-box 实际边界与左 input 内边界对齐, 视觉无缝 */
 }
 
 /* el-select 占满 select-box */
@@ -314,10 +309,10 @@ function onPriceBlur() {
     box-shadow: 0 0 0 1px var(--border-base) inset !important;
     font-size: 13px !important;
     line-height: 30px;
-    padding: 1px 11px !important; /* v28-14: 与左 input padding 同, 高度对齐 */
-    /* v115: 改走 var(--bg-soft), 暗色模式下不再死白 (与表格斑马纹 --bg-soft 对齐) */
+    padding: 1px 11px !important; /* 与左 input padding 同, 高度对齐 */
+    /* 改走 var(--bg-soft), 暗色模式下不再死白 (与表格斑马纹 --bg-soft 对齐) */
     background: var(--bg-soft) !important;
-    min-height: 33px !important; /* v33.1: 与左 input 等高 */
+    min-height: 33px !important; /* 与左 input 等高 */
     box-sizing: border-box !important;
     align-items: center !important; /* 文字垂直居中 */
 }

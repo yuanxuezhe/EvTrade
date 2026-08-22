@@ -1,41 +1,30 @@
 <!--
   T0Trade.vue — 快速做T 主页面
 
-  v93 (本轮): UI 整改 (二次确认挪到 sysconfig 见上一个 feat commit)
-    - 去标题 "⚡ 快速做T"
-    - 顶部独立按钮行删除: (刷新/添加任务/任务筛选) 全部挪到做T配置行末尾 (从右到左: 刷新 → 添加任务 → 任务筛选)
-    - 标的列宽 180 → 90 (减一半)
-
-  v74 (本轮): 委托表 11→15 列对齐今日委托
-    - 加列: 交易日 / 类型(委托/撤单) / 标的(代码+名称合并) / 操作(撤单按钮)
-    - 改: 委托号→委托编号(label); 状态列 el-tag→OrderStatusBadge(对齐今日委托);
-         下单时间 (90 + slice(0,8)) → (185 全显)
-    - 接入 COL 常量: STOCK_CODE/TARGET/NUMBER/MONEY/STATUS/TIME/2×makeDict
-    - 撤单: canCancel(row) 守卫 + handleCancel(row) 调 orderStore.cancelOrder
-    - 不动: 上半主表(task 视角 8 列)/ 配平逻辑/ 备注列(放最后)
-
-  v55 (commit 24c7b07): 主表 task 视角 (每行 = 1 做T 任务) + 900px 添加任务 dialog 集成 HoldingsPanel + T0TaskCreateDialog
-
-  v55.1 (本轮): 上下分区布局
+  布局: 上下分区, 无页面标题, 工具栏只有一条 (做T配置行)
     ┌──────────────────────────────┐
-    │ Header (标题/选择/添加/刷新)     │
+    │ 工具栏 (做T配置 + 从右到左:      │
+    │   刷新 → 添加任务 → 任务筛选)     │
     ├──────────────────────────────┤
-    │ 上半: 主表 8 列 (task 视角)     │
+    │ 上半: 主表 (task 视角,           │
+    │   每行 = 1 做T 任务, 标的列 90)  │
     ├──────────────────────────────┤
     │ 下半: 当前 task 的实时委托表     │
-    │   - 7 列 (委托号/方向/价格/数量/  │
-    │     状态/下单时间/备注)           │
+    │   - 15 列 (对齐今日委托: 交易日/ │
+    │     类型/标的/撤单按钮等)          │
     │   - 数据源: holdings.orders     │
     │     .filter(o => o.task_id===id)│
     └──────────────────────────────┘
+    添加任务: 900px dialog 集成 HoldingsPanel + T0TaskCreateDialog
+    撤单: canCancel(row) 守卫 + handleCancel(row) 调 orderStore.cancelOrder
 
-  v55.1 数据流:
+  数据流:
     主表行选中 / el-select 选 task
       → selectedTaskId.value 变化
       → lowerArea filteredTaskOrders 自动响应
       → computeSelectedTaskDiff() 实时算差 → 配平按钮文案 + disabled 状态
 
-  v55.1 配平按钮 (前端计算 + 下市价单):
+  配平按钮 (前端计算 + 下市价单):
     - 算: holdings.orders.filter(o=>o.task_id===id)
         .reduce((d, o) => d + (order_type==='23'?+1:-1) * (traded_volume||0), 0)
     - 方向: diff>0 多买 → SELL; diff<0 多卖 → BUY; diff===0 按钮 disabled
@@ -44,9 +33,9 @@
 -->
 <template>
   <div class="t0-trade fade-in-up" :style="rootStyle">
-    <!-- v93: 整页只剩一条工具栏行 — 做T配置 + (任务筛选 / 添加任务 / 刷新) 全部靠右集中 -->
+    <!-- 整页只有一条工具栏行 — 做T配置 + (任务筛选 / 添加任务 / 刷新) 全部靠右集中 -->
     <!--   顺序(从右到左): 刷新 → 添加任务 → 任务筛选 → 提示文案 → 3 个 select -->
-    <!-- change 2026-07-27-v109-mode-toggle: 工具栏 — 百分数 vs 股数 单选互斥输入框 -->
+    <!-- 工具栏 — 百分数 vs 股数 单选互斥输入框 -->
     <div class="t0-config-bar">
       <span class="t0-config-label">做T配置:</span>
       <!-- 模式一: 按比例 (el-radio-group 二选一, 互斥单选) -->
@@ -56,7 +45,7 @@
         <el-radio-button value="amount">按金额</el-radio-button>
       </el-radio-group>
       <!-- 输入框按模式条件显隐 + 单位提示 -->
-      <!-- change 2026-07-27-v109-mode-toggle: 输入框按模式条件显隐 + 单位提示 (两个分支各自独立 v-if, 不用 v-else 防中间被截断) -->
+      <!-- 输入框按模式条件显隐 + 单位提示 (两个分支各自独立 v-if, 不用 v-else 防中间被截断) -->
       <template v-if="globalMode === 'pct'">
         <el-input-number
           v-model="globalPctInput"
@@ -96,7 +85,7 @@
         />
         <span class="t0-unit-hint">元</span>
       </template>
-      <!-- v127: 价格 + 价格类型 → 复用 Trade.vue 同款 PriceTypeInput 组件 (左 50% 价格, 右 50% 类型) -->
+      <!-- 价格 + 价格类型 → 复用 Trade.vue 同款 PriceTypeInput 组件 (左 50% 价格, 右 50% 类型) -->
       <PriceTypeInput
         v-model:price="orderPrice"
         v-model:price-type="orderPriceTypeCode"
@@ -137,7 +126,7 @@
       <el-button size="small" @click="onRefresh" :loading="refreshing">刷新</el-button>
     </div>
 
-    <!-- v55.1 上下分区: 上半主表 + 下半委托表 -->
+    <!-- 上下分区: 上半主表 + 下半委托表 -->
     <div class="t0-split">
       <section class="t0-upper">
         <div class="area-hint">
@@ -169,7 +158,7 @@
             <span class="text-mono">{{ formatNumber(holdingsStore.positions?.find(p=>p.stock_code===row.stock_code)?.vol ?? 0) }}</span>
           </template>
           <template #column-last_price="{ row }">
-            <!-- 2026-08-20: 改用通用 LivePriceCell (与 HoldingsPanel / CachePositions 三处一致) -->
+            <!-- 通用 LivePriceCell (与 HoldingsPanel / CachePositions 三处一致) -->
             <LivePriceCell :stock-code="row.stock_code" />
           </template>
           <template #column-t0_pnl="{ row }">
@@ -210,7 +199,7 @@
                 </b> 股 — {{ selectedTaskDiff > 0 ? '需卖' : '需买' }}）
               </template>
               <template v-else>（已平衡）</template>
-              ，共 {{ filteredTaskOrders.length }} 笔委托（v112: 不限日期, 含历史做T）
+              ，共 {{ filteredTaskOrders.length }} 笔委托（不限日期, 含历史做T）
             </template>
             <template v-else>请先在上方主表选择 1 个 task，下方展示其委托与实时配平数量</template>
           </span>
@@ -319,7 +308,7 @@
       </div>
     </el-dialog>
 
-    <!-- task 详情 drawer (保留 v54) -->
+    <!-- task 详情 drawer -->
     <el-drawer v-model="tasksDetailVisible" :title="`task #${viewingTaskId} 详情`" size="55%" direction="rtl"
       :close-on-click-modal="false">
       <T0TaskDetail v-if="tasksDetailVisible" :task-id="viewingTaskId" embedding="drawer" />
@@ -341,7 +330,7 @@ import DataTableView from '../components/DataTableView.vue'
 import T0TaskDetail from '../components/trade/T0TaskDetail.vue'
 import T0TaskCreateDialog from '../components/trade/T0TaskCreateDialog.vue'
 import HoldingsPanel from '../components/trade/HoldingsPanel.vue'
-import LivePriceCell from '../components/cells/LivePriceCell.vue'  // 2026-08-20: 最新价+涨跌幅通用 cell
+import LivePriceCell from '../components/cells/LivePriceCell.vue'  // 最新价+涨跌幅通用 cell
 import PriceTypeInput from '../components/PriceTypeInput.vue'
 import { PriceType } from '../constants/priceType.js'
 import { useT0OrderSubmit } from '../composables/useT0OrderSubmit'
@@ -393,7 +382,7 @@ const taskOrderColumns = [
 
 const holdingsStore = useHoldingsStore()
 const quoteStore = useQuoteStore()
-const stocksStore = useStocksStore()   // v57 commit.4: 取 min_buy_qty/trade_unit
+const stocksStore = useStocksStore()   // 取 min_buy_qty/trade_unit
 const t0TasksStore = useT0TasksStore()
 const orderStore = useOrderStore()
 const { positions } = storeToRefs(holdingsStore)
@@ -406,8 +395,8 @@ const selectedTaskId = ref(null)
 const tasksDetailVisible = ref(false)
 const viewingTaskId = ref(null)
 
-// v57: 操作列改造 — 全局配置 (页面顶部 row 共用)
-// change 2026-07-27-v109-mode-toggle: ref 重写
+// 操作列全局配置 (页面顶部 row 共用)
+// ref 重写
 //   globalMode: 'pct' | 'qty' 二选一互斥单选
 //   globalPctInput: 直接是百分数 (用户视角 25 表示 25%, 支持小数), 计算时除以 100
 //   globalQtyInput: 直接是股数 (整数)
@@ -415,8 +404,8 @@ const globalMode = ref('pct')              // 模式 'pct' (按比例) | 'qty' (
 const globalPctInput = ref(25)             // 百分数 (用户视角 25 = 25%, 支持小数 0.001-100)
 const globalQtyInput = ref(100)            // 股数 (整数 ≥ 1)
 const globalAmountInput = ref(10000)       // 金额 (元)
-// v127: 价格类型从 string 'latest'/'market' → numeric PriceType (11/5/44), 与 PriceTypeInput 配套
-//   默认市价 (44), 沿用 v109 决策
+// 价格类型为 numeric PriceType (11/5/44), 与 PriceTypeInput 配套
+//   默认市价 (44)
 const orderPriceTypeCode = ref(PriceType.MARKET_PEER_PRICE_FIRST)
 const orderPrice = ref(0)                 // 实际下单价格 (FIX_PRICE 用户可改; 最新价/市价 由 watcher 自动填)
 const globalQtyBase = ref('last_vol')      // 数量基数 'vol'/'avl_vol'/'last_vol' (pct 模式下的基数)
@@ -433,7 +422,7 @@ const createDialogVisible = ref(false)
 const createDialogLoading = ref(false)
 const externalStockCode = ref('')  // HoldingsPanel 选中 → 驱动 dialog 表单
 
-// v55.1 配平: useT0OrderSubmit 实例化（价格类型跟随做T配置 orderPriceTypeCode, numeric）
+// 配平: useT0OrderSubmit 实例化（价格类型跟随做T配置 orderPriceTypeCode, numeric）
 const balancePriceType = orderPriceTypeCode  // 直接共享 numeric ref, useT0OrderSubmit 已支持
 const balanceCoeff = ref(1)               // 配平系数（固定 1）
 const balanceSubmitting = ref(false)
@@ -462,11 +451,10 @@ watch([stockCode, filteredActiveTasks], ([code, list]) => {
   }
 })
 
-// change 2026-07-21-t0-default-select-first: 进入页面/taskRows 变化时, 默认选中第一条
+// 进入页面/taskRows 变化时, 默认选中第一条
 //   修复配平 stock_code=空 bug: balanceStockCode 依赖 selectedTaskId, 无选中时返回 ''
 //   后端 place.py:84 校验 task.stock_code != req.stock_code → 报错
-// v75 (fix): taskRows 必须在 watch 之前定义 — TDZ ReferenceError 否则整个 setup 抛错,
-//   整个 T0Trade 页面渲染空白. 修复: 把 const taskRows 提升到此 watch 之前 (复用为下方的 taskRows).
+// taskRows 必须在此 watch 之前定义 (复用为下方的 taskRows), 否则 TDZ ReferenceError 导致整个 setup 抛错、页面渲染空白.
 const taskRows = computed(() => t0TasksStore.tasks || [])
 watch(taskRows, (rows) => {
   if (!selectedTaskId.value && rows && rows.length > 0) {
@@ -474,12 +462,12 @@ watch(taskRows, (rows) => {
   }
 }, { immediate: true })
 
-// ---- v55.1 上下分区: 下半委托表 + 实时配平 ----
+// ---- 上下分区: 下半委托表 + 实时配平 ----
 // storeToRefs 是 pinia 解构 ref 必备
 const { orders: holdingsOrders } = storeToRefs(holdingsStore)
 
 // 下半委托表: 实时按 task_id 过滤 holdings.orders, 按 order_time desc
-//   v126 防御: 排除 strategy_type=2 (策略下单母单子单, 由 StrategyOrder.vue 单独展示)
+//   排除 strategy_type=2 (策略下单母单子单, 由 StrategyOrder.vue 单独展示)
 const filteredTaskOrders = computed(() => {
   if (!selectedTaskId.value) return []
   return holdingsOrders.value
@@ -497,7 +485,7 @@ function _taskNetDiff(taskId) {
   if (!taskId) return 0
   let buy = 0, sell = 0
   for (const o of holdingsOrders.value) {
-    // v126 防御: 排除 strategy_type=2 (策略下单母单子单)
+    // 排除 strategy_type=2 (策略下单母单子单)
     if (Number(o.task_id) !== Number(taskId)) continue
     if (o.strategy_type === 2) continue
     const tv = Number(o.traded_volume) || 0
@@ -523,15 +511,13 @@ function computeRowBalanceDiff(taskId) {
 // 当前选中 task 的差值 (下半 header hint 用)
 const selectedTaskDiff = computed(() => _taskNetDiff(selectedTaskId.value))
 
-// 委托状态格式化 (v63: 与下单页 / 历史委托统一用 STATUS_LABEL 字典)
-// 删除旧私有 orderStatusLabel (L510) + orderStatusTagType (L520), 它们映射错:
-// 旧 '51' = '已成交' 应是 '已报待撤', '56' = '已撤(部)' 应是 '已成' 等.
-// 现统一从 format.js STATUS_LABEL / STATUS_TYPE 取, 与 Trade.vue 一致.
+// 委托状态格式化: 统一用 STATUS_LABEL 字典 (format.js), 与下单页 / 历史委托 / Trade.vue 一致.
+// 不用私有映射 (旧私有映射有错: '51' 应是 '已报待撤', '56' 应是 '已成' 等).
 const orderStatusLabel = (s) => STATUS_LABEL[s] || String(s || '—')
 const orderStatusTagType = (s) => STATUS_TYPE[s] || 'default'
 
-// ---- v74: T0Trade 委托表加撤单按钮 ----
-// v91: 可撤状态白名单 - 仅 已报(50) / 部成(55) 可撤 (与 TodayOrdersPanel 一致)
+// ---- T0Trade 委托表撤单按钮 ----
+// 可撤状态白名单 - 仅 已报(50) / 部成(55) 可撤 (与 TodayOrdersPanel 一致)
 const CANCELLABLE_STATUSES = new Set(['50', '55'])
 const cancellingOrderNo = ref('')
 function canCancel(row) {
@@ -552,26 +538,26 @@ async function handleCancel(row) {
   }
 }
 
-// v127: 价格类型选项改用 PriceTypeInput 内置 + PriceType.label(code); 删除旧 priceTypeOptions
+// 价格类型选项用 PriceTypeInput 内置 + PriceType.label(code); 无本地 priceTypeOptions
 const qtyBaseOptions = [
   { value: 'vol',       label: '当前持仓' },
-  { value: 'avl_vol',   label: '可用数量' },   // v116: '可用持仓' → '可用数量' (更精准)
+  { value: 'avl_vol',   label: '可用数量' },   // '可用数量' (比 '可用持仓' 更精准)
   { value: 'last_vol',  label: '期初持仓' },
 ]  
 
-// v57 commit.4: vol 计算 — 按 globalMode × globalPctInput / globalQtyInput + trade_unit 取整 + ≥ min_buy_qty
+// vol 计算 — 按 globalMode × globalPctInput / globalQtyInput + trade_unit 取整 + ≥ min_buy_qty
 //   数据源:
 //     - base (pct 模式): holdingsStore.positions[stockCode][globalQtyBase]  (实时) — 卖时
-//                        holdingsStore.cachedAsset.available / quoteStore.get(code).last_price — 买时 (v116)
+//                        holdingsStore.cachedAsset.available / quoteStore.get(code).last_price — 买时
 //     - pct (pct 模式): globalPctInput / 100 (用户输入百分数 → 比例)
 //     - qty (qty 模式): globalQtyInput (用户直接输入股数)
 //     - trade_unit/min_buy_qty: stocksStore.stocks (按 stock_code 实时匹配)
 //   取整规则: floor(raw / unit) * unit  (浮点→整数倍)
 //   下界: max(unit_adjusted, min_buy_qty)  (允许小幅超出 raw 一档 unit)
-//   change 2026-07-27-v109-mode-toggle: 重写分发
+//   重写分发
 //     - mode='pct': pct 模式, 用 globalPctInput(百分数)/100 × base
 //     - mode='qty': qty 模式, 直接用 globalQtyInput (股数), 与持仓无关
-//   change 2026-07-28-v116: 按比例下, 买入 base = 可用金额 / 最新价 (可买股数)
+//   按比例下, 买入 base = 可用金额 / 最新价 (可买股数)
 //     - 卖 base = qtyBaseOptions 选的 vol/avl_vol/last_vol (持仓基数)
 //     - qtyBaseOptions 仅 pct 模式有意义 (qty 模式直接读输入框)
 //   ⚠️ 注意: base 仅影响 base/raw/pct 显示字段, 实际下单 volume 用 floor(raw/unit)*unit
@@ -619,7 +605,7 @@ function computeOrderVolume(stockCode, direction = '买') {
   return { volume, raw, trade_unit, min_buy_qty, base, pct, mode: 'pct', direction }
 }
 
-// v127: computeOrderPrice 已删除 — 取最新价的职责移入 _recomputeOrderPrice (按价格类型分发)
+// 无 computeOrderPrice — 取最新价的职责在 _recomputeOrderPrice (按价格类型分发)
 
 // 市价下单保护限价（上交所要求：对手盘第五档价格）
 // 买入时对手盘 = 卖盘 → ask_prices[4]（卖五）
@@ -653,7 +639,7 @@ function _balancePrice(stockCode, orderType) {
   return Number(p) || 0
 }
 
-// v127: 根据价格类型 + 当前选中 stock_code, 自动填 orderPrice
+// 根据价格类型 + 当前选中 stock_code, 自动填 orderPrice
 //   11 (限价) → 选中 row 时自动填 last_price, 用户可手动改
 //   5 (最新价) → 0 (UI + 下单 price 都传 0, 柜台撮合)
 //   44 (市价) → SSE 取 5 档对手价; 非 SSE = 0
@@ -674,13 +660,13 @@ function _recomputeOrderPrice() {
   }
 }
 
-// v127: 监听价格类型切换 + 选中 task 变化 → 重填 orderPrice
+// 监听价格类型切换 + 选中 task 变化 → 重填 orderPrice
 watch(orderPriceTypeCode, () => _recomputeOrderPrice())
 watch(selectedTaskId, () => _recomputeOrderPrice())
 
 // 主表行单击 → 选中/切换 task (联动下半表)
-// v2026-08-17: 行为变更 — 再点同一行 **保留** 焦点 (不清空 selectedTaskId, 交易明细不重置);
-//   只有换不同行才切换焦点. 原 toggle 行为让用户误失焦, 下半交易明细被清空体验差.
+// 再点同一行 **保留** 焦点 (不清空 selectedTaskId, 交易明细不重置);
+//   只有换不同行才切换焦点 (toggle 清空行为会让用户误失焦, 下半交易明细被清空体验差).
 function onTaskRowClick(row) {
   // 同 row: 直接返回, 保持 selectedTaskId + 联动状态不变
   if (selectedTaskId.value === row.id) return
@@ -690,9 +676,8 @@ function onTaskRowClick(row) {
   if (t && t.stock_code) stockCode.value = t.stock_code
 }
 
-// ---- 主表数据源 (v55 task 视角) ----
-// v75 (fix): taskRows 已提前至 watch 之前定义 — TDZ 修复, 见上方 watch 上方注释.
-// const taskRows = computed(() => t0TasksStore.tasks || [])   ← 已前移, 移除此重复声明
+// ---- 主表数据源 (task 视角) ----
+// taskRows 定义已提前至上方 watch 之前 (TDZ 规避), 此处不重复声明
 
 function ptRowClass({ row }) {
   const classes = []
@@ -710,21 +695,20 @@ function onSortChange({ prop, order }) {
 function _taskSortValue(row, key) {
   switch (key) {
     case 'position_vol': return Number(row.summary?.position_vol) || 0
-    case 't0_pnl': return t0PnlForRow(row)?.total_pnl || 0   // v115: 总盈亏
-    case 't0_today_pnl': return t0PnlForRow(row)?.today_pnl || 0   // v115: 当日做T盈亏
+    case 't0_pnl': return t0PnlForRow(row)?.total_pnl || 0   // 总盈亏
+    case 't0_today_pnl': return t0PnlForRow(row)?.today_pnl || 0   // 当日做T盈亏
     default: return 0
   }
 }
 
-// v77: 纯委托+实时盘口 PnL — 实现放在 setup 内 (上方注释见)
-//   v77.5: 不再调 quoteStore.getDepth(code) (那是另封装), 直接 quoteStore.get(code) 拿整个行情结构体, 然后取结构体已有字段 bid_prices[0] / ask_prices[0]
+// 纯委托+实时盘口 PnL — 实现放在 setup 内 (上方注释见)
+//   不调 quoteStore.getDepth(code) (那是另封装), 直接 quoteStore.get(code) 拿整个行情结构体, 取结构体已有字段 bid_prices[0] / ask_prices[0]
 //   quoteStore.byCode 是 shallowRef(Map), update() 内 byCode.value.set(...) + triggerRef(byCode) 让 cell 自动重渲
-// change 2026-07-27-v109-pnl-formula: PnL 公式重构 (用户口径: diff 语义变化)
-//   - 老语义: diff = target - cur, diff>0 多买, diff<0 多卖 (公式按 ask1/bid1)
-//   - 新语义 (2026-07-27): diff = cur - target, diff<0 需买, diff>0 需卖
-//   - 价格不再区分 ask1/bid1, 统一用最新价 (last_price), PnL = realized + diff × last_price
+// PnL 公式
+//   - diff = cur - target, diff<0 需买, diff>0 需卖
+//   - 价格不区分 ask1/bid1, 统一用最新价 (last_price), PnL = realized + diff × last_price
 //   - 配平盘口金额 rate 分母: 统一 diff × last_price (按"按最近价平掉"的市值估算)
-// change 2026-07-28-v115-t0-pnl-split: PnL 分两字段
+// PnL 分两字段
 //   - total_pnl: task 创建以来累计 (当前公式) = realized + diff × last_price
 //   - today_pnl: 仅当日做T操作平衡后的盈亏 (只算 trd_date === activeDay 的订单)
 //     = (今日sell_amt - 今日buy_amt) - (今日净持仓 × last_price)
@@ -761,7 +745,7 @@ function _calcT0Pnl(code, taskId, base, tgv, orders) {
   return { total_pnl, diff, last }
 }
 
-// v115.2: 当日做T盈亏 = 用总盈亏公式 (realized + diff × last_price),
+// 当日做T盈亏 = 用总盈亏公式 (realized + diff × last_price),
 //   但 orders 仅过滤 trd_date === activeDay (只看今日委托)
 //   与做T总盈亏用相同公式, 仅订单范围不同 → 两栏对比一目了然
 function _calcTodayT0Pnl(code, taskId, base, tgv, orders, activeDay) {
@@ -769,13 +753,13 @@ function _calcTodayT0Pnl(code, taskId, base, tgv, orders, activeDay) {
     ? orders.filter((o) => String(o.trd_date) === String(activeDay))
     : []
   const { total_pnl, diff, last } = _calcT0Pnl(code, taskId, base, tgv, todayOrders)
-  return total_pnl   // v116.1 fix: 之前直接返回对象 {total_pnl, diff, last}, 模板当数字用显示成 0
+  return total_pnl   // 返回数字 (直接返回对象 {total_pnl, ...} 会被模板当数字用显示成 0)
 }
 
-// change 2026-07-27-v109-pnl-reactive: PnL / 收益率反应式 — 行情推过来时由依赖触发 recompute
+// PnL 反应式 — 行情推过来时由依赖触发 recompute
 //   - t0PnlMap: 字典 { "taskId|stock_code": { pnl, rate, diff, ... } }
 //   - template 从 t0PnlMap.value[rowKey(row)] 读, 函数 t0PnlForRow 改成 thin wrapper (回退兼容)
-// change 2026-07-27-v109.5: t0PnlMap computed 显式订阅 quoteStore.tick.value
+// t0PnlMap computed 显式订阅 quoteStore.tick.value
 //   - quoteStore.byCode 是 shallowRef(Map), triggerRef(byCode) 在某些
 //     el-table cell render 路径下不广播 (cell render 是 v-once 函数 cache 不更新)
 //   - 兜底: tick 是 ref, 每次 quote update() 自增, computed 读 tick.value
@@ -786,7 +770,7 @@ const t0PnlMap = computed(() => {
   const out = {}
   const orders = holdingsStore.orders || []
   const tasks = t0TasksStore.tasks || []
-  const activeDay = holdingsStore.activeTrdDate || ''  // v115: 当日做T盈亏过滤用
+  const activeDay = holdingsStore.activeTrdDate || ''  // 当日做T盈亏过滤用
   for (const row of tasks) {
     if (!row || row.status === 'archived') continue
     const code = row.stock_code
@@ -798,23 +782,23 @@ const t0PnlMap = computed(() => {
       o => o.stock_code === code
         && Number(o.task_id) === Number(taskId)
         && o.order_flag !== 1
-        && o.strategy_type !== 2  // v126 防御: 排除策略下单母单子单
+        && o.strategy_type !== 2  // 排除策略下单母单子单
     )
     const { total_pnl, diff, last } = _calcT0Pnl(code, taskId, base, tgv, rs)
-    // v115: 当日做T盈亏 (trd_date === activeDay)
+    // 当日做T盈亏 (trd_date === activeDay)
     const today_pnl = _calcTodayT0Pnl(code, taskId, base, tgv, rs, activeDay)
-    // v116.1 debug: 临时诊断日志 (你测完跟我说是否要保留)
+    // debug: 诊断日志 (window.__t0PnlDebug 开关)
     if (window.__t0PnlDebug && (window.__t0PnlDebug === taskId || window.__t0PnlDebug === 'all')) {
       const todayRs = activeDay ? rs.filter(o => String(o.trd_date) === String(activeDay)) : []
       console.log(`[t0Pnl ${taskId}|${code}] activeDay=${activeDay} rs.total=${rs.length} todayRs=${todayRs.length} total_pnl=${total_pnl} today_pnl=${today_pnl} diff=${diff} last=${last}`)
     }
-    // v115.1: rate 字段删除 (用户: 去掉做T收益率)
+    // 无 rate 字段 (用户口径: 去掉做T收益率)
     out[`${taskId}|${code}`] = { total_pnl, today_pnl, diff, last }
   }
   return out
 })
 function _rowKey(row) { return row ? `${row.id}|${row.stock_code}` : '' }
-// change 2026-07-27-v109.5: t0PnlCell 显式订阅 quoteStore.tick, 确保 el-table 重渲
+// t0PnlCell 显式订阅 quoteStore.tick, 确保 el-table 重渲
 //   - tick 是 ref, 读 .value 才是当前值 (Vue 收集依赖是基于 .value 访问)
 //   - 因为函数在 render 函数上下文执行, .value 访问会被 render 收集依赖
 //   - 兜底如果 t0PnlMap.value 不在依赖图 (e.g. el-table 模板缓存), tick 自增能强制刷
@@ -823,14 +807,13 @@ function t0PnlCell(row) {
   return t0PnlMap.value[_rowKey(row)] || null
 }
 function t0PnlForRow(row) {
-  // change 2026-07-27-v109-pnl-reactive: 改从 t0PnlMap 读 (响应式), 不再实时算
+  // 从 t0PnlMap 读 (响应式), 不实时算
   const m = t0PnlMap.value
   const it = m[_rowKey(row)]
   return it ? it.pnl : 0
 }
 function t0ReturnRateForRow(row) {
-  // v115.1: 已删除 — 用户口径"去掉做T收益率"
-  //   保留空 stub 防止外部 import 引用, 函数返回 0
+  // 空 stub (用户口径"去掉做T收益率") — 保留防止外部 import 引用, 函数返回 0
   return 0
 }
 const sortedTaskRows = computed(() => {
@@ -851,24 +834,20 @@ function statusTagType(s) {
   return 'danger'
 }
 
-// ---- 做T盈亏 / 收益率 (v77: 纯委托 + 实时盘口口径, 不依赖 cost_basis) ----
+// ---- 做T盈亏 / 收益率 (纯委托 + 实时盘口口径, 不依赖 cost_basis) ----
 //
-// 修 bug: 用户 2026-07-21 二次反馈 "实时价 vs 成交价差异时, 页面没正常计算 PnL".
-//   v76 用 realized + (livePrice - cost_basis) × taskNetVol 的公式, 但 cost_basis
-//   是后端基于成交均价推的静态值, 跟"实时配平"语义不一致 — 用户要的是"实时盘口"口径.
-// v77 改为纯委托+盘口 (user 业务定义):
+// 口径 (user 业务定义, "实时盘口"而非 cost_basis 静态值):
 //   1) 已实现: Σ(卖成交量 × 卖成交均价) − Σ(买成交量 × 买成交均价)
 //   2) 配平盘口 (按当前已成交净持仓 vs 目标 base+target):
 //        cur    = Σ(买成交) − Σ(卖成交)         // 当前净持仓
 //        target = base_volume + target_volume   // 配平目标
-//        diff   = target − cur
-//        diff>0: 配平部分按"补买" 算: Pnl += −(diff) × 卖1价(ask1)  (花卖1价买)
-//        diff<0: 配平部分按"补卖" 算: Pnl += (|diff|) × 买1价(bid1)  (收买1价卖)
-//        diff=0: 不加盘口项
-//   3) 收益率 = Pnl / (Σ成交量 × 均价 + |diff|×盘口价)  (综合成本分母)
-// 数据源: holdingsStore.orders (同 stock_code 即为该 task 下所有委托), quoteStore.get(code).bid_prices[0]/.ask_prices[0] (行情表结构体已有字段).
+//        diff   = cur − target
+//        diff<0: 需买; diff>0: 需卖
+//   3) 表格只显示绝对值盈亏, 不显示收益率 % (用户口径)
+// 当前公式: PnL = realized + diff × last_price (价格统一用最新价)
+// 数据源: holdingsStore.orders (同 stock_code 即为该 task 下所有委托), quoteStore.get(code) (行情表结构体已有字段).
 // 实现位置: 在 setup 块内 (见 _taskSortValue 下方) — 因 holdingsStore/quoteStore 是 setup 内 const,
-//   setup 外定义会 ReferenceError. (v77 v2)
+//   setup 外定义会 ReferenceError.
 // ---- 实现 ---- (setup 内部, 见下方 t0PnlForRow / t0ReturnRateForRow)
 
 // ---- task 操作 ----
@@ -883,14 +862,14 @@ function onOpenTaskDetail(taskId) {
   viewingTaskId.value = taskId
   tasksDetailVisible.value = true
 }
-// v55.1 配平按钮: 前端算差值 + 调用 useT0OrderSubmit 下市价单
+// 配平按钮: 前端算差值 + 调用 useT0OrderSubmit 下市价单
 async function onBalanceTask(taskId) {
   const diff = _taskNetDiff(taskId)
   if (diff === 0) {
     ElMessage.info(`task #${taskId} 已平衡，无需操作`)
     return
   }
-  // change 2026-07-21-t0-balance-stock-code-guard: 防 balanceStockCode 空导致后端校验失败
+  // 防 balanceStockCode 空导致后端校验失败
   //   server/api/orders/place.py:84 校验 task.stock_code != req.stock_code → 报错
   //   兜底: selectedTaskId 失效 / tasksById 缺失 stock_code 时, 直接从 taskRows 拿 row.stock_code
   let stockCodeForBalance = balanceStockCode.value
@@ -913,7 +892,7 @@ async function onBalanceTask(taskId) {
     )
   } catch (e) { return }
   try {
-    // change 2026-07-21-t0-balance-stock-code-guard: 用 stockCodeOverride 让 useT0OrderSubmit
+    // 用 stockCodeOverride 让 useT0OrderSubmit
     //   优先用兜底 stock_code (而不是闭包 stockCode.value, 后者可能为空)
     await submitBalanceOrder({ orderType, volume, price: _balancePrice(stockCodeForBalance, orderType), taskId, stockCodeOverride: stockCodeForBalance })
     // useT0OrderSubmit 内部已 ElMessage.success
@@ -921,17 +900,17 @@ async function onBalanceTask(taskId) {
   } catch (e) { /* ElMessage 已被 axios 拦截器弹出 */ }
 }
 
-// v57: 主表 row 操作按钮可用性 — archived task 任何按钮都不能用
+// 主表 row 操作按钮可用性 — archived task 任何按钮都不能用
 function canOpRow(row) {
   return row.status !== 'archived' && !!row.stock_code
 }
 
-// v57: 买/卖按钮 (走全局配置: pct × qtyBase → vol, latest/market → price)
-// v127: 价格直接用 orderPrice.value (FIX_PRICE 由 watcher 自动填 + 用户可改; 最新价/市价 由 watcher 预填 0/5 档)
+// 买/卖按钮 (走全局配置: pct × qtyBase → vol, latest/market → price)
+// 价格直接用 orderPrice.value (FIX_PRICE 由 watcher 自动填 + 用户可改; 最新价/市价 由 watcher 预填 0/5 档)
 function _prepareOrderPayload(row, direction) {
   const stockCode = row.stock_code
-  // v116: computeOrderVolume 现在接受 direction 参数 — 买入 base=可用金额/最新价
-  const volInfo = computeOrderVolume(stockCode, direction)   // v57 commit.4: {volume, raw, trade_unit, min_buy_qty, base, pct}
+  // computeOrderVolume 接受 direction 参数 — 买入 base=可用金额/最新价
+  const volInfo = computeOrderVolume(stockCode, direction)   // {volume, raw, trade_unit, min_buy_qty, base, pct}
   if (!volInfo || !volInfo.volume || volInfo.volume <= 0) {
     ElMessage.warning(`${row.stock_code} 按当前配置算不出可下单数量（可能持仓为空或 0%）`)
     return null
@@ -939,7 +918,7 @@ function _prepareOrderPayload(row, direction) {
   const orderType = direction === '买' ? '23' : '24'
   return {
     direction, stockCode, price: orderPrice.value, volume: volInfo.volume,
-    orderType,                                       // v58 commit.5 fix: 后端 Pydantic 必填, 之前漏掉 → 422
+    orderType,                                       // 后端 Pydantic 必填
     taskId: row.id,
     mode: globalMode.value,                          // 'pct' | 'qty' | 'amount'
     qtyBase: globalQtyBase.value,                    // 仅 pct 模式有意义
@@ -947,15 +926,15 @@ function _prepareOrderPayload(row, direction) {
     qty: globalQtyInput.value,                       // qty 模式: 股数
     amount: globalAmountInput.value,                 // amount 模式: 金额
     priceType: orderPriceTypeCode.value,             // numeric PriceType (11/5/44)
-    // v57 commit.4: 取整提示信息 (供 dialog 显示)
+    // 取整提示信息 (供 dialog 显示)
     base: volInfo.base,
     raw: volInfo.raw,
     tradeUnit: volInfo.trade_unit,
     minBuyQty: volInfo.min_buy_qty,
   }
 }
-// v127: 买/卖 row 按钮联动选中
-// v2026-08-17: row-click 只在换不同行时才同步 selectedTaskId;
+// 买/卖 row 按钮联动选中
+// row-click 只在换不同行时才同步 selectedTaskId;
 //   同 row 二次点击保留焦点 (clear 下半交易明细的旧 toggle 行为已废)
 //   - 已选中 → 不重置价格 (用户可能手动改过)
 async function onBuyTask(row) {
@@ -969,7 +948,7 @@ async function onBuyTask(row) {
   }
   const payload = _prepareOrderPayload(row, '买')
   if (!payload) return
-  // v93: 二次确认由 order.js 统一拦截, 这里直接下单
+  // 二次确认由 order.js 统一拦截, 这里直接下单
   await _submitOrder(payload)
 }
 async function onSellTask(row) {
@@ -983,16 +962,16 @@ async function onSellTask(row) {
   }
   const payload = _prepareOrderPayload(row, '卖')
   if (!payload) return
-  // v93: 二次确认由 order.js 统一拦截, 这里直接下单
+  // 二次确认由 order.js 统一拦截, 这里直接下单
   await _submitOrder(payload)
 }
 
 // 二次确认 dialog 用户点"确认下单" 才真正下单
 async function _submitOrder(p) {
   try {
-    // v127: priceType 已是 numeric (11/5/44); watcher 已预填 orderPrice, 不需要再重算保护限价
+    // priceType 已是 numeric (11/5/44); watcher 已预填 orderPrice, 不需要再重算保护限价
     const priceTypeCode = p.priceType
-    // v127: SSE 市价保护限价守卫 — 上交所需对手盘 5 档 (或涨跌停兜底), 未就绪时拒单
+    // SSE 市价保护限价守卫 — 上交所需对手盘 5 档 (或涨跌停兜底), 未就绪时拒单
     if (
       priceTypeCode === PriceType.MARKET_PEER_PRICE_FIRST
       && (!p.price || p.price <= 0)
@@ -1008,7 +987,7 @@ async function _submitOrder(p) {
       price: p.price,
       volume: p.volume,
       user_def: 'T0',
-      strategy_type: 1,  // v66: REQ-TRADE-026; T0Trade.vue 下单 = 快速做T
+      strategy_type: 1,  // REQ-TRADE-026; T0Trade.vue 下单 = 快速做T
       ...(p.taskId ? { task_id: p.taskId } : {}),
     })
     ElMessage.success(`${p.direction}单已报：${p.stockCode} ${p.volume} 股 @ ${priceTypeCode === PriceType.MARKET_PEER_PRICE_FIRST ? '市价' : '¥' + formatPrice(p.price, p.stockCode)}`)
@@ -1102,7 +1081,7 @@ onMounted(async () => {
   min-height: 0;
   overflow: hidden;
 }
-/* v93: .t0-header / .t0-title / .qs-row 已删除 — 工具栏合并到 .t0-config-bar */
+/* 无 .t0-header / .t0-title / .qs-row — 工具栏在 .t0-config-bar */
 .task-table {
   width: 100%;
 }
@@ -1115,7 +1094,7 @@ onMounted(async () => {
 .down { color: var(--el-color-success, #67c23a); }
 .muted { color: var(--el-text-color-placeholder, #c0c4cc); }
 
-/* v55 添加任务 dialog 2 列布局 */
+/* 添加任务 dialog 2 列布局 */
 .add-task-grid {
   display: grid;
   grid-template-columns: 380px 1fr;
@@ -1147,7 +1126,7 @@ onMounted(async () => {
   margin: 0;
 }
 
-/* v57 commit.2: 二次确认 dialog 内部样式 */
+/* 二次确认 dialog 内部样式 */
 .confirm-order-dialog .confirm-detail {
   padding: 0 8px;
 }
@@ -1184,7 +1163,7 @@ onMounted(async () => {
   color: var(--el-color-danger, #f56c6c);
 }
 
-/* v55.1 上下分区布局: 上半主表 + 下半委托表, 1:1 flex column */
+/* 上下分区布局: 上半主表 + 下半委托表, 1:1 flex column */
 .t0-split {
   display: flex;
   flex-direction: column;
@@ -1192,7 +1171,7 @@ onMounted(async () => {
   flex: 1;
   min-height: 0;
 }
-/* v57 commit.2: 做T全局配置 row — 4 select + 1 checkbox */
+/* 做T全局配置 row — 4 select + 1 checkbox */
 .t0-config-bar {
   display: flex;
   align-items: center;
@@ -1210,11 +1189,11 @@ onMounted(async () => {
   color: var(--el-text-color-primary, #303133);
   margin-right: 4px;
 }
-/* v93: 选 task 选择器靠右固定宽度 — 推到右的力交给 .t0-spacer (flex:1) 吃 */
+/* 选 task 选择器靠右固定宽度 — 推到右的力交给 .t0-spacer (flex:1) 吃 */
 .t0-config-bar .qs-task-select {
   width: 200px;
 }
-/* v93: 弹性占位 — 把 (刷新/添加任务/选 task) 整体推到最右 */
+/* 弹性占位 — 把 (刷新/添加任务/选 task) 整体推到最右 */
 .t0-config-bar .t0-spacer {
   flex: 1;
 }
@@ -1223,7 +1202,7 @@ onMounted(async () => {
   font-size: 11px;
   margin-left: 8px;
 }
-/* change 2026-07-27-v109-mode-toggle: 单位提示 (%/股) 紧贴 el-input-number 右侧 */
+/* 单位提示 (%/股) 紧贴 el-input-number 右侧 */
 .t0-config-bar .t0-unit-hint {
   color: var(--el-text-color-regular, #606266);
   font-size: 12px;
@@ -1265,12 +1244,11 @@ onMounted(async () => {
 .order-table :deep(.el-table__body-wrapper) {
   /* 让 el-table 内部滚动条工作 */
   overflow-y: auto;
-  overflow-x: auto; /* v57 commit.1: 主表 9 列宽 1150px > 容器 1010px, 允许横滚 (操作列 fixed 浮动) */
+  overflow-x: auto; /* 主表 9 列宽 1150px > 容器 1010px, 允许横滚 (操作列 fixed 浮动) */
 }
 
-/* v92: 选中行美化 - 品牌色低透明度背景 + 4px 左侧强调边, 亮/暗自适应
-   旧: --el-color-primary-light-9 (#eef2ff) 在暗色模式下是浅蓝突兀
-   新: rgba(brand-primary, 0.10/0.18) 跟随品牌色, 暗色加深一档 */
+/* 选中行美化 - 品牌色低透明度背景 + 4px 左侧强调边, 亮/暗自适应
+   rgba(brand-primary, 0.10/0.18) 跟随品牌色, 暗色加深一档 */
 .task-table :deep(.el-table__row.is-selected) > td {
   background-color: rgba(79, 124, 255, 0.10) !important;
   box-shadow: inset 4px 0 0 0 var(--brand-primary);

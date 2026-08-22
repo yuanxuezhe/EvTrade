@@ -1,5 +1,5 @@
 """
-repo/quote_snapshots.py — quote_snapshots 表仓库（2026-07-09 完整实现）
+repo/quote_snapshots.py — quote_snapshots 表仓库
 
 📌 设计：latest-only 模型（每 stock_code 1 行，UPSERT 覆盖）
 📌 ORM 列名（server/models/orm.py:295-334）：
@@ -8,7 +8,7 @@ repo/quote_snapshots.py — quote_snapshots 表仓库（2026-07-09 完整实现�
    - volume / bid*_vol / ask*_vol (Integer，手/股数)
    - bid1_price .. bid5_price (Float, 买价 1=最高买 .. 5=最低买)
    - ask1_price .. ask5_price (Float, 卖价 1=最低卖 .. 5=最高卖)
-📌 跨方言 UPSERT（v20 MySQL-only 永久标准）:
+📌 跨方言 UPSERT（MySQL-only 永久标准）:
    - MySQL : INSERT ... ON DUPLICATE KEY UPDATE ...
 📌 表已加 UNIQUE 约束：migration 2026-07-09-add-quote-snapshots-unique.py
 📌 应用层调用点：server.services.strategy.quote_consumer._save_snapshot
@@ -57,15 +57,12 @@ def _coerce_value(col: str, v) -> object:
 
 
 def _build_snapshot_sql(data: Dict) -> str:
-    """v111: 原子 UPSERT SQL, 不依赖预查 existing
+    """原子 UPSERT SQL, 不依赖预查 existing
 
-    📌 取代 v84.4 之前 "get_latest → if existing: update else: add" 的双段式:
-       - 之前必须 add_one (会跳过 id 列) + _get_required_columns 自动填 NOT NULL 列
-         → id 列被填了 0 进 INSERT（v111 bug: 没跳过 auto_increment 列）
-       - 之前 + query_by_fields 在新连接 REPEATABLE READ 看不到刚 commit 的行
-         → get_latest 误返 None → 走 add_one → 撞 stock_code UNIQUE
-    📌 修法: 直接 INSERT … ON DUPLICATE KEY UPDATE 走 stock_code UNIQUE 索引,
-       原子 + race-safe + 不依赖 get_latest
+    📌 直接 INSERT … ON DUPLICATE KEY UPDATE 走 stock_code UNIQUE 索引,
+       原子 + race-safe + 不依赖 get_latest 预查
+       (预查 get_latest 在新连接 REPEATABLE READ 下看不到刚 commit 的行,
+        会误返 None → 走 add_one → 撞 stock_code UNIQUE)
     """
     cols = ["`stock_code`"] + [f"`{c}`" for c in _SNAPSHOT_COLUMNS] + ["`ts`"]
     placeholders = [":stock_code"] + [f":{c}" for c in _SNAPSHOT_COLUMNS] + ["CURRENT_TIMESTAMP"]
@@ -82,10 +79,9 @@ def _build_snapshot_sql(data: Dict) -> str:
 def upsert(db, snapshot: Dict) -> None:
     """写入或覆盖一行 snapshot（latest-only，MySQL only）。
 
-    v111 重写: 用 INSERT … ON DUPLICATE KEY UPDATE 原子 UPSERT，
-    不再 get_latest → if/else。两层修:
+    用 INSERT … ON DUPLICATE KEY UPDATE 原子 UPSERT，不做 get_latest 预查:
     1) 消除 race (REPEATABLE READ 看不到刚 commit 行)
-    2) 消除 _get_required_columns 把 id 列填 0 进 INSERT 的 bug
+    2) 不依赖 _get_required_columns (不会把 id 列填 0 进 INSERT)
 
     📌 调用方负责 commit
     """
@@ -107,15 +103,15 @@ def upsert(db, snapshot: Dict) -> None:
 
 
 def _build_batch_sql(cols: List[str]) -> str:
-    """构造 MySQL 批量 UPSERT SQL（v20 MySQL-only 永久标准）。
+    """构造 MySQL 批量 UPSERT SQL（MySQL-only 永久标准）。
 
-    📌 2026-07-10 batch-flush + v20 MySQL-only：
+    📌 批量写约定：
        - 占位符走 `%s`（pymysql cursor.executemany tuple-of-tuple）
        - ts 由 SQL 字符串直接写 CURRENT_TIMESTAMP（migration schema ts 列无 DEFAULT，
          不能用占位符参数化）
        - 同 stock_code 重复 → ON DUPLICATE KEY UPDATE 兜底（依赖 UNIQUE 索引）
 
-    性能收益（pymysql cursor.executemany vs 单条 cursor.execute loop, 2026-07-10 实测）:
+    性能收益（pymysql cursor.executemany vs 单条 cursor.execute loop, 实测）:
       - loop N=100:               239 rows/s (单 commit)
       - executemany N=100:        430 rows/s   (1.8x)
       - executemany N=200:        666 rows/s   (2.8x)
@@ -141,12 +137,11 @@ def _build_batch_sql(cols: List[str]) -> str:
 def upsert_batch(db, snapshots: List[Dict]) -> int:
     """批量 UPSERT 多个 snapshot（latest-only，MySQL only）。
 
-    📌 v111: 走真正的 executemany 批量 + stock_code UNIQUE 索引 ON DUPLICATE KEY
+    📌 走真正的 executemany 批量 + stock_code UNIQUE 索引 ON DUPLICATE KEY
        单 SQL 一次插入 = O(1) round-trip / row (pymysql vs N round-trips)
-       之前 v84.4 的循环单条是规避 IntegrityError 的兜底;
-       现在原子 UPSERT 不会报 IntegrityError, 直接 executemany
+       原子 UPSERT 不会报 IntegrityError, 直接 executemany
 
-    性能 (pymysql raw cursor.executemany, MySQL, 2026-07-10 实测):
+    性能 (pymysql raw cursor.executemany, MySQL, 实测):
       - 单条 cursor.execute(N=100):   239 rows/s
       - executemany(N=100):            430 rows/s   (1.8x)
       - executemany(N=200):            666 rows/s   (2.8x)
@@ -159,7 +154,7 @@ def upsert_batch(db, snapshots: List[Dict]) -> int:
     if not valid_snaps:
         return 0
     try:
-        # v111.1: ts 也进 VALUES (timestamp NOT NULL, 不能漏)
+        # ts 也进 VALUES (timestamp NOT NULL, 不能漏)
         #   INSERT 用 %s (current_ts 是 SQL 字面量, 不走 pymysql param)
         col_names = ["stock_code"] + _SNAPSHOT_COLUMNS  # 26 + 1 stock_code
         placeholders = ", ".join(["%s"] * len(col_names)) + ", CURRENT_TIMESTAMP"
@@ -201,12 +196,11 @@ def upsert_batch(db, snapshots: List[Dict]) -> int:
 def get_latest(stock_code: str, db=None) -> Optional[object]:
     """查 stock_code 唯一快照（latest-only 模型下只有 1 行）
 
-    db 参数保留 (兼容旧调用方: get_latest(db, stock_code)) — v80.5 实际不依赖 db.
+    db 参数保留 (兼容旧调用方: get_latest(db, stock_code)), 实际不依赖 db.
 
-    v84.4 BUG 修复: 之前用 QuoteSnapshots.query_all() (全表扫 5万行) + Python filter,
-      不仅 O(N) 慢, 还因为 _execute_select 用新连接 (REPEATABLE READ) 看不到同事务
-      内刚 INSERT 但未 commit 的数据, 导致 add_one INSERT 触发 UNIQUE 冲突 IntegrityError.
-    修法: 用 query_by_fields 直接 WHERE stock_code=? (UNIQUE 索引 → O(logN))
+    用 query_by_fields 直接 WHERE stock_code=? (UNIQUE 索引 → O(logN)),
+    不用 query_all() 全表扫 + Python filter (慢, 且新连接 REPEATABLE READ
+    看不到同事务内刚 INSERT 未 commit 的数据, 会触发 UNIQUE 冲突 IntegrityError).
     """
     rows = QuoteSnapshots.query_by_fields({"stock_code": stock_code}, limit=1)
     return rows[0] if rows else None
@@ -215,12 +209,12 @@ def get_latest(stock_code: str, db=None) -> Optional[object]:
 def get_latest_multi(stock_codes: Iterable[str], db=None) -> Dict[str, object]:
     """批量查最新快照.
 
-    db 参数保留 (兼容旧调用方) — v80.5 实际不依赖 db.
+    db 参数保留 (兼容旧调用方), 实际不依赖 db.
 
     返回 dict{stock_code: QuoteSnapshot}，缺失的 code 不在 dict 中（前端走 ack/snapshot 分支兜底）。
 
-    v84.4: query_by_fields 当前只支持 = 等值, 不支持 IN tuple. 循环单查:
-      UNIQUE 索引 → 单查 O(logN), 100 个 codes 总计 O(100*logN) 远小于 query_all() 5万行扫表.
+    query_by_fields 只支持 = 等值, 不支持 IN tuple. 循环单查:
+      UNIQUE 索引 → 单查 O(logN), 100 个 codes 总计 O(100*logN) 远小于 query_all() 全表扫.
     """
     codes = list(stock_codes)
     if not codes:
