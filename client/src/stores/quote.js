@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, shallowRef, triggerRef, computed } from 'vue'
-import { http } from '../api'  // axios 实例 + Bearer interceptor (api/index.js:12-24)
+import { http } from '../api/http'  // axios 实例 + Bearer interceptor (api/http.js)
 
 /**
  * 行情缓存 + 订阅管理（quote-snapshot-subscribe）

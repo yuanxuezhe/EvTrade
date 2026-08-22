@@ -1,6 +1,6 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
-import { setUnauthorizedHandler } from '../api'
+import { setUnauthorizedHandler } from '../api/http'
 
 const Login = () => import('../views/Login.vue')
 const Dashboard = () => import('../views/Dashboard.vue')

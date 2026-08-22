@@ -9,7 +9,7 @@
  *   回测/批次:     backtestStrategy / listBatches / listBatchTasks
  *   Task 控制:     listTasks / getTask / stopTask / deleteTask / getTaskLogs / getTaskSignals
  */
-import { http } from './index'
+import { http } from './http'
 
 export const scriptStrategyApi = {
   // ─────────────── Script CRUD ───────────────

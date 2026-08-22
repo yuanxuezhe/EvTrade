@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
-import { authApi, tokenStorage } from '../api'
+import { authApi } from '../api'
+import { tokenStorage } from '../api/http'
 import { loadSession, saveSession, clearSession } from './auth_idb'
 
 const USER_KEY = 'evtrade-user'
