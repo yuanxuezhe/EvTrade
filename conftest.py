@@ -7,12 +7,12 @@ conftest.py — pytest 全局配置 + 裸名 import 兼容层
   与生产代码的 `server.*` 限定名 import 命中两个 sys.modules entry，
   导致 ORM 声明基类重复注册。已解决方式为下方 sys.modules 裸名别名。
 
-现状（A.7 后）：
-  - `server/models/orm.py` 已删除；数据访问统一走 `server/tables/`。
-  - legacy tests/ 里 `from models.orm import ...` 的文件已无法收集
-    （orm.py 删除，这些文件本身已因引用已移除的符号而失败）。
+现状（A.8 后）：
+  - `server/models/orm.py` 与 `server/models/user.py` 均已删除；数据访问统一走 `server/tables/`。
+  - legacy tests/ 里 `from models.orm import ...` / `from models.user import ...` 的文件已无法收集
+    （引用已删除的 ORM 模块，属既存失败，非新增回归）。
   - 本文件保留 sys.modules 裸名别名机制，供仍在用裸名 import
-    的 legacy 测试文件（`from db import` / `from models.user import` 等）。
+    的 legacy 测试文件（`from db import` 等）。
 
 注意：
   - 本文件不动 test 文件本身（保持向后兼容）。
@@ -77,7 +77,6 @@ if str(_ROOT) not in sys.path:
 
 # 2. 预加载 server.* 包内模块
 import server.infra.db as _server_db
-import server.models.user as _server_user
 import server.services.guards as _server_guards
 import server.services.reconcile as _server_reconcile
 import server.services.t0 as _server_t0
@@ -115,8 +114,6 @@ import server.api.auth as _server_api_auth
 #    `from db import X` 走裸名，强制命中同一模块对象
 _BARE_ALIASES = {
     "db": _server_db,
-    "models": sys.modules.get("server.models"),  # 由 _server_user 加载时已存在
-    "models.user": _server_user,
     "services": sys.modules.get("server.services"),
     # v13 layered-architecture: 旧 services.order_no/status/trading_clock alias 移除（迁 repo/）
     "services.guards": _server_guards,

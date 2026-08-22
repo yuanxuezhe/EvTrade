@@ -7,7 +7,7 @@ URL 优先级（REQ-CFG-009 永久标准）：
   1. EVTRADE_DB_URL 显式 → 用
   2. 否则 **RuntimeError**（运维必须 .env 配齐 MySQL URL）
 
-依赖：仅 stdlib + sqlalchemy + pymysql + cryptography + server.models（注册 ORM 元数据）。
+依赖：仅 stdlib + sqlalchemy + pymysql + cryptography。
 """
 import os
 import logging

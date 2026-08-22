@@ -1,7 +1,7 @@
 """Alembic env.py — EvTrade 表结构迁移入口
 
 工作流程：
-  1. 改 ORM model（server/models/orm.py）
+  1. 改 schema（server/schema.yml 唯一事实来源，见 知识库/数据库/Schema说明.md）
   2. alembic revision --autogenerate -m "description"
   3. 审查生成的 migration（server/alembic/versions/）
   4. alembic upgrade head
@@ -42,9 +42,8 @@ if not DATABASE_URL.startswith("mysql"):
     DATABASE_URL = ""
 
 # ─── 导入表类注册 metadata ─────────────────────────────────
-# tables/ 是纯数据类 (不继承 Base); server.tables.metadata 在 import 时把表类
-# schema 转成 sqlalchemy.Table 注册进 Base.metadata (users 由 declarative User 注册)
-from server.models import user  # noqa: F401  # users declarative User 注册 metadata
+# server.tables.metadata 在 import 时把 tables/ 表类 schema 转成 sqlalchemy.Table
+# 注册进 Base.metadata (含 users, declarative ORM 已删除)
 import server.tables.metadata  # noqa: F401  # tables/ → Base.metadata 注册
 from server.infra.db import Base  # declarative_base() 单例
 

@@ -2,17 +2,16 @@
 server/tables/metadata.py — 从 tables/ 表类定义构建 SQLAlchemy metadata
 
 背景: tables/ 层是纯数据类 (原生 SQL), 不持有 SQLAlchemy Table 对象。
-alembic autogenerate 与 init_db() 的 create_all 需要 Base.metadata;
+alembic autogenerate 需要 Base.metadata (init_db 已改走 schema.yml DDL, 不依赖 metadata);
 本模块在 import 时把 tables/ 各表类 (__tablename__/__pk_fields__/__fields__/
 __field_types__/__auto_increment_pk__) 转成 sqlalchemy.Table 并注册进 Base.metadata,
-让 tables/ 成为 schema 唯一来源 (orm.py 删除后仍可用)。
+让 tables/ 成为 schema 唯一来源。
 
 约定:
-- users 表由 server/models/user.py 的 declarative User 单独注册 (避免双注册冲突),
-  本模块跳过 users。
+- 全部表 (含 users) 都由 tables/ 表类注册, 不再有 declarative ORM 模型。
 - 约束/索引信息 tables/ 未承载, 生成的 metadata 只含列/主键/自增;
   生产 DDL 以 alembic 静态基线迁移为准。
-- 幂等: 已注册的表跳过 (支持 orm.py 与 tables/ 并存过渡期)。
+- 幂等: 已注册的表跳过 (重复 import 安全)。
 
 用法:
     import server.tables           # 先加载表类
@@ -33,8 +32,8 @@ from server.tables.base import TableBase
 
 log = logging.getLogger(__name__)
 
-# users 由 server/models/user.py 的 declarative User 单独注册, 跳过避免双注册冲突
-_SKIP_TABLES = {"users"}
+# 全部表由 tables/ 注册 (declarative ORM 已删除), 无需跳过任何表
+_SKIP_TABLES = set()
 
 
 def mysql_type_to_sa(mysql_type: str):
@@ -103,7 +102,7 @@ def register_tables_from_tables_module() -> int:
             continue
         Table(tablename, Base.metadata, *columns)
         registered += 1
-    log.info("tables.metadata: registered %d tables into Base.metadata (skip users)", registered)
+    log.info("tables.metadata: registered %d tables into Base.metadata", registered)
     return registered
 
 

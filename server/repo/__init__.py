@@ -3,7 +3,7 @@ server.repo — 仓库层
 
 按表聚合的 CRUD 函数 + 表级业务方法（如 next_order_no / infer_order_status）。
 
-依赖方向：本层仅可 import `server.models.*` / `server.infra.db` / `server.utils.*`。
+依赖方向：本层仅可 import `server.tables.*` / `server.infra.db` / `server.utils.*`。
 禁止 import 上层（api / services / rpc）。
 
 模块：
