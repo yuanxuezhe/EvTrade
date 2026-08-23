@@ -1,6 +1,6 @@
 # EvTrade 启停脚本
 
-单一 Python 入口, 跨平台 (Linux / Windows / git-bash) 管理开发期三个服务 (backend / frontend / hqserver) 的 start / stop / restart / status。
+单一 Python 入口, 跨平台 (Linux / Windows / git-bash) 管理开发期 5 个默认服务 (backend / frontend / hqserver / strategy_exec / hermes) + 1 个可选服务 (broker) 的 start / stop / restart / status / logs。
 
 ## 用法
 
@@ -24,16 +24,19 @@ python3 scripts/evctl.py start
 | restart | `… restart` | `… restart backend` | `… restart frontend` | `… restart frontend hqserver` |
 | status | `… status` | `… status backend` | `… status frontend` | `… status frontend hqserver` |
 
-合法动作: `start` / `stop` / `restart` / `status`。
-合法服务: `backend` / `frontend` / `hqserver`。
+合法动作: `start` / `stop` / `restart` / `status` / `logs`。
+合法服务: `backend` / `frontend` / `hqserver` / `strategy_exec` / `hermes` / `broker`（`broker` 为可选，需显式指定）。
 
 ## 端口
 
 | 服务 | 端口 | 备注 |
 |---|---|---|
-| backend (FastAPI/uvicorn) | **8000** | `--reload` 模式, 改代码自动重启 |
+| backend (FastAPI/uvicorn) | **8000** | — |
 | frontend (Vite) | **50998** | `--strictPort` 模式, 端口被占直接退出 (不静默 fallback) |
 | hqserver (WebSocket quotes) | **8765** | hq/hqserverd/target/release/hqserverd[.exe] 内部写死 (Rust 二进制) |
+| strategy_exec | **8001** | 从 `strategy_exec/.env` 加载环境变量 |
+| hermes (Hermes Agent daemon) | **9119** | `hermes serve`；外部 Hermes Agent，AI 助手后端依赖；CLI 缺失时 preflight 报指引 |
+| broker（可选） | 无 TCP | `python -u xtquant_api.py`（纯 RabbitMQ publisher，依赖 QMT/xtquant 环境） |
 
 端口在 `scripts/evctl.py` 顶部硬编码, **不读环境变量**。改端口要同时改 `client/vite.config.js` 的 `proxy.target` (现指向 `http://localhost:8000`)。
 
@@ -43,14 +46,8 @@ python3 scripts/evctl.py start
 scripts/
 ├── evctl.py          ← 唯一入口 (本文件配套使用)
 ├── README.md         ← 本文档
-├── .logs/            ← 三服务 stdout+stderr 追加日志
-│   ├── backend.log
-│   ├── frontend.log
-│   └── hqserver.log
-└── .pids/            ← 三服务真实 PID (Popen 返回值, 不是壳进程)
-    ├── backend.pid
-    ├── frontend.pid
-    └── hqserver.pid
+├── .logs/            ← 各服务 stdout+stderr 追加日志 (backend/frontend/hqserver/strategy_exec/hermes/broker)
+└── .pids/            ← 各服务真实 PID (Popen 返回值, 不是壳进程)
 ```
 
 ## 行为细节
@@ -64,7 +61,7 @@ scripts/
 
 ### 停止
 
-- 按 hqserver → frontend → backend 顺序反着停 (减少前端 WebSocket 断连噪音)
+- 按 `DEFAULT_SERVICES` 反序停 (hermes → strategy_exec → hqserver → frontend → backend, 减少前端 WebSocket 断连噪音)
 - PID 文件里的进程先 SIGTERM → 等 3s → SIGKILL (Linux); Windows 用 `taskkill /F /T`
 - 停完再扫一次三个端口, 残留进程 `taskkill /F /T` / `pkill -KILL` 兜底
 

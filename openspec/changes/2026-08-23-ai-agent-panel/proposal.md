@@ -96,7 +96,7 @@ EvTrade 目前缺一个**全局 AI 助手入口**，用户必须去特定页面�
 - ❌ 不做 `@tool` 装饰器（Hermes 无此 API）
 - ❌ 不做 SSE token 流（Hermes agent loop 不支持）
 - ❌ 不让 Hermes 自动透传 JWT（tool 内部实现）
-- ❌ 不纳入 hermes serve 到 evctl 管理
+- ❌ 不纳入 hermes serve 到 evctl 管理（~~已推翻 2026-08-23~~ → 用户拍板纳入 evctl 默认服务，见 `openspec/changes/2026-08-23-hermes-serve-evctl/`）
 - ❌ 不做对话历史持久化（v1 仅内存 session；v2 再加 DB）
 - ❌ 不做多用户并发同一 session（每 session 单 user）
 
