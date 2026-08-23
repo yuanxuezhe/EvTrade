@@ -463,3 +463,84 @@ class StkpoolDetailAdd(BaseModel):
 - **WHEN** `uvicorn server.main:app --reload` 启动
 - **THEN** `curl http://localhost:8000/api/stkpool` 返 200 + `{pools: []}`
 - **AND** 端点需带鉴权头（无 token 返 401）
+
+### REQ-ARCH-008: Hermes Agent Client + WS Gateway + Confirmation 协议 (2026-08-23, ai-agent-panel change)
+
+> 详见 change `openspec/changes/2026-08-23-ai-agent-panel/`（已合并 spec-deltas）。本节为现行契约。
+
+#### Purpose
+
+EvTrade 后端作为 **WebSocket Gateway** 桥接 Vue 前端和外部 Hermes Agent daemon，支持多轮对话、Function Calling（通过本地 MCP server）、高危操作二次确认协议。
+
+#### 客户端契约
+
+- **文件**：
+  - `server/services/hermes_agent_client.py`（hermes serve JSON-RPC over WS 客户端）
+  - `server/services/agent_confirm.py`（pending_confirmations 状态机）
+- **接口**（hermes_agent_client.py）：
+  - `start_run(session_id: str, user_message: str) -> str`（返回 run_id）
+  - `get_run_events(run_id: str) -> AsyncIterator[Event]`
+  - `respond_confirmation(run_id: str, tool_call_id: str, confirmed: bool) -> None`
+  - `is_reachable() -> bool`
+- **协议**：JSON-RPC over WebSocket（与 hermes serve 兼容）
+- **配置**：`HERMES_SERVE_WS_URL` 环境变量（默认 `ws://127.0.0.1:9119/ws`）
+
+#### WS Gateway 契约
+
+- **文件**：`server/api/agent.py`
+- **端点**：`WS /api/agent/ws`
+- **协议**（双向 JSON 消息）：
+  - Vue → FastAPI：`{type: "user_message", text: "..."}` / `{type: "confirmation", run_id, tool_call_id, confirmed}`
+  - FastAPI → Vue：`{type: "step_start"}` / `{type: "text", content}` / `{type: "tool_call", name, params}` / `{type: "tool_result", result}` / `{type: "confirmation_required", run_id, tool_call_id, name, params}` / `{type: "agent_complete"}` / `{type: "error", message}`
+- **JWT 校验**：WS 连接握手时校验 query param `?token=<jwt>` → 注入 user_id 到 session
+- **Session 管理**：每 (user_id, ws_connection) 一个 session_id（uuid4）
+
+#### MCP Server 契约
+
+- **文件**：`server/mcp/evtrade_mcp_server.py`（FastMCP 入口）
+- **端口**：`EVMCP_PORT=8787`（独立 daemon）
+- **Tool 列表**：12 个（详见 `openspec/changes/2026-08-23-ai-agent-panel/proposal.md` §12 tool 候选清单）
+- **JWT 注入**：每个 tool 必须接收 `jwt_token: str` 参数 → 服务端校验 → 用 user_id 调下游 EvTrade REST API
+- **高危 tool**：`place_order` / `cancel_order` / `delete_strategy_script` / `set_user_role` / `init_trading_day` — 不直接执行，返回 `{"status": "confirmation_required"}`，由 FastAPI gateway 拦截并推给前端确认
+- **启动方式**：FastAPI 启动时 spawn 子进程（用 `subprocess.Popen`），FastAPI 退出时 kill
+
+#### 二次确认协议
+
+- FastAPI 维护 `pending_confirmations: dict[run_id, asyncio.Future[bool]]`
+- 拦截 MCP tool call（白名单）→ 不调 MCP → 推 WS `confirmation_required` → 等 Future（60s 超时）
+- 用户在 Vue Modal 确认 → FastAPI 解析 Future → 调 MCP tool（这次真执行）→ 继续 hermes run
+- 超时 / 用户拒绝 → Future cancel + 返回 `{"status": "user_rejected"}` 给 hermes → LLM 整合自然语言响应
+
+#### 沙箱边界
+
+- LLM **不得**指定 user_id（所有 tool 的 user_id 从 JWT 强制注入）
+- LLM **不得**看到其他用户的资源（tool 返回结果只含当前 user 的数据）
+- LLM **不得**写 EvTrade 任意文件（tool 只能调预定义 REST API）
+- 高危 tool **必须**经前端二次确认
+
+#### Scenario: WS JWT 校验
+
+- **WHEN** Vue WS 连接 `ws://host/api/agent/ws?token=<invalid_jwt>`
+- **THEN** FastAPI 关闭连接 + code 1008（policy violation）
+- **AND** 不创建 session
+
+#### Scenario: 高危 tool 二次确认流程
+
+- **GIVEN** user 通过 WS 发送 "帮我下单 100 股 600000.SH"
+- **WHEN** Hermes agent 决定调 `place_order` tool
+- **THEN** FastAPI gateway 拦截（白名单命中）
+- **AND** 推 WS `confirmation_required` 事件（含 place_order params 预览）
+- **WHEN** Vue Modal 用户点 "确认"
+- **THEN** Vue 发 `{type: "confirmation", confirmed: true}`
+- **AND** FastAPI 调 MCP tool 真正执行下单
+- **WHEN** 60s 内无响应
+- **THEN** Future cancel → 推 WS `error: confirmation_timeout`
+- **AND** LLM 整合 "user did not respond in time" 自然语言响应
+
+#### Scenario: LLM 越权尝试
+
+- **GIVEN** LLM 在 tool call 时试图指定 `user_id="other_user"`
+- **WHEN** MCP tool 收到请求
+- **THEN** tool **必须**忽略 LLM 传入的 user_id
+- **AND** tool **必须**用 JWT 解出的 user_id 调下游 API
+- **AND** tool 返回的 result **不得**包含其他 user 的数据

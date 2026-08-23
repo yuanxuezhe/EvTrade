@@ -2424,3 +2424,74 @@ The system SHALL provide a "编译" button in `ScriptDev.vue` 底栏，位于"�
 - **WHEN** 请求 in-flight
 - **THEN** 编译按钮 MUST 显示 loading 态（`:loading="compiling"`）
 - **AND** 其他按钮 MUST 保持可点击状态（不阻塞"保存"等其他操作）
+
+### REQ-FE-537: 全局 AI 对话助手浮动按钮 (2026-08-23, ai-agent-panel change)
+
+> 详见 change `openspec/changes/2026-08-23-ai-agent-panel/`（已合并 spec-deltas）。本节为现行契约。
+
+#### Purpose
+
+在所有页面右下角提供全局 AI 对话助手入口（与 ScriptDev 单次生成助手 `REQ-FE-536` **并存**），用户可多轮对话、调用 EvTrade 业务 API、执行高危操作（下单/撤单）需二次确认。
+
+#### UI 契约
+
+- **入口**：所有页面右下角 `fixed bottom: 24px; right: 24px;` 一个 56×56 圆形按钮（`data-el="agent-fab"`），图标 MagicStick + "🤖 AI" 文字
+- **点击** → 右下角弹出 480×600 悬浮对话框（`fixed bottom: 96px; right: 24px;`，z-index 9999）
+- **对话框结构**：
+  - **顶部 header**：标题 "🤖 AI 助手" + "清空" 按钮
+  - **中部消息列表**（MessageList 子组件）
+  - **底部 footer**：textarea 输入框 + 发送按钮（Ctrl+Enter 发送）
+
+#### 消息类型渲染
+
+| 类型 | 渲染 |
+|---|---|
+| `user` | 蓝色气泡，右对齐，纯文本 |
+| `assistant_text` | 灰色气泡，左对齐，`markdown-it` 渲染 |
+| `tool_call` | 工具卡片（图标 + 名称 + status tag + params + result） |
+| `thinking` | 旋转 spinner + "AI 思考中..." |
+
+#### 状态机
+
+`closed` → `open-empty` → `sending` → `thinking` → `tool-executing` ↔ `confirming` ↔ `streaming` → `complete`
+
+#### WS 事件协议（前端订阅）
+
+| Event | 触发 | UI 副作用 |
+|---|---|---|
+| `step_start` | LLM 开始一轮推理 | 显示 thinking spinner |
+| `text` | LLM 返回完整文本段（非 token 流） | 累积到 assistant_text 气泡 |
+| `tool_call` | LLM 决定调 tool | 显示工具卡片 status='executing' |
+| `tool_result` | tool 返回结果 | 更新工具卡片 result |
+| `confirmation_required` | 高危 tool | 弹 ElMessageBox.confirm（覆盖层） |
+| `agent_complete` | 整个对话完成 | 隐藏 spinner，显示 AI 最终回复 |
+| `error` | 错误 | 显示错误 toast |
+
+#### Out of Scope (v1)
+
+- 对话历史持久化（v1 仅内存 session）
+- 多用户并发同一 session
+- 跨页面 session 同步（v1 每个 tab 独立 session）
+- 拖拽/最小化悬浮窗
+- 替代 `REQ-FE-536` ScriptDev 单次生成助手（**并存**）
+
+#### Scenario: 右下角按钮全局可见
+
+- **GIVEN** user 登录后访问任意页面（Dashboard / Trade / Position / ScriptDev / ...）
+- **WHEN** 页面加载完成
+- **THEN** 右下角 MUST 显示 AgentPanel 浮动按钮
+- **AND** 点击 → 弹出 480×600 悬浮对话框
+
+#### Scenario: 高危 tool 二次确认
+
+- **GIVEN** user 对 AI 说 "帮我下单 100 股 600000.SH"
+- **AND** AI 决定调 `place_order` tool
+- **WHEN** FastAPI gateway 拦截该 tool call
+- **THEN** 前端 MUST 收到 `confirmation_required` 事件
+- **AND** MUST 弹 `ElMessageBox.confirm` 显示操作预览（stock_code / direction / volume / price）
+- **WHEN** user 点击 "确认"
+- **THEN** 前端发 `confirmation` 事件 + `confirmed=true`
+- **AND** FastAPI 调 MCP tool 真正执行下单
+- **WHEN** user 点击 "取消" 或 60s 超时
+- **THEN** 前端发 `confirmation` 事件 + `confirmed=false`
+- **AND** LLM 整合 "user rejected" 自然语言响应
