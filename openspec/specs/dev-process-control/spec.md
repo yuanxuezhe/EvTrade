@@ -227,3 +227,27 @@ The system SHALL exit with status 0 on success, 1 on a partial failure (e.g. som
 
 - **WHEN** developer runs `python scripts/evctl.py frobnicate`
 - **THEN** script prints error listing valid actions and exits with status 2
+
+### Requirement: evctl 管理 hermes serve daemon
+
+> 2026-08-23 用户拍板覆盖 ai-agent-panel 的「不纳入 evctl」决策：hermes serve 是 AI Agent 功能的必需 daemon，纳入 evctl 默认启动集。
+
+The system SHALL provide a `hermes` service in the `SERVICES` table of `scripts/evctl.py`: port `9119`, working directory project root, and command `[<hermes-cli>, "serve"]`. The `hermes` service SHALL be part of `DEFAULT_SERVICES` so that `evctl start` / `stop` / `restart` / `status` / `logs` (without explicit service arguments) all cover it. Before starting `hermes`, the system SHALL preflight-check that the `hermes` CLI is resolvable via `shutil.which`; if missing, it SHALL print an installation guide and treat the service start as failed (without crashing other commands or silently skipping). If port `9119` is already occupied (e.g. a manually started daemon), `evctl start hermes` SHALL treat it as skip-success. The preflight mechanism SHALL support callable preflight items in addition to the existing module-import checks.
+
+#### Scenario: evctl start 一并拉起 hermes serve
+
+- **GIVEN** 机器已安装 Hermes Agent CLI（`hermes` 在 PATH）
+- **WHEN** 运行 `python scripts/evctl.py start`
+- **THEN** hermes serve 以默认服务之一启动（`[hermes, serve]`，cwd 项目根，日志 `scripts/.logs/hermes.log`，PID `scripts/.pids/hermes.pid`）
+
+#### Scenario: hermes CLI 缺失时给出明确指引
+
+- **GIVEN** 机器未安装 Hermes Agent（`shutil.which('hermes') is None`）
+- **WHEN** 运行 `python scripts/evctl.py start`
+- **THEN** 输出 hermes 预检失败 + 安装指引（`hermes serve` / SKILL.md 路径），`evctl start` 对该服务返回失败（退出码 1），但其它命令（stop/status/logs）不受影响
+
+#### Scenario: 端口被占视为已运行
+
+- **GIVEN** 用户已手动 `hermes serve`（9119 被占）
+- **WHEN** 运行 `python scripts/evctl.py start hermes`
+- **THEN** evctl warn 端口已被占并 skip（不重复 spawn），与其它服务端口占用语义一致
