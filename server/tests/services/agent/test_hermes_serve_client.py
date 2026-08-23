@@ -22,12 +22,22 @@ from server.services.agent.hermes_serve_client import (  # noqa: E402
 
 # ─── 1. is_reachable ─────────────────────────────────────────────
 class TestIsReachable:
-    @pytest.mark.asyncio
-    async def test_healthy_returns_true(self):
-        client = HermesServeClient(base_url="http://test:9119")
-        mock_resp = MagicMock(status_code=200)
+    """is_reachable() 判据：HTTP 响应到达即 True，连接错误/超时即 False。
 
-        # httpx.AsyncClient() 返回 async ctx mgr；__aenter__ 返回 mock_client
+    Hermes serve v0.19.0 headless 后端对所有 GET 路径返回 404 JSON —— 只要 daemon 在跑
+    HTTP 层就有响应，不卡 status_code。详见
+    openspec/changes/2026-08-23-fix-agent-is-reachable-healthz/proposal.md。
+    """
+
+    @pytest.mark.asyncio
+    async def test_404_still_reachable(self):
+        """Hermes serve v0.19.0 真实行为：daemon 在跑 → GET / 返回 404，但仍视为可达。
+
+        这是修复前误报的根因：旧实现卡 status_code==200，404 直接返回 False。
+        """
+        client = HermesServeClient(base_url="http://test:9119")
+        mock_resp = MagicMock(status_code=404)
+
         mock_client = MagicMock()
         mock_client.get = AsyncMock(return_value=mock_resp)
 
@@ -40,10 +50,74 @@ class TestIsReachable:
         assert result is True
 
     @pytest.mark.asyncio
-    async def test_unreachable_returns_false(self):
-        client = HermesServeClient(base_url="http://127.0.0.1:1")
-        # 连不存在的端口 → httpx.RequestError
-        result = await client.is_reachable()
+    async def test_200_also_reachable(self):
+        """如果未来 hermes serve 加了 /healthz 返回 200，也仍然返回 True。"""
+        client = HermesServeClient(base_url="http://test:9119")
+        mock_resp = MagicMock(status_code=200)
+
+        mock_client = MagicMock()
+        mock_client.get = AsyncMock(return_value=mock_resp)
+
+        async_ctx = MagicMock()
+        async_ctx.__aenter__ = AsyncMock(return_value=mock_client)
+        async_ctx.__aexit__ = AsyncMock(return_value=False)
+
+        with patch("httpx.AsyncClient", return_value=async_ctx):
+            result = await client.is_reachable()
+        assert result is True
+
+    @pytest.mark.asyncio
+    async def test_500_also_reachable(self):
+        """服务端 5xx 也算「响应到达」= 可达；只要 HTTP 通道没断。"""
+        client = HermesServeClient(base_url="http://test:9119")
+        mock_resp = MagicMock(status_code=500)
+
+        mock_client = MagicMock()
+        mock_client.get = AsyncMock(return_value=mock_resp)
+
+        async_ctx = MagicMock()
+        async_ctx.__aenter__ = AsyncMock(return_value=mock_client)
+        async_ctx.__aexit__ = AsyncMock(return_value=False)
+
+        with patch("httpx.AsyncClient", return_value=async_ctx):
+            result = await client.is_reachable()
+        assert result is True
+
+    @pytest.mark.asyncio
+    async def test_connect_error_returns_false(self):
+        """daemon 没起（连接拒绝）→ httpx.ConnectError → False。
+
+        用显式 mock 替代「连 127.0.0.1:1 等待真实超时」，避免 5s 慢测试。
+        """
+        import httpx
+        client = HermesServeClient(base_url="http://test:9119")
+
+        mock_client = MagicMock()
+        mock_client.get = AsyncMock(side_effect=httpx.ConnectError("conn refused"))
+
+        async_ctx = MagicMock()
+        async_ctx.__aenter__ = AsyncMock(return_value=mock_client)
+        async_ctx.__aexit__ = AsyncMock(return_value=False)
+
+        with patch("httpx.AsyncClient", return_value=async_ctx):
+            result = await client.is_reachable()
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_timeout_returns_false(self):
+        """daemon 挂了（连接挂起）→ asyncio.TimeoutError → False。"""
+        import asyncio
+        client = HermesServeClient(base_url="http://test:9119")
+
+        mock_client = MagicMock()
+        mock_client.get = AsyncMock(side_effect=asyncio.TimeoutError())
+
+        async_ctx = MagicMock()
+        async_ctx.__aenter__ = AsyncMock(return_value=mock_client)
+        async_ctx.__aexit__ = AsyncMock(return_value=False)
+
+        with patch("httpx.AsyncClient", return_value=async_ctx):
+            result = await client.is_reachable()
         assert result is False
 
 

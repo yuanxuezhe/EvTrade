@@ -92,13 +92,28 @@ class HermesServeClient:
         return self._id_counter
 
     async def is_reachable(self) -> bool:
-        """GET /healthz → True/False"""
+        """探测 hermes serve daemon 是否在跑。
+
+        Hermes serve v0.19.0 headless 后端对所有 GET 路径统一返回 404 JSON（无具体路由）；
+        只要 daemon 在跑，HTTP 层就有响应。判定标准：HTTP 请求**能拿到响应**（无论 200/404/405）
+        即视为可达；只有连接失败/超时才算不可达。
+
+        不用 `/healthz`：v0.19.0 没这个端点，用了会永远 False → 误报 "daemon not reachable"。
+        不用 `/rpc` POST：当前版本该路径只接受 WebSocket（JSON-RPC over WS），HTTP POST 返回 405。
+
+        详见 openspec/changes/2026-08-23-fix-agent-is-reachable-healthz/proposal.md。
+        """
         try:
             async with httpx.AsyncClient(timeout=5.0) as c:
-                r = await c.get(f"{self.base_url}/healthz")
-                return r.status_code == 200
-        except (httpx.RequestError, httpx.HTTPStatusError) as e:
-            log.debug("Hermes healthz failed: %s", e)
+                # 探任意稳定路径（/ 在 v0.19.0 返回 404 + JSON body，连接必通）
+                r = await c.get(f"{self.base_url}/")
+                # 响应到达 → daemon 在跑。不卡 status_code（v0.19.0 恒为 404）
+                return True
+        except asyncio.TimeoutError:
+            log.debug("Hermes reachable probe timed out")
+            return False
+        except httpx.RequestError as e:
+            log.debug("Hermes reachable probe failed: %s", e)
             return False
 
     async def _rpc(self, method: str, params: dict[str, Any]) -> dict[str, Any]:
