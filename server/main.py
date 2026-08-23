@@ -320,6 +320,12 @@ app.include_router(admin_reconcile.router, prefix="/api/admin/reconcile", tags=[
 app.include_router(admin_session.router, prefix="/api/admin/trading-session", tags=["admin-session"], dependencies=_AUTH_ADMIN)
 
 
+# ---- AI Agent WS Gateway (2026-08-23, ai-agent-panel) --------------
+# WS 端点不能用 HTTP Depends — 内部手动校验 JWT (token query param)
+from server.api import agent as agent_api  # noqa: E402  # 触发 hermes_client + mcp tool 注册
+app.include_router(agent_api.router, prefix="/api/agent", tags=["ai-agent"])
+
+
 @app.get("/api/health")
 def health():
     """无鉴权健康检查 - 仅用于探活 (evctl.py / k8s probe)
