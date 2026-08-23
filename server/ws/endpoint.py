@@ -1,5 +1,5 @@
 """
-ws/endpoint.py — /ws/{channel} WebSocket 端点（单向心跳 + 订阅推送）
+ws/endpoint.py — /ws/{channel} WebSocket 端点（单向心跳 + 订阅推送 + agent_channel 双向）
 
 行为：
 - 通过 ?token=JWT 认证，无 token → close 4001
@@ -19,6 +19,8 @@ ws/endpoint.py — /ws/{channel} WebSocket 端点（单向心跳 + 订阅推送�
   - 收到 client `{"type":"unsubscribe", "stock_codes":[...]}` →
       - 调 ws_manager.unsubscribe(ws, codes)
       - 立即返 `{"type":"unsubscribe_ack", "stock_codes":[...]}`
+  - 收到 client agent_channel 消息（"user_message" / "confirmation"）→ 启动 hermes agent run
+    （详见 server.ws.agent_handler 模块）
 """
 import asyncio
 import json
@@ -33,6 +35,7 @@ from server.infra.db import SessionLocal
 from server.ws.manager import ws_manager, match_pattern
 from server.repo.quote_snapshots import get_latest_multi as repo_get_latest_multi, to_dict as repo_to_dict
 from server.tables import Users
+from server.ws.agent_handler import handle_agent_channel_message  # 2026-08-23, ai-agent-ws-reuse-channel
 
 
 WS_IDLE_TIMEOUT = 600  # 秒：WS 通道无任意消息的最大容忍（客户端 30s ping → 10 分钟内必收到消息）
@@ -214,6 +217,15 @@ def register_ws_endpoint(app: FastAPI):
                         "type": "unsubscribe_ack", "code": 0, "msg": "",
                         "stock_codes": sorted(removed),
                     })
+                    continue
+                # agent_channel (2026-08-23, ai-agent-ws-reuse-channel):
+                #   双向 RPC-like 协议, 启动 hermes agent run + 流式推 WS events
+                #   与 quote_update 的 subscribe/unsubscribe 完全不同的协议
+                if channel == "agent_channel":
+                    await handle_agent_channel_message(
+                        websocket, parsed,
+                        user_id=int(user.get("id") or user.get("sub", 0)) or None,
+                    )
                     continue
                 # 其他业务消息：当作心跳续约，不做业务处理（推送是单向 server→client）
         except WebSocketDisconnect:
