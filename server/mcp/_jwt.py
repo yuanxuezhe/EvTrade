@@ -18,8 +18,15 @@ from jwt import PyJWTError  # type: ignore — python-jose 内部用 PyJWTError 
 log = logging.getLogger(__name__)
 
 # 与 server/auth/* 一致 — 复用 JWT_SECRET (环境变量)
-JWT_SECRET = os.environ.get("JWT_SECRET", "")
-JWT_ALGORITHM = os.environ.get("JWT_ALGORITHM", "HS256")
+# 注意：不缓存到模块级 — 单测 monkeypatch os.environ 时能立即生效
+
+
+def _jwt_secret() -> str:
+    return os.environ.get("JWT_SECRET", "")
+
+
+def _jwt_algorithm() -> str:
+    return os.environ.get("JWT_ALGORITHM", "HS256")
 
 
 class JWTError(Exception):
@@ -35,10 +42,11 @@ def decode_user_id(jwt_token: str) -> int:
     """
     if not jwt_token:
         raise JWTError("jwt_token is empty")
-    if not JWT_SECRET:
+    secret = _jwt_secret()
+    if not secret:
         raise JWTError("JWT_SECRET not configured (server-side misconfig)")
     try:
-        payload = jwt.decode(jwt_token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+        payload = jwt.decode(jwt_token, secret, algorithms=[_jwt_algorithm()])
     except PyJWTError as e:  # type: ignore
         raise JWTError(f"jwt decode failed: {e}") from e
 
