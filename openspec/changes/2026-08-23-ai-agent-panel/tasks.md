@@ -54,7 +54,7 @@
 - [ ] 跑 evctl status + /api/health 验证服务健康 → ⚠️ **后端 restart 失败**（uvicorn 0.52 与现有 websockets 10.4 不兼容 — 详见 §A5.1）
 - [ ] 归档：spec merge + mv openspec/changes/2026-08-23-ai-agent-panel → archive/
 
-### A5.1 uvicorn 0.52 ↔ websockets 10.4 不兼容（已知问题 — 待用户拍板）
+### A5.1 uvicorn 0.52 ↔ websockets 10.4 不兼容（已修复 — 2026-08-23）
 
 **背景**：A2 装 mcp SDK 时副作用，uvicorn 从 0.29.0（pyproject 锁的）升到 0.52.4。mcp 已及时卸载，但 uvicorn 留在 0.52.4。
 
@@ -63,11 +63,11 @@
 - `npm run build` 通过
 - `evctl restart backend` **失败**：`ImportError: cannot import name 'ServerProtocol' from 'websockets.server'`（uvicorn 0.52 期待新版 websockets API）
 
-**修法**（需用户拍板）：
-1. `uv pip install "uvicorn==0.29.0"` 回滚 → 恢复后端启动；不破现有功能
-2. 保留 uvicorn 0.52 → 需同步升 websockets 到 13+（可能破现有代码）
-
-**当前决策**：保留 uvicorn 0.52 + 暂不起 backend。代码已 commit，pytest 通过，daemon 实际联通由用户在 cron/手动验证。
+**修法（2026-08-23 17:20 执行）**：
+- `uv pip install "websockets>=13.0"` 升 websockets 到 16.1.1（兼容 uvicorn 0.52）
+- 同步更新 `pyproject.toml` 锁版本：`uvicorn>=0.52,<1.0` + `websockets>=13.0,<17.0`
+- `evctl start backend` → `[OK] backend healthy`
+- pytest 102 passed / 7 failed（基线不变）
 
 ## 验证清单（commit 前必做）
 
