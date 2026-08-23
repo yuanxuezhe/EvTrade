@@ -320,10 +320,11 @@ app.include_router(admin_reconcile.router, prefix="/api/admin/reconcile", tags=[
 app.include_router(admin_session.router, prefix="/api/admin/trading-session", tags=["admin-session"], dependencies=_AUTH_ADMIN)
 
 
-# ---- AI Agent WS Gateway (2026-08-23, ai-agent-panel) --------------
-# WS 端点不能用 HTTP Depends — 内部手动校验 JWT (token query param)
-from server.api import agent as agent_api  # noqa: E402  # 触发 hermes_client + mcp tool 注册
-app.include_router(agent_api.router, prefix="/api/agent", tags=["ai-agent"])
+# ---- AI Agent WS Gateway 已迁移至 /ws/agent_channel ----------------
+# 2026-08-23, ai-agent-ws-reuse-channel: AI WS 复用现有 /ws/{channel} endpoint
+# （与 order_update / trade_update / quote_update 共用 ws_manager + 鉴权 + idle + ping/pong）
+# 服务端: server/ws/endpoint.py + server/ws/agent_handler.py
+# 客户端: client/src/api/agent.js → WS_PATH = '/ws/agent_channel'
 
 
 @app.get("/api/health")
