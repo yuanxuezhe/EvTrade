@@ -25,7 +25,7 @@
  *   {type: "pong"}
  */
 
-const WS_PATH = '/api/agent/ws'
+const WS_PATH = '/ws/agent_channel'  // 2026-08-23, ai-agent-ws-reuse-channel — 共用 /ws/{channel}
 const MAX_RECONNECT = 5
 const BASE_BACKOFF_MS = 500  // 指数退避起点
 

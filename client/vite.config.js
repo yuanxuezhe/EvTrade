@@ -16,17 +16,11 @@ export default defineConfig({
       'Expires': '0',
     },
     proxy: {
-      // ⚠️ 必须先于 /api — vite 按顺序匹配，/api/agent/ws 需要单独走 WS proxy
-      // （否则被下面 /api 的 HTTP proxy 接管，HTTP proxy 不转 WebSocket upgrade）
-      '/api/agent/ws': {
-        target: 'ws://localhost:8000',
-        ws: true,
-        changeOrigin: true,
-      },
+      // /api/agent/ws 已迁移至 /ws/agent_channel (2026-08-23, ai-agent-ws-reuse-channel)
+      // 不再需要单独的 /api/agent/ws proxy — /api + /ws 已覆盖
       '/api': {
         target: 'http://localhost:8000',
         changeOrigin: true,
-        // 让 /api 也支持 WS（避免未来其他 WS 端点遗漏）
         ws: true,
       },
       '/ws': {
