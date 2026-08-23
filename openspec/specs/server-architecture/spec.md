@@ -488,12 +488,20 @@ EvTrade 后端作为 **WebSocket Gateway** 桥接 Vue 前端和外部 Hermes Age
 #### WS Gateway 契约
 
 - **文件**：`server/api/agent.py`
-- **端点**：`WS /api/agent/ws`
+- **端点**：`WS /api/agent/ws`（复用 FastAPI 8000 端口，**不新开通路**）
 - **协议**（双向 JSON 消息）：
-  - Vue → FastAPI：`{type: "user_message", text: "..."}` / `{type: "confirmation", run_id, tool_call_id, confirmed}`
-  - FastAPI → Vue：`{type: "step_start"}` / `{type: "text", content}` / `{type: "tool_call", name, params}` / `{type: "tool_result", result}` / `{type: "confirmation_required", run_id, tool_call_id, name, params}` / `{type: "agent_complete"}` / `{type: "error", message}`
+  - Vue → FastAPI：`{type: "user_message", text: "..."}` / `{type: "confirmation", pending_key, tool_call_id, confirmed}` / `{type: "ping"}`
+  - FastAPI → Vue：`{type: "ready", session_id}` / `{type: "step_start", run_id}` / `{type: "text", run_id, content}` / `{type: "tool_call", name, params, run_id}` / `{type: "tool_result", result, run_id}` / `{type: "confirmation_required", pending_key, run_id, tool_call_id, name, params}` / `{type: "agent_complete", run_id}` / `{type: "error", message, run_id}` / `{type: "pong"}`
 - **JWT 校验**：WS 连接握手时校验 query param `?token=<jwt>` → 注入 user_id 到 session
 - **Session 管理**：每 (user_id, ws_connection) 一个 session_id（uuid4）
+- **端口复用原则**：与 `/api/quote/*` HTTP、`/ws/{channel}` 行情 WS 共用 FastAPI 8000 端口（**不新开端口/通路**），减少 nginx 反代复杂度。
+
+#### Scenario: WS 端口复用
+
+- **GIVEN** FastAPI 服务监听 8000 端口
+- **WHEN** 用户 WS 连接 `/api/agent/ws`
+- **THEN** 连接升级在同一 8000 端口完成，**不依赖**其他端口
+- **AND** 与 `/api/quote/*` HTTP 端点、`/ws/{channel}` 行情推送 WS 共用同一监听端口
 
 #### MCP Server 契约
 
