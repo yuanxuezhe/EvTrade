@@ -54,8 +54,9 @@ export class AgentWSClient {
     const envBase = (import.meta?.env?.VITE_AGENT_WS_BASE || '').trim()
     if (envBase) return envBase.replace(/\/+$/, '')
     const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-    // 只取 hostname（WS 应走标准 443/80，通过 nginx upgrade 转发）
-    return `${proto}//${window.location.hostname}`
+    // 与 ws_heartbeat._wsUrl / api.createWSConnection 保持一致：用 host（含端口），
+    // 公网反代端口 50443 必须在 URL 里，否则 WS 落到 443 无升级 → 连接失败
+    return `${proto}//${window.location.host}`
   }
 
   /**
