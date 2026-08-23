@@ -45,24 +45,35 @@ export class AgentWSClient {
     this.shouldReconnect = true
     this.sessionId = null
     this.lastEvent = null
+    this.readyPromise = null  // Promise resolves when WS is OPEN + ready event arrived
+    this.messageQueue = []  // messages buffered before WS ready
   }
 
   _deriveWSBase() {
+    // 优先用环境变量（Vite 注入），否则从当前页面推导
+    const envBase = (import.meta?.env?.VITE_AGENT_WS_BASE || '').trim()
+    if (envBase) return envBase.replace(/\/+$/, '')
     const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-    return `${proto}//${window.location.host}`
+    // 只取 hostname，不要端口（WS 应走标准 443/80，通过 nginx upgrade 转发）
+    return `${proto}//${window.location.hostname}`
   }
 
   /**
    * 启动 WS 连接 + 注册事件分发。
    * Returns Promise that resolves when first 'ready' event arrives.
+   * Subsequent calls return the same Promise (避免重复 connect).
    */
   connect() {
-    return new Promise((resolve, reject) => {
-      const url = `${this.wsBase}${WS_PATH}?token=${encodeURIComponent(this.token)}`
+    // 复用现有 connect promise（避免重复建连）
+    if (this.readyPromise) return this.readyPromise
+
+    const url = `${this.wsBase}${WS_PATH}?token=${encodeURIComponent(this.token)}`
+    this.readyPromise = new Promise((resolve, reject) => {
       let readyResolved = false
       try {
         this.ws = new WebSocket(url)
       } catch (e) {
+        this.readyPromise = null
         reject(new Error(`WS construct failed: ${e.message}`))
         return
       }
@@ -70,6 +81,7 @@ export class AgentWSClient {
       this.ws.onopen = () => {
         this.reconnectAttempts = 0
         this._emit('onOpen')
+        // onopen 不算"ready"（FastAPI 还要发 ready 事件）— 等 ready 事件才 flush queue
       }
 
       this.ws.onmessage = (event) => {
@@ -77,28 +89,48 @@ export class AgentWSClient {
         try {
           msg = JSON.parse(event.data)
         } catch (e) {
-          // 非 JSON 帧 → 静默忽略
           return
         }
         this.lastEvent = msg
         this._dispatch(msg, resolve, () => { readyResolved = true })
+        // ready 事件到达 → flush 队列
+        if (msg.type === 'ready') {
+          this._flushQueue()
+        }
       }
 
       this.ws.onerror = (e) => {
         this._emit('onError', e)
         if (!readyResolved) {
           readyResolved = true
+          this.readyPromise = null
           reject(new Error('WS connection error'))
         }
       }
 
       this.ws.onclose = (e) => {
         this._emit('onClose', e)
+        this.readyPromise = null  // 下次 connect 可重试
         if (this.shouldReconnect && this.reconnectAttempts < MAX_RECONNECT) {
           this._scheduleReconnect()
         }
       }
     })
+    return this.readyPromise
+  }
+
+  _flushQueue() {
+    while (this.messageQueue.length > 0) {
+      const payload = this.messageQueue.shift()
+      try {
+        this.ws.send(JSON.stringify(payload))
+      } catch (e) {
+        console.error('[AgentWS] flush queue failed:', e)
+        // send 失败时把消息放回队首（避免丢消息）
+        this.messageQueue.unshift(payload)
+        break
+      }
+    }
   }
 
   _dispatch(msg, resolveReady, isReady) {
@@ -159,16 +191,26 @@ export class AgentWSClient {
 
   _send(payload) {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
-      throw new Error('WS not open')
+      // WS 未就绪 → 入队，等 ready 事件自动 flush
+      this.messageQueue.push(payload)
+      return
     }
-    this.ws.send(JSON.stringify(payload))
+    try {
+      this.ws.send(JSON.stringify(payload))
+    } catch (e) {
+      // send 失败 → 入队，下次 flush 重试
+      this.messageQueue.push(payload)
+      console.error('[AgentWS] _send failed, queued:', e)
+    }
   }
 
-  sendUserMessage(text) {
+  async sendUserMessage(text) {
     this._send({ type: 'user_message', text })
+    // 等消息真正发出（避免 race — store 拿不到 ack）
+    // 不强制等 ack，只保证已入队 / 已 send
   }
 
-  respondConfirmation(pendingKey, confirmed) {
+  async respondConfirmation(pendingKey, confirmed) {
     this._send({ type: 'confirmation', pending_key: pendingKey, confirmed })
   }
 

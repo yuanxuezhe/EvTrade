@@ -129,24 +129,42 @@ export const useAgentStore = defineStore('agent', () => {
     }
   }
 
-  function sendUserMessage(text) {
+  async function sendUserMessage(text) {
     if (!text || !text.trim()) return
+    // 1. 先确保 WS 连上（如果还没连就 await，连上后再发）
     if (!_client) {
-      lastError.value = 'WS not connected'
-      return
+      await _connect()
+    } else if (!_client.readyPromise) {
+      // WS 之前连接已断开 → 重连
+      try {
+        await _client.connect()
+      } catch (e) {
+        lastError.value = `WS reconnect failed: ${e.message}`
+        return
+      }
+    } else if (_client.readyPromise) {
+      // WS 正在连 → 等连上
+      try {
+        await _client.readyPromise
+      } catch (e) {
+        lastError.value = `WS connect failed: ${e.message}`
+        return
+      }
     }
+
+    // 2. 入消息 + 发（_send 会保证 WS OPEN 才真发出，未连上则入队等 ready 事件 flush）
     messages.value.push({
       id: _nextId(),
       role: 'user',
       text,
       createdAt: Date.now(),
     })
-    _client.sendUserMessage(text)
+    await _client.sendUserMessage(text)
   }
 
-  function respondConfirmation(confirmed) {
+  async function respondConfirmation(confirmed) {
     if (!_client || !pendingConfirmation.value) return
-    _client.respondConfirmation(pendingConfirmation.value.pendingKey, confirmed)
+    await _client.respondConfirmation(pendingConfirmation.value.pendingKey, confirmed)
     pendingConfirmation.value = null
   }
 

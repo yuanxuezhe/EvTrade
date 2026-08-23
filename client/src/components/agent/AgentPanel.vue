@@ -163,10 +163,10 @@ watch(() => store.messages.length, async () => {
 })
 
 // ─── 发送 ──────────────────────────────────────────────────────
-function onSend() {
+async function onSend() {
   const text = inputText.value.trim()
   if (!text) return
-  store.sendUserMessage(text)
+  await store.sendUserMessage(text)
   inputText.value = ''
 }
 
