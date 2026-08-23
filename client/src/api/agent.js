@@ -54,8 +54,20 @@ export class AgentWSClient {
     const envBase = (import.meta?.env?.VITE_AGENT_WS_BASE || '').trim()
     if (envBase) return envBase.replace(/\/+$/, '')
     const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-    // 只取 hostname，不要端口（WS 应走标准 443/80，通过 nginx upgrade 转发）
+    // 只取 hostname（WS 应走标准 443/80，通过 nginx upgrade 转发）
     return `${proto}//${window.location.hostname}`
+  }
+
+  /**
+   * 让外部显式覆盖 WS base URL（用于绕过 nginx WS 不可用的情况）。
+   * 例如直接连后端 8000：client.setWsBaseOverride('ws://backend-host:8000')
+   */
+  setWsBaseOverride(wsBase) {
+    if (this.ws) {
+      this.close()
+    }
+    this.wsBase = wsBase.replace(/\/+$/, '')
+    this.readyPromise = null
   }
 
   /**
