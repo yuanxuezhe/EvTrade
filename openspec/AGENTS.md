@@ -130,7 +130,7 @@ mv openspec/changes/<name> openspec/changes/archive/<date>-<name>
 
 ## 当前活跃 change
 
-> 当前**无活跃 draft change**（最近 5 个变更均已归档）。新增需求请走 `/openspec:proposal <name>`。
+> 当前**1 个活跃 draft change**（`2026-08-23-ai-strategy-assistant` ScriptDev AI 生成脚本 — C0 调研完成，C1-C5 待拍板推进）。
 
 | Change | 状态 | 解决什么 |
 |---|---|---|
@@ -141,5 +141,9 @@ mv openspec/changes/<name> openspec/changes/archive/<date>-<name>
 | `2026-08-23-delete-orm-layer` | **✅ 已归档** | A.8：删 server/models/ + server/db.py，User 全迁 tables.Users，metadata 由 tables/ 注册 21 表（详见 `archive/2026-08-23-delete-orm-layer/proposal.md`） |
 | `2026-08-23-script-visibility-toggle` | **✅ 已归档** | ScriptDev 脚本编辑补公开/私有开关（后端 REQ-STRAT-014 已就绪，前端缺口）（详见 `archive/2026-08-23-script-visibility-toggle/proposal.md`） |
 | `2026-08-23-rpc-test-mode` | **✅ 已归档** | RPC 测试模式：EVTRADE_TEST_MODE=1 时业务 RPC 不发真实请求，mock.py 固定应答（详见 `archive/2026-08-23-rpc-test-mode/proposal.md`） |
+| `2026-08-23-hermes-serve-evctl` | **✅ 已归档** | hermes serve daemon 纳入 evctl 默认服务（REQ-DEVCTL-011），CLI 缺失时 preflight 报错（详见 `archive/2026-08-23-hermes-serve-evctl/proposal.md`） |
+| `2026-08-23-ai-agent-panel` | **✅ 已归档** | 全局右下角浮动 AgentPanel（REQ-FE-537）+ MCP 9 tool + WS gateway（REQ-ARCH-008）+ ConfirmRegistry 状态机（commit `78a5f15` 前端 / `1d45542`+`09a4c9e` MCP / `d552c35` WS / `b2babc3` 38 单测 / `8b73c51` spec merge；详见 `archive/2026-08-23-ai-agent-panel/proposal.md`） |
+| `2026-08-23-ai-agent-ws-reuse-channel` | **✅ 已归档** | AI WS 走 `/ws/agent_channel` 第 6 channel，共用现有 /ws/{channel} 鉴权/心跳/idle/ws_manager 机制，0 新端口（commit `1f30112`+`ad2796d`+`a482531`+`c02ea2f` / spec merge `88638f1`；详见 `archive/2026-08-23-ai-agent-ws-reuse-channel/proposal.md`） |
+| `2026-08-23-fix-agent-is-reachable-healthz` | **✅ 已归档** | `is_reachable()` 改「HTTP 响应到达即可达」判据，避开 Hermes serve v0.19.0 无 `/healthz` 端点导致的误报 not reachable（commit `18bce19`；详见 `archive/2026-08-23-fix-agent-is-reachable-healthz/proposal.md`） |
 
 详见 `openspec/changes/archive/<date>-<name>/proposal.md`。
