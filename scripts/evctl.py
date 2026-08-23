@@ -11,14 +11,16 @@ Usage:
     uv run python scripts/evctl.py start backend          # 只起后端
     uv run python scripts/evctl.py stop frontend hqserver strategy_exec  # 停指定
     uv run python scripts/evctl.py start hqserver strategy_exec  # 只起指定
-    uv run python scripts/evctl.py logs [backend|frontend|hqserver|strategy_exec]  # 看日志
+    uv run python scripts/evctl.py logs [backend|frontend|hqserver|strategy_exec|hermes]  # 看日志
 
 约束:
     - 通过 `uv run` 启动时, sys.executable 自动指向 .venv 的 Python,
       子进程 (uvicorn / hqserver.py) 继承同一解释器, 无需手动激活 venv.
-    - 端口 8000 / 50998 / 8765 / 8001 硬编码, 不读 env
+    - 端口 8000 / 50998 / 8765 / 8001 / 9119 硬编码, 不读 env
     - 仅用标准库 (无 psutil / colorama)
     - strategy_exec 通过 .env.example 加载环境变量再启动
+    - hermes 为外部 Hermes Agent daemon (默认 9119), 由 _hermes_cmd() 构造启动命令,
+      CLI 缺失时 preflight 给出安装指引 (2026-08-23, hermes-serve-evctl)
 """
 
 import os
@@ -46,6 +48,7 @@ BACKEND_PORT = 8000
 FRONTEND_PORT = 50998
 HQSERVER_PORT = 8765
 STRATEGY_EXEC_PORT = 8001
+HERMES_PORT = 9119  # Hermes Agent headless daemon (JSON-RPC/WS gateway)
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(SCRIPT_DIR)
@@ -166,6 +169,31 @@ def _strategy_exec_cmd():
     }
 
 
+def _hermes_cmd():
+    """构造 hermes serve 启动命令 (外部 Hermes Agent daemon, 默认 9119).
+
+    hermes 是 Hermes Agent 的 headless JSON-RPC/WebSocket gateway (LLM 后端),
+    AI 助手功能 (server/ws/agent_handler.py) 依赖它。**不走 venv**, 直接调 PATH 里的
+    `hermes` CLI。CLI 缺失时 preflight (_hermes_preflight) 在 start 阶段报指引,
+    这里 `or 'hermes'` 保证 import 阶段不 crash (status/stop/logs 不受影响)。
+    """
+    return [shutil.which('hermes') or 'hermes', 'serve']
+
+
+def _hermes_preflight():
+    """hermes serve 前置检查: `hermes` CLI 必须在 PATH 里.
+
+    缺失时打印安装指引并返回 False → start_service 对该服务 fail。
+    """
+    if shutil.which('hermes'):
+        return True
+    log_err(
+        'hermes CLI not found in PATH — install Hermes Agent first '
+        '(daemon: `hermes serve`; API doc: ~/.hermes/skills/autonomous-ai-agents/hermes-agent/SKILL.md)'
+    )
+    return False
+
+
 SERVICES = {
     'backend': Service(
         'backend', BACKEND_PORT,
@@ -202,6 +230,15 @@ SERVICES = {
         _strategy_exec_cmd(),
         preflight=['fastapi', 'uvicorn'],  # backtrader 仅运行时需要，暂不预检
     ),
+    # hermes: 外部 Hermes Agent daemon (AI 助手后端依赖), 默认服务随 evctl start 拉起。
+    #   - port 9119 被占 (用户手动起过) → skip-success, 与其它服务端口占用语义一致
+    #   - CLI 缺失 → preflight 报安装指引 (callable 预检)
+    'hermes': Service(
+        'hermes', HERMES_PORT,
+        PROJECT_ROOT,
+        _hermes_cmd(),
+        preflight=[_hermes_preflight],
+    ),
     'broker': Service(
         'broker', None,   # no TCP port — pure RabbitMQ publisher
         os.path.join(PROJECT_ROOT, 'iquant'),
@@ -213,7 +250,7 @@ SERVICES = {
 VALID_ACTIONS = ['start', 'stop', 'restart', 'status', 'logs']
 # broker 在服务表中但 DEFAULT_SERVICES 默认跳过 (xtquant 模块依赖 QMT 客户端环境)
 #   用户可显式 `uv run python scripts/evctl.py start broker` / restart broker 启动
-DEFAULT_SERVICES = ['backend', 'frontend', 'hqserver', 'strategy_exec']
+DEFAULT_SERVICES = ['backend', 'frontend', 'hqserver', 'strategy_exec', 'hermes']
 OPTIONAL_SERVICES = ['broker']   # 需要 xtquant 本地模块, 默认不启动
 
 # ============================================================================
@@ -524,15 +561,28 @@ def spawn_detached(cmd, cwd, log_path, pid_file, env=None):
 
 
 def _preflight_check(svc):
-    """启动前 import-check. Python 版本不对/依赖缺失时给出明确错误."""
+    """启动前预检: module import 检查 + callable 检查 (如 hermes CLI 存在性).
+
+    callable 预检项负责自己打印失败原因并返回 True/False;
+    import 项聚成 missing 列表统一报错。二者可并存 (2026-08-23, hermes-serve-evctl)。
+    """
     if not svc.preflight:
         return True
     missing = []
-    for mod in svc.preflight:
-        try:
-            __import__(mod)
-        except ImportError:
-            missing.append(mod)
+    for item in svc.preflight:
+        if callable(item):
+            try:
+                ok = item()
+            except Exception as e:
+                log_err('preflight failed for ' + svc.name + ': ' + str(e))
+                return False
+            if not ok:
+                return False  # callable 已打印具体失败原因
+        else:
+            try:
+                __import__(item)
+            except ImportError:
+                missing.append(item)
     if missing:
         log_err(
             'preflight failed for ' + svc.name + ': missing module(s) ' +
