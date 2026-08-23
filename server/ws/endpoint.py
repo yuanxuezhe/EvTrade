@@ -35,7 +35,10 @@ from server.infra.db import SessionLocal
 from server.ws.manager import ws_manager, match_pattern
 from server.repo.quote_snapshots import get_latest_multi as repo_get_latest_multi, to_dict as repo_to_dict
 from server.tables import Users
-from server.ws.agent_handler import handle_agent_channel_message  # 2026-08-23, ai-agent-ws-reuse-channel
+from server.ws.agent_handler import (  # 2026-08-23, ai-agent-ws-reuse-channel
+    handle_agent_channel_message,
+    send_agent_ready,
+)
 
 
 WS_IDLE_TIMEOUT = 600  # 秒：WS 通道无任意消息的最大容忍（客户端 30s ping → 10 分钟内必收到消息）
@@ -101,6 +104,14 @@ def register_ws_endpoint(app: FastAPI):
                 await websocket.close(code=4003, reason="Admin required")
                 return
         await ws_manager.connect(websocket, channel)
+        # agent_channel 需要的 user_id（连接级, 供 ready / 业务消息共用）
+        user_id = int(user.get("id") or user.get("sub", 0)) or None
+        if channel == "agent_channel":
+            # REQ-ARCH-008: agent_channel 连上后**立即**发 ready。
+            # 前端 AgentWSClient.connect() 以收到 ready 事件为连接成功标志,
+            # 在此之前不会发出首条 user_message —— 若等第一条 user_message 才发,
+            # 前后端互相等待, 首条消息永远发不出去 (实际故障 2026-08-23)。
+            await send_agent_ready(websocket, user_id)
 
         last_recv = asyncio.get_event_loop().time()
 
@@ -222,10 +233,7 @@ def register_ws_endpoint(app: FastAPI):
                 #   双向 RPC-like 协议, 启动 hermes agent run + 流式推 WS events
                 #   与 quote_update 的 subscribe/unsubscribe 完全不同的协议
                 if channel == "agent_channel":
-                    await handle_agent_channel_message(
-                        websocket, parsed,
-                        user_id=int(user.get("id") or user.get("sub", 0)) or None,
-                    )
+                    await handle_agent_channel_message(websocket, parsed, user_id=user_id)
                     continue
                 # 其他业务消息：当作心跳续约，不做业务处理（推送是单向 server→client）
         except WebSocketDisconnect:

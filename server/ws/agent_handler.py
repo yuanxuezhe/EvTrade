@@ -80,6 +80,23 @@ def _jwt_for(user_id: int) -> str:
     )
 
 
+# ─── 连接建立时推送 ready ────────────────────────────────────────
+async def send_agent_ready(websocket: WebSocket, user_id: int | None) -> str:
+    """agent_channel 连上后立即发 ready（REQ-ARCH-008「连上后立即发」）。
+
+    前端 `AgentWSClient.connect()` 以收到 `ready` 事件为连接成功的标志，
+    在此之前**不会**发送首条 `user_message`。所以 ready 必须在连接建立时主动推，
+    不能等第一条 user_message —— 否则前后端互相等待（前端等 ready 才发首条消息、
+    后端等首条消息才发 ready），首条消息永远发不出去。
+
+    Returns:
+        本次连接生成的 session_id（连接级标识；hermes run 的 run session 另生成）。
+    """
+    session_id = f"u{user_id or 0}-{uuid.uuid4().hex[:12]}"
+    await _send(websocket, {"type": "ready", "session_id": session_id})
+    return session_id
+
+
 # ─── 主入口：业务消息分发 ────────────────────────────────────────
 async def handle_agent_channel_message(
     websocket: WebSocket,
@@ -149,11 +166,10 @@ async def _handle_user_message(
         for td in TOOL_REGISTRY.values()
     ]
 
-    # session_id = 单连接唯一（复用 ws_manager connect 时存的）
+    # session_id 单 run 唯一（hermes run 标识）。
+    # ready 已在连接建立时由 endpoint.py 通过 send_agent_ready 推过
+    # （REQ-ARCH-008「连上后立即发」），这里不再重复发。
     session_id = f"u{user_id or 0}-{uuid.uuid4().hex[:12]}"
-
-    # 推 ready（第一次 user_message 才发）
-    await _send(websocket, {"type": "ready", "session_id": session_id})
 
     # 启动 run + 订阅事件
     try:
