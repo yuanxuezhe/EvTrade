@@ -1,10 +1,8 @@
 #!/usr/bin/env bash
 # evtrade_ai.sh — AI 助手一行调 EvTrade REST 的薄壳 (wrapper)
 #
-# ⚠️ AI 助手入门口号: 这是你调 EvTrade 的唯一正确入口.
-#    严禁拼 curl /api/auth/grant, 严禁 /api/auth/login (admin 密码外泄),
-#    严禁 web_extract 拉 127.0.0.1, 严禁 execute_code 跑 subprocess 调接口.
-#    2026-08-24 实测: 上面那些绕路 20+ 步才查到持仓, 本 wrapper 1 步搞定.
+# 设计目的: AI 助手 / LLM 脚本 / shell pipe 场景. 走 hermesagent 授信,
+#           完全不走 /api/auth/login (无密码). 真实数据 token 永久有效 (30y).
 #
 # Usage:
 #   bash scripts/evtrade_ai.sh get  /api/auth/me

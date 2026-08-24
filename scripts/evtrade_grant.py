@@ -3,14 +3,6 @@
 """
 evtrade_grant.py — AI 助手 / 外部脚本调 EvTrade REST API 的"授信 token + HTTP 客户端"工具
 
-⚠️ AI 助手入门口号:
-    bash scripts/evtrade_ai.sh get /api/positions     ← AI agent 一行调用
-    bash scripts/evtrade_ai.sh role=trader get /api/orders
-    from scripts.evtrade_grant import auth_header, get  ← Python 库模式
-
-**严禁**: curl /api/auth/login, curl /api/auth/grant 拼 token, web_extract 拉 127.0.0.1,
-execute_code 跑 subprocess 调接口 (2026-08-24 实测 20+ 步浪费).
-
 Usage:
     # 单次调用 (默认 admin)
     python3 scripts/evtrade_grant.py get /api/stocks
