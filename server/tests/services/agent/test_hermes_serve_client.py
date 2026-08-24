@@ -1,282 +1,437 @@
 """
-server/tests/services/agent/test_hermes_serve_client.py — HermesServeClient 单测
+server/tests/services/agent/test_hermes_serve_client.py
 
-Mock httpx + websockets（不依赖真实 hermes serve daemon）。
+单测覆盖 HermesServeClient 新版（Hermes API server :8642 /v1/runs REST + SSE）。
+
+覆盖接口：
+- is_reachable
+- submit_run
+- stream_events（SSE 解析）
+- respond_approval
+- stop_run
+- get_run_status
+- list_models
+- HermesEvent.from_dict
 """
-import os
+from __future__ import annotations
+
+import json
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
 
-# 在 import 之前设 JWT_SECRET
-os.environ.setdefault("JWT_SECRET", "test_secret_for_unit_test_only_32bytes!!")
-os.environ.setdefault("JWT_ALGORITHM", "HS256")
-
-from server.services.agent.hermes_serve_client import (  # noqa: E402
-    HermesServeClient,
-    HermesEvent,
-    HermesUnreachableError,
+from server.services.agent.hermes_serve_client import (
+    HERMES_API_BASE_URL,
     HermesError,
+    HermesEvent,
+    HermesServeClient,
+    HermesUnreachableError,
 )
 
+API_BASE = "http://test:8642"
+API_KEY = "test-key-123"
 
-# ─── 1. is_reachable ─────────────────────────────────────────────
+
+def _mock_client():
+    """构造一个 patch 后用于 httpx.AsyncClient 的 mock ctx manager."""
+    m = MagicMock()
+    m.__aenter__ = AsyncMock(return_value=m)
+    m.__aexit__ = AsyncMock(return_value=False)
+    return m
+
+
+# ─── 1. HermesEvent.from_dict ─────────────────────────────────
+class TestHermesEvent:
+    """Hermes SSE 事件 payload → HermesEvent 转换。"""
+
+    def test_run_started(self):
+        d = {"type": "run.started", "session_id": "s-1"}
+        e = HermesEvent.from_dict(d)
+        assert e.type == "run.started"
+        assert e.session_id == "s-1"
+        assert e.raw == d
+
+    def test_assistant_completed(self):
+        d = {"type": "assistant.completed", "message_id": "m-1", "content": "hi"}
+        e = HermesEvent.from_dict(d)
+        assert e.type == "assistant.completed"
+        assert e.message_id == "m-1"
+        assert e.content == "hi"
+
+    def test_tool_started_with_args(self):
+        d = {"type": "tool.started", "tool_name": "list_positions", "args": {"limit": 10}, "preview": "loading..."}
+        e = HermesEvent.from_dict(d)
+        assert e.type == "tool.started"
+        assert e.tool_name == "list_positions"
+        assert e.tool_args == {"limit": 10}
+
+    def test_tool_started_args_none_safe(self):
+        """args 字段为 None 或缺失时，tool_args 应为空 dict（不 None）"""
+        d = {"type": "tool.started", "tool_name": "x", "args": None}
+        e = HermesEvent.from_dict(d)
+        assert e.tool_args == {}
+        d2 = {"type": "tool.started", "tool_name": "x"}
+        e2 = HermesEvent.from_dict(d2)
+        assert e2.tool_args == {}
+
+    def test_tool_completed_with_result(self):
+        d = {"type": "tool.completed", "tool_name": "get_quote", "result": {"price": 1.23}}
+        e = HermesEvent.from_dict(d)
+        assert e.tool_result == {"price": 1.23}
+
+    def test_approval_required(self):
+        d = {"type": "approval.required", "pending_key": "r1:tc1", "tool_name": "place_order", "args": {"stock_code": "600000.SH"}}
+        e = HermesEvent.from_dict(d)
+        assert e.pending_key == "r1:tc1"
+        assert e.tool_name == "place_order"
+        assert e.tool_args == {"stock_code": "600000.SH"}
+
+    def test_error_event(self):
+        d = {"type": "error", "message": "boom"}
+        e = HermesEvent.from_dict(d)
+        assert e.error_message == "boom"
+
+    def test_unknown_type_fallback(self):
+        """type 字段缺失时用 "unknown" 兜底（防御性）。"""
+        d = {"foo": "bar"}
+        e = HermesEvent.from_dict(d)
+        assert e.type == "unknown"
+
+    def test_minimal_dict(self):
+        """空 dict → 所有字段默认值。"""
+        e = HermesEvent.from_dict({})
+        assert e.type == "unknown"
+        assert e.run_id == ""
+        assert e.tool_args == {}
+
+
+# ─── 2. is_reachable ─────────────────────────────────────────
 class TestIsReachable:
-    """is_reachable() 判据：HTTP 响应到达即 True，连接错误/超时即 False。
-
-    Hermes serve v0.19.0 headless 后端对所有 GET 路径返回 404 JSON —— 只要 daemon 在跑
-    HTTP 层就有响应，不卡 status_code。详见
-    openspec/changes/2026-08-23-fix-agent-is-reachable-healthz/proposal.md。
-    """
+    """HTTP 响应到达判据（沿用 healthz 修复）。"""
 
     @pytest.mark.asyncio
     async def test_404_still_reachable(self):
-        """Hermes serve v0.19.0 真实行为：daemon 在跑 → GET / 返回 404，但仍视为可达。
-
-        这是修复前误报的根因：旧实现卡 status_code==200，404 直接返回 False。
-        """
-        client = HermesServeClient(base_url="http://test:9119")
-        mock_resp = MagicMock(status_code=404)
-
-        mock_client = MagicMock()
-        mock_client.get = AsyncMock(return_value=mock_resp)
-
-        async_ctx = MagicMock()
-        async_ctx.__aenter__ = AsyncMock(return_value=mock_client)
-        async_ctx.__aexit__ = AsyncMock(return_value=False)
-
-        with patch("httpx.AsyncClient", return_value=async_ctx):
-            result = await client.is_reachable()
-        assert result is True
+        client = HermesServeClient(base_url=API_BASE, api_key=API_KEY)
+        m = _mock_client()
+        m.get = AsyncMock(return_value=MagicMock(status_code=404))
+        with patch("httpx.AsyncClient", return_value=m):
+            assert await client.is_reachable() is True
 
     @pytest.mark.asyncio
     async def test_200_also_reachable(self):
-        """如果未来 hermes serve 加了 /healthz 返回 200，也仍然返回 True。"""
-        client = HermesServeClient(base_url="http://test:9119")
-        mock_resp = MagicMock(status_code=200)
-
-        mock_client = MagicMock()
-        mock_client.get = AsyncMock(return_value=mock_resp)
-
-        async_ctx = MagicMock()
-        async_ctx.__aenter__ = AsyncMock(return_value=mock_client)
-        async_ctx.__aexit__ = AsyncMock(return_value=False)
-
-        with patch("httpx.AsyncClient", return_value=async_ctx):
-            result = await client.is_reachable()
-        assert result is True
-
-    @pytest.mark.asyncio
-    async def test_500_also_reachable(self):
-        """服务端 5xx 也算「响应到达」= 可达；只要 HTTP 通道没断。"""
-        client = HermesServeClient(base_url="http://test:9119")
-        mock_resp = MagicMock(status_code=500)
-
-        mock_client = MagicMock()
-        mock_client.get = AsyncMock(return_value=mock_resp)
-
-        async_ctx = MagicMock()
-        async_ctx.__aenter__ = AsyncMock(return_value=mock_client)
-        async_ctx.__aexit__ = AsyncMock(return_value=False)
-
-        with patch("httpx.AsyncClient", return_value=async_ctx):
-            result = await client.is_reachable()
-        assert result is True
+        client = HermesServeClient(base_url=API_BASE, api_key=API_KEY)
+        m = _mock_client()
+        m.get = AsyncMock(return_value=MagicMock(status_code=200))
+        with patch("httpx.AsyncClient", return_value=m):
+            assert await client.is_reachable() is True
 
     @pytest.mark.asyncio
     async def test_connect_error_returns_false(self):
-        """daemon 没起（连接拒绝）→ httpx.ConnectError → False。
-
-        用显式 mock 替代「连 127.0.0.1:1 等待真实超时」，避免 5s 慢测试。
-        """
-        import httpx
-        client = HermesServeClient(base_url="http://test:9119")
-
-        mock_client = MagicMock()
-        mock_client.get = AsyncMock(side_effect=httpx.ConnectError("conn refused"))
-
-        async_ctx = MagicMock()
-        async_ctx.__aenter__ = AsyncMock(return_value=mock_client)
-        async_ctx.__aexit__ = AsyncMock(return_value=False)
-
-        with patch("httpx.AsyncClient", return_value=async_ctx):
-            result = await client.is_reachable()
-        assert result is False
+        client = HermesServeClient(base_url=API_BASE, api_key=API_KEY)
+        with patch("httpx.AsyncClient", side_effect=httpx.ConnectError("refused")):
+            assert await client.is_reachable() is False
 
     @pytest.mark.asyncio
     async def test_timeout_returns_false(self):
-        """daemon 挂了（连接挂起）→ asyncio.TimeoutError → False。"""
-        import asyncio
-        client = HermesServeClient(base_url="http://test:9119")
-
-        mock_client = MagicMock()
-        mock_client.get = AsyncMock(side_effect=asyncio.TimeoutError())
-
-        async_ctx = MagicMock()
-        async_ctx.__aenter__ = AsyncMock(return_value=mock_client)
-        async_ctx.__aexit__ = AsyncMock(return_value=False)
-
-        with patch("httpx.AsyncClient", return_value=async_ctx):
-            result = await client.is_reachable()
-        assert result is False
+        client = HermesServeClient(base_url=API_BASE, api_key=API_KEY)
+        with patch("httpx.AsyncClient", side_effect=httpx.TimeoutException("slow")):
+            assert await client.is_reachable() is False
 
 
-# ─── 2. _rpc ─────────────────────────────────────────────────────
-class TestRpc:
-    @pytest.mark.asyncio
-    async def test_success(self):
-        client = HermesServeClient()
-        mock_resp = MagicMock(status_code=200)
-        mock_resp.json.return_value = {"jsonrpc": "2.0", "id": 1, "result": {"ok": True}}
-        with patch("httpx.AsyncClient") as mock_async:
-            mock_async.return_value.__aenter__.return_value.post = AsyncMock(
-                return_value=mock_resp
-            )
-            result = await client._rpc("test.method", {"x": 1})
-        assert result == {"ok": True}
+# ─── 3. submit_run ───────────────────────────────────────────
+class TestSubmitRun:
+    """POST /v1/runs → 返回 run_id。"""
 
-    @pytest.mark.asyncio
-    async def test_rpc_error_in_response(self):
-        client = HermesServeClient()
-        mock_resp = MagicMock(status_code=200)
-        mock_resp.json.return_value = {
-            "jsonrpc": "2.0", "id": 1,
-            "error": {"code": -1, "message": "bad params"},
-        }
-        with patch("httpx.AsyncClient") as mock_async:
-            mock_async.return_value.__aenter__.return_value.post = AsyncMock(
-                return_value=mock_resp
-            )
-            with pytest.raises(HermesError, match="bad params"):
-                await client._rpc("test.method", {})
-
-    @pytest.mark.asyncio
-    async def test_network_error_raises_unreachable(self):
-        client = HermesServeClient()
-        with patch("httpx.AsyncClient") as mock_async:
-            mock_async.return_value.__aenter__.return_value.post = AsyncMock(
-                side_effect=__import__("httpx").ConnectError("conn refused")
-            )
-            with pytest.raises(HermesUnreachableError):
-                await client._rpc("test.method", {})
-
-
-# ─── 3. start_run ────────────────────────────────────────────────
-class TestStartRun:
     @pytest.mark.asyncio
     async def test_returns_run_id(self):
-        client = HermesServeClient()
-        with patch.object(client, "_rpc", AsyncMock(return_value={"run_id": "r-abc-123"})):
-            run_id = await client.start_run(
-                session_id="s1", user_message="hello", tools=[]
-            )
-        assert run_id == "r-abc-123"
+        client = HermesServeClient(base_url=API_BASE, api_key=API_KEY)
+        m = _mock_client()
+        m.post = AsyncMock(return_value=MagicMock(
+            status_code=202,
+            json=lambda: {"run_id": "run_abc123", "status": "started"},
+        ))
+        with patch("httpx.AsyncClient", return_value=m):
+            run_id = await client.submit_run(input="hi", session_id="s1")
+        assert run_id == "run_abc123"
+        # 验证 Authorization 头 + payload
+        call_kwargs = m.post.call_args.kwargs
+        assert call_kwargs["json"]["input"] == "hi"
+        assert call_kwargs["json"]["session_id"] == "s1"
+        assert call_kwargs["headers"]["Authorization"] == f"Bearer {API_KEY}"
+
+    @pytest.mark.asyncio
+    async def test_includes_optional_instructions(self):
+        client = HermesServeClient(base_url=API_BASE, api_key=API_KEY)
+        m = _mock_client()
+        m.post = AsyncMock(return_value=MagicMock(
+            status_code=202,
+            json=lambda: {"run_id": "run_xyz"},
+        ))
+        with patch("httpx.AsyncClient", return_value=m):
+            await client.submit_run(input="hi", session_id="s1", instructions="be brief")
+        assert m.post.call_args.kwargs["json"]["instructions"] == "be brief"
+
+    @pytest.mark.asyncio
+    async def test_5xx_raises_hermes_error(self):
+        client = HermesServeClient(base_url=API_BASE, api_key=API_KEY)
+        m = _mock_client()
+        m.post = AsyncMock(return_value=MagicMock(
+            status_code=500,
+            text="internal error",
+            json=lambda: {"error": {"message": "internal error"}},
+        ))
+        with patch("httpx.AsyncClient", return_value=m):
+            with pytest.raises(HermesError) as exc:
+                await client.submit_run(input="hi", session_id="s1")
+        assert "500" in str(exc.value)
 
     @pytest.mark.asyncio
     async def test_missing_run_id_raises(self):
-        client = HermesServeClient()
-        with patch.object(client, "_rpc", AsyncMock(return_value={"ok": True})):
-            with pytest.raises(HermesError, match="missing run_id"):
-                await client.start_run(session_id="s1", user_message="x", tools=[])
+        client = HermesServeClient(base_url=API_BASE, api_key=API_KEY)
+        m = _mock_client()
+        m.post = AsyncMock(return_value=MagicMock(
+            status_code=202,
+            json=lambda: {"status": "started"},  # no run_id
+        ))
+        with patch("httpx.AsyncClient", return_value=m):
+            with pytest.raises(HermesError) as exc:
+                await client.submit_run(input="hi", session_id="s1")
+        assert "missing run_id" in str(exc.value)
 
-
-# ─── 4. HermesEvent.from_dict ────────────────────────────────────
-class TestHermesEvent:
-    def test_from_dict_text_event(self):
-        e = HermesEvent.from_dict({"type": "text", "content": "hi"})
-        assert e.type == "text"
-        assert e.content == "hi"
-
-    def test_from_dict_tool_call_event(self):
-        e = HermesEvent.from_dict({
-            "type": "tool_call",
-            "tool_name": "place_order",
-            "tool_call_id": "tc-1",
-            "tool_params": {"stock_code": "600000.SH"},
-        })
-        assert e.tool_name == "place_order"
-        assert e.tool_call_id == "tc-1"
-        assert e.tool_params["stock_code"] == "600000.SH"
-
-    def test_from_dict_minimal(self):
-        e = HermesEvent.from_dict({"type": "step_start"})
-        assert e.type == "step_start"
-        assert e.run_id == ""
-        assert e.tool_params == {}
-
-
-# ─── 5. subscribe_events (mock websockets) ──────────────────────
-class TestSubscribeEvents:
     @pytest.mark.asyncio
-    async def test_yields_events_then_complete(self):
-        client = HermesServeClient()
+    async def test_connect_error_raises_unreachable(self):
+        client = HermesServeClient(base_url=API_BASE, api_key=API_KEY)
+        with patch("httpx.AsyncClient", side_effect=httpx.ConnectError("refused")):
+            with pytest.raises(HermesUnreachableError):
+                await client.submit_run(input="hi", session_id="s1")
 
-        # Mock websockets.connect → AsyncMock context manager
-        async def fake_recv():
-            yield_idx = fake_recv.i
-            fake_recv.i += 1
-            frames = [
-                '{"type":"step_start"}',
-                '{"type":"text","content":"hello"}',
-                '{"type":"tool_call","tool_name":"list_positions","tool_call_id":"tc-1","tool_params":{}}',
-                '{"type":"tool_result","tool_result":{"ok":true}}',
-                '{"type":"agent_complete"}',
-            ]
-            if yield_idx < len(frames):
-                return frames[yield_idx]
-            raise __import__("asyncio").TimeoutError()
-        fake_recv.i = 0
 
-        mock_ws = MagicMock()
-        mock_ws.recv = fake_recv
+# ─── 4. stream_events SSE 解析 ─────────────────────────────────
+class TestStreamEvents:
+    """GET /v1/runs/{id}/events SSE → AsyncIterator[HermesEvent]。"""
 
-        class FakeConnect:
-            def __init__(self, *a, **kw): pass
-            async def __aenter__(self): return mock_ws
-            async def __aexit__(self, *a): return False
+    @pytest.mark.asyncio
+    async def test_parses_sse_frames(self):
+        """SSE 格式：data: {...}\\n\\n 多帧。"""
+        client = HermesServeClient(base_url=API_BASE, api_key=API_KEY)
 
-        with patch("websockets.connect", FakeConnect):
+        # 构造 aiter_text 返回多块文本
+        chunks = [
+            'data: {"type": "run.started", "session_id": "s1"}\n\n',
+            'data: {"type": "tool.started", "tool_name": "list_positions", "args": {}}\n\n',
+            'data: {"type": "tool.completed", "tool_name": "list_positions", "result": []}\n\n',
+            'data: {"type": "done"}\n\n',
+        ]
+
+        # 构造 httpx AsyncClient.stream() context manager
+        stream_response = MagicMock()
+        stream_response.status_code = 200
+        stream_response.raise_for_status = MagicMock()
+
+        async def fake_aiter_text():
+            for c in chunks:
+                yield c
+
+        stream_response.aiter_text = fake_aiter_text
+
+        stream_ctx = MagicMock()
+        stream_ctx.__aenter__ = AsyncMock(return_value=stream_response)
+        stream_ctx.__aexit__ = AsyncMock(return_value=False)
+
+        # httpx.AsyncClient() 返回的 ctx manager；其 .stream() 也返回 ctx manager
+        async_client_mock = MagicMock()
+        async_client_mock.__aenter__ = AsyncMock(return_value=async_client_mock)
+        async_client_mock.__aexit__ = AsyncMock(return_value=False)
+        async_client_mock.stream = MagicMock(return_value=stream_ctx)
+
+        with patch("httpx.AsyncClient", return_value=async_client_mock):
             events = []
-            async for e in client.subscribe_events("r-1"):
-                events.append(e)
-        assert len(events) == 5
-        assert events[0].type == "step_start"
-        assert events[1].content == "hello"
-        assert events[2].tool_name == "list_positions"
-        assert events[3].tool_result == {"ok": True}
-        assert events[4].type == "agent_complete"
+            async for evt in client.stream_events("run_abc"):
+                events.append(evt)
 
+        assert [e.type for e in events] == [
+            "run.started",
+            "tool.started",
+            "tool.completed",
+            "done",
+        ]
+        assert events[1].tool_name == "list_positions"
+        # done 事件之后 stream_events 应退出（不再 yield）
 
-# ─── 6. list_available_tools ────────────────────────────────────
-class TestListAvailableTools:
     @pytest.mark.asyncio
-    async def test_returns_tools(self):
-        client = HermesServeClient()
-        with patch.object(
-            client, "_rpc",
-            AsyncMock(return_value={"tools": [{"name": "web_search"}]}),
-        ):
-            tools = await client.list_available_tools()
-        assert tools == [{"name": "web_search"}]
+    async def test_skips_sse_comments(self):
+        """: keepalive 注释行应被跳过（不触发 yield）。"""
+        client = HermesServeClient(base_url=API_BASE, api_key=API_KEY)
+
+        chunks = [
+            ": keepalive\n\n",
+            'data: {"type": "run.started"}\n\n',
+            ": keepalive\n\n",
+            'data: {"type": "done"}\n\n',
+        ]
+
+        stream_response = MagicMock()
+        stream_response.status_code = 200
+        stream_response.raise_for_status = MagicMock()
+
+        async def fake_aiter_text():
+            for c in chunks:
+                yield c
+
+        stream_response.aiter_text = fake_aiter_text
+
+        stream_ctx = MagicMock()
+        stream_ctx.__aenter__ = AsyncMock(return_value=stream_response)
+        stream_ctx.__aexit__ = AsyncMock(return_value=False)
+
+        async_client_mock = MagicMock()
+        async_client_mock.__aenter__ = AsyncMock(return_value=async_client_mock)
+        async_client_mock.__aexit__ = AsyncMock(return_value=False)
+        async_client_mock.stream = MagicMock(return_value=stream_ctx)
+
+        with patch("httpx.AsyncClient", return_value=async_client_mock):
+            events = []
+            async for evt in client.stream_events("run_x"):
+                events.append(evt)
+
+        # : keepalive 不应出现在 events 里
+        assert len(events) == 2
+        assert events[0].type == "run.started"
+        assert events[1].type == "done"
+
+    @pytest.mark.asyncio
+    async def test_404_raises_unreachable(self):
+        client = HermesServeClient(base_url=API_BASE, api_key=API_KEY)
+        stream_response = MagicMock(status_code=404)
+
+        stream_ctx = MagicMock()
+        stream_ctx.__aenter__ = AsyncMock(return_value=stream_response)
+        stream_ctx.__aexit__ = AsyncMock(return_value=False)
+
+        async_client_mock = MagicMock()
+        async_client_mock.__aenter__ = AsyncMock(return_value=async_client_mock)
+        async_client_mock.__aexit__ = AsyncMock(return_value=False)
+        async_client_mock.stream = MagicMock(return_value=stream_ctx)
+
+        with patch("httpx.AsyncClient", return_value=async_client_mock):
+            with pytest.raises(HermesUnreachableError) as exc:
+                async for _ in client.stream_events("run_nonexistent"):
+                    pass
+        assert "not found" in str(exc.value).lower()
+
+
+# ─── 5. respond_approval ─────────────────────────────────────
+class TestRespondApproval:
+    """POST /v1/runs/{id}/approval。"""
+
+    @pytest.mark.asyncio
+    async def test_once_choice(self):
+        client = HermesServeClient(base_url=API_BASE, api_key=API_KEY)
+        m = _mock_client()
+        m.post = AsyncMock(return_value=MagicMock(status_code=200, text="ok"))
+        with patch("httpx.AsyncClient", return_value=m):
+            await client.respond_approval(run_id="r1", choice="once")
+        body = m.post.call_args.kwargs["json"]
+        assert body == {"choice": "once", "all": False}
+
+    @pytest.mark.asyncio
+    async def test_approve_alias_maps_to_once(self):
+        client = HermesServeClient(base_url=API_BASE, api_key=API_KEY)
+        m = _mock_client()
+        m.post = AsyncMock(return_value=MagicMock(status_code=200, text="ok"))
+        with patch("httpx.AsyncClient", return_value=m):
+            await client.respond_approval(run_id="r1", choice="approve")
+        assert m.post.call_args.kwargs["json"]["choice"] == "once"
+
+    @pytest.mark.asyncio
+    async def test_resolve_all(self):
+        client = HermesServeClient(base_url=API_BASE, api_key=API_KEY)
+        m = _mock_client()
+        m.post = AsyncMock(return_value=MagicMock(status_code=200, text="ok"))
+        with patch("httpx.AsyncClient", return_value=m):
+            await client.respond_approval(run_id="r1", choice="session", resolve_all=True)
+        assert m.post.call_args.kwargs["json"] == {"choice": "session", "all": True}
+
+    @pytest.mark.asyncio
+    async def test_409_raises_hermes_error(self):
+        client = HermesServeClient(base_url=API_BASE, api_key=API_KEY)
+        m = _mock_client()
+        m.post = AsyncMock(return_value=MagicMock(status_code=409, text="approval_not_pending"))
+        with patch("httpx.AsyncClient", return_value=m):
+            with pytest.raises(HermesError):
+                await client.respond_approval(run_id="r1", choice="once")
+
+
+# ─── 6. stop_run ─────────────────────────────────────────────
+class TestStopRun:
+    """POST /v1/runs/{id}/stop。"""
+
+    @pytest.mark.asyncio
+    async def test_success(self):
+        client = HermesServeClient(base_url=API_BASE, api_key=API_KEY)
+        m = _mock_client()
+        m.post = AsyncMock(return_value=MagicMock(status_code=204))
+        with patch("httpx.AsyncClient", return_value=m):
+            await client.stop_run("r1")  # 应正常返回不抛
+
+    @pytest.mark.asyncio
+    async def test_404_is_idempotent(self):
+        """run 已结束返 404 也视为成功（幂等）。"""
+        client = HermesServeClient(base_url=API_BASE, api_key=API_KEY)
+        m = _mock_client()
+        m.post = AsyncMock(return_value=MagicMock(status_code=404, text="run_not_found"))
+        with patch("httpx.AsyncClient", return_value=m):
+            await client.stop_run("r_done")  # 不抛
+
+
+# ─── 7. get_run_status ───────────────────────────────────────
+class TestGetRunStatus:
+    @pytest.mark.asyncio
+    async def test_returns_dict(self):
+        client = HermesServeClient(base_url=API_BASE, api_key=API_KEY)
+        m = _mock_client()
+        m.get = AsyncMock(return_value=MagicMock(
+            status_code=200,
+            json=lambda: {"run_id": "r1", "status": "running", "last_event": "tool.started"},
+        ))
+        with patch("httpx.AsyncClient", return_value=m):
+            status = await client.get_run_status("r1")
+        assert status["status"] == "running"
+
+
+# ─── 8. list_models ──────────────────────────────────────────
+class TestListModels:
+    @pytest.mark.asyncio
+    async def test_returns_model_ids(self):
+        client = HermesServeClient(base_url=API_BASE, api_key=API_KEY)
+        m = _mock_client()
+        m.get = AsyncMock(return_value=MagicMock(
+            status_code=200,
+            json=lambda: {"data": [{"id": "MiniMax-M3.0"}, {"id": "MiniMax-M2.7"}]},
+        ))
+        with patch("httpx.AsyncClient", return_value=m):
+            models = await client.list_models()
+        assert models == ["MiniMax-M3.0", "MiniMax-M2.7"]
 
     @pytest.mark.asyncio
     async def test_unreachable_returns_empty(self):
-        client = HermesServeClient()
-        with patch.object(client, "_rpc", AsyncMock(side_effect=HermesUnreachableError("x"))):
-            tools = await client.list_available_tools()
-        assert tools == []
+        client = HermesServeClient(base_url=API_BASE, api_key=API_KEY)
+        with patch("httpx.AsyncClient", side_effect=httpx.ConnectError("refused")):
+            models = await client.list_models()
+        assert models == []
 
 
-# ─── 7. respond_confirmation ────────────────────────────────────
-class TestRespondConfirmation:
-    @pytest.mark.asyncio
-    async def test_calls_rpc(self):
-        client = HermesServeClient()
-        with patch.object(client, "_rpc", AsyncMock(return_value={})) as mock_rpc:
-            await client.respond_confirmation(
-                run_id="r-1", tool_call_id="tc-1", confirmed=True,
-            )
-        mock_rpc.assert_called_once_with(
-            "run.confirm",
-            {"run_id": "r-1", "tool_call_id": "tc-1", "confirmed": True},
-        )
+# ─── 9. 默认 base_url 兜底 ───────────────────────────────────
+class TestDefaults:
+    def test_default_base_url(self):
+        """未设 HERMES_API_BASE_URL 环境变量时，HERMES_API_BASE_URL 常量应兜底到 :8642。"""
+        # 默认值硬编码在 hermes_serve_client.py
+        assert HERMES_API_BASE_URL == "http://127.0.0.1:8642" or "8642" in HERMES_API_BASE_URL
+
+    def test_authorization_header_bearer(self):
+        c = HermesServeClient(base_url=API_BASE, api_key="secret")
+        h = c._headers()
+        assert h["Authorization"] == "Bearer secret"
+        assert h["Content-Type"] == "application/json"
