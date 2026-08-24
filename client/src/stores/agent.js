@@ -56,9 +56,9 @@ export const useAgentStore = defineStore('agent', () => {
         sessionId.value = msg.session_id
         lastError.value = null
       },
-      onStepStart: () => {
+      onRunStarted: (msg) => {
         isThinking.value = true
-        currentRunId.value = currentRunId.value  // 保留 run_id（hermes event 自带 run_id）
+        currentRunId.value = msg.run_id
       },
       onText: (msg) => {
         isThinking.value = false
@@ -72,24 +72,28 @@ export const useAgentStore = defineStore('agent', () => {
             role: 'assistant_text',
             text: msg.content || '',
             runId: msg.run_id,
+            messageId: msg.message_id,
             createdAt: Date.now(),
           })
         }
       },
       onToolCall: (msg) => {
+        // Hermes tool.started — 新字段名 tool_name / args
         isThinking.value = false
         messages.value.push({
           id: _nextId(),
           role: 'tool_call',
-          toolName: msg.name,
-          toolParams: msg.params || {},
+          toolName: msg.tool_name,
+          toolParams: msg.args || {},
+          preview: msg.preview,
           status: 'executing',
           runId: msg.run_id,
+          messageId: msg.message_id,
           createdAt: Date.now(),
         })
       },
-      onToolResult: (msg) => {
-        // 找最近的 tool_call 卡片更新 status + result
+      onToolCompleted: (msg) => {
+        // Hermes tool.completed — 找最近的 tool_call 卡片更新 status + result
         for (let i = messages.value.length - 1; i >= 0; i--) {
           const m = messages.value[i]
           if (m.role === 'tool_call' && m.runId === msg.run_id && m.status === 'executing') {
@@ -99,14 +103,26 @@ export const useAgentStore = defineStore('agent', () => {
           }
         }
       },
-      onConfirmationRequired: (msg) => {
-        pendingConfirmation.value = {
-          pendingKey: msg.pending_key,
-          name: msg.name,
-          params: msg.params || {},
+      onToolFailed: (msg) => {
+        for (let i = messages.value.length - 1; i >= 0; i--) {
+          const m = messages.value[i]
+          if (m.role === 'tool_call' && m.runId === msg.run_id && m.status === 'executing') {
+            m.status = 'failed'
+            m.toolResult = { error: msg.error || 'tool failed' }
+            break
+          }
         }
       },
-      onAgentComplete: () => {
+      onApprovalRequired: (msg) => {
+        // Hermes approval.required — 新字段名 pending_key + tool_name + args
+        pendingConfirmation.value = {
+          pendingKey: msg.pending_key,
+          runId: msg.run_id,
+          name: msg.tool_name,
+          params: msg.args || {},
+        }
+      },
+      onRunCompleted: () => {
         isThinking.value = false
         currentRunId.value = null
       },
@@ -164,8 +180,16 @@ export const useAgentStore = defineStore('agent', () => {
 
   async function respondConfirmation(confirmed) {
     if (!_client || !pendingConfirmation.value) return
-    await _client.respondConfirmation(pendingConfirmation.value.pendingKey, confirmed)
+    const { pendingKey, runId } = pendingConfirmation.value
+    // 二次确认 choice：true→once（执行一次），false→deny（拒绝）
+    const choice = confirmed ? 'once' : 'deny'
+    await _client.respondApproval(runId, pendingKey, choice)
     pendingConfirmation.value = null
+  }
+
+  async function stopCurrentRun() {
+    if (!_client || !currentRunId.value) return
+    await _client.stopRun(currentRunId.value)
   }
 
   function clearMessages() {
@@ -203,6 +227,7 @@ export const useAgentStore = defineStore('agent', () => {
     togglePanel,
     sendUserMessage,
     respondConfirmation,
+    stopCurrentRun,
     clearMessages,
     disconnect,
   }

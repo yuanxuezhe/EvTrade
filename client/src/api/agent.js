@@ -1,27 +1,34 @@
 /**
  * client/src/api/agent.js — AI Agent WS 客户端
  *
- * 封装 ws://host/api/agent/ws?token=<jwt> 双向通信：
- * - sendUserMessage(text): 发 user_message → 启动 hermes run
- * - respondConfirmation(pending_key, confirmed): 发 confirmation → 解析 FastAPI Future
- * - 事件回调：onReady / onStepStart / onText / onToolCall / onToolResult / onConfirmationRequired / onAgentComplete / onError
+ * 封装 ws://host/ws/agent_channel?token=<jwt> 双向通信：
+ * - sendUserMessage(text, sessionId?): 发 user_message → FastAPI 调 Hermes /v1/runs
+ * - respondApproval(runId, pendingKey, choice): 发 confirmation → FastAPI 调 /v1/runs/{id}/approval
+ * - stopRun(runId): 发 stop → FastAPI 调 /v1/runs/{id}/stop
+ * - 事件回调：onReady / onRunStarted / onText / onToolCall / onToolCompleted /
+ *              onApprovalRequired / onRunCompleted / onError
  *
  * 自动重连：WS 断开后指数退避重连（最多 5 次）。
  *
- * 协议（与 server/api/agent.py 严格对齐 — REQ-ARCH-008）：
+ * 协议（2026-08-23, upgrade-agent-to-v1-runs change — REQ-ARCH-008 重写）：
  * Vue → FastAPI:
  *   {type: "user_message", text: "..."}
- *   {type: "confirmation", pending_key, confirmed}
+ *   {type: "confirmation", run_id, pending_key, choice}
+ *   {type: "stop", run_id}
  *   {type: "ping"}
- * FastAPI → Vue:
+ * FastAPI → Vue（事件名对齐 Hermes API server SSE）:
  *   {type: "ready", session_id}
- *   {type: "step_start"}
- *   {type: "text", content}
- *   {type: "tool_call", name, params}
- *   {type: "tool_result", result}
- *   {type: "confirmation_required", pending_key, name, params, ...}
- *   {type: "agent_complete"}
- *   {type: "error", message}
+ *   {type: "run.started", run_id, session_id}
+ *   {type: "message.started", message_id, message}
+ *   {type: "tool.progress", tool_name, delta}
+ *   {type: "tool.started", tool_name, preview, args}
+ *   {type: "tool.completed", tool_name, preview, args, result}
+ *   {type: "tool.failed", tool_name, error}
+ *   {type: "assistant.completed", message_id, content}
+ *   {type: "run.completed", session_id, message_id, usage}
+ *   {type: "approval.required", pending_key, tool_name, args}
+ *   {type: "error", message, run_id?}
+ *   {type: "done"}
  *   {type: "pong"}
  */
 
@@ -154,26 +161,43 @@ export class AgentWSClient {
         this._emit('onReady', msg)
         if (resolveReady) resolveReady(msg)
         break
-      case 'step_start':
-        this._emit('onStepStart', msg)
+      case 'run.started':
+        this._emit('onRunStarted', msg)
         break
-      case 'text':
+      case 'message.started':
+        this._emit('onMessageStarted', msg)
+        break
+      case 'tool.progress':
+        // 推理/进度（_thinking 或工具中间输出）— 转给 store 当 tool_call 卡片 delta
+        this._emit('onToolProgress', msg)
+        break
+      case 'tool.started':
+        this._emit('onToolCall', msg)  // store 兼容用旧回调名
+        break
+      case 'tool.completed':
+        this._emit('onToolCompleted', msg)
+        break
+      case 'tool.failed':
+        this._emit('onToolFailed', msg)
+        break
+      case 'assistant.completed':
+        // LLM 文本段生成完 — store 把它当 text delta
         this._emit('onText', msg)
         break
-      case 'tool_call':
-        this._emit('onToolCall', msg)
+      case 'approval.required':
+        this._emit('onApprovalRequired', msg)
         break
-      case 'tool_result':
-        this._emit('onToolResult', msg)
+      case 'approval.responded':
+        this._emit('onApprovalResponded', msg)
         break
-      case 'confirmation_required':
-        this._emit('onConfirmationRequired', msg)
-        break
-      case 'agent_complete':
-        this._emit('onAgentComplete', msg)
+      case 'run.completed':
+        this._emit('onRunCompleted', msg)
         break
       case 'error':
         this._emit('onError', new Error(msg.message || 'agent error'))
+        break
+      case 'done':
+        // 流结束标记 — store 忽略即可
         break
       case 'pong':
         this._emit('onPong', msg)
@@ -217,14 +241,21 @@ export class AgentWSClient {
     }
   }
 
-  async sendUserMessage(text) {
-    this._send({ type: 'user_message', text })
-    // 等消息真正发出（避免 race — store 拿不到 ack）
-    // 不强制等 ack，只保证已入队 / 已 send
+  async sendUserMessage(text, sessionId) {
+    this._send({ type: 'user_message', text, session_id: sessionId })
   }
 
-  async respondConfirmation(pendingKey, confirmed) {
-    this._send({ type: 'confirmation', pending_key: pendingKey, confirmed })
+  async respondApproval(runId, pendingKey, choice = 'deny') {
+    this._send({
+      type: 'confirmation',
+      run_id: runId,
+      pending_key: pendingKey,
+      choice,
+    })
+  }
+
+  async stopRun(runId) {
+    this._send({ type: 'stop', run_id: runId })
   }
 
   ping() {
