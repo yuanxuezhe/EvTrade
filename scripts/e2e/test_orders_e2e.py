@@ -85,10 +85,6 @@ def _request(method: str, path: str, token: Optional[str] = None,
 
 
 def login(user: str, password: str) -> str:
-    """OAuth2PasswordRequestForm login. 仅用于 trader 角色 (grant 白名单不含 trader 默认流程).
-
-    v2026-08-24: admin 路径已走 hermesagent 授信 (见 grant_login), 此函数保留给 trader 业务测试.
-    """
     data = urllib.parse.urlencode({"username": user, "password": password}).encode()
     req = urllib.request.Request(
         f"{BACKEND_URL}/api/auth/login", data=data, method="POST",
@@ -98,17 +94,6 @@ def login(user: str, password: str) -> str:
         body = json.loads(resp.read().decode())
         assert resp.status == 200, body
         return body["access_token"]
-
-
-def grant_login(role: str = "admin") -> str:
-    """hermesagent 授信: 固定 token "hermesagent" 拿永久 JWT (exp 2099).
-
-    v2026-08-24: admin 路径走授信, 不再填 admin 密码. trader 仍走 login().
-    """
-    import sys as _sys
-    _sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
-    from evtrade_grant import auth_header  # noqa: E402
-    return auth_header(role=role)["Authorization"].split(" ", 1)[1]
 
 
 # ──────────────────── tests ────────────────────
@@ -199,9 +184,8 @@ def main() -> int:
     print(f"BACKEND_URL={BACKEND_URL}")
 
     try:
-        # v2026-08-24: admin 走 hermesagent 授信 (永久 JWT, 无密码). trader 仍走 OAuth2 (业务场景必须).
-        admin_token = grant_login("admin")
-        print(_ok(f"grant login admin"))
+        admin_token = login(ADMIN_USER, ADMIN_PASS)
+        print(_ok(f"login admin ({ADMIN_USER})"))
     except Exception as e:
         print(_fail(f"login admin failed: {e}"))
         return 1

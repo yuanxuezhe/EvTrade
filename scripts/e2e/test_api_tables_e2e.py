@@ -13,11 +13,19 @@ TIMEOUT = float(os.environ.get("TIMEOUT", "10"))
 
 
 def login() -> str:
-    # v2026-08-24: 走 hermesagent 授信, 永久 JWT, 不再走 OAuth2 login (admin 密码外泄风险).
-    import sys as _sys
-    _sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
-    from evtrade_grant import auth_header  # noqa: E402
-    return auth_header(role="admin")["Authorization"].split(" ", 1)[1]
+    data = urllib.parse.urlencode({
+        "username": ADMIN_USER,
+        "password": ADMIN_PASS,
+    }).encode()
+    request = urllib.request.Request(
+        f"{BACKEND_URL}/api/auth/login",
+        data=data,
+        method="POST",
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
+    with urllib.request.urlopen(request, timeout=TIMEOUT) as response:
+        assert response.status == 200, response.status
+        return json.loads(response.read().decode())["access_token"]
 
 
 def check_get(path: str, token: str) -> None:
