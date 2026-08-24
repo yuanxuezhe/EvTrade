@@ -87,8 +87,20 @@ def _req(method: str, path: str, body: Optional[Dict] = None,
     return json.loads(payload)
 
 
+def _grant_token(role: str = "admin") -> str:
+    """hermesagent 授信: 固定 token "hermesagent" 拿永久 JWT (exp 2099).
+
+    v2026-08-24: AI 助手 / e2e 脚本默认走 grant, 严禁走 /api/auth/login (admin 密码外泄风险).
+    仅当显式传 user/pwd 时走旧 login (例如 test_reset_password 验证新密码可用).
+    """
+    import sys as _sys
+    _sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+    from evtrade_grant import auth_header  # noqa: E402
+    return auth_header(role=role)["Authorization"].split(" ", 1)[1]
+
+
 def _login_form(user: str, pwd: str) -> str:
-    """OAuth2PasswordRequestForm login, 返回 access_token."""
+    """OAuth2PasswordRequestForm login, 返回 access_token. 仅用于密码流程验证 (reset-password / change-password e2e)."""
     url = f"{BACKEND_URL}/api/auth/login"
     data = urllib.parse.urlencode({"username": user, "password": pwd}).encode()
     req = urllib.request.Request(
@@ -107,8 +119,11 @@ def _login_form(user: str, pwd: str) -> str:
     return json.loads(payload)["access_token"]
 
 
-def login(user: str = ADMIN_USER, pwd: str = ADMIN_PASS) -> str:
-    return _login_form(user, pwd)
+def login(user: Optional[str] = None, pwd: Optional[str] = None, role: str = "admin") -> str:
+    """默认走 hermesagent 授信 (无密码). 显式传 user/pwd 时走 OAuth2 login (密码流程验证)."""
+    if user is not None and pwd is not None:
+        return _login_form(user, pwd)
+    return _grant_token(role)
 
 
 # ──────────────────── 测试用例 ────────────────────
