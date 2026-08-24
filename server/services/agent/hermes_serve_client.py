@@ -1,21 +1,21 @@
 """
-server/services/agent/hermes_serve_client.py — Hermes serve daemon JSON-RPC over WS 客户端
+server/services/agent/hermes_serve_client.py — Hermes API server /v1/runs REST + SSE 客户端
 
-Hermes serve 是 Hermes Agent 的 headless JSON-RPC/WebSocket gateway（默认 127.0.0.1:9119）。
+Hermes API server 是 Hermes gateway 自带的 OpenAI 兼容 HTTP server（默认 127.0.0.1:8642）。
 本客户端封装：
-- 启动 agent run（POST JSON-RPC method=run.start → 返回 run_id）
-- 流式订阅 run 事件（WebSocket → step_start/text/tool_call/tool_result/confirmation_required/step_complete/agent_complete/error）
-- 响应高危 tool 的二次确认（POST JSON-RPC method=run.confirm）
-- 健康检查（GET /healthz）
+- 启动 agent run（POST /v1/runs → 202 + {run_id, status}）
+- 流式订阅 run 事件（GET /v1/runs/{run_id}/events → SSE text/event-stream）
+- 响应高危 tool 二次确认（POST /v1/runs/{run_id}/approval）
+- 中断 run（POST /v1/runs/{run_id}/stop）
+- 查 run 状态（GET /v1/runs/{run_id}）
+- 健康检查（GET /，响应到达判据）
 
-协议细节：
-- JSON-RPC 2.0 over HTTP POST（控制平面）
-- WebSocket 订阅（事件流）—— URL 形如 ws://host:port/ws/runs/{run_id}
-- 所有响应必须包含 jsonrpc="2.0" + id
+取代旧版 JSON-RPC over WebSocket（hermes serve :9119）。
+旧版 see git log < 2026-08-23。
 
 参考：
-- openspec/changes/2026-08-23-ai-agent-panel/proposal.md
-- ~/.hermes/skills/autonomous-ai-agents/hermes-agent/SKILL.md
+- openspec/changes/2026-08-23-upgrade-agent-to-v1-runs/proposal.md
+- ~/.hermes/skills/autonomous-ai-agents/hermes-agent/SKILL.md（方案 A：Hermes API server :8642）
 """
 from __future__ import annotations
 
@@ -23,91 +23,124 @@ import asyncio
 import json
 import logging
 import os
-import uuid
 from dataclasses import dataclass, field
 from typing import Any, AsyncIterator, Optional
 
 import httpx
-import websockets
-from websockets.exceptions import WebSocketException
 
 log = logging.getLogger(__name__)
 
-HERMES_SERVE_URL = os.environ.get("HERMES_SERVE_URL", "http://127.0.0.1:9119")
-HERMES_SERVE_WS_URL = os.environ.get("HERMES_SERVE_WS_URL", "ws://127.0.0.1:9119")
+# 配置（环境变量优先，缺省值兜底）
+HERMES_API_BASE_URL = os.environ.get("HERMES_API_BASE_URL", "http://127.0.0.1:8642").rstrip(" /")
+HERMES_API_KEY = os.environ.get("HERMES_API_KEY", "")
 HTTP_TIMEOUT = float(os.environ.get("HERMES_HTTP_TIMEOUT", "30.0"))
-WS_TIMEOUT = float(os.environ.get("HERMES_WS_TIMEOUT", "300.0"))
 
 
 class HermesUnreachableError(Exception):
-    """Hermes serve daemon 未起 / 网络不可达"""
+    """Hermes API server 未起 / 网络不可达"""
 
 
 class HermesError(Exception):
-    """Hermes serve 返回业务错误（非网络错误）"""
+    """Hermes API server 返回业务错误（非网络错误）"""
 
 
 @dataclass
 class HermesEvent:
-    """Hermes serve run 事件（WS 流式返回）"""
-    type: str  # step_start | text | tool_call | tool_result | confirmation_required | step_complete | agent_complete | error
+    """Hermes /v1/runs/{run_id}/events SSE 事件透传。
+
+    字段命名对齐 Hermes 实际事件 payload（见 api_server.py 源码）：
+      run.started / message.started / tool.progress / tool.started /
+      tool.completed / tool.failed / assistant.completed / run.completed /
+      approval.required / approval.responded / error / done
+
+    额外包含 run_id / message_id / session_id 便于路由（前端 Store 用 message_id 关联消息）。
+    """
+
+    type: str
     run_id: str = ""
-    content: str = ""  # text 内容
-    tool_name: str = ""  # tool_call / tool_result 的 tool 名
-    tool_call_id: str = ""  # tool_call 的 id（用于 respond_confirmation）
-    tool_params: dict[str, Any] = field(default_factory=dict)
+    session_id: str = ""
+    message_id: str = ""
+    content: str = ""
+    tool_name: str = ""
+    tool_call_id: str = ""
+    tool_args: dict[str, Any] = field(default_factory=dict)
     tool_result: Any = None
+    pending_key: str = ""
     error_message: str = ""
+    raw: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> "HermesEvent":
+        # Hermes SSE 事件 payload 用 "type" 字段标识事件名
+        event_type = d.get("type") or d.get("event") or "unknown"
+        # tool.progress payload 的字段是 message_id + tool_name + delta
+        # tool.started/completed/failed 的字段是 message_id + tool_name + preview + args / result / error
+        # tool_args 必须 dict[str, Any]；统一从 raw 中取出并断言为 dict
+        raw_args = d.get("args")
+        args: dict[str, Any] = raw_args if isinstance(raw_args, dict) else {}
         return cls(
-            type=d.get("type", "unknown"),
-            run_id=d.get("run_id", ""),
-            content=d.get("content", ""),
-            tool_name=d.get("tool_name", ""),
-            tool_call_id=d.get("tool_call_id", ""),
-            tool_params=d.get("tool_params", {}) or {},
-            tool_result=d.get("tool_result"),
-            error_message=d.get("error_message", "") or d.get("message", ""),
+            type=event_type,
+            run_id=d.get("run_id", "") or "",
+            session_id=d.get("session_id", "") or "",
+            message_id=d.get("message_id", "") or "",
+            content=d.get("content", "") or "",
+            tool_name=d.get("tool_name", "") or "",
+            tool_call_id=d.get("tool_call_id", "") or d.get("toolCallId", "") or "",
+            tool_args=args,
+            tool_result=d.get("result"),
+            pending_key=d.get("pending_key", "") or "",
+            error_message=d.get("message", "") or d.get("error", "") or "",
+            raw=d,
         )
 
 
 class HermesServeClient:
-    """Hermes serve JSON-RPC over WS 客户端（async context manager）"""
+    """Hermes API server /v1/runs REST + SSE 客户端（async）。
+
+    用法：
+        async with HermesServeClient() as client:
+            run_id = await client.submit_run(input="查一下持仓", session_id="sess-1")
+            async for event in client.stream_events(run_id):
+                if event.type == "run.completed":
+                    break
+    """
 
     def __init__(
         self,
-        base_url: str = HERMES_SERVE_URL,
-        ws_base_url: str = HERMES_SERVE_WS_URL,
+        base_url: str = HERMES_API_BASE_URL,
+        api_key: str = HERMES_API_KEY,
         timeout: float = HTTP_TIMEOUT,
     ):
-        self.base_url = base_url.rstrip("/")
-        self.ws_base_url = ws_base_url.rstrip("/")
+        self.base_url = base_url.rstrip(" /")
+        self.api_key = api_key
         self.timeout = timeout
-        self._id_counter = 0
 
-    def _next_id(self) -> int:
-        self._id_counter += 1
-        return self._id_counter
+    def _headers(self) -> dict[str, str]:
+        h = {"Content-Type": "application/json", "Accept": "application/json"}
+        if self.api_key:
+            h["Authorization"] = f"Bearer {self.api_key}"
+        return h
+
+    def _sse_headers(self) -> dict[str, str]:
+        h = {"Accept": "text/event-stream"}
+        if self.api_key:
+            h["Authorization"] = f"Bearer {self.api_key}"
+        return h
 
     async def is_reachable(self) -> bool:
-        """探测 hermes serve daemon 是否在跑。
+        """探测 Hermes API server 是否在跑。
 
-        Hermes serve v0.19.0 headless 后端对所有 GET 路径统一返回 404 JSON（无具体路由）；
-        只要 daemon 在跑，HTTP 层就有响应。判定标准：HTTP 请求**能拿到响应**（无论 200/404/405）
-        即视为可达；只有连接失败/超时才算不可达。
+        Hermes API server 对所有未注册 GET 路径返 404 JSON（headless 拦截器统一处理），
+        只要 daemon 在跑，HTTP 层就有响应。判定标准：HTTP 请求**能拿到响应**
+        （无论 200/404/405）即视为可达；只有连接失败/超时才算不可达。
 
-        不用 `/healthz`：v0.19.0 没这个端点，用了会永远 False → 误报 "daemon not reachable"。
-        不用 `/rpc` POST：当前版本该路径只接受 WebSocket（JSON-RPC over WS），HTTP POST 返回 405。
-
-        详见 openspec/changes/2026-08-23-fix-agent-is-reachable-healthz/proposal.md。
+        不用 `/v1/models`：v0.19.0 该端点需 API key 且未必存在 → 鉴权失败不区分可达性。
+        沿用 `2026-08-23-fix-agent-is-reachable-healthz` 判据。
         """
         try:
             async with httpx.AsyncClient(timeout=5.0) as c:
-                # 探任意稳定路径（/ 在 v0.19.0 返回 404 + JSON body，连接必通）
                 r = await c.get(f"{self.base_url}/")
-                # 响应到达 → daemon 在跑。不卡 status_code（v0.19.0 恒为 404）
+                # 响应到达 → daemon 在跑。不卡 status_code
                 return True
         except asyncio.TimeoutError:
             log.debug("Hermes reachable probe timed out")
@@ -116,153 +149,255 @@ class HermesServeClient:
             log.debug("Hermes reachable probe failed: %s", e)
             return False
 
-    async def _rpc(self, method: str, params: dict[str, Any]) -> dict[str, Any]:
-        """JSON-RPC 2.0 POST 单次调用"""
-        payload = {
-            "jsonrpc": "2.0",
-            "id": self._next_id(),
-            "method": method,
-            "params": params,
-        }
-        try:
-            async with httpx.AsyncClient(timeout=self.timeout) as c:
-                r = await c.post(f"{self.base_url}/rpc", json=payload)
-        except httpx.RequestError as e:
-            raise HermesUnreachableError(f"hermes serve unreachable: {e}") from e
-        if r.status_code >= 400:
-            raise HermesError(f"hermes HTTP {r.status_code}: {r.text[:200]}")
-        try:
-            resp = r.json()
-        except json.JSONDecodeError as e:
-            raise HermesError(f"hermes non-JSON response: {e}") from e
-        if "error" in resp:
-            err = resp["error"]
-            raise HermesError(f"hermes RPC error: {err.get('message', err)}")
-        return resp.get("result", {})
-
-    async def start_run(
+    async def submit_run(
         self,
         *,
+        input: str,
         session_id: str,
-        user_message: str,
-        tools: list[dict[str, Any]],
-        system_prompt: Optional[str] = None,
+        instructions: Optional[str] = None,
+        conversation_history: Optional[list[dict[str, str]]] = None,
     ) -> str:
         """启动 agent run → 返回 run_id.
 
-        Args:
-            session_id: 会话 id（前端 WS 连接稳定时同一）
-            user_message: 用户自然语言消息
-            tools: 可用 tool 列表（从 server.mcp.list_tools() 来）
-            system_prompt: 自定义 system prompt（可选；不传走 hermes 默认）
-        """
-        params: dict[str, Any] = {
-            "session_id": session_id,
-            "message": user_message,
-            "tools": tools,
-        }
-        if system_prompt:
-            params["system_prompt"] = system_prompt
-        result = await self._rpc("run.start", params)
-        run_id = result.get("run_id", "")
-        if not run_id:
-            raise HermesError(f"hermes run.start missing run_id: {result}")
-        return run_id
-
-    async def respond_confirmation(
-        self,
-        *,
-        run_id: str,
-        tool_call_id: str,
-        confirmed: bool,
-    ) -> None:
-        """响应高危 tool 的二次确认 → hermes 继续 run"""
-        await self._rpc(
-            "run.confirm",
-            {
-                "run_id": run_id,
-                "tool_call_id": tool_call_id,
-                "confirmed": confirmed,
-            },
-        )
-
-    async def subscribe_events(
-        self,
-        run_id: str,
-        *,
-        ws_timeout: float = WS_TIMEOUT,
-    ) -> AsyncIterator[HermesEvent]:
-        """订阅 run 事件流（WebSocket）→ AsyncIterator[HermesEvent].
-
-        Yields:
-            HermesEvent 直到 type='agent_complete' 或 'error'
-
-        Raises:
-            HermesUnreachableError: WS 连接失败
-        """
-        ws_url = f"{self.ws_base_url}/ws/runs/{run_id}"
-        log.info("hermes WS subscribe: %s", ws_url)
-        try:
-            async with websockets.connect(
-                ws_url,
-                open_timeout=10.0,
-                close_timeout=5.0,
-            ) as ws:
-                while True:
-                    try:
-                        raw = await asyncio.wait_for(
-                            ws.recv(), timeout=ws_timeout
-                        )
-                    except asyncio.TimeoutError:
-                        log.warning("hermes WS recv timeout: run_id=%s", run_id)
-                        break
-                    except WebSocketException as e:
-                        log.warning("hermes WS closed: %s", e)
-                        break
-                    try:
-                        d = json.loads(raw)
-                    except json.JSONDecodeError:
-                        log.warning("hermes WS non-JSON frame: %r", raw[:200])
-                        continue
-                    evt = HermesEvent.from_dict(d)
-                    yield evt
-                    if evt.type in ("agent_complete", "error"):
-                        break
-        except (OSError, websockets.WebSocketException) as e:
-            raise HermesUnreachableError(f"hermes WS unreachable: {e}") from e
-
-    async def list_available_tools(self) -> list[dict[str, Any]]:
-        """列出 hermes 内置 tool（system tools，与我们注入的 mcp tool 并存）
+        POST /v1/runs body:
+          {"input": str|list[msg], "session_id": str?, "instructions": str?,
+           "conversation_history": [{role, content}]?, "previous_response_id": str?}
 
         Returns:
-            list of tool dict {name, description, schema, toolset}
-        """
-        try:
-            result = await self._rpc("tools.list", {})
-        except HermesUnreachableError:
-            log.warning("hermes serve unreachable for tools.list; return empty")
-            return []
-        return result.get("tools", [])
+            run_id (形如 "run_<32hex>")
 
-    # ─── 便利方法：组合 start_run + subscribe_events ─────────────
-    async def run_and_subscribe(
+        Raises:
+            HermesError: 4xx/5xx + 业务错误
+            HermesUnreachableError: 网络错误
+        """
+        payload: dict[str, Any] = {
+            "input": input,
+            "session_id": session_id,
+        }
+        if instructions:
+            payload["instructions"] = instructions
+        if conversation_history:
+            payload["conversation_history"] = conversation_history
+
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout) as c:
+                r = await c.post(
+                    f"{self.base_url}/v1/runs",
+                    json=payload,
+                    headers=self._headers(),
+                )
+        except httpx.RequestError as e:
+            raise HermesUnreachableError(f"hermes API server unreachable: {e}") from e
+
+        if r.status_code >= 400:
+            try:
+                err_body = r.json()
+                err_msg = err_body.get("error", {}).get("message", r.text[:200])
+            except Exception:
+                err_msg = r.text[:200]
+            raise HermesError(f"hermes /v1/runs HTTP {r.status_code}: {err_msg}")
+
+        try:
+            body = r.json()
+        except json.JSONDecodeError as e:
+            raise HermesError(f"hermes /v1/runs non-JSON response: {e}") from e
+
+        run_id = body.get("run_id", "")
+        if not run_id:
+            raise HermesError(f"hermes /v1/runs missing run_id: {body}")
+        return run_id
+
+    async def stream_events(self, run_id: str) -> AsyncIterator[HermesEvent]:
+        """订阅 run 事件流（SSE）。
+
+        GET /v1/runs/{run_id}/events → text/event-stream
+          帧格式：`data: {"type": "<event>", ...}\\n\\n`
+          心跳：`: keepalive\\n\\n`（每 30s 一帧）
+          结束：`: stream closed\\n\\n`（服务端 close）
+
+        Yields:
+            HermesEvent 直到 type='done'（流结束标记）或服务端 close
+
+        Raises:
+            HermesUnreachableError: 连接失败 / 4xx（run not found 404 / auth 401）
+        """
+        url = f"{self.base_url}/v1/runs/{run_id}/events"
+        log.info("hermes SSE subscribe: %s", url)
+        try:
+            async with httpx.AsyncClient(timeout=None) as c:
+                async with c.stream(
+                    "GET",
+                    url,
+                    headers=self._sse_headers(),
+                ) as r:
+                    if r.status_code == 404:
+                        raise HermesUnreachableError(
+                            f"hermes run not found (404): {run_id}"
+                        )
+                    if r.status_code == 401:
+                        raise HermesUnreachableError(
+                            "hermes API key invalid (401)"
+                        )
+                    if r.status_code >= 400:
+                        raise HermesUnreachableError(
+                            f"hermes SSE HTTP {r.status_code}"
+                        )
+                    r.raise_for_status()
+                    # 逐行解析 SSE
+                    # Hermes API server 格式：
+                    #   data: {"type": "run.started", ...}\n\n
+                    #   : keepalive\n\n  (注释行，跳过)
+                    #
+                    #   : stream closed\n\n (close marker)
+                    buffer = ""
+                    async for chunk in r.aiter_text():
+                        buffer += chunk
+                        # 按 \n\n 分割 SSE 帧
+                        while "\n\n" in buffer:
+                            frame, buffer = buffer.split("\n\n", 1)
+                            frame = frame.strip()
+                            if not frame or frame.startswith(":"):
+                                # SSE 注释（keepalive 或 stream closed）
+                                continue
+                            # 提取 data: 行
+                            data_lines = []
+                            for line in frame.splitlines():
+                                line = line.strip()
+                                if line.startswith("data:"):
+                                    data_lines.append(line[5:].strip())
+                            if not data_lines:
+                                continue
+                            data_str = "\n".join(data_lines)
+                            try:
+                                payload = json.loads(data_str)
+                            except json.JSONDecodeError:
+                                log.warning(
+                                    "hermes SSE non-JSON frame: %r", data_str[:200]
+                                )
+                                continue
+                            evt = HermesEvent.from_dict(payload)
+                            # 注入 run_id（payload 可能不带，前端要）
+                            if not evt.run_id:
+                                evt.run_id = run_id
+                            yield evt
+                            if evt.type == "done":
+                                # 流结束标记
+                                return
+        except httpx.RequestError as e:
+            raise HermesUnreachableError(f"hermes SSE unreachable: {e}") from e
+
+    async def respond_approval(
         self,
         *,
-        session_id: str,
-        user_message: str,
-        tools: list[dict[str, Any]],
-        system_prompt: Optional[str] = None,
-    ) -> tuple[str, AsyncIterator[HermesEvent]]:
-        """一步：启动 run → 返回 (run_id, 事件迭代器).
+        run_id: str,
+        choice: str,
+        resolve_all: bool = False,
+    ) -> None:
+        """响应高危 tool 的二次确认 → Hermes 继续 run.
 
-        调用方：
-            run_id, iter_ = await client.run_and_subscribe(...)
-            async for evt in iter_: ...
+        POST /v1/runs/{run_id}/approval body:
+          {"choice": "once|session|always|deny", "all": bool}
+
+        choice 别名："approve"/"approved"/"allow" 都映射为 "once"
         """
-        run_id = await self.start_run(
-            session_id=session_id,
-            user_message=user_message,
-            tools=tools,
-            system_prompt=system_prompt,
-        )
-        return run_id, self.subscribe_events(run_id)
+        aliases = {"approve": "once", "approved": "once", "allow": "once"}
+        normalized = aliases.get(choice.lower(), choice.lower())
+        payload = {"choice": normalized, "all": resolve_all}
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout) as c:
+                r = await c.post(
+                    f"{self.base_url}/v1/runs/{run_id}/approval",
+                    json=payload,
+                    headers=self._headers(),
+                )
+        except httpx.RequestError as e:
+            raise HermesUnreachableError(f"hermes approval unreachable: {e}") from e
+
+        if r.status_code == 409:
+            # approval_not_active / approval_not_pending
+            raise HermesError(f"hermes approval 409: {r.text[:200]}")
+        if r.status_code >= 400:
+            raise HermesError(f"hermes approval HTTP {r.status_code}: {r.text[:200]}")
+
+    async def stop_run(self, run_id: str) -> None:
+        """中断正在运行的 agent。
+
+        POST /v1/runs/{run_id}/stop → 204 No Content
+        """
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout) as c:
+                r = await c.post(
+                    f"{self.base_url}/v1/runs/{run_id}/stop",
+                    headers=self._headers(),
+                )
+        except httpx.RequestError as e:
+            raise HermesUnreachableError(f"hermes stop unreachable: {e}") from e
+
+        if r.status_code == 404:
+            # run 已结束，幂等返回 OK
+            return
+        if r.status_code >= 400:
+            raise HermesError(f"hermes stop HTTP {r.status_code}: {r.text[:200]}")
+
+    async def get_run_status(self, run_id: str) -> dict[str, Any]:
+        """查 run 状态（轮询用，SSE 不可用时 fallback）。
+
+        GET /v1/runs/{run_id} → {"run_id", "status", "created_at", "last_event", ...}
+        """
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout) as c:
+                r = await c.get(
+                    f"{self.base_url}/v1/runs/{run_id}",
+                    headers=self._headers(),
+                )
+        except httpx.RequestError as e:
+            raise HermesUnreachableError(f"hermes get_run unreachable: {e}") from e
+
+        if r.status_code == 404:
+            raise HermesError(f"hermes run not found: {run_id}")
+        if r.status_code >= 400:
+            raise HermesError(f"hermes get_run HTTP {r.status_code}: {r.text[:200]}")
+
+        try:
+            return r.json()
+        except json.JSONDecodeError as e:
+            raise HermesError(f"hermes get_run non-JSON: {e}") from e
+
+    async def list_models(self) -> list[str]:
+        """列 Hermes API server 已配置的模型。
+
+        GET /v1/models → {"data": [{"id": "...", ...}]}
+        """
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout) as c:
+                r = await c.get(
+                    f"{self.base_url}/v1/models",
+                    headers=self._headers(),
+                )
+        except httpx.RequestError:
+            return []
+        if r.status_code >= 400:
+            return []
+        try:
+            body = r.json()
+        except json.JSONDecodeError:
+            return []
+        return [m.get("id", "") for m in body.get("data", []) if m.get("id")]
+
+
+# ─── 全局默认实例（薄包装，单例复用连接池）──────────────────
+_default_client: Optional[HermesServeClient] = None
+
+
+def get_default_client() -> HermesServeClient:
+    """拿默认 client 单例。WS handler 内调用，每次都用同一个，httpx 连接池复用。"""
+    global _default_client
+    if _default_client is None:
+        _default_client = HermesServeClient()
+    return _default_client
+
+
+def reset_default_client() -> None:
+    """测试用：重置单例。"""
+    global _default_client
+    _default_client = None
