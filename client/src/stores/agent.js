@@ -60,9 +60,40 @@ export const useAgentStore = defineStore('agent', () => {
         isThinking.value = true
         currentRunId.value = msg.run_id
       },
-      onText: (msg) => {
+      onMessageDelta: (msg) => {
+        // Hermes message.delta — token 级流式文本（累积到最近 assistant_text）
         isThinking.value = false
-        // 累积到最近的 assistant_text 消息（或新建一条）
+        const last = lastMessage.value
+        const delta = msg.delta || ''
+        if (!delta) return
+        if (last && last.role === 'assistant_text' && last.runId === msg.run_id) {
+          last.text = (last.text || '') + delta
+        } else {
+          messages.value.push({
+            id: _nextId(),
+            role: 'assistant_text',
+            text: delta,
+            runId: msg.run_id,
+            messageId: msg.message_id,
+            createdAt: Date.now(),
+          })
+        }
+      },
+      onReasoningAvailable: (msg) => {
+        // Hermes reasoning.available — LLM 内部推理文本
+        isThinking.value = false
+        messages.value.push({
+          id: _nextId(),
+          role: 'thinking',
+          text: msg.text || '',
+          runId: msg.run_id,
+          messageId: msg.message_id,
+          createdAt: Date.now(),
+        })
+      },
+      onText: (msg) => {
+        // 兜底：旧 assistant.completed 事件（spec 写的字段名）也支持
+        isThinking.value = false
         const last = lastMessage.value
         if (last && last.role === 'assistant_text' && last.runId === msg.run_id) {
           last.text = (last.text || '') + (msg.content || '')
@@ -78,12 +109,12 @@ export const useAgentStore = defineStore('agent', () => {
         }
       },
       onToolCall: (msg) => {
-        // Hermes tool.started — 新字段名 tool_name / args
+        // Hermes tool.started — 实际字段名：tool（不是 tool_name）, preview（不是 args）
         isThinking.value = false
         messages.value.push({
           id: _nextId(),
           role: 'tool_call',
-          toolName: msg.tool_name,
+          toolName: msg.tool || msg.tool_name,
           toolParams: msg.args || {},
           preview: msg.preview,
           status: 'executing',
@@ -93,12 +124,14 @@ export const useAgentStore = defineStore('agent', () => {
         })
       },
       onToolCompleted: (msg) => {
-        // Hermes tool.completed — 找最近的 tool_call 卡片更新 status + result
+        // Hermes tool.completed — 字段名 tool；error=true 时算 failed
+        const errorFlag = msg.error === true
         for (let i = messages.value.length - 1; i >= 0; i--) {
           const m = messages.value[i]
           if (m.role === 'tool_call' && m.runId === msg.run_id && m.status === 'executing') {
-            m.status = 'done'
-            m.toolResult = msg.result
+            m.status = errorFlag ? 'failed' : 'done'
+            m.toolResult = msg.result || (errorFlag ? { error: msg.error_message || 'tool failed' } : null)
+            m.duration = msg.duration
             break
           }
         }
@@ -114,11 +147,11 @@ export const useAgentStore = defineStore('agent', () => {
         }
       },
       onApprovalRequired: (msg) => {
-        // Hermes approval.required — 新字段名 pending_key + tool_name + args
+        // Hermes approval.required — 字段名 pending_key + tool（兼容 tool_name）+ args
         pendingConfirmation.value = {
           pendingKey: msg.pending_key,
           runId: msg.run_id,
-          name: msg.tool_name,
+          name: msg.tool || msg.tool_name,
           params: msg.args || {},
         }
       },

@@ -167,6 +167,14 @@ export class AgentWSClient {
       case 'message.started':
         this._emit('onMessageStarted', msg)
         break
+      case 'message.delta':
+        // Hermes 实际事件：token 级流式文本
+        this._emit('onMessageDelta', msg)
+        break
+      case 'reasoning.available':
+        // Hermes 实际事件：LLM 内部推理文本
+        this._emit('onReasoningAvailable', msg)
+        break
       case 'tool.progress':
         // 推理/进度（_thinking 或工具中间输出）— 转给 store 当 tool_call 卡片 delta
         this._emit('onToolProgress', msg)

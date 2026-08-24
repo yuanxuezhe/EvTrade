@@ -58,6 +58,12 @@
             <pre class="msg-text">{{ msg.text }}</pre>
           </div>
 
+          <!-- Thinking (Hermes reasoning) — 折叠显示 -->
+          <details v-else-if="msg.role === 'thinking'" class="msg-thinking-block">
+            <summary>🤔 推理</summary>
+            <pre class="msg-text">{{ msg.text }}</pre>
+          </details>
+
           <!-- Tool call 卡片 -->
           <div v-else-if="msg.role === 'tool_call'" class="msg-tool-card">
             <header class="tool-header">
