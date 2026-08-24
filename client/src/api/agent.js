@@ -154,7 +154,11 @@ export class AgentWSClient {
   }
 
   _dispatch(msg, resolveReady, isReady) {
+    // 2026-08-24 重做 (claudedemo 模式): 后端推 claudedemo 协议事件 (text/tool_call/tool_result/agent_complete),
+    // 归一化层把字段名映射到前端 store 期望的 Hermes 协议 (tool_name→tool, input→args, run_id 透传)
+    // 前端 store / AgentPanel.vue 不动, 只这一层做兼容.
     const { type } = msg
+    const norm = _normalizeEvent(msg)
     switch (type) {
       case 'ready':
         this.sessionId = msg.session_id
@@ -162,35 +166,39 @@ export class AgentWSClient {
         if (resolveReady) resolveReady(msg)
         break
       case 'run.started':
-        this._emit('onRunStarted', msg)
+        this._emit('onRunStarted', norm)
         break
       case 'message.started':
-        this._emit('onMessageStarted', msg)
+        this._emit('onMessageStarted', norm)
         break
       case 'message.delta':
-        // Hermes 实际事件：token 级流式文本
-        this._emit('onMessageDelta', msg)
+        this._emit('onMessageDelta', norm)
         break
       case 'reasoning.available':
-        // Hermes 实际事件：LLM 内部推理文本
-        this._emit('onReasoningAvailable', msg)
+        this._emit('onReasoningAvailable', norm)
         break
       case 'tool.progress':
-        // 推理/进度（_thinking 或工具中间输出）— 转给 store 当 tool_call 卡片 delta
-        this._emit('onToolProgress', msg)
+        this._emit('onToolProgress', norm)
         break
-      case 'tool.started':
-        this._emit('onToolCall', msg)  // store 兼容用旧回调名
+      case 'text':
+        // claudedemo AgentEvent(type='text', payload={text}) → 转成 assistant_text delta
+        // store.onText 期望 msg.content, 我们让 normalize 透传 + 加 content 字段
+        this._emit('onText', norm)
         break
-      case 'tool.completed':
-        this._emit('onToolCompleted', msg)
+      case 'tool_call':
+        // claudedemo AgentEvent(type='tool_call', payload={name, input, id})
+        // → 转成 tool.started 等价, 字段: tool (name), args (input), preview (input 序列化), id
+        this._emit('onToolCall', norm)
         break
-      case 'tool.failed':
-        this._emit('onToolFailed', msg)
+      case 'tool_result':
+        // claudedemo AgentEvent(type='tool_result', payload={id, content, is_error})
+        // → 转成 tool.completed, 字段: id, result (content), is_error
+        this._emit('onToolCompleted', norm)
         break
-      case 'assistant.completed':
-        // LLM 文本段生成完 — store 把它当 text delta
-        this._emit('onText', msg)
+      case 'agent_complete':
+        // claudedemo AgentEvent(type='agent_complete', payload={success, result, error, usage})
+        // → 转成 run.completed, 字段: success, result, error, usage
+        this._emit('onRunCompleted', norm)
         break
       case 'approval.required':
         this._emit('onApprovalRequired', msg)
@@ -283,4 +291,54 @@ export class AgentWSClient {
 export function createAgentClient(handlers, { wsBase } = {}) {
   const token = localStorage.getItem('evtrade-token') || ''
   return new AgentWSClient({ token, wsBase, handlers })
+}
+
+
+// ────────────────────────────────────────────────────────────────────────
+// 2026-08-24 claudedemo 协议归一化层
+// 后端 server/ai/agent_spawner.py 推 AgentEvent(type=..., payload={...}),
+// 字段名是 claudedemo 风格 (name/input/content/text).
+// 前端 store (stores/agent.js) 期望 Hermes 协议字段 (tool/args/run_id/message_id).
+//
+// _normalizeEvent 把单个 msg 复制 + 字段重命名, 不改原 msg.
+// 字段映射:
+//   AgentEvent.text          → msg.content (前端 onText 读 content)
+//   AgentEvent.tool_call      → msg.tool (name→tool), msg.args (input→args), msg.preview (input JSON.stringify)
+//   AgentEvent.tool_result    → msg.result (content→result), msg.is_error 透传
+//   AgentEvent.agent_complete → msg.success, msg.result, msg.error, msg.usage 透传
+//   其余事件原样透传
+// ────────────────────────────────────────────────────────────────────────
+function _normalizeEvent(msg) {
+  if (!msg || typeof msg !== 'object') return msg
+  const out = { ...msg }
+  switch (msg.type) {
+    case 'text':
+      // AgentEvent payload={:text} → 前端 onText 期望 msg.content
+      if (typeof msg.text === 'string' && msg.content === undefined) {
+        out.content = msg.text
+      }
+      break
+    case 'tool_call':
+      // payload={:name, :input, :id}
+      if (msg.name !== undefined && out.tool === undefined) out.tool = msg.name
+      if (msg.input !== undefined && out.args === undefined) out.args = msg.input
+      if (msg.input !== undefined && out.preview === undefined) {
+        try { out.preview = typeof msg.input === 'string' ? msg.input : JSON.stringify(msg.input) } catch (_) { out.preview = '' }
+      }
+      if (msg.id !== undefined && out.tool_use_id === undefined) out.tool_use_id = msg.id
+      break
+    case 'tool_result':
+      // payload={:id, :content, :is_error}
+      if (msg.id !== undefined && out.tool_use_id === undefined) out.tool_use_id = msg.id
+      if (msg.content !== undefined && out.result === undefined) out.result = msg.content
+      // is_error 已透传
+      break
+    case 'agent_complete':
+      // payload={:success, :result, :error, :usage} — 全部已直接对齐, 透传即可
+      break
+    default:
+      // ready / run.started / error / 其他 — 原样
+      break
+  }
+  return out
 }
