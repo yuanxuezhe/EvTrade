@@ -464,54 +464,107 @@ class StkpoolDetailAdd(BaseModel):
 - **THEN** `curl http://localhost:8000/api/stkpool` 返 200 + `{pools: []}`
 - **AND** 端点需带鉴权头（无 token 返 401）
 
-### REQ-ARCH-008: Hermes Agent Client + WS Gateway + Confirmation 协议 (2026-08-23, ai-agent-panel + ai-agent-ws-reuse-channel changes)
+### REQ-ARCH-008: Hermes Agent Client + WS Gateway + Confirmation 协议 (2026-08-23, upgrade-agent-to-v1-runs change)
 
-> 详见 change `openspec/changes/2026-08-23-ai-agent-panel/` + `2026-08-23-ai-agent-ws-reuse-channel/`。本节为现行契约。
+> 详见 change `openspec/changes/2026-08-23-upgrade-agent-to-v1-runs/`（取代 `ai-agent-panel` + `ai-agent-ws-reuse-channel` 的 JSON-RPC over WS 方案）。本节为现行契约。
 
 #### Purpose
 
-EvTrade 后端作为 **WebSocket Gateway** 桥接 Vue 前端和外部 Hermes Agent daemon，支持多轮对话、Function Calling（通过本地 MCP server）、高危操作二次确认协议。
+EvTrade FastAPI 作为**薄包装网关**调用 Hermes 自带的 API server（`/v1/runs` 异步端点 + SSE 事件流），把 WS `agent_channel` 收到的用户消息转 REST 调用，再把 SSE 事件透传回 WS。完全删除自研 JSON-RPC over WS 协议。
 
 #### 客户端契约
 
-- **文件**：
-  - `server/services/agent/hermes_serve_client.py`（hermes serve JSON-RPC over WS 客户端）
-  - `server/services/agent/agent_confirm.py`（ConfirmRegistry pending 状态机）
-- **接口**（hermes_serve_client.py）：
-  - `start_run(session_id, user_message) -> str`（返回 run_id）
-  - `stream_to_ws(run_id, ws_send_func) -> None`（流式推 ws）
-  - `respond_confirmation(run_id, tool_call_id, confirmed) -> None`
-  - `is_reachable() -> bool`：GET `{HERMES_SERVE_URL}/` 任意 HTTP 响应（非连接错误/超时）即视为可达。当前 Hermes serve v0.19.0 headless 后端对所有 GET 路径返回 404 JSON，但只要 daemon 在跑就有响应——用「响应到达」作为可达判据，不依赖具体端点存在。`httpx.RequestError` / `asyncio.TimeoutError` → 不可达（返回 False）
-- **协议**：JSON-RPC over WebSocket（与 hermes serve 兼容）
-- **配置**：`HERMES_SERVE_WS_URL` 环境变量（默认 `ws://127.0.0.1:9119/ws`）
+- **文件**：`server/services/agent/hermes_serve_client.py`（REST + SSE 客户端，httpx async）
+- **基础 URL**：`HERMES_API_BASE_URL`（默认 `http://127.0.0.1:8642`）
+- **鉴权**：`Authorization: Bearer ${HERMES_API_KEY}`（`HERMES_API_KEY` = `~/.hermes/.env` 的 `API_SERVER_KEY`）
+- **接口**：
+  - `submit_run(input: str, session_id: str, instructions: str | None = None, conversation_history: list | None = None) -> str` → 返回 `run_id`（POST `/v1/runs`）
+  - `stream_events(run_id: str) -> AsyncIterator[HermesEvent]`（GET `/v1/runs/{run_id}/events`，SSE 逐行解析 `data:` JSON）
+  - `respond_approval(run_id: str, choice: str, resolve_all: bool = False) -> None`（POST `/v1/runs/{run_id}/approval`，`choice ∈ {once, session, always, deny}`）
+  - `stop_run(run_id: str) -> None`（POST `/v1/runs/{run_id}/stop`）
+  - `get_run_status(run_id: str) -> dict`（GET `/v1/runs/{run_id}`）
+  - `is_reachable() -> bool`：GET `{HERMES_API_BASE_URL}/` 任意 HTTP 响应即视为可达（沿用 `2026-08-23-fix-agent-is-reachable-healthz` 判据）
+- **超时**：HTTP 请求默认 30s；SSE 流式订阅无超时（由 client 主动 close）
+- **错误**：HTTP 5xx → raise `HermesError`；4xx → raise `HermesError`；网络错误 → raise `HermesUnreachableError`
+
+#### SSE 事件类型（由 Hermes API server 推送）
+
+| 事件 | 含义 |
+|---|---|
+| `run.started` | run 开始（含原始用户消息） |
+| `message.started` | LLM 开始响应 |
+| `tool.progress` | 推理/工具进度（`tool_name` + `delta`） |
+| `tool.started` | tool 调用开始（`tool_name` + `args` + `preview`） |
+| `tool.completed` | tool 返回结果（`result`） |
+| `tool.failed` | tool 失败（`error`） |
+| `assistant.completed` | LLM 文本段生成完成（`content`） |
+| `run.completed` | run 结束（`usage`） |
+| `approval.required` | 高危 tool 等用户确认（`pending_key` + `tool_name` + `args`） |
+| `error` | 错误 |
+| `done` | 流结束标记 |
 
 #### WS Gateway 契约
 
-- **文件**：`server/ws/endpoint.py`（复用现有 `/ws/{channel}` handler，加 `agent_channel` 分支）
-- **端点**：`WS /ws/agent_channel`（与 `/ws/quote_update` / `/ws/order_update` / `/ws/trade_update` / `/ws/position_update` / `/ws/asset_update` **共用同一 endpoint handler**，仅 channel 名不同）
-- **完全复用**（0 新机制）：
-  - JWT 鉴权：`server.ws.endpoint._resolve_ws_user`（支持 JWT + hermesagent token）
-  - 连接管理：`server.ws.manager.ws_manager`（按 channel key 分组连接）
-  - Idle timeout：`server.ws.endpoint.WS_IDLE_TIMEOUT`（10 分钟无消息 close 4001）
-  - 单向心跳：客户端 30s 主动 ping → 服务端 pong（重置 last_recv）
-  - HTTP session 续期：ping 触发 `session_touch(token)`
-- **agent_channel 业务消息**（在现有 `if msg_type == "ping"` / `== "subscribe"` 后加 `if channel == "agent_channel":` 分支）：
-  - Vue → FastAPI：
-    - `{type: "ping"}` — 复用现有 ping（30s 心跳）
-    - `{type: "user_message", text: "..."}` — 启动 hermes run
-    - `{type: "confirmation", pending_key, confirmed}` — 响应高危 tool 二次确认
-  - FastAPI → Vue：
-    - `{type: "pong", ts}` — 复用现有
-    - `{type: "ready", session_id}` — 连上后立即发（无消息也会发）
-    - `{type: "text", run_id, content}` — LLM 文本段（非流式 token）
-    - `{type: "tool_call", name, params, run_id}` — LLM 决定调 tool
-    - `{type: "tool_result", result, run_id}` — tool 返回结果
-    - `{type: "confirmation_required", pending_key, name, params}` — 高危 tool 等用户确认
-    - `{type: "agent_complete", run_id}` — agent run 结束
-    - `{type: "error", message, run_id}` — 错误
-- **JWT 校验**：WS 连接握手时校验 query param `?token=<jwt>` → 注入 user_id 到 session
-- **Session 管理**：每 (user_id, ws_connection) 一个 session_id（uuid4）
-- **端口复用原则**：与 `/api/quote/*` HTTP、所有 `/ws/{channel}` WS 共用 FastAPI 8000 端口（**不新开端口/通路**），减少 nginx 反代复杂度。
+- **文件**：`server/ws/endpoint.py`（复用现有 `/ws/{channel}` handler，agent_channel 分支薄包装）
+- **端点**：`WS /ws/agent_channel`（与 `/ws/quote_update` 等共用同一 endpoint）
+- **薄包装职责**：
+  1. 接 `{type: "user_message", text, session_id?}` → 调 `submit_run` → 订阅 `stream_events` → 推 SSE 事件给前端
+  2. 接 `{type: "confirmation", run_id, pending_key, choice}` → 调 `respond_approval`
+  3. 接 `{type: "stop", run_id}` → 调 `stop_run`
+  4. SSE 事件 → WS 消息透传（`{type: <event_name>, ...event_fields}`，WS handler 注入 `run_id`）
+- **移除**：`ConfirmRegistry` 拦截逻辑（Hermes API server 自身处理 approval）
+- **复用**：JWT 鉴权、idle timeout、ping/pong 不变
+
+#### 沙箱边界
+
+- JWT 由 FastAPI 解，user_id 注入下游 MCP tool 调用（已有，`_jwt.py` 函数式读 JWT_SECRET）
+- Hermes API server 调用 MCP 时，MCP tool 强制从 JWT 拿 user_id，LLM **不得**覆盖
+- 高危 tool（`place_order`/`cancel_order`/`delete_strategy_script`/`set_user_role`/`init_trading_day`）由 Hermes API server 在 `tools/approval.py` 拦截，EvTrade FastAPI 不再二次实现
+
+#### Scenario: 端到端对话
+
+- **GIVEN** Vue 连 `/ws/agent_channel?token=<jwt>` → Hermes API server `:8642` 已启 + MCP 9 tool 已注册
+- **WHEN** Vue 发 `{type: "user_message", text: "查一下当前持仓"}`
+- **THEN** FastAPI 调 `submit_run` → 拿 `run_id` → 订阅 SSE
+- **AND** FastAPI 推 WS `{type: "run.started", run_id, session_id}`
+- **WHEN** Hermes 决定调 `list_positions` tool
+- **THEN** FastAPI 推 WS `{type: "tool.started", tool_name: "list_positions", args: {}}`
+- **AND** tool 返回持仓 → FastAPI 推 WS `{type: "tool.completed", result: ...}`
+- **WHEN** LLM 生成文本
+- **THEN** FastAPI 推 WS `{type: "assistant.completed", content: "您当前持仓..."}`
+- **AND** 推 WS `{type: "run.completed", ...}`
+
+#### Scenario: 高危 tool 二次确认
+
+- **GIVEN** 用户发"帮我下单 100 股 600000.SH"
+- **WHEN** Hermes 决定调 `place_order` tool + API server 拦截
+- **THEN** Hermes 在 SSE 流推 `approval.required` 事件（字段含 `pending_key`, `tool_name`, `args`）
+- **AND** FastAPI 透传为 WS `{type: "approval.required", pending_key, tool_name, args}`
+- **WHEN** 用户在 Vue Confirm Modal 确认
+- **THEN** Vue 发 `{type: "confirmation", run_id, pending_key, choice: "once"}`
+- **AND** FastAPI 调 `respond_approval(run_id, "once")` → Hermes 继续执行 tool
+- **AND** 推 WS `{type: "tool.completed", result: {order_no: "..."}}`
+
+#### 端口复用原则（不变）
+
+- FastAPI 8000 端口同时承载 `/api/*` HTTP + `/ws/{channel}` WS（包括 agent_channel）
+- Hermes API server :8642 独立进程，由 Hermes gateway 启动时 spawn
+- MCP 9 tool 在 Hermes API server 进程内 spawn（由 `tools/approval.py` 拦截）
+- **0 新端口**
+
+#### 移除清单（2026-08-23 完成）
+
+- ✗ `server/api/agent.py`（旧独立 `/api/agent/ws` endpoint，已删）
+- ✗ `server/services/agent/agent_confirm.py`（ConfirmRegistry，新版不再需要）
+- ✗ `server/tests/services/agent/test_agent_confirm.py`（同上）
+
+#### 配置变更
+
+| 旧 | 新 |
+|---|---|
+| `HERMES_SERVE_WS_URL=ws://127.0.0.1:9119/ws` | `HERMES_API_BASE_URL=http://127.0.0.1:8642` |
+| （hermes serve 自己读 .env） | `HERMES_API_KEY=<API_SERVER_KEY>` |
+| evctl 默认启 hermes serve :9119 | evctl **不**启 hermes serve（Hermes gateway api_server platform 内置） |
 
 #### Scenario: WS 端口复用
 
