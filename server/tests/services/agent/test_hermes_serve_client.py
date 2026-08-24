@@ -435,3 +435,40 @@ class TestDefaults:
         h = c._headers()
         assert h["Authorization"] == "Bearer secret"
         assert h["Content-Type"] == "application/json"
+
+    def test_default_api_key_uses_dev_fallback(self):
+        """未设 HERMES_API_KEY env 时，client 用 dev 兜底值（避免 401）。"""
+        import os
+        saved = os.environ.pop("HERMES_API_KEY", None)
+        try:
+            # 重新加载模块以让模块级常量反映新的 env 状态
+            import importlib
+            import server.services.agent.hermes_serve_client as mod
+            importlib.reload(mod)
+            assert mod.HERMES_API_KEY == "evtrade-dev-20260823-do-not-use-in-prod"
+            # client 默认用这个 key
+            c = mod.HermesServeClient(base_url=API_BASE)
+            assert c.api_key == "evtrade-dev-20260823-do-not-use-in-prod"
+            assert "Bearer" in c._headers()["Authorization"]
+        finally:
+            if saved is not None:
+                os.environ["HERMES_API_KEY"] = saved
+            # 再 reload 还原模块状态
+            import importlib
+            import server.services.agent.hermes_serve_client as mod
+            importlib.reload(mod)
+
+    def test_env_var_overrides_dev_fallback(self):
+        """HERMES_API_KEY 环境变量存在时，覆盖 dev 兜底。"""
+        import os
+        os.environ["HERMES_API_KEY"] = "my-prod-key"
+        try:
+            import importlib
+            import server.services.agent.hermes_serve_client as mod
+            importlib.reload(mod)
+            assert mod.HERMES_API_KEY == "my-prod-key"
+        finally:
+            del os.environ["HERMES_API_KEY"]
+            import importlib
+            import server.services.agent.hermes_serve_client as mod
+            importlib.reload(mod)

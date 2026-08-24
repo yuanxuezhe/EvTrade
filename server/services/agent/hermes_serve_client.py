@@ -32,7 +32,10 @@ log = logging.getLogger(__name__)
 
 # 配置（环境变量优先，缺省值兜底）
 HERMES_API_BASE_URL = os.environ.get("HERMES_API_BASE_URL", "http://127.0.0.1:8642").rstrip(" /")
-HERMES_API_KEY = os.environ.get("HERMES_API_KEY", "")
+# 鉴权 key：HERMES_API_KEY 优先；缺省为 dev 默认值（与 ~/.hermes/.env API_SERVER_KEY 对齐，
+# 仅本地开发用，prod 必须从环境变量或 secret manager 注入）
+_DEV_DEFAULT_KEY = "evtrade-dev-20260823-do-not-use-in-prod"
+HERMES_API_KEY = os.environ.get("HERMES_API_KEY") or _DEV_DEFAULT_KEY
 HTTP_TIMEOUT = float(os.environ.get("HERMES_HTTP_TIMEOUT", "30.0"))
 
 
