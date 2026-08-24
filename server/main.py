@@ -247,6 +247,7 @@ async def on_shutdown_signal_consumer():
 
 # ---- REQ-AUTH-IDLE-001: token session cache 后台 sweep ----
 _auth_sweep_task = None  # type: ignore[var-annotated]
+_ai_mcp_server = None  # 2026-08-24 重做: EvTrade AI 助手 MCP server 全局单例 (claudedemo 模式)
 
 
 @app.on_event("startup")
@@ -268,6 +269,27 @@ async def on_startup_auth_sweep():
         print(f"[INIT] auth sweep failed to start: {e}")
 
 
+@app.on_event("startup")
+def on_startup_ai_mcp_server():
+    """2026-08-24 重做: 启动 EvTrade AI 助手 (claudedemo 模式) 的 MCP HTTP server.
+
+    绑 127.0.0.1:RAND, spawn claude -p 子进程时通过 --mcp-config 注入此 URL.
+    pytest 模式跳过 (TestClient 不发 spawn).
+    """
+    global _ai_mcp_server
+    if os.environ.get("PYTEST_CURRENT_TEST"):
+        print("[INIT] pytest mode: skip AI MCP server")
+        return
+    try:
+        from server.ai.mcp_server import EvTradeMCPServer, set_mcp_server
+        _ai_mcp_server = EvTradeMCPServer.start(port=0)
+        set_mcp_server(_ai_mcp_server)
+        print(f"[INIT] AI MCP server started on http://127.0.0.1:{_ai_mcp_server.port}/mcp")
+    except Exception as e:
+        print(f"[INIT] AI MCP server failed to start: {e}")
+        _ai_mcp_server = None
+
+
 @app.on_event("shutdown")
 async def on_shutdown_auth_sweep():
     """停止 auth session sweep 协程。"""
@@ -278,6 +300,21 @@ async def on_shutdown_auth_sweep():
             await _auth_sweep_task
         except Exception as e:
             print(f"[SHUTDOWN] auth sweep cancel: {e}")
+
+
+@app.on_event("shutdown")
+def on_shutdown_ai_mcp_server():
+    """停 AI MCP server."""
+    global _ai_mcp_server
+    if _ai_mcp_server is not None:
+        try:
+            _ai_mcp_server.stop()
+            print("[SHUTDOWN] AI MCP server stopped")
+        except Exception as e:
+            print(f"[SHUTDOWN] AI MCP server stop error: {e}")
+        _ai_mcp_server = None
+        from server.ai.mcp_server import set_mcp_server
+        set_mcp_server(None)
 
 
 # ---- Public routes ------------------------------------------------------
