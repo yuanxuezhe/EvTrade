@@ -175,11 +175,8 @@ def update_profile(
 async def grant(payload: dict):
     """技能包授信: 固定 token "hermesagent" -> 永久 JWT (exp 2099).
 
-    仅当 EVTRADE_ALLOW_GRANT_TOKEN=1 才启用. 默认 admin 身份,
-    payload.role=trader 时签 trader 身份 (e2e RBAC 测试 / 自动交易脚本场景).
-    user id 运行时动态查 users 表 (避免硬编码 id 与实际 seed 冲突 — 历史 id=6 但现 seed 已切 id=1).
-
-    安全: 仅 2 个白名单角色 (admin / trader) 可签, viewer 拒绝.
+    仅当 EVTRADE_ALLOW_GRANT_TOKEN=1 才启用, 默认 admin 身份.
+    admin id 运行时动态查 users 表 (避免硬编码 id 与实际 seed 冲突 — 历史 id=6 但现 seed 已切 id=1).
     """
     import os
     from datetime import datetime, timezone, timedelta
@@ -189,18 +186,14 @@ async def grant(payload: dict):
     from server.auth.security import HERMES_AGENT_TOKEN
     if token_str != HERMES_AGENT_TOKEN:
         raise HTTPException(status_code=401, detail="invalid grant token")
-    # role 白名单: admin/trader 可签 (viewer 不授信 — 防止脚本误调只读账号)
-    role = payload.get("role", "admin")
-    if role not in ("admin", "trader"):
-        raise HTTPException(status_code=400, detail=f"role must be admin or trader, got {role!r}")
-    # 动态查 user (硬编码 id=6 历史 bug: seed 后真实 admin id=1, get_current_user 401 "用户不存在")
-    user_row = Users.query_by("role", role, limit=1)
-    if not user_row:
-        raise HTTPException(status_code=500, detail=f"{role} user not found in users table")
-    user = user_row[0]
-    if not getattr(user, "is_active", True):
-        raise HTTPException(status_code=403, detail=f"{role} account disabled")
-    data = {"sub": str(user.id), "id": user.id, "role": role, "username": user.username}
+    # 动态查 admin id (硬编码 id=6 历史 bug: seed 后真实 id=1, get_current_user 401 "用户不存在")
+    admin_row = Users.query_by("role", "admin", limit=1)
+    if not admin_row:
+        raise HTTPException(status_code=500, detail="admin user not found in users table")
+    admin = admin_row[0]
+    if not getattr(admin, "is_active", True):
+        raise HTTPException(status_code=403, detail="admin account disabled")
+    data = {"sub": str(admin.id), "id": admin.id, "role": "admin", "username": admin.username}
     now = datetime.now(timezone.utc).replace(tzinfo=None)
     expires = now + timedelta(days=365 * 30)
     to_encode = dict(data)
@@ -211,12 +204,12 @@ async def grant(payload: dict):
     permanent_token = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
     # 注册到 session cache (否则 is_valid 失败 → 401)
     from server.auth.session import register_token
-    register_token(permanent_token, user_id=user.id, role=role)
+    register_token(permanent_token, user_id=admin.id, role="admin")
     return {
         "access_token": permanent_token,
         "token_type": "bearer",
         "expires_in": int((expires - now).total_seconds()),
-        "user": {"id": user.id, "username": user.username, "role": role},
+        "user": {"id": admin.id, "username": admin.username, "role": "admin"},
     }
 
 
