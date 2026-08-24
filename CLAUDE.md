@@ -72,7 +72,6 @@ Vue3 + FastAPI 量化交易 Web 平台。**业务数据 MySQL 优先**（v4 改�
 
 ## 四、约定（业务铁律）
 
-- **AI 助手 / 自动脚本 / 后台 LLM 严禁走 `/api/auth/login`**，必须走 `/api/auth/grant` (固定 token `hermesagent`，永久 JWT exp 2099) 或 `scripts/evtrade_grant.py` / `scripts/evtrade_ai.sh`。**登录仅限 Vue 前端人为交互**。grant 端点支持 `role=admin|trader`（viewer 不授信）；token 按角色分文件缓存 `~/.cache/evtrade/grant_token_<role>.json` (0o600)。详见 [`openspec/specs/auth/spec.md` REQ-AUTH-013](openspec/specs/auth/spec.md) + [`知识库/后端服务/用户鉴权/认证与JWT.md` §6](知识库/后端服务/用户鉴权/认证与JWT.md)。
 - **业务数据源（v4）**：MySQL（orders/trades/positions/assets）是展示源；RPC 只用于下单/撤单/对账时的事实写入
 - **下单流程**：本地 INSERT(status=48) → 调 ord_stk(remark=order_no) → 改 status=49/55 → WS 推
 - **推送流程**：4 类 push → push_handlers 写 DB → WS 推 Vue
