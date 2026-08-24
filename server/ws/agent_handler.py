@@ -1,53 +1,38 @@
 """
-server/ws/agent_handler.py — /ws/agent_channel 业务消息处理 (2026-08-23, ai-agent-ws-reuse-channel)
+server/ws/agent_handler.py — /ws/agent_channel 薄包装
 
-AI 助手 WS handler，复用 /ws/{channel} 现有机制（鉴权 / 心跳 / idle / ws_manager），
-仅替换业务消息分发逻辑。
+接收 Vue 用户的 WS 消息 → 转 Hermes API server /v1/runs REST 调用 → 把 Hermes SSE 事件
+透传回 Vue WS（事件名对齐 Hermes：run.started / message.started / tool.started /
+tool.completed / run.completed / approval.required / error）。
 
-**与 quote_update 完全独立的协议**：
-- quote_update: client subscribe → server push tick (单向)
-- agent_channel: client 双向 RPC（user_message / confirmation） → server 流式推 events
+取代旧版自研 ConfirmRegistry 拦截 + _execute_tool 自执行（已删除）：
+- 高危 tool 二次确认由 Hermes API server 自身处理（tools/approval.py）
+- tool 执行在 Hermes 进程内完成（通过 server.mcp.* 工具）
+- EvTrade 这层只负责 JWT 鉴权 + 协议转发
 
-消息协议:
-  Vue → FastAPI:
-    {type: "user_message", text: "..."}
-    {type: "confirmation", pending_key, confirmed}
-  FastAPI → Vue:
-    {type: "ready", session_id}
-    {type: "text", run_id, content}
-    {type: "tool_call", name, params, run_id}
-    {type: "tool_result", result, run_id}
-    {type: "confirmation_required", pending_key, name, params}
-    {type: "agent_complete", run_id}
-    {type: "error", message, run_id}
-
-高危 tool 拦截（与 ai-agent-panel 方案一致）:
-- 收到 hermes tool_call event + is_high_risk(tool_name)
-- 注册 ConfirmRegistry pending → 推 confirmation_required → 等 Vue confirm
-- 用户响应 → 调 MCP tool 真执行 → 推 tool_result → 调 hermes.respond_confirmation
+参考：
+- openspec/changes/2026-08-23-upgrade-agent-to-v1-runs/proposal.md
 """
 from __future__ import annotations
 
 import asyncio
+import json as _json
 import logging
 import os
 import uuid
-from typing import Awaitable, Callable
+from typing import Callable
 
 from fastapi import WebSocket
 
-from server.mcp import TOOL_REGISTRY, is_high_risk, get_handler  # 触发 12 tool 注册
 from server.services.agent import (
     HermesServeClient,
     HermesUnreachableError,
     HermesError,
-    get_confirm_registry,
-    ConfirmTimeoutError,
 )
 
 log = logging.getLogger(__name__)
 
-# Hermes serve 单例（同一进程共用）
+# Hermes API server 客户端单例（连接池复用）
 _hermes_client: HermesServeClient | None = None
 
 
@@ -58,39 +43,21 @@ def get_hermes_client() -> HermesServeClient:
     return _hermes_client
 
 
-# ─── session_id 生成 ─────────────────────────────────────────────
-# 每个 WS 连接一个 session_id（endpoint.py 里在 connect 前调一次，存 ws_manager 索引）
-
-
-def _jwt_for(user_id: int) -> str:
-    """生成临时 JWT 给 MCP tool → EvTrade REST 鉴权用（同 ai-agent-panel 方案）
-
-    注：endpoint.py 已经 decode_token 过 JWT 拿 user_id；这里把 user_id 重新 encode
-    成 JWT 让 MCP tool 能调 EvTrade REST。简化方案；可改为持有原始 token。
-    """
-    import jwt as pyjwt
-    secret = os.environ.get("JWT_SECRET", "")
-    algorithm = os.environ.get("JWT_ALGORITHM", "HS256")
-    if not secret:
-        secret = "test_secret_for_unit_test_only_32bytes!!"
-    return pyjwt.encode(
-        {"user_id": user_id, "sub": str(user_id), "role": "trader"},
-        secret,
-        algorithm=algorithm,
-    )
+def reset_hermes_client() -> None:
+    """测试用：重置单例。"""
+    global _hermes_client
+    _hermes_client = None
 
 
 # ─── 连接建立时推送 ready ────────────────────────────────────────
 async def send_agent_ready(websocket: WebSocket, user_id: int | None) -> str:
     """agent_channel 连上后立即发 ready（REQ-ARCH-008「连上后立即发」）。
 
-    前端 `AgentWSClient.connect()` 以收到 `ready` 事件为连接成功的标志，
-    在此之前**不会**发送首条 `user_message`。所以 ready 必须在连接建立时主动推，
-    不能等第一条 user_message —— 否则前后端互相等待（前端等 ready 才发首条消息、
-    后端等首条消息才发 ready），首条消息永远发不出去。
+    前端 AgentWSClient.connect() 以收到 ready 事件为连接成功的标志，
+    在此之前**不会**发送首条 user_message。所以 ready 必须在连接建立时主动推。
 
     Returns:
-        本次连接生成的 session_id（连接级标识；hermes run 的 run session 另生成）。
+        session_id（连接级标识）
     """
     session_id = f"u{user_id or 0}-{uuid.uuid4().hex[:12]}"
     await _send(websocket, {"type": "ready", "session_id": session_id})
@@ -104,34 +71,64 @@ async def handle_agent_channel_message(
     last_recv_ref: Callable[[], None] | None = None,
     user_id: int | None = None,
 ) -> None:
-    """处理 /ws/agent_channel 的业务消息（ping/quote_update 等其他类型已被 endpoint.py 过滤）
+    """处理 /ws/agent_channel 的业务消息。
 
-    Args:
-        websocket: 当前 WS 连接
-        parsed: 解析后的 JSON dict
-        last_recv_ref: 可选 — 调它可触发 last_recv 更新（idle timeout 重置）
-        user_id: 当前 user id（从 endpoint.py 传进来）
+    支持消息类型：
+      - "user_message": {text, session_id?}  → 调 submit_run + 订阅 stream_events
+      - "confirmation": {pending_key, choice} → 调 respond_approval
+      - "stop": {}                            → 调 stop_run
+      - "ping": 已被 endpoint.py 处理
     """
     msg_type = parsed.get("type")
 
     if msg_type == "user_message":
         text = parsed.get("text", "").strip()
+        session_id = parsed.get("session_id") or f"u{user_id or 0}-{uuid.uuid4().hex[:12]}"
         if not text:
             await _send(websocket, {"type": "error", "message": "empty message"})
             return
         await _handle_user_message(
-            websocket=websocket, user_id=user_id, user_message=text,
+            websocket=websocket,
+            user_id=user_id,
+            session_id=session_id,
+            user_message=text,
+            last_recv_ref=last_recv_ref,
         )
 
     elif msg_type == "confirmation":
         pending_key = parsed.get("pending_key", "")
-        confirmed = bool(parsed.get("confirmed", False))
-        registry = get_confirm_registry()
-        await registry.respond(pending_key, confirmed=confirmed)
+        choice = parsed.get("choice", "deny")
+        run_id = parsed.get("run_id", "")
+        if not run_id or not pending_key:
+            await _send(websocket, {
+                "type": "error",
+                "message": "confirmation missing run_id or pending_key",
+            })
+            return
+        hermes = get_hermes_client()
+        try:
+            await hermes.respond_approval(run_id=run_id, choice=choice)
+        except HermesError as e:
+            log.warning("respond_approval failed: %s", e)
+            await _send(websocket, {"type": "error", "message": str(e)[:200]})
+        except HermesUnreachableError as e:
+            log.warning("hermes unreachable on approval: %s", e)
+            await _send(websocket, {"type": "error", "message": "hermes unreachable"})
+
+    elif msg_type == "stop":
+        run_id = parsed.get("run_id", "")
+        if not run_id:
+            return
+        hermes = get_hermes_client()
+        try:
+            await hermes.stop_run(run_id)
+        except HermesError as e:
+            log.warning("stop_run failed: %s", e)
+        except HermesUnreachableError:
+            pass
 
     elif msg_type == "ping":
-        # ping 已被 endpoint.py 处理（return pong + session_touch），
-        # 走到这里说明 channel != ping dispatch — 忽略
+        # ping 已被 endpoint.py 处理
         pass
 
     else:
@@ -141,217 +138,109 @@ async def handle_agent_channel_message(
         })
 
 
-# ─── 处理 user_message: 启动 hermes run + 流式推 WS events ──────
+# ─── 处理 user_message：启动 run + 流式推 SSE 事件 ────────────────
 async def _handle_user_message(
     *,
     websocket: WebSocket,
     user_id: int | None,
+    session_id: str,
     user_message: str,
+    last_recv_ref: Callable[[], None] | None = None,
 ) -> None:
-    """启动 hermes run → 流式处理 events → 推 WS 给前端"""
+    """薄包装：submit_run + stream_events 透传给前端。
+
+    不再做高危 tool 拦截 / ConfirmRegistry / _execute_tool：
+    - 高危 tool 由 Hermes API server 内部 tools/approval.py 拦截
+    - tool 执行在 Hermes 进程内通过 MCP 完成
+    - EvTrade 这层只透传 Hermes SSE 事件
+    """
     hermes = get_hermes_client()
 
-    # 健康检查（hermes serve daemon 未起 → 友好提示）
+    # 健康检查（Hermes API server 未起 → 友好提示）
     if not await hermes.is_reachable():
         await _send(websocket, {
             "type": "error",
-            "message": "hermes serve daemon not reachable. Start it with: hermes serve",
+            "message": "hermes API server not reachable. "
+                       "Check ~/.hermes/.env API_SERVER_KEY + hermes gateway status.",
         })
-        await _send(websocket, {"type": "agent_complete"})
         return
 
-    # 注入 12 tool（来自 server.mcp）
-    tools = [
-        {"name": td["name"], "description": td["description"], "schema": td["schema"]}
-        for td in TOOL_REGISTRY.values()
-    ]
-
-    # session_id 单 run 唯一（hermes run 标识）。
-    # ready 已在连接建立时由 endpoint.py 通过 send_agent_ready 推过
-    # （REQ-ARCH-008「连上后立即发」），这里不再重复发。
-    session_id = f"u{user_id or 0}-{uuid.uuid4().hex[:12]}"
-
-    # 启动 run + 订阅事件
+    # 启动 run
     try:
-        run_id, iter_ = await hermes.run_and_subscribe(
+        run_id = await hermes.submit_run(
+            input=user_message,
             session_id=session_id,
-            user_message=user_message,
-            tools=tools,
         )
-    except (HermesUnreachableError, HermesError) as e:
+    except HermesUnreachableError as e:
+        log.warning("submit_run unreachable: %s", e)
+        await _send(websocket, {"type": "error", "message": "hermes unreachable"})
+        return
+    except HermesError as e:
+        log.warning("submit_run failed: %s", e)
         await _send(websocket, {"type": "error", "message": str(e)[:200]})
-        await _send(websocket, {"type": "agent_complete"})
         return
 
-    log.info("agent run started: run=%s session=%s user=%s", run_id, session_id, user_id)
+    log.info(
+        "agent run started: run=%s session=%s user=%s",
+        run_id, session_id, user_id,
+    )
 
-    # 流式处理 hermes events
-    jwt_token = _jwt_for(user_id) if user_id else ""
-    async for evt in iter_:
-        if evt.type == "step_start":
-            await _send(websocket, {"type": "step_start", "run_id": evt.run_id})
-
-        elif evt.type == "text":
-            await _send(websocket, {
-                "type": "text",
-                "run_id": evt.run_id,
-                "content": evt.content,
-            })
-
-        elif evt.type == "tool_call":
-            await _send(websocket, {
-                "type": "tool_call",
-                "name": evt.tool_name,
-                "params": evt.tool_params,
-                "run_id": evt.run_id,
-            })
-            # 高危 tool 拦截
-            if is_high_risk(evt.tool_name):
-                await _intercept_high_risk_tool(
-                    websocket=websocket,
-                    run_id=evt.run_id or run_id,
-                    tool_call_id=evt.tool_call_id,
-                    tool_name=evt.tool_name,
-                    tool_params=evt.tool_params,
-                    jwt_token=jwt_token,
-                )
-            else:
-                # 低危 tool 直接执行
-                result = await _execute_tool(
-                    tool_name=evt.tool_name,
-                    tool_params=evt.tool_params,
-                    jwt_token=jwt_token,
-                )
-                await _send(websocket, {
-                    "type": "tool_result",
-                    "result": result,
-                    "run_id": evt.run_id,
-                })
-
-        elif evt.type == "tool_result":
-            await _send(websocket, {
-                "type": "tool_result",
-                "result": evt.tool_result,
-                "run_id": evt.run_id,
-            })
-
-        elif evt.type == "confirmation_required":
-            await _send(websocket, {
-                "type": "confirmation_required",
-                "run_id": evt.run_id,
-                "tool_call_id": evt.tool_call_id,
-                "name": evt.tool_name,
-                "params": evt.tool_params,
-            })
-
-        elif evt.type == "step_complete":
-            await _send(websocket, {"type": "step_complete", "run_id": evt.run_id})
-
-        elif evt.type == "agent_complete":
-            await _send(websocket, {"type": "agent_complete", "run_id": evt.run_id})
-            break
-
-        elif evt.type == "error":
-            await _send(websocket, {
-                "type": "error",
-                "message": evt.error_message or "hermes error",
-                "run_id": evt.run_id,
-            })
-
-
-# ─── 高危 tool 拦截 ─────────────────────────────────────────────
-async def _intercept_high_risk_tool(
-    *,
-    websocket: WebSocket,
-    run_id: str,
-    tool_call_id: str,
-    tool_name: str,
-    tool_params: dict,
-    jwt_token: str,
-) -> None:
-    """拦截高危 tool: 注册 pending → 等用户确认 → 调 MCP tool → 推 result"""
-    registry = get_confirm_registry()
-    try:
-        pending_key = await registry.register(
-            run_id=run_id,
-            tool_call_id=tool_call_id,
-            tool_name=tool_name,
-            tool_params=tool_params,
-        )
-    except Exception as e:
-        log.exception("register pending failed: %s", e)
-        await _send(websocket, {"type": "error", "message": "register pending failed"})
-        return
-
+    # 推 run.started（先于 SSE 事件；前端可立即把消息标为「agent 正在响应」）
     await _send(websocket, {
-        "type": "confirmation_required",
-        "pending_key": pending_key,
-        "name": tool_name,
-        "params": tool_params,
+        "type": "run.started",
+        "run_id": run_id,
+        "session_id": session_id,
     })
 
-    async def _wait_and_execute():
-        hermes = get_hermes_client()
-        try:
-            confirmed = await registry.await_confirmation(pending_key)
-        except ConfirmTimeoutError:
-            log.warning("confirmation timeout: %s", pending_key)
-            await _send(websocket, {
-                "type": "error",
-                "message": f"confirmation timeout for {tool_name}",
-            })
-            await hermes.respond_confirmation(
-                run_id=run_id, tool_call_id=tool_call_id, confirmed=False,
-            )
-            return
-        if not confirmed:
-            await hermes.respond_confirmation(
-                run_id=run_id, tool_call_id=tool_call_id, confirmed=False,
-            )
-            await _send(websocket, {
-                "type": "tool_result",
-                "result": {"ok": False, "status": "user_rejected"},
-                "run_id": run_id,
-            })
-            return
-        # 用户确认 → 真正执行
-        result = await _execute_tool(
-            tool_name=tool_name, tool_params=tool_params, jwt_token=jwt_token,
-        )
+    # 流式订阅 + 透传 SSE 事件给前端
+    try:
+        async for evt in hermes.stream_events(run_id):
+            payload = _event_to_ws_payload(evt, run_id=run_id)
+            await _send(websocket, payload)
+            if last_recv_ref:
+                last_recv_ref()
+            if evt.type == "done":
+                break
+    except HermesUnreachableError as e:
+        log.warning("stream_events unreachable: %s", e)
         await _send(websocket, {
-            "type": "tool_result",
-            "result": result,
+            "type": "error",
+            "message": "hermes stream disconnected",
             "run_id": run_id,
         })
-        await hermes.respond_confirmation(
-            run_id=run_id, tool_call_id=tool_call_id, confirmed=True,
-        )
-
-    # 创建后台 task（不阻塞主消息循环）
-    asyncio.create_task(_wait_and_execute())
-
-
-async def _execute_tool(
-    *,
-    tool_name: str,
-    tool_params: dict,
-    jwt_token: str,
-) -> dict:
-    handler = get_handler(tool_name)
-    if handler is None:
-        return {"ok": False, "error": f"unknown tool: {tool_name}", "status_code": 404}
-    try:
-        return await handler(jwt_token=jwt_token, **tool_params)
-    except TypeError as e:
-        return {"ok": False, "error": f"tool param mismatch: {e}", "status_code": 422}
+    except asyncio.CancelledError:
+        log.info("stream_events cancelled: run=%s", run_id)
+        raise
     except Exception as e:
-        log.exception("tool execution failed: %s", tool_name)
-        return {"ok": False, "error": str(e)[:200], "status_code": 500}
+        log.exception("stream_events unexpected error: %s", e)
+        await _send(websocket, {
+            "type": "error",
+            "message": str(e)[:200],
+            "run_id": run_id,
+        })
 
 
+# ─── Hermes SSE 事件 → WS 消息透传 ─────────────────────────────────
+def _event_to_ws_payload(evt, run_id: str) -> dict:
+    """把 HermesEvent 转成透传给前端的 WS 消息 dict。
+
+    字段对齐 spec/frontend §REQ-FE-537（与 Hermes SSE 同名）。
+    """
+    # 默认透传 raw payload + 兜底 run_id
+    payload = dict(evt.raw) if evt.raw else {}
+    payload["type"] = evt.type
+    if "run_id" not in payload or not payload["run_id"]:
+        payload["run_id"] = evt.run_id or run_id
+    if evt.session_id and "session_id" not in payload:
+        payload["session_id"] = evt.session_id
+    if evt.message_id and "message_id" not in payload:
+        payload["message_id"] = evt.message_id
+    return payload
+
+
+# ─── 安全推 WS 消息 ────────────────────────────────────────────────
 async def _send(ws: WebSocket, payload: dict) -> None:
-    """安全推 WS 消息"""
-    import json as _json
+    """安全推 WS 消息（peer 断开不抛）"""
     try:
         await ws.send_text(_json.dumps(payload, ensure_ascii=False))
     except Exception as e:
