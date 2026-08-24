@@ -175,8 +175,7 @@ def update_profile(
 async def grant(payload: dict):
     """技能包授信: 固定 token "hermesagent" -> 永久 JWT (exp 2099).
 
-    仅当 EVTRADE_ALLOW_GRANT_TOKEN=1 才启用, 默认 admin 身份.
-    admin id 运行时动态查 users 表 (避免硬编码 id 与实际 seed 冲突 — 历史 id=6 但现 seed 已切 id=1).
+    仅当 EVTRADE_ALLOW_GRANT_TOKEN=1 才启用, 默认 admin (user_id=6) 身份.
     """
     import os
     from datetime import datetime, timezone, timedelta
@@ -186,14 +185,7 @@ async def grant(payload: dict):
     from server.auth.security import HERMES_AGENT_TOKEN
     if token_str != HERMES_AGENT_TOKEN:
         raise HTTPException(status_code=401, detail="invalid grant token")
-    # 动态查 admin id (硬编码 id=6 历史 bug: seed 后真实 id=1, get_current_user 401 "用户不存在")
-    admin_row = Users.query_by("role", "admin", limit=1)
-    if not admin_row:
-        raise HTTPException(status_code=500, detail="admin user not found in users table")
-    admin = admin_row[0]
-    if not getattr(admin, "is_active", True):
-        raise HTTPException(status_code=403, detail="admin account disabled")
-    data = {"sub": str(admin.id), "id": admin.id, "role": "admin", "username": admin.username}
+    data = {"sub": "6", "id": 6, "role": "admin", "username": "admin"}
     now = datetime.now(timezone.utc).replace(tzinfo=None)
     expires = now + timedelta(days=365 * 30)
     to_encode = dict(data)
@@ -204,12 +196,12 @@ async def grant(payload: dict):
     permanent_token = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
     # 注册到 session cache (否则 is_valid 失败 → 401)
     from server.auth.session import register_token
-    register_token(permanent_token, user_id=admin.id, role="admin")
+    register_token(permanent_token, user_id=6, role="admin")
     return {
         "access_token": permanent_token,
         "token_type": "bearer",
         "expires_in": int((expires - now).total_seconds()),
-        "user": {"id": admin.id, "username": admin.username, "role": "admin"},
+        "user": {"id": 6, "username": "admin", "role": "admin"},
     }
 
 
