@@ -145,5 +145,6 @@ mv openspec/changes/<name> openspec/changes/archive/<date>-<name>
 | `2026-08-23-ai-agent-panel` | **✅ 已归档** | 全局右下角浮动 AgentPanel（REQ-FE-537）+ MCP 9 tool + WS gateway（REQ-ARCH-008）+ ConfirmRegistry 状态机（commit `78a5f15` 前端 / `1d45542`+`09a4c9e` MCP / `d552c35` WS / `b2babc3` 38 单测 / `8b73c51` spec merge；详见 `archive/2026-08-23-ai-agent-panel/proposal.md`） |
 | `2026-08-23-ai-agent-ws-reuse-channel` | **✅ 已归档** | AI WS 走 `/ws/agent_channel` 第 6 channel，共用现有 /ws/{channel} 鉴权/心跳/idle/ws_manager 机制，0 新端口（commit `1f30112`+`ad2796d`+`a482531`+`c02ea2f` / spec merge `88638f1`；详见 `archive/2026-08-23-ai-agent-ws-reuse-channel/proposal.md`） |
 | `2026-08-23-fix-agent-is-reachable-healthz` | **✅ 已归档** | `is_reachable()` 改「HTTP 响应到达即可达」判据，避开 Hermes serve v0.19.0 无 `/healthz` 端点导致的误报 not reachable（commit `18bce19`；详见 `archive/2026-08-23-fix-agent-is-reachable-healthz/proposal.md`） |
+| `2026-08-23-upgrade-agent-to-v1-runs` | **✅ 已归档** | AI 助手后端从自研 JSON-RPC over WS 迁到 Hermes API server `/v1/runs` REST + SSE：hermes_serve_client 重写 + WS gateway 薄包装（删 ConfirmRegistry）+ 前端事件协议对齐；后端净减 ~420 行；基线 106/98/8 不破（commit `7bd95e0`+`f1f5b9e`+`93f63fb`+`870bc3e`+`4fc6870`；详见 `archive/2026-08-23-upgrade-agent-to-v1-runs/proposal.md`） |
 
 详见 `openspec/changes/archive/<date>-<name>/proposal.md`。
