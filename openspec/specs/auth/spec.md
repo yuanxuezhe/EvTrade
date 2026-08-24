@@ -106,20 +106,59 @@ EvTrade 是多用户交易平台，必须区分：
 
 **v92 立**（2026-08-04）：技能包授信入口，固定 token "hermesagent" → 永久 JWT（exp 2099）。
 
-- 端点：`POST /api/auth/grant`，body `{token: "hermesagent"}`
+**v2026-08-24 扩展**：grant 支持 `role=admin|trader`（白名单），`role=viewer` 拒绝 400；admin id 运行时动态查 users 表（避免硬编码 id 与实际 seed 冲突）。
+
+- 端点：`POST /api/auth/grant`，body `{token: "hermesagent", role?: "admin"|"trader"}`
 - 启用条件：**必须** `EVTRADE_ALLOW_GRANT_TOKEN=1` 环境变量；否则 403 "grant endpoint disabled"
 - 校验：
   1. `payload.token` 必须等于字符串 `"hermesagent"` → 否则 401 "invalid grant token"
+  2. `payload.role` ∈ `{"admin", "trader"}`，默认 `admin`；`viewer`/其他 → 400
 - 成功行为：
-  - 生成 JWT `{sub: "6", id: 6, role: "admin", username: "admin", exp: now + 30 年}`
-  - 调用 `server.auth.session.register_token(permanent_token, user_id=6, role="admin")` 注册到 session cache
+  - `Users.query_by("role", requested_role, limit=1)` 动态查 user（admin id=1, trader id=2 真实 seed）
+  - 生成 JWT `{sub: <user.id>, id: <user.id>, role: requested_role, username: <user.username>, exp: now + 30 年}`
+  - 调用 `server.auth.session.register_token(permanent_token, user_id=<user.id>, role=requested_role)` 注册到 session cache
   - **必须注册** — 否则下次请求 `is_valid` 失败 → 401
 - 响应：`TokenResponse{access_token, token_type, expires_in, user{id, username, role}}`
 - 安全约束：
   - 默认 `EVTRADE_ALLOW_GRANT_TOKEN=0`（环境变量门控，避免生产环境暴露）
   - token 字符串 "hermesagent" 硬编码（技能包白名单，不开放 admin 后台入口）
+  - role 白名单：仅 admin/trader 可签（viewer 不授信 — 防止脚本误调只读账号）
   - 不需要任何现有 JWT（grant 端点本身是绕过登录的）
 - 实现位置：`server/api/auth.py::grant`（line 179）
+
+### REQ-AUTH-014: AI 助手 / 脚本授信通路（v2026-08-24 立）
+
+**问题**：v92 grant 端点只给 admin，但 AI 助手 / e2e 脚本 / 后台 LLM 默认走 `/api/auth/login`（OAuth2PasswordRequestForm），导致：
+- admin 密码明文出现在 shell history / 日志 / 进程 args
+- 与 §四"AI 助手严禁走 login"业务铁律冲突
+
+**方案**：
+- 后端：`server/api/auth.py::grant` 加 `payload.role` 参数（REQ-AUTH-011 v2026-08-24 扩展）
+- 客户端 helper：`scripts/evtrade_grant.py` + `scripts/evtrade_ai.sh`
+  - `evtrade_grant.py` Python helper：`auth_header(role="admin"|"trader")` / `get/post/put/patch/delete(path, role=...)`
+  - token 按角色分文件缓存：`~/.cache/evtrade/grant_token_<role>.json`（0o600），跨进程复用 + 401 自动重新 grant 重试
+  - `evtrade_ai.sh` bash wrapper：AI agent 一行调 `bash scripts/evtrade_ai.sh [role=...] <verb> <path> [json_body]`
+- e2e 脚本改造：
+  - `test_users_e2e.py` / `test_t0_tasks_e2e.py` / `test_api_tables_e2e.py` / `test_orders_e2e.py`（admin 部分）改走 grant
+  - `test_orders_e2e.py` trader 部分保留 OAuth2 login（grant 默认 admin，trader 角色测试业务场景必须）
+  - `test_auth_e2e.py` 不动（测的就是 login 本身）
+- WS 不变：`server/ws/endpoint.py` 仍只接受 `token=hermesagent` → admin(id=6)（待后续扩展时再考虑 `token=hermesagent:trader` 之类格式）
+
+**安全约束**：
+- viewer 角色**不授信** — grant endpoint 拒绝（400）；helper 无 viewer role
+- e2e 密码（admin123/trader123）从脚本里逐步退场；reset-password / change-password 测试仍需 OAuth2 流程（验证新密码可用）
+- AI 助手 / 自动脚本 / 后台 LLM **严禁走 `/api/auth/login`**（CLAUDE.md §四铁律）；登录仅限 Vue 前端人为交互
+
+**影响面**：
+- `scripts/e2e/test_{users,t0_tasks,api_tables,orders}_e2e.py` 4 文件改 `_grant_token(role)` 替代 admin login
+- `scripts/init_strategy_exec_env.py:request_grant_token` 也走 grant（之前已支持）
+- `scripts/evtrade_grant.py` 新增（commit `2366897`）
+- `scripts/evtrade_ai.sh` 新增
+
+**实现位置**：
+- 后端：`server/api/auth.py::grant`
+- 客户端：`scripts/evtrade_grant.py` + `scripts/evtrade_ai.sh`
+- 规则：`CLAUDE.md` §四业务铁律
 
 ### REQ-AUTH-013: WS 直连 token=hermesagent — 无条件接受（v129, 2026-08-13）
 

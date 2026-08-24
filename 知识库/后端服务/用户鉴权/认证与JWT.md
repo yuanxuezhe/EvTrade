@@ -166,13 +166,40 @@ async def grant(payload: dict):
     if os.environ.get("EVTRADE_ALLOW_GRANT_TOKEN", "0") != "1":
         raise HTTPException(403, "grant endpoint disabled")
     if payload.get("token") != HERMES_AGENT_TOKEN: raise HTTPException(401, "invalid grant token")
-    data = {"sub": "6", "id": 6, "role": "admin", "username": "admin"}
+    # v2026-08-24: role 白名单 admin/trader; viewer 拒绝; admin id 动态查 users 表
+    role = payload.get("role", "admin")
+    if role not in ("admin", "trader"):
+        raise HTTPException(400, f"role must be admin or trader, got {role!r}")
+    user_row = Users.query_by("role", role, limit=1)
+    if not user_row: raise HTTPException(500, f"{role} user not found")
+    user = user_row[0]
+    if not getattr(user, "is_active", True):
+        raise HTTPException(403, f"{role} account disabled")
+    data = {"sub": str(user.id), "id": user.id, "role": role, "username": user.username}
     expires = now + timedelta(days=365*30)                      # ~2099
     permanent_token = jwt.encode({**data, "iat": now, "exp": expires}, SECRET_KEY, algorithm=ALGORITHM)
-    register_token(permanent_token, user_id=6, role="admin")    # 必须注册，否则 is_valid 401
+    register_token(permanent_token, user_id=user.id, role=role) # 必须注册，否则 is_valid 401
 ```
 
 WS 直连时 decode 失败但 token == HERMES_AGENT_TOKEN 也视为 admin(id=6)（同一事实源）。
+
+### 6.1 grant 客户端 helper（v2026-08-24 立）
+
+AI 助手 / 自动脚本 / 后台 LLM 调 EvTrade REST 接口的"授信 + HTTP 客户端"工具，**严禁走 OAuth2 login**：
+
+| 文件 | 用途 | 接口 |
+|------|------|------|
+| `scripts/evtrade_grant.py` | Python helper (库模式 + CLI) | `auth_header(role="admin\|trader")` / `get/post/put/patch/delete(path, role=...)` |
+| `scripts/evtrade_ai.sh` | Bash wrapper (AI agent 一行调用) | `bash scripts/evtrade_ai.sh [role=...] <verb> <path> [json_body]` |
+
+**token 缓存**：按角色分文件 `~/.cache/evtrade/grant_token_<role>.json`（0o600），跨进程复用；401 自动重新 grant 重试（应对后端重启 — session cache 进程内 dict）。
+
+**viewer 不授信**：grant 端点 + helper 都拒绝 viewer 角色（防止误调只读账号）。
+
+**e2e 改造**：
+- admin 路径：4 个 e2e 脚本（test_users / test_t0_tasks / test_api_tables / test_orders）改走 `_grant_token(role)`
+- trader 路径：test_orders_e2e 保留 OAuth2 login（grant 默认 admin，trader 业务场景必须）
+- test_auth_e2e.py 不动（测的就是 login 本身）
 
 ### 7. 其余端点
 
