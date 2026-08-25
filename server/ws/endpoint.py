@@ -1,5 +1,5 @@
 """
-ws/endpoint.py — /ws/{channel} WebSocket 端点（单向心跳 + 订阅推送 + agent_channel 双向）
+ws/endpoint.py — /ws/{channel} WebSocket 端点（单向心跳 + 订阅推送）
 
 行为：
 - 通过 ?token=JWT 认证，无 token → close 4001
@@ -19,8 +19,6 @@ ws/endpoint.py — /ws/{channel} WebSocket 端点（单向心跳 + 订阅推送 
   - 收到 client `{"type":"unsubscribe", "stock_codes":[...]}` →
       - 调 ws_manager.unsubscribe(ws, codes)
       - 立即返 `{"type":"unsubscribe_ack", "stock_codes":[...]}`
-  - 收到 client agent_channel 消息（"user_message" / "confirmation"）→ 启动 hermes agent run
-    （详见 server.ws.agent_handler 模块）
 """
 import asyncio
 import json
@@ -32,16 +30,12 @@ import logging
 
 log = logging.getLogger(__name__)
 
-from server.auth.security import decode_token, HERMES_AGENT_TOKEN
+from server.auth.security import decode_token
 from server.auth.session import touch as session_touch  # WS ping 续期 HTTP session
 from server.infra.db import SessionLocal
 from server.ws.manager import ws_manager, match_pattern
 from server.repo.quote_snapshots import get_latest_multi as repo_get_latest_multi, to_dict as repo_to_dict
 from server.tables import Users
-# 2026-08-24 重做: agent_channel 改调 server.ai.agent_spawner (claudedemo 模式)
-# 删除旧的 server.ws.agent_handler / server.services.agent.* 依赖
-from server.ai.agent_spawner import ClaudeSession, _which_claude
-from server.ai.mcp_server import get_mcp_server
 
 
 WS_IDLE_TIMEOUT = 600  # 秒：WS 通道无任意消息的最大容忍（客户端 30s ping → 10 分钟内必收到消息）
@@ -99,18 +93,7 @@ def register_ws_endpoint(app: FastAPI):
                 await websocket.close(code=4003, reason="Admin required")
                 return
         await ws_manager.connect(websocket, channel)
-        # agent_channel 需要的 user_id（连接级, 供 ready / 业务消息共用）
         user_id = int(user.get("id") or user.get("sub", 0)) or None
-        if channel == "agent_channel":
-            # 2026-08-24 重做: claude 未 spawn 也发 ready (claudedemo 同款).
-            # ready 事件先于首条 user_message 到达, 前端才能确认 WS 双向通.
-            # claude 实际 spawn 推迟到首条 user_message (懒初始化).
-            import uuid as _uuid_mod
-            session_id = f"u{user_id or 0}-{_uuid_mod.uuid4().hex[:12]}"
-            await websocket.send_json({
-                "type": "ready",
-                "session_id": session_id,
-            })
 
         last_recv = asyncio.get_event_loop().time()
 
@@ -228,13 +211,6 @@ def register_ws_endpoint(app: FastAPI):
                         "stock_codes": sorted(removed),
                     })
                     continue
-                # agent_channel (2026-08-24 重做): claudedemo 模式
-                #   - WS 收到 user_message → spawner.run_turn(text) → 推流式 event 给前端
-                #   - 旧 self-built JSON-RPC/Hermes 链路已删 (server.ws.agent_handler / server.services.agent.*)
-                #   - claude -p 子进程 + --mcp-config 指向本进程内的 server.ai.mcp_server
-                if channel == "agent_channel":
-                    await _handle_agent_message(websocket, parsed, user_id=user_id)
-                    continue
                 # 其他业务消息：当作心跳续约，不做业务处理（推送是单向 server→client）
         except WebSocketDisconnect:
             pass
@@ -243,101 +219,3 @@ def register_ws_endpoint(app: FastAPI):
         finally:
             idle_task.cancel()
             ws_manager.disconnect(websocket, channel)
-
-
-# ────────────────────────────────────────────────────────────────────────
-# agent_channel 消息处理 (2026-08-24 重做: claudedemo 模式)
-# ────────────────────────────────────────────────────────────────────────
-async def _handle_agent_message(websocket: WebSocket, parsed: dict, user_id: int | None) -> None:
-    """agent_channel 单条消息分发.
-
-    支持 type:
-      - user_message: {text, session_id?, history?} → spawn claude -p + stream events
-      - ping: 已被 endpoint 主循环处理 (这里兜底)
-      - stop: 暂不实现 (每 turn 是独立 claude -p, kill 由 idle / disconnect 兜底)
-    """
-    msg_type = parsed.get("type")
-
-    if msg_type == "user_message":
-        text = (parsed.get("text") or "").strip()
-        session_id = parsed.get("session_id") or ""
-        history = parsed.get("history") or []
-        if not text:
-            await websocket.send_json({"type": "error", "message": "empty message"})
-            return
-
-        # 检查 MCP server 是否已启动 (lifespan 必须先 set_mcp_server)
-        mcp_srv = get_mcp_server()
-        if mcp_srv is None:
-            await websocket.send_json({
-                "type": "error",
-                "message": "EvTrade AI 助手未启动 (mcp_server is None). 确认 server.ai lifespan 起好.",
-            })
-            return
-
-        # 检查 claude CLI 是否在 PATH
-        if _which_claude() is None:
-            # 推 error 事件 (前端 toast / tooltip 展示)
-            await websocket.send_json({
-                "type": "error",
-                "message": (
-                    "未在 PATH 中找到 `claude` CLI. EvTrade AI 助手 (claudedemo 模式) "
-                    "需要本机或容器内有 claude binary. 安装: `npm i -g @anthropic-ai/claude-code`."
-                ),
-            })
-            # 追加推 agent_complete 事件 — 让前端 onRunCompleted 能清 isThinking
-            # 否则 spinner 会卡死 (前端 store.run_turn_started 但没收到 complete)
-            await websocket.send_json({
-                "type": "agent_complete",
-                "success": False,
-                "error": "claude_cli_missing",
-                "session_id": session_id,
-            })
-            return
-
-        # 推 run.started 先于 SSE 事件 (前端可立即把消息标为「agent 正在响应」)
-        await websocket.send_json({
-            "type": "run.started",
-            "session_id": session_id,
-            "user_id": user_id,
-        })
-
-        # spawn claude -p 子进程 + 流式推 AgentEvent
-        session = ClaudeSession(
-            mcp_port=mcp_srv.port,
-            user_id=user_id,
-            session_id=session_id,
-        )
-        try:
-            async for evt in session.run_turn(text, history):
-                # AgentEvent → 前端 WS 消息
-                payload = {"type": evt.type, **evt.payload}
-                if session_id:
-                    payload.setdefault("session_id", session_id)
-                try:
-                    await websocket.send_json(payload)
-                except Exception as e:
-                    log.debug("[AI] WS send failed: %s", e)
-                    break
-        except Exception as e:
-            log.exception("[AI] run_turn failed: %s", e)
-            try:
-                await websocket.send_json({"type": "error", "message": str(e)[:200]})
-            except Exception:
-                pass
-        finally:
-            session.close()
-
-    elif msg_type == "ping":
-        return  # 主循环已处理
-
-    elif msg_type == "stop":
-        # claudedemo 模式: claude 一次性 per-turn, stop 实际意义有限
-        # 暂不实现: 若用户想中断, 关 WS 即可 (claude 子进程随 WS 断开被 close())
-        return
-
-    else:
-        await websocket.send_json({
-            "type": "error",
-            "message": f"unknown agent_channel msg type: {msg_type}",
-        })

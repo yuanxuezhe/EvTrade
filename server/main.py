@@ -33,8 +33,6 @@ from server.api import quote as quote_api  # quote 查询/订阅
 from server.api import stocks as stocks_api  # stock-info-crawler
 from server.api import stkpool as stkpool_api  # add-stkpool-module
 from server.api import sync as sync_api  # stock-info-crawler
-from server.api import ai_analysis as ai_analysis_api  # AI 分析 (invest-analyst skill 集成, 同步 PoC)
-from server.ai.agent_spawner import is_claude_available as _is_claude_available, claude_missing_reason as _claude_missing_reason  # /api/ai/status 公开探测 (claude CLI 缺失优雅降级)
 from server.api.admin import sys_status as admin_sys_status, reconcile as admin_reconcile, session as admin_session
 from server.middleware.request_logging import RequestLoggingMiddleware
 from server.rpc.client import get_rpc_client, close_rpc_client
@@ -250,7 +248,6 @@ async def on_shutdown_signal_consumer():
 
 # ---- REQ-AUTH-IDLE-001: token session cache 后台 sweep ----
 _auth_sweep_task = None  # type: ignore[var-annotated]
-_ai_mcp_server = None  # 2026-08-24 重做: EvTrade AI 助手 MCP server 全局单例 (claudedemo 模式)
 
 
 @app.on_event("startup")
@@ -272,27 +269,6 @@ async def on_startup_auth_sweep():
         log.warning(f"[INIT] auth sweep failed to start: {e}")
 
 
-@app.on_event("startup")
-def on_startup_ai_mcp_server():
-    """2026-08-24 重做: 启动 EvTrade AI 助手 (claudedemo 模式) 的 MCP HTTP server.
-
-    绑 127.0.0.1:RAND, spawn claude -p 子进程时通过 --mcp-config 注入此 URL.
-    pytest 模式跳过 (TestClient 不发 spawn).
-    """
-    global _ai_mcp_server
-    if os.environ.get("PYTEST_CURRENT_TEST"):
-        log.info("[INIT] pytest mode: skip AI MCP server")
-        return
-    try:
-        from server.ai.mcp_server import EvTradeMCPServer, set_mcp_server
-        _ai_mcp_server = EvTradeMCPServer.start(port=0)
-        set_mcp_server(_ai_mcp_server)
-        log.info(f"[INIT] AI MCP server started on http://127.0.0.1:{_ai_mcp_server.port}/mcp")
-    except Exception as e:
-        log.warning(f"[INIT] AI MCP server failed to start: {e}")
-        _ai_mcp_server = None
-
-
 @app.on_event("shutdown")
 async def on_shutdown_auth_sweep():
     """停止 auth session sweep 协程。"""
@@ -303,21 +279,6 @@ async def on_shutdown_auth_sweep():
             await _auth_sweep_task
         except Exception as e:
             log.warning(f"[SHUTDOWN] auth sweep cancel: {e}")
-
-
-@app.on_event("shutdown")
-def on_shutdown_ai_mcp_server():
-    """停 AI MCP server."""
-    global _ai_mcp_server
-    if _ai_mcp_server is not None:
-        try:
-            _ai_mcp_server.stop()
-            log.info("[SHUTDOWN] AI MCP server stopped")
-        except Exception as e:
-            log.warning(f"[SHUTDOWN] AI MCP server stop error: {e}")
-        _ai_mcp_server = None
-        from server.ai.mcp_server import set_mcp_server
-        set_mcp_server(None)
 
 
 # ---- Public routes ------------------------------------------------------
@@ -347,9 +308,6 @@ app.include_router(stocks_api.router, prefix="/api/stocks", tags=["stocks"], dep
 app.include_router(stkpool_api.router, prefix="/api/stkpool", tags=["stkpool"], dependencies=_AUTH)  # add-stkpool-module
 # sync 管理 (admin only,内联守卫避免 _AUTH_ADMIN 未定义)
 app.include_router(sync_api.router, prefix="/api/sync", tags=["sync"], dependencies=[Depends(get_current_user)])
-# AI 分析 (PoC: 同步调用 invest-analyst demo 脚本, 单次 60-180s)
-#   前端 axios 调用: POST /api/ai/ai-analysis (baseURL=/api + router prefix=/ai + endpoint=/ai-analysis)
-app.include_router(ai_analysis_api.router, prefix="/api/ai", tags=["ai-analysis"], dependencies=_AUTH)
 
 
 # ---- Admin routes (login required, role checked by handler) ----------------
@@ -360,13 +318,6 @@ app.include_router(admin_reconcile.router, prefix="/api/admin/reconcile", tags=[
 app.include_router(admin_session.router, prefix="/api/admin/trading-session", tags=["admin-session"], dependencies=_AUTH_ADMIN)
 
 
-# ---- AI Agent WS Gateway 已迁移至 /ws/agent_channel ----------------
-# 2026-08-23, ai-agent-ws-reuse-channel: AI WS 复用现有 /ws/{channel} endpoint
-# （与 order_update / trade_update / quote_update 共用 ws_manager + 鉴权 + idle + ping/pong）
-# 服务端: server/ws/endpoint.py + server/ws/agent_handler.py
-# 客户端: client/src/api/agent.js → WS_PATH = '/ws/agent_channel'
-
-
 @app.get("/api/health")
 def health():
     """无鉴权健康检查 - 仅用于探活 (evctl.py / k8s probe)
@@ -374,18 +325,3 @@ def health():
     前端 keepalive 用 /api/auth/heartbeat (有 token, 会触发 touch)
     """
     return {"status": "ok"}
-
-
-@app.get("/api/ai/status")
-def ai_status():
-    """公开 - 探测 AI 助手可用性 (前端 useAgentStore 启动时调, 决定浮动按钮是否禁用).
-
-    不鉴权: 仅返回 boolean + reason 字符串, 无业务数据泄露.
-
-    Returns:
-        available=true  → claude CLI 在 PATH, 前端可连 WS /ws/agent_channel
-        available=false → claude 缺失, 前端应禁用浮动按钮 + 展示 reason
-    """
-    if _is_claude_available():
-        return {"available": True}
-    return {"available": False, "reason": _claude_missing_reason()}

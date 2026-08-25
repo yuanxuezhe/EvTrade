@@ -58,9 +58,6 @@ class WSManager:
             "system_update": set(),
             # 回测 / live task 进度推送 (ScriptTask.vue 详情实时刷新)
             "task_progress_update": set(),
-            # AI Agent 对话 WS (2026-08-23, ai-agent-ws-reuse-channel)
-            #   与 order_update / trade_update 等推送频道并列，共用 ws_manager + 鉴权 + idle + ping/pong 机制
-            "agent_channel": set(),
         }
         #   pattern -> Set[WebSocket]：倒排索引（订阅了此 pattern 的 ws 集合）
         #   pattern 可以是: 具体 stock_code ('000001.SZ') / 市场 ('SZ') / 片段 ('000001') / '' (全市场)
