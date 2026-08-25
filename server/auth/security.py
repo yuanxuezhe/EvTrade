@@ -36,10 +36,6 @@ SECRET_KEY = _load_or_create_secret()
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24  # 24 hours
 
-# 技能包 hermes agent 固定授信 token (REQ-AUTH-011 / REQ-AUTH-013)。
-# grant 端点与 WS 直连共用单一事实源; WS 直连时 decode 失败若 token 等于该值 → 视为 admin(id=6)。
-HERMES_AGENT_TOKEN = "hermesagent"
-
 
 # ---- Password hashing ----------------------------------------------------
 def hash_password(plain: str) -> str:

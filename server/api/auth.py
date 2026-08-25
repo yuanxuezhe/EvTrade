@@ -171,40 +171,6 @@ def update_profile(
     return UserInfoResponse(**_row_to_user_dict(current_user))
 
 
-@router.post("/grant", response_model=TokenResponse)
-async def grant(payload: dict):
-    """技能包授信: 固定 token "hermesagent" -> 永久 JWT (exp 2099).
-
-    仅当 EVTRADE_ALLOW_GRANT_TOKEN=1 才启用, 默认 admin (user_id=6) 身份.
-    """
-    import os
-    from datetime import datetime, timezone, timedelta
-    if os.environ.get("EVTRADE_ALLOW_GRANT_TOKEN", "0") != "1":
-        raise HTTPException(status_code=403, detail="grant endpoint disabled (set EVTRADE_ALLOW_GRANT_TOKEN=1)")
-    token_str = payload.get("token", "")
-    from server.auth.security import HERMES_AGENT_TOKEN
-    if token_str != HERMES_AGENT_TOKEN:
-        raise HTTPException(status_code=401, detail="invalid grant token")
-    data = {"sub": "6", "id": 6, "role": "admin", "username": "admin"}
-    now = datetime.now(timezone.utc).replace(tzinfo=None)
-    expires = now + timedelta(days=365 * 30)
-    to_encode = dict(data)
-    to_encode["iat"] = now
-    to_encode["exp"] = expires
-    from server.auth.security import SECRET_KEY, ALGORITHM
-    from jose import jwt
-    permanent_token = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
-    # 注册到 session cache (否则 is_valid 失败 → 401)
-    from server.auth.session import register_token
-    register_token(permanent_token, user_id=6, role="admin")
-    return {
-        "access_token": permanent_token,
-        "token_type": "bearer",
-        "expires_in": int((expires - now).total_seconds()),
-        "user": {"id": 6, "username": "admin", "role": "admin"},
-    }
-
-
 @router.post("/change-password")
 async def change_password(
     payload: ChangePasswordRequest,

@@ -52,18 +52,11 @@ WS_CHANNELS_REQUIRE_ADMIN = {"sync_update"}
 
 
 def _resolve_ws_user(token: str):
-    """WS 鉴权: 合法 JWT → claims; 固定 hermesagent token → admin(id=6); 否则 None。
+    """WS 鉴权: 合法 JWT → claims; 否则 None。
 
-    hermes agent 直连 WS —— 用户决策无条件接受 token=hermesagent,
-    视为 admin 身份, 与 REQ-AUTH-011 grant 身份一致 (共用 HERMES_AGENT_TOKEN 常量),
-    不做 env 门控 (REQ-AUTH-013)。风险已登记: 硬编码 admin 凭证, 回收需改代码。
+    仅接受合法 JWT 鉴权; 不再有 hardcoded admin 凭证捷径 (2026-08-25 cleanup-ai-remove)。
     """
-    user = decode_token(token)
-    if user:
-        return user
-    if token == HERMES_AGENT_TOKEN:
-        return {"sub": "6", "id": 6, "role": "admin", "username": "admin"}
-    return None
+    return decode_token(token)
 
 
 def register_ws_endpoint(app: FastAPI):
@@ -94,7 +87,6 @@ def register_ws_endpoint(app: FastAPI):
         if not token:
             await websocket.close(code=4001, reason="Unauthorized")
             return
-        # 直连 hermesagent 也放行 (REQ-AUTH-013), 不再只认 JWT
         user = _resolve_ws_user(token)
         if not user:
             await websocket.close(code=4001, reason="Invalid token")
