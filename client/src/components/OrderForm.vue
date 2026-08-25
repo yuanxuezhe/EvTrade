@@ -63,13 +63,15 @@
           />
           <div class="volume-quick">
             <button
-              v-for="v in volumeShortcuts"
-              :key="v"
+              v-for="f in volumeShortcuts"
+              :key="f.label"
               type="button"
               class="quick-btn"
-              @click="form.volume = v"
+              :disabled="availableTradeQty <= 0"
+              :title="fractionTitle(f)"
+              @click="applyFraction(f.value)"
             >
-              {{ formatVolume(v) }}
+              {{ f.label }}
             </button>
           </div>
         </el-form-item>
@@ -116,6 +118,7 @@ import PriceTypeInput from './PriceTypeInput.vue'
 import { useAssetStore } from '../stores/asset'
 import { usePositionStore } from '../stores/position'
 import { useQuoteStore } from '../stores/quote'
+import { useStocksStore } from '../stores/stocks'
 
 const props = defineProps({
   onSubmit: { type: Function, required: true },
@@ -146,6 +149,7 @@ const form = reactive({
 const assetStore = useAssetStore()
 const positionStore = usePositionStore()
 const quoteStore = useQuoteStore()
+const stocksStore = useStocksStore()
 
 // 价格类型选项（从常量导入）
 // const priceTypeOptions = [
@@ -154,7 +158,16 @@ const quoteStore = useQuoteStore()
 //   { label: '市价', value: 44 }
 // ]
 
-const volumeShortcuts = [100, 500, 1000, 5000, 10000]
+// 委托数量快捷按钮 = 可用数量的分数 (REQ-FE-543)
+//   点击后按买卖方向 × fraction × trade_unit 整手取整 (买 floor / 卖 ceil)
+//   替代原绝对股数 [100,500,1000,5000,10000] — 与可用不联动 / 跨股失效问题
+const volumeShortcuts = [
+  { label: '1/10', value: 1 / 10 },
+  { label: '1/5', value: 1 / 5 },
+  { label: '1/4', value: 1 / 4 },
+  { label: '1/2', value: 1 / 2 },
+  { label: '1/1', value: 1 }
+]
 
 const estimatedAmount = computed(() => (form.price || 0) * (form.volume || 0))
 
@@ -215,32 +228,34 @@ const availableLabel = computed(() =>
 )
 
 /**
- * 可买/可卖数量
+ * 可买/可卖股数 (纯数字, 给分数快捷按钮 / applyAvailableToVolume 共用)
  *
  * 买入时 (用可用的现金 cash 计算):
  *   - 限价 (FIX_PRICE) → 用 输入价格
  *   - 最新价 (LATEST_PRICE) → 行情最新价 (quote.last_price)
  *   - 市价 (MARKET_PEER_PRICE_FIRST) → 卖一价 (ask_price[0])
- *   - 公式: floor(cash / price / 100) * 100 (A股 100 股一手, 不足一手部分丢弃)
+ *   - 公式: floor(cash / price / trade_unit) * trade_unit (买向下取整)
  *
  * 卖出时 (用持仓 avl_vol 即"可用"):
  *   - 取持仓 avl_vol 字段 (T+1 制度下该字段即为可卖数)
- *   - 未持仓 / 行情无 → "0"
+ *   - 未持仓 / 行情无 → 0
+ *
+ * 注意: 返回的是 **按 trade_unit 整手取整** 后的最大可下单股数,
+ *   而非裸 cash/px 浮点 — 直接给按钮 / applyAvailableToVolume 用, 避免重复计算.
  */
-const availableText = computed(() => {
+const availableTradeQty = computed(() => {
   // ----- 卖出: 直接返回 avl_vol -----
   if (form.order_type === OrderType.SELL) {
-    if (!form.stock_code) return '0'
+    if (!form.stock_code) return 0
     const pos = positionStore.positions.find((p) => p.stock_code === form.stock_code)
-    if (!pos) return '0'
-    const avl = Number(pos.avl_vol) || 0
-    return avl.toLocaleString()
+    if (!pos) return 0
+    return Number(pos.avl_vol) || 0
   }
 
   // ----- 买入: 根据价格类型取不同价格, 计算可买股数 -----
-  if (!form.stock_code) return '—'
+  if (!form.stock_code) return 0
   const cash = Number(assetStore.asset.cash) || 0
-  if (cash <= 0) return '0'
+  if (cash <= 0) return 0
 
   let px = 0
   if (form.price_type === PriceType.FIX_PRICE) {
@@ -251,15 +266,24 @@ const availableText = computed(() => {
   } else if (form.price_type === PriceType.MARKET_PEER_PRICE_FIRST) {
     // 吃对手方最优价 (买→卖1, 卖→买1)
     const q = quoteStore.getQuote(form.stock_code)
-    const isBuy = String(form.order_type) === '23'
-    const peer = isBuy ? q?.ask_prices?.[0] : q?.bid_prices?.[0]
+    const peer = q?.ask_prices?.[0]
     px = Number(peer) || 0
   }
-  if (px <= 0) return '—'
+  if (px <= 0) return 0
 
-  // A 股最小买入 100 股, 向下取整到 100 倍数
-  const raw = Math.floor(cash / px / 100) * 100
-  return raw.toLocaleString()
+  // 按 trade_unit 整手取整 (买向下)
+  const unit = stocksStore.stockTradeUnit(form.stock_code)
+  return Math.floor(cash / px / unit) * unit
+})
+
+/**
+ * 可买/可卖数量 (格式化文本, UI 展示用)
+ * 与 availableTradeQty 同源, 仅 toLocaleString 包装.
+ */
+const availableText = computed(() => {
+  const v = availableTradeQty.value
+  if (v <= 0) return form.order_type === OrderType.SELL ? '0' : '—'
+  return v.toLocaleString()
 })
 
 // 切到非对手价 (最新价 5 / 市价 44) 时清空价格；切回对手价 (14) 也清空（避免残留的旧值误下单）
@@ -361,14 +385,55 @@ async function handleSubmit() {
   }
 }
 
-/** 双击可交易数量 → 带入委托数量 */
+/** 双击可交易数量 → 带入委托数量 (直接读 availableTradeQty, 不走 toLocaleString parseInt) */
 function applyAvailableToVolume() {
-  const raw = availableText.value.replace(/,/g, '')
-  const vol = parseInt(raw, 10)
-  if (!isNaN(vol) && vol >= 100) {
+  const vol = availableTradeQty.value
+  if (vol >= 100) {
     form.volume = vol
     ElMessage.success(`已带入 ${vol.toLocaleString()} 股`)
   }
+}
+
+/**
+ * 点击分数快捷按钮 → 计算并写入 form.volume (REQ-FE-543)
+ *   买:  floor(available × fraction / trade_unit) * trade_unit (向下取整, 不超 available)
+ *   卖:  ceil(available × fraction / trade_unit) * trade_unit (向上取整, 不超 available, <1 手 → 0)
+ *   不足 1 手 → 0 (不可下零手, 跟原 applyAvailableToVolume vol >= 100 兜底一致)
+ */
+function applyFraction(fraction) {
+  const available = availableTradeQty.value
+  const unit = stocksStore.stockTradeUnit(form.stock_code)
+  if (available <= 0 || unit <= 0) {
+    form.volume = 0
+    return
+  }
+  const raw = available * fraction
+  let v = 0
+  if (form.order_type === OrderType.BUY) {
+    // 买向下取整 (不足 1 手部分丢弃)
+    v = Math.floor(raw / unit) * unit
+  } else {
+    // 卖向上取整, 但不超 available (避免算到手上没有的股数)
+    v = Math.ceil(raw / unit) * unit
+    if (v > available) v = Math.floor(available / unit) * unit
+  }
+  form.volume = v
+  if (v > 0) {
+    ElMessage.success(`已带入 ${v.toLocaleString()} 股`)
+  }
+}
+
+/** 分数按钮 title (hover 显示具体股数, 例如 "1/2 = 2500 股 (按可用 5000)") */
+function fractionTitle(f) {
+  const available = availableTradeQty.value
+  if (available <= 0) return '无可用持仓'
+  const raw = available * f.value
+  const unit = stocksStore.stockTradeUnit(form.stock_code)
+  const rounded = form.order_type === OrderType.BUY
+    ? Math.floor(raw / unit) * unit
+    : Math.min(Math.ceil(raw / unit) * unit, Math.floor(available / unit) * unit)
+  if (rounded <= 0) return `${f.label} = 不足 1 手`
+  return `${f.label} = ${rounded.toLocaleString()} 股 (按可用 ${available.toLocaleString()})`
 }
 
 function handleReset() {
