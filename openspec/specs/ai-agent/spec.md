@@ -92,6 +92,24 @@
 - **内容**：7 个工具列表 + 行为规范（必带 `mcp__evtrade__` 前缀 / 一次只调一个 / 回答简洁 / 不确定就问 / 不替用户做高危操作 / 数据无值如实说 / 中文）
 - **加载时机**：每次 spawn claude -p 时通过 `--append-system-prompt` 注入（不是 stdin）
 
+### REQ-AI-007: AI 助手能力探测 endpoint（2026-08-25）
+
+- **端点**：`GET /api/ai/status`（**无需鉴权**，公开）
+- **响应**：
+  - claude CLI 在 PATH：`{"available": true}`
+  - 缺失：`{"available": false, "reason": "未在 PATH 中找到 claude CLI..."}`
+- **作用**：前端启动时探测，决定 AI 助手浮动按钮是否启用（见 REQ-FE-539）
+- **实现**：`server/main.py` 新增路由，调 `server.ai.is_claude_available()` + `claude_missing_reason()`
+- **不依赖**：每次实时查 `shutil.which("claude")`（不 cache，避免 PATH 变化后失同步）
+
+### REQ-AI-008: WS handler claude-missing 错误兜底（2026-08-25）
+
+- **触发**：`_handle_agent_message` 收到 `user_message` 时 `_which_claude() is None`
+- **旧行为**：只推 `{type: "error", message: "..."}` 然后 return → 前端 `isThinking` 卡死
+- **新行为**：error 事件后**追加推** `{type: "agent_complete", success: false, error: "claude_cli_missing", session_id}` → 前端 `onRunCompleted` 收到 → `isThinking=false`
+- **前端契约**：必须容忍"error 事件后可能仍有 agent_complete 事件"（不是 bug，是设计上保证兜底）
+- **实现**：`server/ws/endpoint.py::_handle_agent_message` 错误分支
+
 ## 三、Scenarios
 
 ### S-AI-001: 用户登录后点 AI 助手按钮
@@ -110,6 +128,13 @@ Then 后端 spawn `claude -p` → claude 调 `mcp__evtrade__list_positions` → 
 Given EvTrade backend 跑的本机/容器没有 `claude` binary（`which claude` 返回 None）
 When 用户点 AI 助手按钮 → 发 user_message
 Then 后端立即推 `error: 未在 PATH 中找到 claude CLI...`，前端显示安装指引
+
+**增强（2026-08-25，REQ-AI-007/008 + REQ-FE-539）**：
+- 前端 `useAgentStore.openPanel()` 调用前先 `await probeAgentStatus()`：
+  - 若 `available=false`：浮动按钮灰显 + `:disabled="true"` + hover tooltip 显示 `reason`；用户点不开
+  - 若 `available=true`：正常连 WS
+  - 若 `fetchAgentStatus()` 自身失败：默认 `available=true`（保持原行为，最坏回退到当前路径）
+- WS 已连上但 claude 缺失（边界场景，e.g. 用户重装/卸载竞态）：后端推 `error` + `agent_complete` 双事件 → 前端 `isThinking` 自动清，不卡 spinner
 
 ### S-AI-004: backend 重启 → MCP server 自动重启
 

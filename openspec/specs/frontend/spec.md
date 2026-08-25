@@ -2518,6 +2518,46 @@ export function useQuoteSubscription(codesGetter: () => string[] | Ref<string[]>
 6. **不感知跨页面订阅**: diff 算法只管自己的 codes；多页面订阅同一 code 时 unsubscribe 不会误影响其他页面（靠 quoteStore.subscribedSet 全局去重）
 7. **TDZ 警告**: 调用必须在 taskRows / detail 等被引用的 ref/computed **定义之后**, 否则 setup() 抛 ReferenceError (2026-08-25 实战踩坑). Vue setup 是同步顺序执行, useQuoteSubscription 内部的 watch(immediate=true) 会在调用瞬间就读 getter, 触发引用.
 
+### REQ-FE-539: AI 助手能力探测 + 降级 UI（2026-08-25）
+
+**业务定位**: 后端 `claude` CLI 缺失（环境差异 / 容器未装 / 用户手动卸载）时，前端**不要让用户点开一个注定失败的按钮**，改为探测后灰显 + 提示。
+
+**接口契约**:
+
+```js
+// client/src/api/agent.js
+export async function fetchAgentStatus({ httpBase?: string }): Promise<{
+  available: boolean
+  reason?: string  // 仅 available=false 时有值
+}>
+
+// client/src/stores/agent.js  — Pinia store 新增 state
+useAgentStore().agentAvailable: Ref<boolean>            // 默认 true
+useAgentStore().agentUnavailableReason: Ref<string>     // 默认 ''
+useAgentStore().agentStatusLoaded: Ref<boolean>         // 默认 false
+useAgentStore().probeAgentStatus(): Promise<void>       // 调 fetchAgentStatus + 写 store
+```
+
+**行为契约**:
+
+1. **加载时探测**: `openPanel()` 调用前先 `await probeAgentStatus()`（lazy，**不在 module top-level 跑**，避免 module-top-level useXxxStore 调用顺序问题 — 见 `vue3-pinia-spa-bootstrap-gate` 踩坑）
+2. **浮动按钮**: `!agentAvailable` 时按钮 `:disabled="true"` + 灰显（`agent-fab-disabled` class）+ hover tooltip = `agentUnavailableReason`
+3. **面板 header**: 打开面板时若不可用，header 内顶部加红色提示条 `⚠️ AI 助手暂不可用：<reason>`
+4. **store.openPanel()**: 探测前先 await；不可用时直接 set `lastError = reason`，**不连 WS**
+5. **探测失败降级**: `fetchAgentStatus()` 自身异常（FastAPI 没起 / 网络错）时默认返 `available=true`（保持原行为，最坏回到 WS 错误兜底路径 — 由 `REQ-AI-008` 兜底）
+6. **不感知 store.client**: `agentAvailable` 是单一 boolean，跨 store / 跨页面共享（单 store 单例）
+
+**失败路径**（WS 已连上但 claude 缺失时）:
+- 后端 `REQ-AI-008` 推 `error` + `agent_complete` 双事件
+- 前端 `onError` + `onRunCompleted` 收到 → `isThinking=false` + `lastError=message` → spinner 不卡死
+
+**实现位置**:
+- `client/src/api/agent.js`：`fetchAgentStatus()` 函数
+- `client/src/stores/agent.js`：state + `probeAgentStatus` + `openPanel` 改写
+- `client/src/components/agent/AgentPanel.vue`：浮动按钮 `:disabled` + `agent-degraded-banner`
+
+**测试**: 前端不强制单测（项目惯例）；后端 `REQ-AI-007` `/api/ai/status` 单测覆盖
+
 #### Scenario: T0Trade.vue 任务列表接入（修主问题）
 
 - **GIVEN** user 进入 "快速做T" 页面（T0Trade.vue）
