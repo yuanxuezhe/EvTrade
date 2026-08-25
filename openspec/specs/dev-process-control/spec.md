@@ -251,3 +251,43 @@ The system SHALL provide a `hermes` service in the `SERVICES` table of `scripts/
 - **GIVEN** 用户已手动 `hermes serve`（9119 被占）
 - **WHEN** 运行 `python scripts/evctl.py start hermes`
 - **THEN** evctl warn 端口已被占并 skip（不重复 spawn），与其它服务端口占用语义一致
+
+### Requirement: pytest testpaths 覆盖工作测试目录（2026-08-25）
+
+The `pytest.ini` SHALL 设置 `testpaths = server/tests tests`，确保项目根运行 `pytest` 时能发现 `server/tests/`（auth / push / services / test_place_async / test_v78_skip_rebroadcast / test_rpc_handlers / test_script_* / test_orders_cancel）下的工作测试。Root `tests/` 目录保留集成脚本（`tests/strategy_exec/`、`tests/hq/`、`tests/client/`、根目录的 `test_quote_pattern_subscribe.py` / `test_quota_batch.py` / `stress_quota_5etf.py`）。
+
+#### Scenario: 默认 pytest 跑到 server/tests 工作测试
+
+- **WHEN** developer 在项目根运行 `pytest`
+- **THEN** pytest 同时从 `server/tests/`（工作测试）与 `tests/`（集成 / 脚本）收集
+- **AND** legacy `tests/server/` 子树已被整体删除（曾引用已删 `server.models.orm` / `server.models.user` 模块，不再被收集）
+
+### Requirement: Ruff 作为默认 lint 工具（2026-08-25）
+
+The `pyproject.toml` SHALL 包含 `[tool.ruff]` section，强制：
+- `line-length = 120`（与 CLAUDE.md § 六 一致）
+- `select = ["E", "F", "W"]`（pycodestyle 错误/警告 + pyflakes）
+- `target-version = "py310"`（与 `.python-version` 一致）
+
+The `.ruff_cache/` 目录（已在 repo 内）作为缓存目标。dev dependencies MUST 包含 `ruff>=0.6.0`。
+
+#### Scenario: ruff check 0 错误（开发期）
+
+- **WHEN** developer 运行 `ruff check server/ hq/ iquant/ scripts/ conftest.py tests/`
+- **THEN** exit code 0；无 rule violation
+- **NOTE**：CI 当前非阻断（基线错误由后续 change 清理）；dev 工具必须自己先修
+
+### Requirement: GitHub Actions CI workflow（2026-08-25）
+
+The `.github/workflows/ci.yml` SHALL 在 push / pull_request 到 `master` 时自动验证：
+
+- **`backend` job**: ubuntu + Python 3.10 + uv → `uv sync --frozen` → `pytest hq/ server/tests/`（lint 非阻断）
+- **`frontend` job**: ubuntu + Node 20 → `cd client && npm ci` → `npm run build`
+
+The CI SHALL NOT push artifacts or deploy。Cache SHALL be enabled for both pip (uv) and npm dependencies。
+
+#### Scenario: push 触发 CI
+
+- **WHEN** developer push 一个 commit 到 `master`
+- **THEN** GitHub Actions 并行运行 `backend` 与 `frontend` jobs
+- **AND** 两个 job 必须均成功才允许合并

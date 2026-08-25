@@ -150,6 +150,33 @@ Then `on_shutdown_ai_mcp_server` 停旧 server → `on_startup_ai_mcp_server` �
 - **多租户/权限隔离**：当前所有工具进程内调用，不区分 user role。如需，按 `current_user_id` 参数从 `get_current_user` 透传到 WS handler，再传到 ClaudeSession
 - **claude binary 部署约束**：Docker 镜像里 `npm i -g @anthropic-ai/claude-code` + 用户本机 keychain；纯本机开发同理
 
+### REQ-AI-009: ai_analysis.py 模块 import-order 规范（2026-08-25）
+
+The `server/api/ai_analysis.py` SHALL 按项目 import-order 约定组织：
+1. 标准库 imports 集中在顶部（`json` / `logging` / `os` / `subprocess` / `time` / `threading` / `asyncio` / `typing`）
+2. 第三方 imports 次之（`fastapi` / `pydantic`）
+3. 本地 imports 居末（`server.*`）
+
+The unused `import re` SHALL be removed。The misplaced `import threading` SHALL be moved to 标准库组顶部。The module-level `_analysis_lock = threading.Lock()` SHALL remain — 它串行化所有 in-flight subprocess.run 调用，避免多 worker 抢占。
+
+#### Scenario: ai_analysis.py 顶部 stdlib 组包含 threading
+
+- **WHEN** developer 打开 `server/api/ai_analysis.py` 顶部 30 行
+- **THEN** stdlib 组包含 `threading`
+- **AND** `import re` 不存在
+- **AND** `import threading` 不出现在文件中段
+
+### REQ-AI-010: ai_analysis 行为零变更（2026-08-25）
+
+This change SHALL NOT modify any of:
+- `POST /api/ai/ai-analysis` 端点签名 / request model / response model
+- `_run_demo_script` / `_resolve_saved_json_path` / `_find_latest_report` / `_to_table_rows` helpers
+- subprocess timeout / cwd / cmd / `_SUBPROCESS_TIMEOUT` 值（240s）
+- `_analysis_lock` lock 语义（process-serial）
+- `GET /api/ai/status` 端点行为（REQ-AI-007）
+
+仅做 import-order / 未使用 import 清理。
+
 ## 五、依赖
 
 - **依赖**：`claude` CLI（外部进程）；`server.tables` / `server.services` / `server.api.ai_analysis`；FastAPI / starlette WebSocket；Python stdlib `http.server` / `subprocess` / `json`

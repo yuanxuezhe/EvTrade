@@ -481,3 +481,44 @@ EvTrade 母单路径下，`LiveRunner` MUST 接受并透传母单元数据，使
 | 多策略组合优化器 | 后续 change（Backtrader 支持）|
 | 策略回测报告 Web 渲染 | 后续 change（独立 BI 模块）|
 | 用户脚本自动迁移工具（v90 → Backtrader）| 后续 change（静态迁移指南可查 git 历史）|
+
+## iQuant / QMT 适配库（2026-08-25）
+
+### REQ-SE-011: iquant 错误处理禁止裸 except
+
+The `iquant/*.py` 适配库（`runtime_trdapi_rel.py` / `quota_his.py`）SHALL NOT 使用裸 `except:` 子句吞噬 `KeyboardInterrupt` / `SystemExit`。Drain-queue 模式
+
+```python
+while not Q.empty():
+    try:
+        Q.get_nowait()
+    except:   # ❌ 禁止
+        break
+```
+
+MUST 改写为
+
+```python
+while not Q.empty():
+    try:
+        Q.get_nowait()
+    except queue.Empty:
+        break
+```
+
+`import queue` MUST 已在模块顶部。
+
+#### Scenario: drain queue 正确捕获 Empty
+
+- **WHEN** shutdown path 在 `iquant/runtime_trdapi_rel.py` 或 `iquant/quota_his.py` 中排空 `GLOBAL_REQ_QUEUE` / `GLOBAL_ANS_QUEUE`
+- **THEN** 队列空时退出仅捕获 `queue.Empty`；`KeyboardInterrupt` / `SystemExit` 正常向上传播
+
+### REQ-SE-012: iquant 行为零变更（2026-08-25）
+
+This change SHALL NOT modify any of:
+- 策略执行热路径（signal 接收 / 下单 / 行情消费）
+- RPC 客户端协议（msgpacket / xtconstant）
+- MQ 线程生命周期（start / stop / join / daemon flag）
+- 沙箱与回测行为
+
+仅做 except 收窄（裸 → `queue.Empty`）。

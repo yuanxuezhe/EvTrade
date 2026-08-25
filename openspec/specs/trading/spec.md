@@ -994,3 +994,50 @@ Then 返回该股票的全部委托，**不包含**其他股票
 - **THEN** merged.strategy_type = row.strategy_type ?? ref.strategy_type ?? 0
 - **AND** 历史 ref 中 strategy_type=undefined 时兜底 0
 - **AND** T0Trade 委托明细 filter `o.strategy_type === 1` 立即生效（无需重刷 bootstrap）
+
+## 死代码清理（2026-08-25）
+
+### REQ-TRADE-009: 撤单端点单元测试覆盖
+
+The system SHALL 为 `server/api/orders/cancel.py` 提供至少 1 个 happy-path 单元测试覆盖完整 5 步流程：
+1. 插入 `Orders` 行（`status="50"` 已报 + broker `order_id`）
+2. Mock `rpc_cancel_order` 返 `code=0` 成功
+3. FastAPI TestClient 调 `DELETE /api/orders/{order_no}?trd_date=YYYYMMDD`
+4. 断言：撤单行 `status="54"`、原单 `cancelled_volume=volume`、插入 1 条 `Trades` 行（`trade_type=1`）
+
+新增 `server/tests/test_orders_cancel.py` 覆盖 5 个 case（happy 50→54、status=48 拒、无 broker order_id 拒、RPC code≠0→57、RPC 异常→57）。
+
+#### Scenario: 50→54 happy path
+
+- **WHEN** 测试 seed 一个 `status="50"` + `broker_order_id="BRK-001"` 的 order 并调 cancel
+- **THEN** response `code=0`，撤单行 `status="54"`，原单 `cancelled_volume=volume`，1 条 `trade_type=1` 的 Trades 行
+
+#### Scenario: 48 不可撤（pre-check）
+
+- **WHEN** 测试 seed 一个 `status="48"`（未报）的 order 并调 cancel
+- **THEN** response `code=1`，无撤单行插入，未触发 RPC
+
+### REQ-TRADE-010: place.py / cancel.py / repo/orders.py 死代码清理
+
+The `server/api/orders/place.py` SHALL NOT import `server.utils.time.format_ts`（函数体未使用）。The helper `_compute_summary` in `server/services/t0/tasks.py` SHALL 仅接受 `(task, **kwargs)` 单签名 —— 旧双签名 `(db, task)` shim 已被移除（API 层只调 `_compute_summary(t)`）。The compat 参数 `user_id_kw` in `create_task` / `list_tasks` SHALL 已被移除（API 层已统一用 `user_id=`）。
+
+#### Scenario: 下单 import 收敛
+
+- **WHEN** developer 打开 `server/api/orders/place.py`
+- **THEN** import 块不含 `from server.utils.time import format_ts`
+
+#### Scenario: t0 摘要单签名
+
+- **WHEN** API 调 `_compute_summary(task)`
+- **THEN** 函数接受 `task` 为 positional arg，返回 6 keys dict（`task_net_volume` / `position_vol` / `realized_pnl` / `unrealized_pnl` / `trading_days` / `win_rate`）
+- **AND** 不存在 `(db, task)` 两 positional 签名路径
+
+### REQ-TRADE-011: 服务端口、状态码、handler 逻辑零变更
+
+This change SHALL NOT modify:
+- 下单 / 撤单的 HTTP 端点签名（路由 / method / request model / response model）
+- broker 状态码 48-57 的语义
+- T0 配平算法 / 屏障（guards）/ 推送协议（push/dispatcher）
+- 订单表 schema / 字段
+
+Only dead code（未用 imports / dead aliases / unused compat params / unused `_compute_summary` signature branch）is removed。

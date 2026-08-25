@@ -2623,3 +2623,33 @@ v1 composable 接口 (薄封装 + 即时 diff + 自动 unsubscribe) 跟 QuotePan
 - ❌ 内置 unmounted flag（调用方各自管 async 竞态）
 - ❌ 节流 / 防抖（codes 变化频率低，股票池切换是个位数秒级）
 - ❌ 自动重连重订阅（已有 quoteStore.replayAll，由 ws_heartbeat 在重连后调）
+
+## 死代码 / 依赖清理（2026-08-25）
+
+### REQ-FE-540: Vitest 版本与依赖一致性
+
+The `client/package.json` SHALL pin `vitest@^1.6.0`（Vitest 主线版本，与 `@vue/test-utils@^2.x` / `happy-dom@^20.x` 配套）。The bogus `vitest@^4.1.9` pin（npm 上不存在该版本，`npm install` 失败）SHALL be replaced。The `jsdom` dev dependency SHALL be retained if used by `tests/client/vitest.config.js` `environmentMatchGlobs`; 否则移除。
+
+#### Scenario: npm install 成功
+
+- **WHEN** developer 运行 `cd client && npm install`
+- **THEN** 安装成功，无 "no matching version found for vitest@^4.1.9" 错误
+
+### REQ-FE-541: 死代码 / 死别名收敛
+
+The system SHALL 收敛前端死代码与死别名：
+- `client/src/views/Dashboard.vue` SHALL NOT import `STATUS_TYPE` from `utils/format`（status 渲染统一 delegate 给 `<OrderStatusBadge>` 组件）
+- `client/src/utils/format.js` SHALL NOT export `formatAmount = formatMoney` 别名（唯一 caller `T0Trade.vue:338` 已 inline 改为 `formatMoney`）
+- `client/src/views/T0Trade.vue` SHALL 直接调 `formatMoney(...)`
+
+#### Scenario: format.js 导出收敛
+
+- **WHEN** developer 在 `client/src/` grep `formatAmount`
+- **THEN** 0 结果（alias 已删除，caller 已 inline）
+
+### REQ-FE-542: 不变项
+
+This change SHALL NOT modify:
+- 任何 .vue 组件的 template / 业务逻辑 / store 接口
+- 表格列定义 / DataTableView 配置
+- 路由 / RBAC / WS 频道订阅
