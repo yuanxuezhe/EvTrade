@@ -35,7 +35,6 @@ from server.repo.orders import (
     insert_pending_order,
     next_order_no,
 )
-from server.utils.time import format_ts
 from server.services.t0 import calc_net_amount, calc_t0_volume, get_fee_config
 from server.repo.stocks import GetStockInfo  # 统一证券信息入口
 from server.services.sysconfig import get_cantrd_stktypes

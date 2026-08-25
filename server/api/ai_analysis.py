@@ -33,8 +33,8 @@ ai_analysis.py - AI 分析 API（invest-analyst skill 集成）
 import json
 import logging
 import os
-import re
 import subprocess
+import threading
 import time
 import asyncio  # ai_analysis 走 asyncio.to_thread 防 event loop 阻塞
 from typing import List, Optional
@@ -61,7 +61,6 @@ ALLOWED_PERIODS = {"1d", "4h", "1h", "30m", "15m", "5m", "1m"}
 _SUBPROCESS_TIMEOUT = 240
 
 # 进程级并发限流：1 个进程同时只跑 1 个分析（broker 限频）
-import threading
 _analysis_lock = threading.Lock()
 
 

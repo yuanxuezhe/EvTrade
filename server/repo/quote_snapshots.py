@@ -22,9 +22,6 @@ from sqlalchemy import text
 
 from server.tables.quote_snapshots import QuoteSnapshots
 
-# Backward-compatible alias for callers that import the table symbol.
-QuoteSnapshot = QuoteSnapshots
-
 log = logging.getLogger(__name__)
 
 

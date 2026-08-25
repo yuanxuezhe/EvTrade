@@ -52,12 +52,11 @@ def create_task(
     coefficient: float = 1.0,
     note: Optional[str] = None,
     created_trd_date: Optional[str] = None,
-    user_id_kw: Optional[int] = None,  # 兼容别名
 ) -> Any:
     """创建 T0Task.
 
     Args:
-        user_id: 实际参数位 (api 调用用)
+        user_id: 用户 ID（api 层直接传 user.id）
         base_volume: 底仓量 (>= 0)
         target_volume: 目标开仓量 (可为负=净减仓)
         coefficient: 配平系数
@@ -67,10 +66,6 @@ def create_task(
     Returns:
         新建的 T0Task Row (含 id)
     """
-    # 兼容别名 (api 层曾用 user_id=user.id)
-    if user_id_kw is not None and not user_id:
-        user_id = user_id_kw
-
     if base_volume < 0:
         raise ValueError("base_volume 必须 >= 0")
     if not (0.0 <= coefficient <= 10.0):
@@ -105,7 +100,6 @@ def list_tasks(
     status: Optional[str] = None,
     stock_code: Optional[str] = None,
     days: Optional[int] = None,
-    user_id_kw: Optional[int] = None,
 ) -> List[Dict]:
     """列表 task (带 summary).
 
@@ -113,9 +107,6 @@ def list_tasks(
     按 created_at DESC 排序
     每行附带 summary: {task_net_volume, realized_pnl, unrealized_pnl, position_vol}
     """
-    if user_id_kw is not None and not user_id:
-        user_id = user_id_kw
-
     # 1. 全表 (按 id 升序; 待会内存倒序)
     rows = T0Tasks.query_all(order="asc")
 
@@ -764,24 +755,18 @@ def _balance_reason(task_net: int, pos_vol: int, target: int, action: str) -> st
     return f"需{direction} (净敞口 {task_net}, 持仓 {pos_vol}, 目标 {target})"
 
 
-def _compute_summary(*args, **kwargs) -> Dict:  # noqa: ARG001 — 双签名兼容
+def _compute_summary(task: Any, *, prefetched: Optional[Dict] = None) -> Dict:
     """task 摘要 (轻量, 用于列表).
 
-    - 接受 (task) 或 (db, task) 双签名 (兼容 api 层调用)
-    - 接受 Row 或 duck-typed obj (含 .id 即可)
+    Args:
+        task: T0Tasks Row 或 duck-typed obj (需含 .id)
+        prefetched: 预取的统计依赖（list_tasks 批量计算用）
+
+    Returns:
+        dict 含 6 键: task_net_volume / position_vol / realized_pnl /
+        unrealized_pnl / trading_days / win_rate
     """
-    # 解析参数: 支持 _compute_summary(task) / _compute_summary(db, task)
-    task: Any = None
-    if len(args) == 1:
-        task = args[0]
-    elif len(args) >= 2:
-        # 第一个是 db (Session, 忽略), 第二个是 task
-        task = args[1]
-    if task is None and 'task' in kwargs:
-        task = kwargs['task']
-    if task is None:
-        raise TypeError("_compute_summary 需要 1 个 task 参数")
-    s = aggregate_task_stats(task_id=task.id, _prefetched=kwargs.get('prefetched'))['summary']
+    s = aggregate_task_stats(task_id=task.id, _prefetched=prefetched)['summary']
     return {
         'task_net_volume': s['task_net_volume'],
         'position_vol': s['position_vol'],
