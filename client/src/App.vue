@@ -41,11 +41,7 @@
     <BottomNav
       v-if="authStore.isAuthenticated && uiStore.isMobile"
     />
-
-    <!-- 全局 AI 对话助手 (右下角浮动按钮 + 悬浮对话框) -->
-    <AgentPanel v-if="authStore.isAuthenticated" />
   </template>
-</template>
 
 <script setup>
 import { computed, onMounted, watch } from 'vue'
@@ -54,7 +50,6 @@ import Sidebar from './components/Sidebar.vue'
 import AppHeader from './components/AppHeader.vue'
 import OperationLog from './components/OperationLog.vue'
 import BottomNav from './components/BottomNav.vue'
-import AgentPanel from './components/agent/AgentPanel.vue'
 import { useUiStore } from './stores/ui'
 import { useAuthStore } from './stores/auth'
 import { useWsStore } from './stores/ws'

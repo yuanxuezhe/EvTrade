@@ -27,8 +27,6 @@ const AdminStockConfig = () => import('../views/AdminStockConfig.vue')
 const StkPool = () => import('../views/StkPool.vue')
 // stkpool-view-feature: 证券池只读视图 (仪表盘和交易下单之间, 自选用)
 const StkPoolView = () => import('../views/StkPoolView.vue')
-// AI 分析 (invest-analyst skill 集成, 同步 PoC)
-const AiAnalysis = () => import('../views/AiAnalysis.vue')
 
 const routes = [
   {
@@ -73,8 +71,6 @@ const routes = [
   { path: '/admin/stock-config', name: 'AdminStockConfig', component: AdminStockConfig, meta: { title: '证券信息设置', requiresAdmin: true } },
   // add-stkpool-module: 证券池 (auth 通用鉴权, 不分 RBAC)
   { path: '/stkpool', name: 'StkPool', component: StkPool, meta: { title: '证券池' } },
-  // AI 分析 (invest-analyst skill 集成, 同步 PoC, 单次 60-180s)
-  { path: '/ai-analysis', name: 'AiAnalysis', component: AiAnalysis, meta: { title: 'AI 分析' } },
   { path: '/:pathMatch(.*)*', redirect: '/' }
 ]
 

@@ -22,8 +22,6 @@ export default defineConfig({
       'Expires': '0',
     },
     proxy: {
-      // /api/agent/ws 已迁移至 /ws/agent_channel (2026-08-23, ai-agent-ws-reuse-channel)
-      // 不再需要单独的 /api/agent/ws proxy — /api + /ws 已覆盖
       '/api': {
         target: 'http://localhost:8000',
         changeOrigin: true,
