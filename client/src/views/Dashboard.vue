@@ -166,7 +166,7 @@ import { usePositionStore } from '../stores/position'
 import { useHoldingsStore } from '../stores/holdings'
 // quoteStore 订阅在 holdings store bootstrap 阶段, 此处不需要 useQuoteStore
 import { useUiStore } from '../stores/ui'
-import { formatMoney, formatNumber, STATUS_LABEL, STATUS_TYPE } from '../utils/format'
+import { formatMoney, formatNumber, STATUS_LABEL } from '../utils/format'
 import { formatPrice } from '../composables/usePricePrecision'
 import { stockName } from '../utils/stockNames'
 import { COL } from '../utils/tableColumns'
