@@ -335,8 +335,9 @@ def init_db():
     admin_engine = create_engine(admin_url, **_pool_kwargs(admin_url))
 
     # 1. 读 schema.yml 并创建缺失的表
+    # 注意: schema.yml 含中文注释, 必须显式 UTF-8 (Windows locale 默认 GBK 会触发 UnicodeDecodeError)
     schema_path = os.environ.get('EVTRADE_SCHEMA_YML', _SCHEMA_YML_PATH)
-    with open(schema_path) as f:
+    with open(schema_path, encoding='utf-8') as f:
         schema = _parse_yaml_inline(f.read())
 
     insp = inspect(admin_engine)

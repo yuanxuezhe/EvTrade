@@ -19,8 +19,9 @@ Usage:
     - 端口 8000 / 50998 / 8765 / 8001 / 9119 硬编码, 不读 env
     - 仅用标准库 (无 psutil / colorama)
     - strategy_exec 通过 .env.example 加载环境变量再启动
-    - hermes 为外部 Hermes Agent daemon (默认 9119), 由 _hermes_cmd() 构造启动命令,
-      CLI 缺失时 preflight 给出安装指引 (2026-08-23, hermes-serve-evctl)
+    - hermes (Hermes Agent AI 守护进程, 2026-08-23 hermes-serve-evctl) 默认不随 evctl
+      启动 (2026-08-25 调整为 OPTIONAL); CLI 缺失不影响其它服务。
+      需 AI 时显式 `uv run python scripts/evctl.py start hermes`
 """
 
 import os
@@ -250,8 +251,12 @@ SERVICES = {
 VALID_ACTIONS = ['start', 'stop', 'restart', 'status', 'logs']
 # broker 在服务表中但 DEFAULT_SERVICES 默认跳过 (xtquant 模块依赖 QMT 客户端环境)
 #   用户可显式 `uv run python scripts/evctl.py start broker` / restart broker 启动
-DEFAULT_SERVICES = ['backend', 'frontend', 'hqserver', 'strategy_exec', 'hermes']
-OPTIONAL_SERVICES = ['broker']   # 需要 xtquant 本地模块, 默认不启动
+#
+# hermes 同理 (2026-08-25): AI 助手可选依赖, 默认跳过。需要 AI 时显式
+#   `uv run python scripts/evctl.py start hermes`, `hermes` CLI 必须先装好;
+#   未装不影响其它服务启动 (server/api/ai_analysis.py 走 claude-missing 降级)。
+DEFAULT_SERVICES = ['backend', 'frontend', 'hqserver', 'strategy_exec']
+OPTIONAL_SERVICES = ['broker', 'hermes']   # 默认不启动, 显式 opt-in
 
 # ============================================================================
 # 输出辅助 (无 ANSI 颜色, 跨平台一致)
