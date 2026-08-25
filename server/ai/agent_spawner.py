@@ -56,6 +56,26 @@ def _which_claude() -> str | None:
     return shutil.which("claude")
 
 
+def is_claude_available() -> bool:
+    """公开探测: claude CLI 是否在 PATH. 供 /api/ai/status endpoint 使用.
+
+    不 cache — 每次调用实时查 shutil.which. 理由: PATH 可能动态变化 (例如临时
+    source 虚拟环境), cache 会让重装 / 卸载不能即时反映到前端.
+    """
+    return _which_claude() is not None
+
+
+_CLAUDE_MISSING_REASON = (
+    "未在 PATH 中找到 `claude` CLI. EvTrade AI 助手 (claudedemo 模式) "
+    "需要本机或容器内有 claude binary. 安装: `npm i -g @anthropic-ai/claude-code`."
+)
+
+
+def claude_missing_reason() -> str:
+    """公开探测: claude 缺失原因 (给前端 tooltip / status endpoint 展示)."""
+    return _CLAUDE_MISSING_REASON
+
+
 def _build_mcp_config(mcp_port: int) -> dict:
     """构造 --mcp-config JSON: 注册 evtrade MCP server 到 claude."""
     return {

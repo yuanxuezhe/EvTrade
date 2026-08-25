@@ -32,6 +32,7 @@ from server.api import stocks as stocks_api  # stock-info-crawler
 from server.api import stkpool as stkpool_api  # add-stkpool-module
 from server.api import sync as sync_api  # stock-info-crawler
 from server.api import ai_analysis as ai_analysis_api  # AI 分析 (invest-analyst skill 集成, 同步 PoC)
+from server.ai.agent_spawner import is_claude_available as _is_claude_available, claude_missing_reason as _claude_missing_reason  # /api/ai/status 公开探测 (claude CLI 缺失优雅降级)
 from server.api.admin import sys_status as admin_sys_status, reconcile as admin_reconcile, session as admin_session
 from server.middleware.request_logging import RequestLoggingMiddleware
 from server.rpc.client import get_rpc_client, close_rpc_client
@@ -371,3 +372,18 @@ def health():
     前端 keepalive 用 /api/auth/heartbeat (有 token, 会触发 touch)
     """
     return {"status": "ok"}
+
+
+@app.get("/api/ai/status")
+def ai_status():
+    """公开 - 探测 AI 助手可用性 (前端 useAgentStore 启动时调, 决定浮动按钮是否禁用).
+
+    不鉴权: 仅返回 boolean + reason 字符串, 无业务数据泄露.
+
+    Returns:
+        available=true  → claude CLI 在 PATH, 前端可连 WS /ws/agent_channel
+        available=false → claude 缺失, 前端应禁用浮动按钮 + 展示 reason
+    """
+    if _is_claude_available():
+        return {"available": True}
+    return {"available": False, "reason": _claude_missing_reason()}
