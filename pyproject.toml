@@ -35,4 +35,25 @@ dev = [
     "httpx>=0.28.1",
     "pytest>=9.1.1",
     "pytest-asyncio>=1.0,<2.0",
+    "ruff>=0.6.0",
 ]
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+# 不强制 E501 (line too long): 项目遗留长行 (URL / SQL / 注释) 由后续清理 change 处理
+extend-ignore = ["E501"]
+# 排除虚拟环境/构建产物/前端打包产物
+extend-exclude = [
+    ".venv",
+    "node_modules",
+    "client/dist",
+    "*.egg-info",
+    "build",
+    "dist",
+]
+
+[tool.ruff.lint]
+select = ["E", "F", "W"]
+# 单独模块豁免: 第三方 vendor 目录 / iquant 量化库保留宽松规则
+per-file-ignores = { "iquant/*" = ["F401"] }
