@@ -285,12 +285,21 @@ async def _handle_agent_message(websocket: WebSocket, parsed: dict, user_id: int
 
         # 检查 claude CLI 是否在 PATH
         if _which_claude() is None:
+            # 推 error 事件 (前端 toast / tooltip 展示)
             await websocket.send_json({
                 "type": "error",
                 "message": (
                     "未在 PATH 中找到 `claude` CLI. EvTrade AI 助手 (claudedemo 模式) "
                     "需要本机或容器内有 claude binary. 安装: `npm i -g @anthropic-ai/claude-code`."
                 ),
+            })
+            # 追加推 agent_complete 事件 — 让前端 onRunCompleted 能清 isThinking
+            # 否则 spinner 会卡死 (前端 store.run_turn_started 但没收到 complete)
+            await websocket.send_json({
+                "type": "agent_complete",
+                "success": False,
+                "error": "claude_cli_missing",
+                "session_id": session_id,
             })
             return
 
