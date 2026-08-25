@@ -41,6 +41,7 @@
     <BottomNav
       v-if="authStore.isAuthenticated && uiStore.isMobile"
     />
+    </template>
   </template>
 
 <script setup>
