@@ -334,6 +334,7 @@ import LivePriceCell from '../components/cells/LivePriceCell.vue'  // 最新价+
 import PriceTypeInput from '../components/PriceTypeInput.vue'
 import { PriceType } from '../constants/priceType.js'
 import { useT0OrderSubmit } from '../composables/useT0OrderSubmit'
+import { useQuoteSubscription } from '../composables/useQuoteSubscription'
 import { formatNumber, formatAmount, formatMoney, priceTypeLabel } from '../utils/format'
 import { formatPrice } from '../composables/usePricePrecision'
 import { STATUS_LABEL, STATUS_TYPE } from '../utils/format'
@@ -461,6 +462,13 @@ watch(taskRows, (rows) => {
     selectedTaskId.value = rows[0].id
   }
 }, { immediate: true })
+
+// 任务列表 stock_code 自动订阅行情 (REQ-FE-538)
+//   - 必须放在 taskRows 定义之后, 否则 TDZ ReferenceError (2026-08-25 修复)
+//   - taskRows 变化 → composable 自动 diff subscribe(added) / unsubscribe(removed)
+//   - 页面卸载 → composable 自动 unsubscribe(current)
+//   - LivePriceCell 由此读到 last_price, last_price 列 + t0PnlCell 才有数据
+useQuoteSubscription(() => taskRows.value.map((r) => r.stock_code))
 
 // ---- 上下分区: 下半委托表 + 实时配平 ----
 // storeToRefs 是 pinia 解构 ref 必备
