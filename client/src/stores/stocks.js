@@ -311,6 +311,21 @@ export const useStocksStore = defineStore('stocks', () => {
     return Number(t) || 0
   }
 
+  /**
+   * 按 stock_code 查最小交易单位 (trade_unit, A 股默认 100 = 1 手)
+   * 返回 number (默认 100); cache miss / null / 0 / 超 100000 → 兜底 100
+   *   下游 OrderForm 用此做整手取整 (买 floor / 卖 ceil), 兜底避免除零 / NaN
+   */
+  function stockTradeUnit(code) {
+    if (!code) return 100
+    if (!cacheLoaded.value) return 100
+    const t = cacheMap.get(code)?.trade_unit
+    if (t === null || t === undefined) return 100
+    const n = Number(t)
+    if (!Number.isFinite(n) || n <= 0 || n > 100000) return 100
+    return Math.floor(n)
+  }
+
   // ==================== 添加 (stock-info-create) ====================
 
   const createLoading = ref(false)
@@ -440,5 +455,6 @@ export const useStocksStore = defineStore('stocks', () => {
     stockName,
     stockScale,
     stockStktype,
+    stockTradeUnit,
   }
 })
