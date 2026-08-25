@@ -13,7 +13,7 @@
  */
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import { AgentWSClient } from '../api/agent'
+import { AgentWSClient, fetchAgentStatus } from '../api/agent'
 
 let _client = null  // 单例 WS client（跨 store action）
 
@@ -27,6 +27,13 @@ export const useAgentStore = defineStore('agent', () => {
   const sessionId = ref(null)
   const lastError = ref(null)
   const currentRunId = ref(null)
+  // 2026-08-25 增补 (REQ-FE-539): AI 助手可用性探测状态
+  // - agentAvailable: 后端 /api/ai/status 探测结果, 默认 true (向后兼容: 探测失败时保持原行为)
+  // - agentUnavailableReason: 不可用时给前端的 tooltip / 提示语
+  // - agentStatusLoaded: 是否已完成首次探测 (避免面板打开前按钮闪烁)
+  const agentAvailable = ref(true)
+  const agentUnavailableReason = ref('')
+  const agentStatusLoaded = ref(false)
 
   // ─── getters ──────────────────────────────────────────────
   const hasPendingConfirmation = computed(() => pendingConfirmation.value !== null)
@@ -34,10 +41,30 @@ export const useAgentStore = defineStore('agent', () => {
   const messageCount = computed(() => messages.value.length)
 
   // ─── actions ──────────────────────────────────────────────
+  // 2026-08-25 增补: 探测后端 /api/ai/status, 决定 agentAvailable
+  async function probeAgentStatus() {
+    const result = await fetchAgentStatus()
+    agentAvailable.value = result.available
+    agentUnavailableReason.value = result.reason || ''
+    agentStatusLoaded.value = true
+  }
+
   function openPanel() {
     isOpen.value = true
-    if (!isConnected.value) {
+    // 2026-08-25 增补: 打开前先探测 AI 可用性; 不可用时不连 WS, 直接展示降级提示
+    if (!agentStatusLoaded.value) {
+      probeAgentStatus().then(() => {
+        if (!agentAvailable.value) {
+          lastError.value = agentUnavailableReason.value
+          // 不调 _connect(), 让按钮保持灰显状态
+        } else if (!isConnected.value) {
+          _connect()
+        }
+      })
+    } else if (agentAvailable.value && !isConnected.value) {
       _connect()
+    } else if (!agentAvailable.value) {
+      lastError.value = agentUnavailableReason.value
     }
   }
 
@@ -250,6 +277,9 @@ export const useAgentStore = defineStore('agent', () => {
     sessionId,
     lastError,
     currentRunId,
+    agentAvailable,           // 2026-08-25
+    agentUnavailableReason,   // 2026-08-25
+    agentStatusLoaded,        // 2026-08-25
     // getters
     hasPendingConfirmation,
     lastMessage,
@@ -263,6 +293,7 @@ export const useAgentStore = defineStore('agent', () => {
     stopCurrentRun,
     clearMessages,
     disconnect,
+    probeAgentStatus,         // 2026-08-25
   }
 })
 

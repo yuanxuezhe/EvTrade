@@ -295,6 +295,33 @@ export function createAgentClient(handlers, { wsBase } = {}) {
 
 
 // ────────────────────────────────────────────────────────────────────────
+// 2026-08-25 增补 (REQ-AI-007): fetchAgentStatus
+// 前端 useAgentStore 启动时调 /api/ai/status, 决定浮动按钮是否禁用.
+// 返回 { available: bool, reason?: string }.
+// 失败时 (FastAPI 没起 / 网络错) 返 { available: true } — 保持原行为, 让
+// 强点按钮场景仍走 WS 错误兜底路径.
+// ────────────────────────────────────────────────────────────────────────
+export async function fetchAgentStatus({ httpBase } = {}) {
+  const base = (httpBase || '').replace(/\/+$/, '') || (typeof window !== 'undefined' ? window.location.origin : '')
+  const url = `${base}/api/ai/status`
+  try {
+    const resp = await fetch(url, { method: 'GET' })
+    if (!resp.ok) {
+      return { available: true, reason: `HTTP ${resp.status}` }
+    }
+    const data = await resp.json()
+    return {
+      available: data.available === true,
+      reason: data.reason || '',
+    }
+  } catch (e) {
+    // 网络错 / FastAPI 没起 → 默认 available=true (保持原行为, 最坏回退到 WS 错误兜底)
+    return { available: true, reason: `fetch failed: ${e.message || e}` }
+  }
+}
+
+
+// ────────────────────────────────────────────────────────────────────────
 // 2026-08-24 claudedemo 协议归一化层
 // 后端 server/ai/agent_spawner.py 推 AgentEvent(type=..., payload={...}),
 // 字段名是 claudedemo 风格 (name/input/content/text).
