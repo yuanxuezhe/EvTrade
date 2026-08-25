@@ -110,6 +110,7 @@ import { stkpoolApi } from '../api/stkpool'
 import { useQuoteStore } from '../stores/quote'
 import { useStocksStore } from '../stores/stocks'
 import { formatPrice as formatPriceByCode } from '../composables/usePricePrecision'
+import { useQuoteSubscription } from '../composables/useQuoteSubscription'
 
 import DataTableView from '../components/DataTableView.vue'
 // ============ 列定义 ============
@@ -145,9 +146,6 @@ const selectedPool = computed(
   () => pools.value.find(p => p.id === selectedPoolId.value) || null
 )
 
-// 当前池 codes (订阅用)
-const detailCodes = computed(() => detail.value.map(d => d.stock_code))
-
 // 合并行情字段进 detail 行 — 让 DataTableView 能 sort(row[field])
 // 监听 quoteStore.tick 每次 ws push 后重算
 // null 字段统一转为 undefined 保持 sort 行为一致 (null/undefined 排在最后)
@@ -175,14 +173,17 @@ const mergedData = computed(() => {
   })
 })
 
-// race-condition guard
+// 当前池 codes 订阅 (REQ-FE-538 useQuoteSubscription)
+//   - composable 自动: detail 变化 → diff subscribe(added) / unsubscribe(removed)
+//   - composable 自动: onBeforeUnmount → unsubscribe(current)
+//   - 替代原 detailCodes computed + onBeforeUnmount + loadDetail 内 subscribe + switchPool 内 unsubscribe
+useQuoteSubscription(() => detail.value.map((d) => d.stock_code))
+
+// race-condition guard (仅用于 async 数据加载, 不管订阅)
+//   - composable 内部不感知 unmounted, 调用方继续在 loadPools/loadDetail 内 guard
 let unmounted = false
 onBeforeUnmount(() => {
   unmounted = true
-  // 取消订阅避免幽灵订阅
-  if (detailCodes.value.length > 0) {
-    quoteStore.unsubscribe(detailCodes.value)
-  }
 })
 
 // ============ 数据加载 ============
@@ -213,11 +214,7 @@ async function loadDetail(poolId) {
     const rows = await stkpoolApi.detail(poolId)
     if (unmounted) return
     detail.value = rows
-    // 订阅行情
-    const codes = rows.map(r => r.stock_code)
-    if (codes.length > 0) {
-      quoteStore.subscribe(codes)
-    }
+    // 行情订阅由 useQuoteSubscription 自动 diff 管理 (REQ-FE-538)
   } catch (err) {
     if (unmounted) return
     ElMessage.error('加载明细失败: ' + extractErrorMsg(err))
@@ -227,15 +224,14 @@ async function loadDetail(poolId) {
   }
 }
 
-// 切换池: 取消旧订阅 → 拉明细 → 订新订阅
+// 切换池: composable 自动 diff 旧/新 codes (REQ-FE-538)
+//   - 旧 codes 在 detail.value 更新时自动 unsubscribe(removed)
+//   - 新 codes 在 detail.value 更新时自动 subscribe(added)
+//   - 不再需要手动 unsubscribe 旧池 → loadDetail → subscribe 新池
 async function switchPool(newId) {
   if (!newId) {
-    if (detailCodes.value.length > 0) quoteStore.unsubscribe(detailCodes.value)
     detail.value = []
     return
-  }
-  if (detailCodes.value.length > 0) {
-    quoteStore.unsubscribe(detailCodes.value)
   }
   await loadDetail(newId)
 }
