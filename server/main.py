@@ -18,6 +18,8 @@ import logging
 import os
 import asyncio
 from fastapi import FastAPI, Depends
+
+log = logging.getLogger(__name__)
 from fastapi.middleware.cors import CORSMiddleware
 
 from server.auth.deps import get_current_user
@@ -110,7 +112,7 @@ async def on_startup_register_loop():
     import asyncio
     from server.ws.manager import ws_manager as _ws
     _ws._main_loop = asyncio.get_running_loop()
-    print("[INIT] ws_manager._main_loop registered")
+    log.info("[INIT] ws_manager._main_loop registered")
 
 @app.on_event("startup")
 def on_startup():
@@ -119,7 +121,7 @@ def on_startup():
     # 启动时一次性加载 sysconfig 到 cache
     from server.services import sysconfig
     sysconfig.load_all()
-    print(f"[INIT] sysconfig loaded: {len(sysconfig._cache)} users")
+    log.info(f"[INIT] sysconfig loaded: {len(sysconfig._cache)} users")
 
     # strategy-exec-service: stale task 清理由 strategy_exec 服务自行处理
     #  (启动时清理 progress > 5min 没更新的 task → 标 failed, EvTrade 仅做兜底)
@@ -130,7 +132,7 @@ def on_startup():
         # 占位: 若以后 EvTrade 想加兜底, 在此实现
         pass
     except Exception as e:
-        print(f"[INIT] stale task sweep error (non-fatal): {e}")
+        log.warning(f"[INIT] stale task sweep error (non-fatal): {e}")
 
 
 @app.on_event("startup")
@@ -138,13 +140,13 @@ async def on_startup_rpc():
     """启动 RPC 客户端（同时启动 reply 监听 + push 监听）。"""
     # pytest 跑 TestClient 时跳过 RPC 启动 (会尝试连真 RabbitMQ, SSL hang)
     if os.environ.get("PYTEST_CURRENT_TEST"):
-        print("[INIT] pytest mode: skip RPC client")
+        log.info("[INIT] pytest mode: skip RPC client")
         return
     # 测试模式 (sys_config rpc_test_mode=1): 不连 RabbitMQ
     # 业务 RPC 由 mock.py 固定应答, 无需真实链路; 启动时判定一次 (离线可用)
     from server.services import sysconfig
     if bool(sysconfig.get("rpc_test_mode", 0)):
-        print("[INIT] TEST_MODE (sys_config rpc_test_mode=1): skip RPC client (mock replies)")
+        log.info("[INIT] TEST_MODE (sys_config rpc_test_mode=1): skip RPC client (mock replies)")
         return
     try:
         await get_rpc_client()
@@ -152,7 +154,7 @@ async def on_startup_rpc():
         from server.services.rpc_health import start_sync
         await start_sync()
     except Exception as e:
-        print(f"[INIT] RPC client failed to start: {e}")
+        log.warning(f"[INIT] RPC client failed to start: {e}")
 
 
 @app.on_event("shutdown")
@@ -161,11 +163,11 @@ async def on_shutdown_rpc():
         from server.services.rpc_health import stop_sync
         await stop_sync()
     except Exception as e:
-        print(f"[SHUTDOWN] rpc_health stop error: {e}")
+        log.warning(f"[SHUTDOWN] rpc_health stop error: {e}")
     try:
         await close_rpc_client()
     except Exception as e:
-        print(f"[SHUTDOWN] RPC client close error: {e}")
+        log.warning(f"[SHUTDOWN] RPC client close error: {e}")
 
 
 @app.on_event("startup")
@@ -177,12 +179,12 @@ async def on_startup_quote_consumer():
     📌 pytest 模式仍跳过（避免 WS 连真行情污染测试）。
     """
     if os.environ.get("PYTEST_CURRENT_TEST"):
-        print("[INIT] pytest mode: skip quote consumer")
+        log.info("[INIT] pytest mode: skip quote consumer")
         return
     try:
         await get_quote_consumer()
     except Exception as e:
-        print(f"[INIT] quote consumer failed to start: {e}")
+        log.warning(f"[INIT] quote consumer failed to start: {e}")
 
 
 # 启动后台 periodic flush task (quote-cache)
@@ -200,12 +202,12 @@ async def on_startup_quote_cache_flusher():
     """
     global _quote_cache_flusher_task
     if os.environ.get("PYTEST_CURRENT_TEST"):
-        print("[INIT] pytest mode: skip quote cache flusher")
+        log.info("[INIT] pytest mode: skip quote cache flusher")
         return
     try:
         _quote_cache_flusher_task = start_quote_cache_flusher()
     except Exception as e:
-        print(f"[INIT] quote cache flusher failed to start: {e}")
+        log.warning(f"[INIT] quote cache flusher failed to start: {e}")
 
 
 @app.on_event("shutdown")
@@ -213,7 +215,7 @@ async def on_shutdown_quote_consumer():
     try:
         await close_quote_consumer()
     except Exception as e:
-        print(f"[SHUTDOWN] quote consumer close error: {e}")
+        log.warning(f"[SHUTDOWN] quote consumer close error: {e}")
 
     # 停止 periodic flush task（task 内部 finally 会做最后 flush）
     global _quote_cache_flusher_task
@@ -222,7 +224,7 @@ async def on_shutdown_quote_consumer():
         try:
             await _quote_cache_flusher_task
         except Exception as e:
-            print(f"[SHUTDOWN] quote cache flusher cancel: {e}")
+            log.warning(f"[SHUTDOWN] quote cache flusher cancel: {e}")
 
 
 # ---- strategy_exec_service (change strategy-exec-service) ----
@@ -234,7 +236,7 @@ async def on_startup_signal_consumer():
         from server.services.strategy.signal_consumer import start_signal_consumer
         await start_signal_consumer()
     except Exception as e:
-        print(f"[STARTUP] signal_consumer start failed (non-fatal): {e}")
+        log.warning(f"[STARTUP] signal_consumer start failed (non-fatal): {e}")
 
 
 @app.on_event("shutdown")
@@ -243,7 +245,7 @@ async def on_shutdown_signal_consumer():
         from server.services.strategy.signal_consumer import stop_signal_consumer
         await stop_signal_consumer()
     except Exception as e:
-        print(f"[SHUTDOWN] signal_consumer stop error: {e}")
+        log.warning(f"[SHUTDOWN] signal_consumer stop error: {e}")
 
 
 # ---- REQ-AUTH-IDLE-001: token session cache 后台 sweep ----
@@ -260,14 +262,14 @@ async def on_startup_auth_sweep():
     """
     global _auth_sweep_task
     if os.environ.get("PYTEST_CURRENT_TEST"):
-        print("[INIT] pytest mode: skip auth session sweep")
+        log.info("[INIT] pytest mode: skip auth session sweep")
         return
     try:
         from server.auth.session import sweep_loop
         _auth_sweep_task = asyncio.ensure_future(sweep_loop())
-        print("[INIT] auth session sweep task started")
+        log.info("[INIT] auth session sweep task started")
     except Exception as e:
-        print(f"[INIT] auth sweep failed to start: {e}")
+        log.warning(f"[INIT] auth sweep failed to start: {e}")
 
 
 @app.on_event("startup")
@@ -279,15 +281,15 @@ def on_startup_ai_mcp_server():
     """
     global _ai_mcp_server
     if os.environ.get("PYTEST_CURRENT_TEST"):
-        print("[INIT] pytest mode: skip AI MCP server")
+        log.info("[INIT] pytest mode: skip AI MCP server")
         return
     try:
         from server.ai.mcp_server import EvTradeMCPServer, set_mcp_server
         _ai_mcp_server = EvTradeMCPServer.start(port=0)
         set_mcp_server(_ai_mcp_server)
-        print(f"[INIT] AI MCP server started on http://127.0.0.1:{_ai_mcp_server.port}/mcp")
+        log.info(f"[INIT] AI MCP server started on http://127.0.0.1:{_ai_mcp_server.port}/mcp")
     except Exception as e:
-        print(f"[INIT] AI MCP server failed to start: {e}")
+        log.warning(f"[INIT] AI MCP server failed to start: {e}")
         _ai_mcp_server = None
 
 
@@ -300,7 +302,7 @@ async def on_shutdown_auth_sweep():
         try:
             await _auth_sweep_task
         except Exception as e:
-            print(f"[SHUTDOWN] auth sweep cancel: {e}")
+            log.warning(f"[SHUTDOWN] auth sweep cancel: {e}")
 
 
 @app.on_event("shutdown")
@@ -310,9 +312,9 @@ def on_shutdown_ai_mcp_server():
     if _ai_mcp_server is not None:
         try:
             _ai_mcp_server.stop()
-            print("[SHUTDOWN] AI MCP server stopped")
+            log.info("[SHUTDOWN] AI MCP server stopped")
         except Exception as e:
-            print(f"[SHUTDOWN] AI MCP server stop error: {e}")
+            log.warning(f"[SHUTDOWN] AI MCP server stop error: {e}")
         _ai_mcp_server = None
         from server.ai.mcp_server import set_mcp_server
         set_mcp_server(None)
