@@ -13,8 +13,10 @@
     <button
       v-if="!store.isOpen"
       class="agent-fab"
+      :class="{ 'agent-fab-disabled': !store.agentAvailable }"
       data-el="agent-fab"
-      title="AI 助手"
+      :title="store.agentAvailable ? 'AI 助手' : (store.agentUnavailableReason || 'AI 助手暂不可用')"
+      :disabled="!store.agentAvailable"
       @click="store.openPanel()"
     >
       <el-icon class="agent-fab-icon"><MagicStick /></el-icon>
@@ -24,6 +26,14 @@
 
     <!-- 悬浮对话框 (右下角 fixed, 480×600) -->
     <div v-if="store.isOpen" class="agent-panel" data-el="agent-panel">
+      <!-- 2026-08-25 增补: AI 助手不可用时, header 内顶部展示降级提示条 -->
+      <div
+        v-if="!store.agentAvailable"
+        class="agent-degraded-banner"
+        data-el="agent-degraded-banner"
+      >
+        ⚠️ AI 助手暂不可用：{{ store.agentUnavailableReason || 'Claude CLI 未安装' }}
+      </div>
       <header class="agent-header">
         <h3 class="agent-title">
           <el-icon><MagicStick /></el-icon>
@@ -231,6 +241,17 @@ function formatJson(obj) {
   transform: translateY(-2px);
   box-shadow: 0 8px 28px rgba(64, 158, 255, 0.5);
 }
+/* 2026-08-25 增补 (REQ-FE-539): AI 助手不可用时按钮灰显 */
+.agent-fab.agent-fab-disabled {
+  background: linear-gradient(135deg, #b1b3b6, #c0c4cc);
+  cursor: not-allowed;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1);
+  opacity: 0.65;
+}
+.agent-fab.agent-fab-disabled:hover {
+  transform: none;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1);
+}
 .agent-fab-icon {
   font-size: 22px;
 }
@@ -277,6 +298,15 @@ function formatJson(obj) {
   padding: 12px 16px;
   border-bottom: 1px solid var(--border-light, #ebeef5);
   background: var(--bg-page, #fafafa);
+}
+/* 2026-08-25 增补 (REQ-FE-539): AI 助手降级提示条 */
+.agent-degraded-banner {
+  padding: 8px 16px;
+  background: #fef0f0;
+  border-bottom: 1px solid #fbc4c4;
+  color: #f56c6c;
+  font-size: 12px;
+  line-height: 1.4;
 }
 .agent-title {
   display: flex;
