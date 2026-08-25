@@ -88,7 +88,11 @@ def test_handle_agent_message_dispatches_user_message(monkeypatch):
 
 
 def test_handle_agent_message_no_claude_error(monkeypatch):
-    """_handle_agent_message 在 claude 不在 PATH 时返清晰错误."""
+    """_handle_agent_message 在 claude 不在 PATH 时返清晰错误.
+
+    2026-08-25 增补: 必须同时推 agent_complete 事件, 让前端 isThinking 清掉
+    (否则 spinner 卡死).
+    """
     import server.ai.mcp_server as mcpsrv
     import server.ws.endpoint as ep
 
@@ -101,7 +105,7 @@ def test_handle_agent_message_no_claude_error(monkeypatch):
         async def send_json(self, payload):
             sent.append(payload)
 
-    parsed = {"type": "user_message", "text": "hi"}
+    parsed = {"type": "user_message", "text": "hi", "session_id": "test-1"}
     asyncio.run(ep._handle_agent_message(FakeWS(), parsed, user_id=1))
 
     errs = [m for m in sent if m["type"] == "error"]
@@ -109,6 +113,13 @@ def test_handle_agent_message_no_claude_error(monkeypatch):
     assert any("claude" in m.get("message", "").lower() for m in errs), (
         f"expected error mentioning 'claude', got {sent}"
     )
+    # 必须同时推 agent_complete (success=False, error=claude_cli_missing)
+    # 这是 2026-08-25 优雅降级改动的核心契约
+    completes = [m for m in sent if m["type"] == "agent_complete"]
+    assert len(completes) == 1, f"expected exactly 1 agent_complete event, got {sent}"
+    assert completes[0]["success"] is False
+    assert completes[0]["error"] == "claude_cli_missing"
+    assert completes[0].get("session_id") == "test-1"
     srv.stop()
 
 
