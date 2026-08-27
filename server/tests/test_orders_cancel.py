@@ -219,12 +219,13 @@ async def test_cancel_happy_path_50_to_54(trader, fake_rpc_cancel, fake_broadcas
     assert body["cancel_order"]["user_def"] == f"CANCEL:{orig.order_no}"
 
     # DB 验证: 原单 cancelled_volume=volume, cancel-trade 写入
+    # v-future (2026-08-27): 查询限定到隔离 trd_date='99990718', 避免跟生产 orders 行混淆
     db.close()
     db.expire_all()
     updated = Orders.query_by("order_no", "10000001")[0]
     assert updated.cancelled_volume == updated.volume == 100
 
-    cancel_rows = [o for o in Orders.query_all() if o.order_no != "10000001"]
+    cancel_rows = [o for o in Orders.query_all() if o.order_no != "10000001" and o.trd_date == "99990718"]
     assert len(cancel_rows) == 1
     cancel_row = cancel_rows[0]
     assert cancel_row.order_flag == 1
@@ -258,7 +259,8 @@ async def test_cancel_48_unreported_rejected(trader, fake_rpc_cancel, fake_broad
     # 验证: 无 RPC 调用
     assert len(fake_rpc_cancel.calls) == 0
     # 验证: DB 未插入 cancel-row
-    cancel_rows = [o for o in Orders.query_all() if o.user_def.startswith("CANCEL:")]
+    # v-future (2026-08-27): 查询限定 trd_date='99990718'
+    cancel_rows = [o for o in Orders.query_all() if o.user_def.startswith("CANCEL:") and o.trd_date == "99990718"]
     assert len(cancel_rows) == 0
 
 
@@ -308,7 +310,7 @@ async def test_cancel_rpc_failure_writes_57_no_trade(trader, fake_rpc_cancel, fa
     assert "broker 撤单失败" in body["msg"]
 
     # DB 验证: cancel-row status=57 + status_msg 含 broker msg
-    cancel_rows = [o for o in Orders.query_all() if o.user_def.startswith("CANCEL:")]
+    cancel_rows = [o for o in Orders.query_all() if o.user_def.startswith("CANCEL:") and o.trd_date == "99990718"]
     assert len(cancel_rows) == 1
     assert cancel_rows[0].status == "57"
     assert "broker 撤单失败" in cancel_rows[0].status_msg
@@ -338,7 +340,7 @@ async def test_cancel_rpc_exception_writes_57(trader, fake_rpc_cancel, fake_broa
     assert body["code"] == 1
 
     # cancel-row status=57
-    cancel_rows = [o for o in Orders.query_all() if o.user_def.startswith("CANCEL:")]
+    cancel_rows = [o for o in Orders.query_all() if o.user_def.startswith("CANCEL:") and o.trd_date == "99990718"]
     assert len(cancel_rows) == 1
     assert cancel_rows[0].status == "57"
     assert "RPC connection refused" in cancel_rows[0].status_msg
