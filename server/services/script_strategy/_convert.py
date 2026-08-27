@@ -4,6 +4,7 @@ server/services/script_strategy/_convert.py — TableBase Row ↔ API dict 转�
 职责单一: 把 strategy / strategy_script / strategy_task / strategy_script_audit 的行
 转成 API 返回用的 dict (幂等, 无 DB 写入, 无外部副作用)。
 """
+# 内部模块, 外部请用 strategy_order_convert.py 不要直接 import _convert
 import json
 from datetime import datetime
 from typing import Any, Dict, Optional
