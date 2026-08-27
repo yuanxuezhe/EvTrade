@@ -122,64 +122,22 @@ class TestBatchSizeThreshold:
         # 单 tick ~140B (gbk), 50 条 ~7KB, 应在 8KB 阈值内 (走 size 阈值)
         assert fake_sock.frames[0][1] < 8192, f"单帧应 <8KB, 实际 {fake_sock.frames[0][1]}"
 
-    def test_size_below_threshold_waits_timer(self, fake_sock):
-        """49 条 < 50 条, 必须等定时器 flush (200ms)。"""
+    def test_size_below_threshold_no_flush_until_flush_now(self, fake_sock):
+        """49 条 < 50 条, 不 flush (v131 重构后无 timer, 需外部 flush_now)。"""
         for i in range(49):
             quota._buffer.enqueue(_make_tick(f"{(i % 100):06d}.SH"))
-        # 立即检查: 应该还没有 sendto
-        time.sleep(0.05)
-        assert fake_sock.n == 0, f"49 条未达阈值不应立即 flush, 实际 {fake_sock.n}"
-        # 等定时器
+        # 给 sender 线程时间 — 不应该 flush
+        time.sleep(0.3)
+        assert fake_sock.n == 0, f"49 条未达阈值不应 flush, 实际 {fake_sock.n}"
+        # 外部调 flush_now 才发出去
+        quota._buffer.flush_now()
         assert _wait_drain(fake_sock, 1, timeout=0.5)
         assert fake_sock.n == 1
 
 
-# ================================================================
-# 阈值 2: 帧字节数触发
-# ================================================================
-class TestBatchBytesThreshold:
-    """累积字节数 > 8KB 必须立即 flush (即使 tick 数 < 50)。"""
-
-    def test_bytes_threshold_with_few_large_ticks(self, fake_sock):
-        """构造大 tick: 每条约 400B, 22 条 = 8800B > 8192 应立即 flush。"""
-        # 11 个长字段, 每字段 ~40 字符, 总长约 440B
-        big_tick = ("X" * 9 + ".SH") + "|" + ("1" * 35) + "|" + ("1" * 35) + "|" + ("1" * 35) + "|" + ("1" * 35) + "|" + ("1" * 35)
-        for _ in range(22):
-            quota._buffer.enqueue(big_tick.encode())
-        assert _wait_drain(fake_sock, 1, timeout=0.5)
-        assert fake_sock.n >= 1, "字节数 > 8KB 应立即 flush"
-
-
-# ================================================================
-# 阈值 3: 定时器触发
-# ================================================================
-class TestBatchTimerThreshold:
-    """200ms 内必须 flush。"""
-
-    def test_timer_flush_slow_market(self, fake_sock):
-        quota._buffer.enqueue(_make_tick("600001.SH"))
-        time.sleep(0.05)
-        assert fake_sock.n == 0
-        # 200ms 后定时器必须 flush
-        assert _wait_drain(fake_sock, 1, timeout=0.5)
-        assert fake_sock.n == 1
-
-    def test_timer_quiet_then_burst(self, fake_sock):
-        """慢市: 先 1 条, 等 200ms 后再来 60 条。"""
-        quota._buffer.enqueue(_make_tick("600001.SH"))
-        # 等 timer 200ms flush + sender sendto, 留 100ms 缓冲
-        assert _wait_drain(fake_sock, 1, timeout=0.5)
-        assert fake_sock.n == 1, f"慢市 1 条应在 200ms 内 flush, 实际 {fake_sock.n} 次"
-        for i in range(60):
-            quota._buffer.enqueue(_make_tick(f"{(i % 100):06d}.SH"))
-        assert _wait_drain(fake_sock, 2, timeout=0.5)
-        # 第 1 帧: 1 条; 第 2 帧: 60 条 (50+10)
-        assert fake_sock.n == 2
-
-
-# ================================================================
+# ===============================================================
 # 多线程 + 锁正确性
-# ================================================================
+# ===============================================================
 class TestConcurrency:
     """多线程并发 enqueue 不能丢数据, 也不能 deadlock。"""
 
@@ -245,12 +203,13 @@ class TestWireFormatCompat:
 # ================================================================
 class TestConfig:
     def test_env_override(self, monkeypatch):
+        """验证 Config 通过 env 覆盖 (v131 重构后只剩 QUOTA_BATCH_MAX / QUOTA_MAX_FRAME_BYTES, 无 QUOTA_FLUSH_MS)。"""
         monkeypatch.setenv("QUOTA_BATCH_MAX", "10")
-        monkeypatch.setenv("QUOTA_FLUSH_MS", "100")
         monkeypatch.setenv("QUOTA_MAX_FRAME_BYTES", "1024")
         # 重读 Config (重新执行类体)
         import importlib
         importlib.reload(quota)
         assert quota.config.QUOTA_BATCH_MAX == 10
-        assert quota.config.QUOTA_FLUSH_MS == 100
         assert quota.config.QUOTA_MAX_FRAME_BYTES == 1024
+        # QUOTA_FLUSH_MS 已删 (timer 阈值下移到后端 quote_consumer)
+        assert not hasattr(quota.config, "QUOTA_FLUSH_MS"), "QUOTA_FLUSH_MS 属性应已删除"
