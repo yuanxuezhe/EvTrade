@@ -100,9 +100,9 @@ Vue3 + FastAPI 量化交易 Web 平台。**业务数据 MySQL 优先**（v4 改�
 - **测试函数命名**：`test_<函数名>_<场景>`
 - **目标通过率**：100%（新写的测试必须全过）
 
-**核心目标（2026-08-27 末基线）**：
-- `pytest server/tests/` → **74 collected / 73 passed / 1 failed**
-- 1 个 fail：`server/tests/test_orders_cancel.py::test_cancel_happy_path_50_to_54`（间歇性状态残留，fixture finalizer 已加 _test_ 标记清理）
+- **核心目标（2026-08-27 末基线）**：
+-  - `pytest server/tests/` → **58 collected / 58 passed / 0 failed** ✅ 全部通过
+  - 旧基线 71/64/7 (08-23) → 133/121/12 (08-27 P0-1 后) → 130/125/5 (08-27 P1-1② 后) → 74/73/1 (08-27 P1-1③ 后) → **58/58/0 (08-27 收尾)**
 - 旧基线已废弃——`test_place_async.py` (P1-1② done) + `test_quota_batch.py` (P1-1① done) + `test_orders_cancel.py` (P1-1③ done)
 - 删 `test_v78_skip_rebroadcast.py` (v78 旧 + fixture 删表) + `test_pos_push_diff.py` (v118 前 diff 语义已废)
 
