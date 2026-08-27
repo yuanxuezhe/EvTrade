@@ -427,3 +427,135 @@ pytest 模式下 `conftest.py` 会检测 `PYTEST_CURRENT_TEST` 环境变量，�
 - [ ] 工作日志已更新？
 
 全部打勾，任务才算完成。
+
+---
+
+## 十一、AI 助手 skill 速查表（2026-08-27 瘦身）
+
+> 旧版 Hermes 注入的 39 个 EvTrade skill 已 archive 到 `~/.hermes/skills/.archive/evtrade-*/`。遇到相关问题时，**先查知识库 + 脚本目录**，按下面速查表定位。
+
+### A. 业务场景速查（最常用）
+
+| 场景 | 看这里 | 跑这个 |
+|------|--------|--------|
+| 起停服务 / 看健康状态 / 重启 | `知识库/脚本工具/启停脚本.md` | `scripts/evctl.py status\|restart <svc>` |
+| DB schema 漂移 / 加列 | `知识库/脚本工具/数据库迁移与Schema.md` | `scripts/sync_schema.py export/diff/apply` |
+| broker push 字段对不上 | `知识库/后端服务/RPC通信/` | 读 `server/services/push/*.py` |
+| 持仓没刷新 / pos_push 不通 | `知识库/后端服务/数据同步/` | `server/services/push/pos.py` |
+| RPC 健康灯不亮 / 503 | `知识库/后端服务/RPC通信/` | `server/services/rpc_health.py` |
+| WS 推送收不到 | `知识库/后端服务/WebSocket推送/` | `server/ws/manager.py` |
+| 下单/撤单 路径 | `知识库/后端服务/交易核心/` | `server/api/orders/` |
+| T0 / 当日盈亏算错 | `知识库/后端服务/T0做T/` | `server/services/t0/aggregators.py` |
+| 前端某列不更新 | `client/src/utils/format.js` STATUS_LABEL/RANK | 读 store reactivity 设计 |
+| ETF 价格丢 0 | `client/src/utils/usePricePrecision.formatPrice` | 严禁自造 toFixed |
+| 测试 fixture 要清表怎么办 | `知识库/开发流程/测试体系.md` §fixture 卫生 | **禁止清表**，用 `t_` 前缀 + 隔离 trd_date=`99990718` |
+| 加新表 / 改 schema | `scripts/gen_tables.py --table <name>` | 跑前先读 `知识库/数据库/Schema说明.md` |
+| status 显示错误 | `client/src/utils/format.js` + `STATUS_LABEL` + `STATUS_RANK` | broker status 码全集白名单 |
+| 改 .env / 重启服务 | `知识库/脚本工具/数据与环境工具.md` | `set -a; source server/.env; set +a;` 再启 |
+| pytest 跑全套后生产数据没了 | `知识库/开发流程/测试体系.md` §安全跑测试 | **永远只跑单文件** + 先 grep 找删表 fixture |
+
+### B. 通用模式速查（Hermes 全局 skill 还在用，按 category 排）
+
+| 场景 | Skill |
+|------|-------|
+| 元规则 / 用户偏好 | `using-superpowers` + `user-workflow-preferences` + `memory-starter-kit` |
+| 调试 4 阶段 root cause | `systematic-debugging` |
+| 软件工程生命周期 / TDD / 评审 | `software-engineering-lifecycle` |
+| 知识库审计 / gap 分析 | `knowledge-base-audit` |
+| 写代码前查 git 远程 / OpenSpec | `large-code-preflight-git-fetch` |
+| Hermes 配置 / 调度 / 多模型 | `hermes-agent` + `hermes-multi-model-routing` + `hermes-themes` + `hermes-desktop-plugins` |
+| Claude Code sandbox 中转 | `hermes-sandbox-cc` + `hermes-sandbox-cli-agent` |
+| Hermes terminal SLA / OOB | `v120-hermes-tool-sla` |
+| patch GBK 编码损坏 | `patch-tool-gbk-encoding-traps` |
+| Skill 编写格式 | `hermes-agent-skill-authoring` |
+| 删 SPA feature（router + 导航联动） | `spa-feature-removal-checklist` |
+| 服务 watchdog cron | `service-watchdog-cron-pattern` |
+| git commit 拆分（一 diff 多主题） | `git-commit-splitting` |
+| 简写代码 3 agent 并行 | `simplify-code` |
+| Kanban 编排 / worker | `kanban-orchestrator` + `kanban-worker` |
+| Webhook 触发 agent run | `webhook-subscriptions` |
+| FastAPI async 调同步 IO | `fastapi-async-def-sync-call-blocking` |
+| WS 跨线程 broadcast | `fastapi-cross-thread-ws-broadcast` |
+| 表代码生成 | `table-codegen` + `database-migration` |
+| 派生列 backfill | `derived-column-production-backfill` |
+| Vue3 + Element Plus 样式 | `vue3-element-plus-scoped-css-gotchas` + `element-plus-prop-api-migration` |
+| Vue3 Pinia 启动顺序 | `vue3-pinia-spa-bootstrap-gate` |
+| Vue3 composable ref 注入 | `vue3-composable-ref-injection-pitfalls` |
+| Vue3 CodeMirror 6 集成 | `vue3-codemirror-6-editor-integration` |
+| 前端精度/单位 round | `frontend-precision-and-unit-rounding` |
+| 前端 API axios 401/404 | `frontend-api-conventions` |
+| 前端 auth + 路由守卫 | `frontend-auth-and-routing` |
+| 前端 token keepalive | `frontend-token-keepalive` |
+| 前端配置工具栏 | `frontend-config-toolbar-pattern` |
+| Vite build vs dev 不一致 | `vite-build-vs-dev-divergence` |
+| Jupyter live kernel | `jupyter-live-kernel` |
+| Native MCP client | `native-mcp` |
+| 通用 GitHub | `github-auth` + `codebase-inspection` |
+| 通用 DevOps | `infrastructure-operations` + `nginx-proxy-manager-wildcard-cert` + `tls-certificate-lifecycle` |
+| 通用测试 | `test-create-probe` + `dogfood` |
+| 办公套件 | `notion` / `obsidian` / `apple-notes` / `apple-reminders` / `linear` / `airtable` / `google-workspace` / `imessage` |
+| 文件/文档 | `docx` / `pdf` / `ocr-and-documents` / `xlsx` / `powerpoint` / `nano-pdf` |
+| 信息搜索 | `arxiv` / `blogwatcher` / `llm-wiki` / `polymarket` / `research-paper-writing` |
+| 桌面应用 | `computer-use` + `findmy` + `tui-widgets` |
+| 邮件 | `himalaya` |
+| 地图 | `maps` |
+| 团队会议 | `teams-meeting-pipeline` |
+| 股票代码源 | `china-stock-symbol-list-sources` |
+| 桌面宠物 | `petdex` |
+| 收尾 | `yuanbao` |
+
+### C. 旧 skill 内容保留位置
+
+旧 39 个 EvTrade skill + finance 3 个 + topology 1 个 + claude-demo 1 个 = **44 个**全部 archive 到：
+
+```
+~/.hermes/skills/.archive/
+  ├── evtrade-ai-assistant-architecture/  (已废, AI 助手架构)
+  ├── evtrade-ai-claudedemo/             (已废, 早期 claudedemo 模式)
+  ├── evtrade-ai-rest-call-sop/          (AI 助手被废后无意义)
+  ├── evtrade-atomic-upsert-tablebase-pattern/
+  ├── evtrade-backend-false-error-diagnosis/
+  ├── evtrade-backtest-observability/
+  ├── evtrade-backtest-performance-and-risk/
+  ├── evtrade-broker-protocol-field-audit/
+  ├── evtrade-endpoint-testing/
+  ├── evtrade-frontend-cross-day-cache-architecture/
+  ├── evtrade-frontend-price-panel-antipattern/
+  ├── evtrade-hermes-skill-bridge/
+  ├── evtrade-hq-quota-push-protocol/
+  ├── evtrade-iq-broker-period-coverage/
+  ├── evtrade-live-ui-debug-workflow/
+  ├── evtrade-pkg-install-safety/
+  ├── evtrade-pos-push-broker-driven-position/
+  ├── evtrade-push-handler-position-flow/  (已 ARCHIVED, v118+ 改 broker 权威直覆盖)
+  ├── evtrade-pytest-fixture-db-safety/
+  ├── evtrade-quota-udp-pipeline/
+  ├── evtrade-rpc-health-3state/
+  ├── evtrade-schema-governance/
+  ├── evtrade-script-strategy/
+  ├── evtrade-service-env-injection/
+  ├── evtrade-status-inference-traps/
+  ├── evtrade-t0-aggregator-day-pnl/
+  ├── evtrade-tablebase-pitfalls/
+  ├── evtrade-table-codegen/
+  ├── evtrade-table-patterns/
+  ├── evtrade-test-fixture-hygiene/
+  ├── evtrade-vue3-reactive-el-table-cell-design/
+  ├── evtrade-whitelist-extractor-field-loss/
+  ├── evtrade-ws-channel-reuse-pattern/
+  ├── evtrade-ws-push-fanout/
+  ├── evtrade-ws-system-status-channel/
+  ├── hermes-actual-api-vs-claimed/
+  ├── invest-analyst/                      (用户拍板不做投资分析)
+  ├── market-news-investor/                (同上)
+  └── v120-evtrade-services-topology/
+```
+
+如需查旧内容：
+
+```bash
+ls ~/.hermes/skills/.archive/ | grep evtrade
+cat ~/.hermes/skills/.archive/evtrade-broker-protocol-field-audit/SKILL.md
+```
+
+**原则**：新工作不直接读 archive skill，先按 A 表查知识库 / 脚本；只有知识库缺失时才回退到 archive。
