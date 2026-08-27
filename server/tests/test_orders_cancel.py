@@ -35,15 +35,21 @@ from server.tables import Orders, Trades, SysStatus, Users
 
 @pytest.fixture
 def db():
-    """每 test 独立 Session；清 orders + trades 表保隔离。"""
+    """每 test 独立 Session；不动 orders + trades 表 (v-future 2026-08-27 用户硬规则).
+
+    隔离策略: 测试订单用 mock_trd_date fixture 提供的 trd_date='99990718' (高位前缀,
+    跟生产 trd_date=202608xx 完全不冲突); 测试订单 user_def 全部含 '_test_cancel_v1' 前缀,
+    finalizer 只清 _test_cancel_v1 标记的行, **不碰生产数据**.
+    """
     from sqlalchemy import text
     from server.infra.db import SessionLocal
     s = SessionLocal()
-    s.execute(text("DELETE FROM trades"))
-    s.execute(text("DELETE FROM orders"))
-    s.execute(text("ALTER TABLE orders AUTO_INCREMENT = 1"))
-    s.commit()
     yield s
+    # v-future (2026-08-27): 清 test_cancel_v1 标记的测试行 (含 cancel-row + 测试种子行)
+    #   - DELETE orders WHERE user_def LIKE '_test_cancel_v1%' OR user_def LIKE 'CANCEL:%'
+    #     (cancel-row 写 user_def='CANCEL:<orig_order_no>')
+    #   - DELETE trades WHERE 关联的 order_no 在测试范围
+    s.execute(text("DELETE FROM orders WHERE trd_date='99990718' AND (user_def LIKE '_test_cancel_v1%' OR user_def LIKE 'CANCEL:%')"))
     s.execute(text("DELETE FROM users WHERE LOCATE('_', username) > 0 AND username NOT IN ('admin', 'trader')"))
     s.commit()
     s.close()
@@ -51,7 +57,7 @@ def db():
 
 @pytest.fixture
 def trader(db):
-    """trader 用户 + 激活交易日。"""
+    """trader 用户 (v-future 2026-08-27: 不重置 sys_status, 由 mock_trd_date fixture 拿隔离 trd_date)."""
     for _old in Users.query_by("username", "t_cancel_v1"):
         Users.delete_one(id=_old.id)
     u = Users.add_one({
@@ -59,9 +65,18 @@ def trader(db):
         "password_hash": hash_password("x"),
         "role": "trader",
     })
-    SysStatus.delete_one(id=1)
-    SysStatus.upsert_one({"trd_date": "20260825", "status": "active"}, id=1)
     return {"id": u.id, "username": u.username}
+
+
+@pytest.fixture
+def mock_trd_date(monkeypatch):
+    """返回固定 trd_date='99990718' (cancel 端点通过 Query param 接收, 不调 _get_active_trd_date).
+
+    v-future (2026-08-27 用户硬规则): 用高位前缀 trd_date 隔离测试数据与生产数据
+    (生产 trd_date=202608xx). 测试写入 orders.trd_date='99990718' 永远不会碰到生产订单行.
+    test 通过 query param {"trd_date": mock_trd_date} 显式传给 cancel endpoint.
+    """
+    return "99990718"
 
 
 @pytest.fixture
@@ -130,10 +145,14 @@ def _deps_override(trader):
 # ─────────────── Helpers ───────────────
 
 
-def _seed_reported_order(db, order_no="10000001", broker_order_id="BRK-CXL-001"):
-    """插入一行已报订单（status=50 + broker_order_id 已回报）。"""
+def _seed_reported_order(db, order_no="10000001", broker_order_id="BRK-CXL-001", trd_date="99990718"):
+    """插入一行已报订单（status=50 + broker_order_id 已回报）。
+
+    v-future (2026-08-27 用户硬规则): 默认 trd_date='99990718' 隔离测试数据与生产数据 (生产 trd_date=202608xx).
+    db 参数保留签名兼容 (与 test_place_async.py 一致).
+    """
     return Orders.upsert_one({
-        "user_def": "",
+        "user_def": "_test_cancel_v1",
         "stock_code": "600519.SH",
         "order_type": "23",
         "price_type": 0,
@@ -147,16 +166,19 @@ def _seed_reported_order(db, order_no="10000001", broker_order_id="BRK-CXL-001")
         "status": "50",
         "status_msg": "已报",
         "order_id": broker_order_id,
-        "order_time": "2026-08-25 09:30:00.000",
+        "order_time": "9999-07-18 09:30:00.000",
         "task_id": None,
         "strategy_type": 0,
-    }, return_row=True, trd_date="20260825", order_no=order_no)
+    }, return_row=True, trd_date=trd_date, order_no=order_no)
 
 
-def _seed_unreported_order(db, order_no="10000002"):
-    """插入一行未报订单（status=48，无 broker_order_id）。"""
+def _seed_unreported_order(db, order_no="10000002", trd_date="99990718"):
+    """插入一行未报订单（status=48，无 broker_order_id）。
+
+    v-future (2026-08-27): 默认 trd_date='99990718' 隔离测试数据.
+    """
     return Orders.upsert_one({
-        "user_def": "",
+        "user_def": "_test_cancel_v1",
         "stock_code": "600519.SH",
         "order_type": "23",
         "price_type": 0,
@@ -169,23 +191,23 @@ def _seed_unreported_order(db, order_no="10000002"):
         "order_flag": 0,
         "status": "48",
         "status_msg": "未报",
-        "order_time": "2026-08-25 09:30:00.000",
+        "order_time": "9999-07-18 09:30:00.000",
         "task_id": None,
         "strategy_type": 0,
-    }, return_row=True, trd_date="20260825", order_no=order_no)
+    }, return_row=True, trd_date=trd_date, order_no=order_no)
 
 
 # ─────────────── Tests ───────────────
 
 
-async def test_cancel_happy_path_50_to_54(trader, fake_rpc_cancel, fake_broadcast, db, _deps_override):
+async def test_cancel_happy_path_50_to_54(trader, fake_rpc_cancel, fake_broadcast, db, _deps_override, mock_trd_date):
     """happy path: status=50 + broker order_id → cancel-row status=54 + orig.cancelled_volume=volume + cancel-trade 写入。"""
     orig = _seed_reported_order(db, order_no="10000001")
     fake_rpc_cancel.set_ack({"code": 0, "msg": "OK"})
 
     transport = ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
-        r = await c.delete("/api/orders/10000001", params={"trd_date": "20260825"})
+        r = await c.delete("/api/orders/10000001", params={"trd_date": mock_trd_date})
 
     assert r.status_code == 200, r.text
     body = r.json()
@@ -220,13 +242,13 @@ async def test_cancel_happy_path_50_to_54(trader, fake_rpc_cancel, fake_broadcas
     assert "trade_update" in channels
 
 
-async def test_cancel_48_unreported_rejected(trader, fake_rpc_cancel, fake_broadcast, db, _deps_override):
+async def test_cancel_48_unreported_rejected(trader, fake_rpc_cancel, fake_broadcast, db, _deps_override, mock_trd_date):
     """pre-check: status=48 (未报) 不可撤，code=1，无 RPC 调用。"""
     _seed_unreported_order(db, order_no="10000002")
 
     transport = ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
-        r = await c.delete("/api/orders/10000002", params={"trd_date": "20260825"})
+        r = await c.delete("/api/orders/10000002", params={"trd_date": mock_trd_date})
 
     assert r.status_code == 200, r.text
     body = r.json()
@@ -240,10 +262,10 @@ async def test_cancel_48_unreported_rejected(trader, fake_rpc_cancel, fake_broad
     assert len(cancel_rows) == 0
 
 
-async def test_cancel_no_broker_order_id_returns_broker_not_ready(trader, fake_rpc_cancel, fake_broadcast, db, _deps_override):
+async def test_cancel_no_broker_order_id_returns_broker_not_ready(trader, fake_rpc_cancel, fake_broadcast, db, _deps_override, mock_trd_date):
     """pre-check: status=50 但 broker 未回报 order_id → BROKER_NOT_READY 错误。"""
     Orders.upsert_one({
-        "user_def": "",
+        "user_def": "_test_cancel_v1",
         "stock_code": "600519.SH",
         "order_type": "23",
         "price_type": 0,
@@ -257,14 +279,14 @@ async def test_cancel_no_broker_order_id_returns_broker_not_ready(trader, fake_r
         "status": "50",
         "status_msg": "已报",
         "order_id": None,  # broker 尚未回报
-        "order_time": "2026-08-25 09:30:00.000",
+        "order_time": "9999-07-18 09:30:00.000",
         "task_id": None,
         "strategy_type": 0,
-    }, return_row=True, trd_date="20260825", order_no="10000003")
+    }, return_row=True, trd_date=mock_trd_date, order_no="10000003")
 
     transport = ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
-        r = await c.delete("/api/orders/10000003", params={"trd_date": "20260825"})
+        r = await c.delete("/api/orders/10000003", params={"trd_date": mock_trd_date})
 
     body = r.json()
     assert body["code"] == 1
@@ -272,14 +294,14 @@ async def test_cancel_no_broker_order_id_returns_broker_not_ready(trader, fake_r
     assert len(fake_rpc_cancel.calls) == 0
 
 
-async def test_cancel_rpc_failure_writes_57_no_trade(trader, fake_rpc_cancel, fake_broadcast, db, _deps_override):
+async def test_cancel_rpc_failure_writes_57_no_trade(trader, fake_rpc_cancel, fake_broadcast, db, _deps_override, mock_trd_date):
     """RPC ack.code != 0 → cancel-row status=57 (废单, 审计保留), 无 cancel-trade, orig 不变。"""
     orig = _seed_reported_order(db, order_no="10000004")
     fake_rpc_cancel.set_ack({"code": 1, "msg": "broker 撤单失败"})
 
     transport = ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
-        r = await c.delete("/api/orders/10000004", params={"trd_date": "20260825"})
+        r = await c.delete("/api/orders/10000004", params={"trd_date": mock_trd_date})
 
     body = r.json()
     assert body["code"] == 1
@@ -302,7 +324,7 @@ async def test_cancel_rpc_failure_writes_57_no_trade(trader, fake_rpc_cancel, fa
     assert updated.cancelled_volume == 0
 
 
-async def test_cancel_rpc_exception_writes_57(trader, fake_rpc_cancel, fake_broadcast, db, _deps_override, caplog):
+async def test_cancel_rpc_exception_writes_57(trader, fake_rpc_cancel, fake_broadcast, db, _deps_override, mock_trd_date, caplog):
     """RPC 抛异常 → cancel-row status=57 + log.exception, 无 cancel-trade。"""
     _seed_reported_order(db, order_no="10000005")
     fake_rpc_cancel.set_exception(RuntimeError("RPC connection refused"))
@@ -310,7 +332,7 @@ async def test_cancel_rpc_exception_writes_57(trader, fake_rpc_cancel, fake_broa
     with caplog.at_level(logging.ERROR, logger="server.api.orders.cancel"):
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
-            r = await c.delete("/api/orders/10000005", params={"trd_date": "20260825"})
+            r = await c.delete("/api/orders/10000005", params={"trd_date": mock_trd_date})
 
     body = r.json()
     assert body["code"] == 1
