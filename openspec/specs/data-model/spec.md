@@ -2,10 +2,15 @@
 
 ## Purpose
 
-15 张表（业务 6 + 策略/脚本 3 + 系统/用户 4 + 对账/序列 2）的**单一事实源**（single source of truth）。
+20 张表（业务 7 + 策略/脚本 6 + 系统/用户/证券 5 + 对账/序列 1 + 鉴权 1）的**单一事实源**（single source of truth）。
+
+> ⚠️ **2026-08-27 修订（change `2026-08-27-data-model-spec-drift`）**：v130 schema governance 实施后实际 ORM 类 21 个（`AppliedMigrations` 是迁移日志表不算业务表，net 业务表 = 20 张）。本文档原写"15 张表"严重过期，已重写 Tables Overview 与 §15-§19。
+
 任何表结构变更（加列、改类型、调 PK、改约束）必须先改本 spec，再同步到 `server/schema.yml`，然后跑 `python scripts/sync_schema.py apply` 推 DB + 重新生成 `server/tables/<表名>.py`。
 
-ORM 注释（`server/tables/<表名>.py` 自动生成）必须与本 spec 保持一致（diff 检查项之一）。
+ORM 注释（`server/tables/base.py` + 各 `server/tables/<表名>.py`，由 `scripts/gen_tables.py` 自动生成）必须与本 spec 保持一致（diff 检查项之一）。
+
+DB 引擎实现在 `server/infra/db.py`（v20 起强制 MySQL-only）。
 
 > v20 起强制 MySQL-only。所有 schema 已迁移到 MySQL（InnoDB + utf8mb4）。
 
@@ -21,10 +26,14 @@ ORM 注释（`server/tables/<表名>.py` 自动生成）必须与本 spec 保持
   - `positions` 表移除 `today_buy` / `today_sell` 两列（v5 引入以来从未被消费的死字段）
   - `assets` / `positions` 的 `synced_from` 新增 `'manual'` 取值（admin 调平写入标记）
   - DB 迁移脚本：`scripts/migrations/2026-07-03-drop-position-today-buy-sell.sql`
+- **spec ↔ 代码一致性**（2026-08-27 立）：新增/删表时必须**同时**改本 spec + 跑 `python scripts/sync_schema.py export` 更新 `server/schema.yml`。spec 是 schema 描述的 SoT；yml 是 schema 推 DB 的 SoT；二者必须一致（详见 `evtrade-schema-governance` skill）。
+- **禁止清表数据**（2026-08-27 用户硬规则）：任何 schema 变更禁止 drop / truncate / delete from / 重建表 — 历史数据要保留。走 ALTER ADD COLUMN / ALTER MODIFY；nullable 漂移走 `references/nullable_drift_sync.py`（per-connection ALTER，COLUMN_TYPE verbatim）。
 
 ## Tables Overview
 
-按业务域分组（共 16 张业务表 + 1 张 `order_no_seq` 序列表）：
+> ⚠️ **2026-08-27 修订**：本表已重写，对齐 `server/tables/*.py` 真实 21 个 `TableBase` 类（扣 `AppliedMigrations` 迁移日志表后，**20 张业务表**）。原 spec 漏登 7 张：`users` / `sys_config` / `stocks` / `t0_tasks` / `strategy` / `strategy_order` / `token_sessions`。
+
+按业务域分组（共 19 张业务表 + 1 张 `order_no_seq` 序列表）：
 
 ### 📊 业务核心（v4 数据本地优先：本地 DB 是展示源）
 
@@ -46,33 +55,43 @@ ORM 注释（`server/tables/<表名>.py` 自动生成）必须与本 spec 保持
 | 9 | `strategy_task` | 策略 | `id` 自增 | 否 | `server/api/script_strategy/endpoints.py` |
 | 10 | `strategy_script` | 脚本 | `(user_id, id)` 复合 | 否 | `server/api/script_strategy/endpoints.py` |
 | 11 | `strategy_script_audit` | 脚本 | `id` 自增 | 否 | `server/api/script_strategy/endpoints.py` |
+| 12 | `strategy` | 策略 | `id` 自增 | 否 | `server/services/strategy/` |
+| 13 | `strategy_order` | 策略 | `id` 自增 | 否 | `server/services/strategy/` |
 
-### 🔐 系统/用户
+### 🔐 系统/用户/证券基础
 
 | # | 表 | 分类 | 主键 | 单行？ | 业务入口 |
 |---|---|---|---|---|---|
-| 12 | `users` | 系统 | `id` 自增 | 否 | `server/api/users.py` |
-| 13 | `sys_status` | 系统 | `trd_date` | 否（多日） | `server/services/trading_day.py` |
-| 14 | `sys_config` | 系统 | `(user, cfg_key)` 复合 | 否 | `server/api/sysconfig.py` |
-| 15 | `stocks` | 系统 | `stock_code` | 否（多股） | `server/api/stocks.py` |
+| 14 | `users` | 用户 | `id` 自增 | 否 | `server/api/users.py` |
+| 15 | `sys_status` | 系统 | `id=1` 约束 | ✅ 单行 | `server/services/trading_day.py` |
+| 16 | `sys_config` | 系统 | `(user, cfg_key)` 复合 | 否 | `server/api/sysconfig.py` |
+| 17 | `stocks` | 证券 | `stock_code` | 否（多股） | `server/api/stocks.py` |
+| 18 | `token_sessions` | 鉴权 | `token_hash` | 否 | `server/auth/session.py` |
 
 ### 📋 日初对账 / 序列表
 
 | # | 表 | 分类 | 主键 | 单行？ | 业务入口 |
 |---|---|---|---|---|---|
-| 16 | `reconcile_report` | 历史 | `(trd_date, mode, created_at)` | 否 | `server/services/reconcile.py` |
-| 17 | `order_no_seq` | 序列 | `id` 约束 | ✅ 单行 | `server/services/order_no.py` |
+| 19 | `reconcile_report` | 历史 | `(trd_date, mode, created_at)` | 否 | `server/services/reconcile.py` |
+| 20 | `order_no_seq` | 序列 | `seq_name` | 否（多序列） | `server/services/order_no.py` |
 
-> **变更说明**：
+> **删除的死表**（v130 schema governance 合并进 `sys_config`，本文档原 §Table Details §6-8 已移除，**§Table Details 历史仍保留**供查阅）：
+> - `trading_session` — 交易时段表（已合并）
+> - `fee_config` — 费率配置表（已合并）
+> - `reconcile_config` — 对账配置表（已合并）
+
+> **变更说明**（2026-08-27 大幅更新）：
 > - v14 起迁移到 MySQL（v20 强制 MySQL-only）
 > - v66 strategy_trade change：新增 `strategy` / `strategy_task` / `strategy_grid` / `strategy_regime` / `strategy_audit` 5 张策略表（**其中 4 张网格引擎表已随 v120.5 删除**）
 > - v90 script-strategy change（2026-08-01）：新增 `strategy_script` / `strategy_script_audit` 2 张脚本策略表 + 扩展 `strategy_task` 字段
 > - **v120.5 grid-engine-removal（2026-08-10）**：DROP `strategy` / `strategy_regime` / `strategy_grid` / `strategy_audit` / `stocks_legacy` 5 张表（migration `server/migrations/2026-08-10-drop-legacy-strategy-tables.py`，commit `aa70dae`）。网格引擎被脚本策略取代；schema.yml 同步移除 4 张表定义（19 → 15 张）
-> - **v129 add-stkpool-module（2026-08-16）**：新增 `stkpool`（主表，id 自增 / name UK）和 `stkpooldetail`（明细表，复合 PK `(id, stock_code)` + FK ON DELETE CASCADE）2 张表（migration `server/migrations/2026-08-16-add-stkpool.py`）。share-id 模式：明细表 `id` 不自增，与主表 id 共享，物理聚簇 + CASCADE 自动清。Tables Overview 总表数 15 → 17。详细字段定义见 §16-17
+> - **v129 add-stkpool-module（2026-08-16）**：新增 `stkpool`（主表，id 自增 / name UK）和 `stkpooldetail`（明细表，复合 PK `(id, stock_code)` + FK ON DELETE CASCADE）2 张表（migration `server/migrations/2026-08-16-add-stkpool.py`）。share-id 模式：明细表 `id` 不自增，与主表 id 共享，物理聚簇 + CASCADE 自动清。Tables Overview 总表数 15 → 17。
 > - v120 strategy-exec-service change（2026-08-09）：`strategy_task` 加 3 字段 `execution_service`（'evtrade'/'strategy_exec'）/ `execution_pid` / `version`（乐观锁，migration `2026-08-09-strategy-task-exec-fields.py`）。运行引擎迁到独立服务 `strategy_exec/`；其 `progress` / `live_signals` / `status` 由 strategy_exec 写（`WHERE version=:v` 乐观锁，见 [`strategy-exec/spec.md`](../strategy-exec/spec.md) REQ-SE-007），EvTrade 侧 `strategy_script` / `strategy_script_audit` 只读、`strategy_task` 仅 `signal_consumer` 消费侧写 `status`/`order_no`
 > - **v122 strategy-params-sweep-best-live（2026-08-10）**：`strategy_task` 加 3 sweep 列 `sweep_id VARCHAR(32) NULL` / `sweep_metric VARCHAR(32) NULL` / `sweep_total INT NULL`（migration `2026-08-11-add-strategy-sweep-fields.py`，commit `6808e8b`）。同 sweep 多 task 共享 `sweep_id`；summary task 也带 `sweep_id`（用 `sweep_total=1` 区分自身）。前端按 `sweep_id IS NULL` 判断单 run。详见 [`strategy-exec/spec.md`](../strategy-exec/spec.md) REQ-SE-008 / [`strategy/spec.md`](../strategy/spec.md) REQ-STRAT-016 扩展
 > - v18 t0_tasks change：新增 `t0_tasks` 表（v18）+ `orders.task_id` 列
 > - v23 slim-stocks-table：精简 `stocks` 字段
+> - **v130 schema governance（2026-08-12）**：`trading_session` / `fee_config` / `reconcile_config` 3 张配置表合并进 `sys_config`（v130 之前由各 module 自己管理，现在统一 user+cfg_key）。`sys_status` 改为 `id=1` 单行宽表（之前 `trd_date` 多行）。`order_no_seq` 泛化为 `(seq_name, last_value, updated_at)` PK=seq_name（之前 `id=1` 单行）。详见 `evtrade-schema-governance` skill
+> - **2026-08-27 spec drift cleanup**：本文档原写"15 张表 / 11 张业务核心 / 13 张 Table Details"，实际 ORM 是 20 张业务表 + 1 张 `AppliedMigrations` 迁移日志表。Tables Overview 已重写，新增 7 张缺登（`strategy` / `strategy_order` / `t0_tasks` 已在 Tables Overview 但缺 §Table Details；`users` / `sys_config` / `stocks` / `token_sessions` 已在 Tables Overview 但缺 §Table Details）。§Table Details 段补 7 张业务表 + 删除 3 张死表（trading_session / fee_config / reconcile_config），本 change 后续 commit 跟进。
 
 ## Table Details
 
