@@ -2,12 +2,15 @@
 
 ## Purpose
 
-EvTrade 前端通过 **6 个 WebSocket channel** 接收实时推送：
+EvTrade 前端通过 **7 个 WebSocket channel** 接收实时推送：
 
 - 3 个**业务 channel**（`order_update` / `trade_update` / `position_update`）走**后端** `/ws/<channel>`，复用 JWT 鉴权
 - 1 个**行情 channel**（`quote_update`）直连 hqserver（端口 8765），不走后端转发
 - 1 个**系统 channel**（`system_update`）走**后端**，由日初对账（`server/api/admin/sys_status.py`）+ RPC 健康监测（`server/services/rpc_health.py`）推送 `system_status_change` / `rpc_status` / `asset_update`（v117 合并 init_completed）
 - 1 个**任务进度 channel**（`task_progress_update`）走**后端**，v91.4 起 ScriptTask.vue 详情实时刷新
+- 1 个**同步进度 channel**（`sync_update`）走**后端**，admin-only（`WS_CHANNELS_REQUIRE_ADMIN = {"sync_update"}` in `server/ws/endpoint.py:45`），由 `server/services/sync/manager.py:118` 推 stocks 同步进度
+
+> **2026-08-27 修订（change `2026-08-27-ws-protocol-sync-channel`）**：原 spec 写 6 channel，漏登 `sync_update`（实测代码已实现 admin-only broadcast，但 spec 无记录），已补登到 §Purpose + REQ-WS-001 + REQ-WS-002。
 
 > **策略 channel 已下线（2026-08-10 grid-engine-removal）**：`strategy_update`（原由 `server/services/strategy/engine.py` 推 `regime_changed` / `grid_triggered` / `regime_cooldown`）与 `t0_strategy_update`（T0 策略引擎 `t0/engine.py:42`）均随 commit `aa70dae` 删除，不再有策略 channel。脚本策略进度走 `task_progress_update`。
 
@@ -20,9 +23,9 @@ phase-2 把 `client/src/stores/ws.js`（347 行 3 类职责）拆分为:
 
 ## Requirements
 
-### REQ-WS-001: 6 个 channel + URL 约定
+### REQ-WS-001: 7 个 channel + URL 约定
 
-客户端连接以下 6 个 channel：
+客户端连接以下 7 个 channel：
 
 | Channel | URL 模式 | 鉴权 | 触发源 |
 |---|---|---|---|
@@ -32,6 +35,7 @@ phase-2 把 `client/src/stores/ws.js`（347 行 3 类职责）拆分为:
 | `quote_update` | `{proto}://{QUOTE_WS_HOST}/` | **无**（hqserver 直连）| hqserver 行情（FANOUT）|
 | `system_update` | `{proto}://{host}/ws/system_update?token={jwt}` | JWT (query) | 日初对账 + RPC 健康监测 |
 | `task_progress_update` | `{proto}://{host}/ws/task_progress_update?token={jwt}` | JWT (query) | `server/services/script_strategy/` 任务进度 |
+| `sync_update` | `{proto}://{host}/ws/sync_update?token={jwt}` | JWT (query) + **role=admin** | `server/services/sync/manager.py:118` stocks 同步进度 |
 
 - `proto` = `wss` (https) 或 `ws` (http)
 - `host` = 当前页面 host（如 `localhost:50998`）
@@ -50,7 +54,7 @@ phase-2 把 `client/src/stores/ws.js`（347 行 3 类职责）拆分为:
       | "system_status_change" | "rpc_status" | "asset_update" (system_update channel)
       | "task_progress" (task_progress_update channel),
   "channel": "order_update" | "trade_update" | "position_update" | "asset_update"
-      | "quote_update" | "system_update" | "task_progress_update",
+      | "quote_update" | "system_update" | "task_progress_update" | "sync_update",
   "ts": "<ISO 时间>",
   "data": { "...row fields..." }
 }
@@ -123,12 +127,12 @@ wsStore.lastEvent       // ref<payload>
 
 ## Scenarios
 
-### S-WS-001: 启动连接 6 个 channel
+### S-WS-001: 启动连接 7 个 channel
 
 Given 用户登录成功，App.vue mount
 When `wsStore.connect()` 被调用
-Then 6 个 channel 各自创建 WebSocket
-And 5 个后端 channel URL 含 `?token={jwt}`
+Then 7 个 channel 各自创建 WebSocket
+And 6 个后端 channel URL 含 `?token={jwt}`
 And `quote_update` 直连 `{hostname}:8765/`
 And 每个连接 onopen 后启动 30s 心跳 (quote_update 除外)
 
@@ -160,7 +164,7 @@ And 第 6 次起 `min(30000, ...)` = 30s 上限
 
 Given WS 连接稳定
 When 用户登出，`wsStore.disconnect()` 被调
-Then 6 个 channel 的 `socket.onclose = null` 防止重连回调
+Then 7 个 channel 的 `socket.onclose = null` 防止重连回调
 And `socket.close()` 被调
 And 所有 timer（reconnect / heartbeat）被清
 And `connected.value = false`
@@ -168,7 +172,7 @@ And **不**再触发 `_scheduleReconnect`
 
 ## Known Issues
 
-- 🟡 6 个 channel 各开一条独立 TCP 连接（未来可考虑多路复用单连接）
+- 🟡 7 个 channel 各开一条独立 TCP 连接（未来可考虑多路复用单连接）
 - 🟡 `quote_update` 不带 JWT, hqserver 凭 IP/同源信任（生产环境需加 mTLS 或反代鉴权）
 - 🟢 ~~`strategy_update` / `t0_strategy_update` 频道~~ → 2026-08-10 随网格引擎删除（commit `aa70dae`）
 - 🟢 ~~固定 3s 重连~~ → v7 改指数退避
