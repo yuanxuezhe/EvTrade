@@ -35,16 +35,19 @@ from server.auth.security import hash_password, create_access_token
 
 
 @pytest.fixture
-def db():
+def db(mock_trd_date):
     """每个 test 独立 Session（不动现有数据）.
 
     v-future (2026-08-27 用户硬规则): 测试**不删**生产 orders/trades 数据。
-    隔离策略: 测试订单用 trd_date='99990718' 高位前缀 (跟生产 trd_date=202608xx 完全不冲突);
+    隔离策略: 测试订单用 conftest.TEST_TRD_DATE 高位前缀 (跟生产 trd_date=202608xx 完全不冲突);
     测试 trader 用户名 't_place_v77' 已有下划线, finalizer 排除 admin/trader.
     """
     from sqlalchemy import text
     s = SessionLocal()
     yield s
+    # v-future (2026-08-27): finalizer 清本测试标记的 orders 行 (含 place 主流程/seed 写入),
+    #   按 user_def 标记清不限 trd_date (防历史残留积累, 同 test_orders_cancel)
+    s.execute(text("DELETE FROM orders WHERE user_def LIKE '_test_place_async_v77'"))
     # v-future (REQ-TRADE-030): finalizer 兜底清 t_* 测试用户, 防 admin/trader seed 永久丢失
     #   判定: LOCATE('_', username) > 0 (含下划线 = 测试用户名约定) 且排除真实用户 admin/trader
     s.execute(text("DELETE FROM users WHERE LOCATE('_', username) > 0 AND username NOT IN ('admin', 'trader')"))
@@ -62,26 +65,6 @@ def trader(db):
         Users.delete_one(id=_old.id)
     u = Users.add_one({"username": "t_place_v77", "password_hash": hash_password("x"), "role": "trader"})
     return {"id": u.id, "username": u.username}
-
-
-@pytest.fixture
-def mock_trd_date(monkeypatch):
-    """Monkeypatch _get_active_trd_date 返回 '99990718' 隔离 trd_date.
-
-    v-future (2026-08-27 用户硬规则): 不动 sys_status 表, 用高位前缀 trd_date 隔离测试数据
-    与生产数据 (生产 trd_date=202608xx). 测试写入 orders.trd_date='99990718' 永远不会碰到
-    生产订单行. _get_active_trd_date 由 place() 主流程调, mock 后 place() 自动用 '99990718'.
-    """
-    from server.repo import orders as repo_orders
-
-    def _fake_get_active_trd_date(db=None) -> str:
-        return "99990718"
-
-    monkeypatch.setattr(repo_orders, "_get_active_trd_date", _fake_get_active_trd_date)
-    # 同步 patch re-export 链上的别名 (place.py: from server.repo.orders import _get_active_trd_date)
-    from server.api.orders import place as place_mod
-    monkeypatch.setattr(place_mod, "_get_active_trd_date", _fake_get_active_trd_date)
-    return "99990718"
 
 
 @pytest.fixture
@@ -146,13 +129,13 @@ def fake_broadcast(monkeypatch):
 # ─────────────── Helpers ───────────────
 
 
-def _make_order(db, user_id, order_no="10000001", status="48", trd_date="99990718"):
+def _make_order(db, user_id, order_no: str, status: str, trd_date: str):
     """直接 DB 插入一行 status=48 Order, 模拟阶段 A 完成后 DB 状态
 
     注: orders 无 user_id 字段 (按 trd_date + order_no 联合 PK), user_id 参数仅签名兼容.
     tables 层: Orders.upsert_one (复合 PK trd_date+order_no), 返回 Row.
 
-    v-future (2026-08-27): 默认 trd_date='99990718' 隔离测试数据与生产数据 (生产 trd_date=202608xx).
+    v-future (2026-08-27): trd_date 必传 (conftest.TEST_TRD_DATE 隔离测试数据与生产数据, 生产 trd_date=202608xx).
     """
     o = Orders.upsert_one({
         "user_def": "_test_place_async_v77",
@@ -178,7 +161,7 @@ async def test_submit_rpc_success_keeps_status_48_until_broker_push(trader, fake
       - status_msg 保持 '' (不变, 等 broker ord_cfm 推)
       - log.info 含 ack.code=0
     """
-    order = _make_order(db, trader["id"], order_no="10000001")
+    order = _make_order(db, trader["id"], order_no="10000001", status="48", trd_date=mock_trd_date)
     fake_ord_stk.set_ack({"code": 0, "list": [{"order_id": "BROKER-OID-X"}]})
 
     # 关键: 在 fake loop 中 await task, 让 RPC path 执行
@@ -206,7 +189,7 @@ async def test_submit_rpc_broker_reject_defers_to_transport(trader, fake_ord_stk
       - status_msg 保持 ''
       - place.py 不主动 ws push (transport 推)
     """
-    order = _make_order(db, trader["id"], order_no="10000002")
+    order = _make_order(db, trader["id"], order_no="10000002", status="48", trd_date=mock_trd_date)
     fake_ord_stk.set_ack({"code": 1, "msg": "资金不足"})
 
     await _submit_rpc_async(order.order_no, order.trd_date)
@@ -229,7 +212,7 @@ async def test_submit_rpc_exception_writes_status_57_fallback(trader, fake_ord_s
     这条路径**不是** broker push 路径, 是 _submit_rpc_async 自己的兜底:
     transport cache 已被 evict 后, 必须由这里写 status=57, 否则订单卡 status=48.
     """
-    order = _make_order(db, trader["id"], order_no="10000003")
+    order = _make_order(db, trader["id"], order_no="10000003", status="48", trd_date=mock_trd_date)
     fake_ord_stk.set_exception(TimeoutError("broker RPC timeout 30s"))
 
     await _submit_rpc_async(order.order_no, order.trd_date)
@@ -253,9 +236,9 @@ async def test_submit_rpc_exception_writes_status_57_fallback(trader, fake_ord_s
     ), f"fallback 路径必须 ws push data.status=57, 实际: {[p.get('data', {}).get('status') for p in push_payloads]}"
 
 
-async def test_submit_rpc_does_not_swallow_exception(trader, fake_ord_stk, fake_broadcast, db, caplog):
+async def test_submit_rpc_does_not_swallow_exception(trader, fake_ord_stk, fake_broadcast, db, caplog, mock_trd_date):
     """RPC 异常必须 log.exception (不能静默吞掉, 否则丢委托无法排查)"""
-    order = _make_order(db, trader["id"], order_no="10000004")
+    order = _make_order(db, trader["id"], order_no="10000004", status="48", trd_date=mock_trd_date)
     fake_ord_stk.set_exception(RuntimeError("broker 进程崩溃"))
 
     with caplog.at_level(logging.ERROR, logger="server.api.orders.place"):
@@ -289,7 +272,7 @@ async def test_submit_rpc_payload_includes_required_fields(trader, fake_ord_stk,
       - 母单字段 (task_id / strategy_type) 必须在 (用于 signal_consumer 路径)
       - broker 反馈字段 (order_id / status_msg / order_time / order_flag)
     """
-    o = _make_order(db, trader["id"], order_no="10000005")
+    o = _make_order(db, trader["id"], order_no="10000005", status="48", trd_date=mock_trd_date)
     o.task_id = 99999  # 任意占位 (不写真 T0Task, 用户硬规则)
     o.strategy_type = 1  # 快速做T
     o.update()

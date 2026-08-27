@@ -69,17 +69,6 @@ def trader(db):
 
 
 @pytest.fixture
-def mock_trd_date(monkeypatch):
-    """返回固定 trd_date='99990718' (cancel 端点通过 Query param 接收, 不调 _get_active_trd_date).
-
-    v-future (2026-08-27 用户硬规则): 用高位前缀 trd_date 隔离测试数据与生产数据
-    (生产 trd_date=202608xx). 测试写入 orders.trd_date='99990718' 永远不会碰到生产订单行.
-    test 通过 query param {"trd_date": mock_trd_date} 显式传给 cancel endpoint.
-    """
-    return "99990718"
-
-
-@pytest.fixture
 def fake_rpc_cancel(monkeypatch):
     """monkeypatch rpc_cancel_order → fake async (可控 ack/异常)。"""
     from server.api.orders import cancel as cancel_mod
@@ -145,10 +134,10 @@ def _deps_override(trader):
 # ─────────────── Helpers ───────────────
 
 
-def _seed_reported_order(db, order_no="10000001", broker_order_id="BRK-CXL-001", trd_date="99990718"):
+def _seed_reported_order(db, order_no="10000001", broker_order_id="BRK-CXL-001", *, trd_date: str):
     """插入一行已报订单（status=50 + broker_order_id 已回报）。
 
-    v-future (2026-08-27 用户硬规则): 默认 trd_date='99990718' 隔离测试数据与生产数据 (生产 trd_date=202608xx).
+    v-future (2026-08-27 用户硬规则): trd_date 必传 (conftest.TEST_TRD_DATE 隔离测试数据与生产数据, 生产 trd_date=202608xx).
     db 参数保留签名兼容 (与 test_place_async.py 一致).
     """
     return Orders.upsert_one({
@@ -172,10 +161,10 @@ def _seed_reported_order(db, order_no="10000001", broker_order_id="BRK-CXL-001",
     }, return_row=True, trd_date=trd_date, order_no=order_no)
 
 
-def _seed_unreported_order(db, order_no="10000002", trd_date="99990718"):
+def _seed_unreported_order(db, order_no="10000002", *, trd_date: str):
     """插入一行未报订单（status=48，无 broker_order_id）。
 
-    v-future (2026-08-27): 默认 trd_date='99990718' 隔离测试数据.
+    v-future (2026-08-27): trd_date 必传 (conftest.TEST_TRD_DATE 隔离测试数据).
     """
     return Orders.upsert_one({
         "user_def": "_test_cancel_v1",
@@ -202,7 +191,7 @@ def _seed_unreported_order(db, order_no="10000002", trd_date="99990718"):
 
 async def test_cancel_happy_path_50_to_54(trader, fake_rpc_cancel, fake_broadcast, db, _deps_override, mock_trd_date):
     """happy path: status=50 + broker order_id → cancel-row status=54 + orig.cancelled_volume=volume + cancel-trade 写入。"""
-    orig = _seed_reported_order(db, order_no="10000001")
+    orig = _seed_reported_order(db, order_no="10000001", trd_date=mock_trd_date)
     fake_rpc_cancel.set_ack({"code": 0, "msg": "OK"})
 
     transport = ASGITransport(app=app)
@@ -224,8 +213,10 @@ async def test_cancel_happy_path_50_to_54(trader, fake_rpc_cancel, fake_broadcas
     updated = Orders.query_by("order_no", "10000001")[0]
     assert updated.cancelled_volume == updated.volume == 100
 
-    # 只数测试隔离 trd_date 下的行 (query_all 无过滤会吃到历史残留/生产数据)
-    cancel_rows = [o for o in Orders.query_by("trd_date", mock_trd_date) if o.order_no != "10000001"]
+    # 按 raw_id 定位本测试的 cancel-row: raw_id = orig.order_no (结构化冗余),
+    # 比 user_def/order_flag 过滤更精确 (同 trd_date 下其他测试文件/历史残留的 flag=0 行不算)
+    cancel_rows = [o for o in Orders.query_by("trd_date", mock_trd_date)
+                   if o.raw_id == orig.order_no and o.order_no != orig.order_no]
     assert len(cancel_rows) == 1
     cancel_row = cancel_rows[0]
     assert cancel_row.order_flag == 1
@@ -245,7 +236,7 @@ async def test_cancel_happy_path_50_to_54(trader, fake_rpc_cancel, fake_broadcas
 
 async def test_cancel_48_unreported_rejected(trader, fake_rpc_cancel, fake_broadcast, db, _deps_override, mock_trd_date):
     """pre-check: status=48 (未报) 不可撤，code=1，无 RPC 调用。"""
-    _seed_unreported_order(db, order_no="10000002")
+    _seed_unreported_order(db, order_no="10000002", trd_date=mock_trd_date)
 
     transport = ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
@@ -297,7 +288,7 @@ async def test_cancel_no_broker_order_id_returns_broker_not_ready(trader, fake_r
 
 async def test_cancel_rpc_failure_writes_57_no_trade(trader, fake_rpc_cancel, fake_broadcast, db, _deps_override, mock_trd_date):
     """RPC ack.code != 0 → cancel-row status=57 (废单, 审计保留), 无 cancel-trade, orig 不变。"""
-    orig = _seed_reported_order(db, order_no="10000004")
+    orig = _seed_reported_order(db, order_no="10000004", trd_date=mock_trd_date)
     fake_rpc_cancel.set_ack({"code": 1, "msg": "broker 撤单失败"})
 
     transport = ASGITransport(app=app)
@@ -327,7 +318,7 @@ async def test_cancel_rpc_failure_writes_57_no_trade(trader, fake_rpc_cancel, fa
 
 async def test_cancel_rpc_exception_writes_57(trader, fake_rpc_cancel, fake_broadcast, db, _deps_override, mock_trd_date, caplog):
     """RPC 抛异常 → cancel-row status=57 + log.exception, 无 cancel-trade。"""
-    _seed_reported_order(db, order_no="10000005")
+    _seed_reported_order(db, order_no="10000005", trd_date=mock_trd_date)
     fake_rpc_cancel.set_exception(RuntimeError("RPC connection refused"))
 
     with caplog.at_level(logging.ERROR, logger="server.api.orders.cancel"):
