@@ -35,7 +35,6 @@ from server.services.script_strategy.strategy_order_lifecycle import (
     build_start_forward_payload,
 )
 from server.services.script_strategy.strategy_orders import (
-    STATUS_RUNNING,
     get_strategy_order,
     list_strategy_order_children,
 )
