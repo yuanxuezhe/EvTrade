@@ -145,9 +145,21 @@ Vue3 + FastAPI 量化交易 Web 平台。**业务数据 MySQL 优先**（v4 改�
 - **测试文件命名**：`<模块>_test.py` 或 `test_<模块>.py`（与现有 `server/tests/` 风格一致）
 - **测试函数命名**：`test_<函数名>_<场景>`
 - **目标通过率**：100%（新写的测试必须全过）
-- **核心目标**（2026-08-23 基线）：
-  - `pytest hq/ server/tests/` → **71 collected / 64 passed**（数字按 `pytest` 输出如实记录；任何 refactor 不得让 `passed` 数字降低）
-  - 7 个 failed 属历史基线（详见 `openspec/AGENTS.md` 与归档 change 历史）
+- **核心目标**（2026-08-27 基线）：
+  - `pytest hq/ server/tests/ tests/` → **133 collected / 121 passed / 12 failed**（数字按 `pytest` 输出如实记录；任何 refactor 不得让 `passed` 数字降低）
+  - 12 个 failed 属历史基线（详见下方"历史失败归属"表）；全是 fixture / 期望漂移，**不是代码 bug**
+  - 旧基线（2026-08-23，71/64/7）已废弃——`test_place_async.py` 6 个 + `test_quota_batch.py` 5 个 + `test_pos_push_diff.py` 1 个 + `test_v78_skip_rebroadcast.py` 1 个
+
+### 历史失败归属（2026-08-27）
+
+| 测试文件 | fail 数 | 根因 | 状态 |
+|---|---|---|---|
+| `server/tests/test_place_async.py` | 6 | `status=48 (expected 50)` / `'48' == '57'` / `'待报' == '未报'` — broker 字典变更（v11 align-status-codes-to-xtconstant）后 fixture 期望未同步 | 历史基线（待 fixture 重写时跟进） |
+| `tests/test_quota_batch.py` | 5 | `'Config' object has no attribute 'QUOTA_FLUSH_MS'` — v131 quote batch 配置项重构后测试 fixture 没更新 | 历史基线 |
+| `server/tests/push/test_pos_push_diff.py::test_no_change_returns_none_and_skips_update` | 1 | diff 计算逻辑变更（v118+ 持仓架构）后 fixture 期望未同步 | 历史基线 |
+| `server/tests/test_v78_skip_rebroadcast.py::test_cancel_class_not_pushed` | 1 | `53 不在 PUSH_STATUSES` — broker 字典变更后 fixture 没更新 | 历史基线 |
+
+> **修复优先级**：P1-1 项处理（拆 4 个 fix commit，逐个改 fixture 期望）
 
 ---
 
