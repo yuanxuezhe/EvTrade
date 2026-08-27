@@ -46,10 +46,10 @@ def db():
     s = SessionLocal()
     yield s
     # v-future (2026-08-27): 清 test_cancel_v1 标记的测试行 (含 cancel-row + 测试种子行)
-    #   - DELETE orders WHERE user_def LIKE '_test_cancel_v1%' OR user_def LIKE 'CANCEL:%'
-    #     (cancel-row 写 user_def='CANCEL:<orig_order_no>')
-    #   - DELETE trades WHERE 关联的 order_no 在测试范围
-    s.execute(text("DELETE FROM orders WHERE trd_date='99990718' AND (user_def LIKE '_test_cancel_v1%' OR user_def LIKE 'CANCEL:%')"))
+    #   - 按 _test_cancel_v1 标记清, 不限 trd_date (标记即测试数据, 防历史残留积累);
+    #     CANCEL: 行仍限定 trd_date='99990718' (本测试隔离日期, 不碰其他测试/生产的 CANCEL 行)
+    s.execute(text("DELETE FROM orders WHERE user_def LIKE '_test_cancel_v1%'"))
+    s.execute(text("DELETE FROM orders WHERE trd_date='99990718' AND user_def LIKE 'CANCEL:%'"))
     s.execute(text("DELETE FROM users WHERE LOCATE('_', username) > 0 AND username NOT IN ('admin', 'trader')"))
     s.commit()
     s.close()
@@ -224,7 +224,8 @@ async def test_cancel_happy_path_50_to_54(trader, fake_rpc_cancel, fake_broadcas
     updated = Orders.query_by("order_no", "10000001")[0]
     assert updated.cancelled_volume == updated.volume == 100
 
-    cancel_rows = [o for o in Orders.query_all() if o.order_no != "10000001"]
+    # 只数测试隔离 trd_date 下的行 (query_all 无过滤会吃到历史残留/生产数据)
+    cancel_rows = [o for o in Orders.query_by("trd_date", mock_trd_date) if o.order_no != "10000001"]
     assert len(cancel_rows) == 1
     cancel_row = cancel_rows[0]
     assert cancel_row.order_flag == 1
@@ -257,8 +258,8 @@ async def test_cancel_48_unreported_rejected(trader, fake_rpc_cancel, fake_broad
 
     # 验证: 无 RPC 调用
     assert len(fake_rpc_cancel.calls) == 0
-    # 验证: DB 未插入 cancel-row
-    cancel_rows = [o for o in Orders.query_all() if o.user_def.startswith("CANCEL:")]
+    # 验证: DB 未插入 cancel-row (限定测试隔离 trd_date, 防历史残留干扰)
+    cancel_rows = [o for o in Orders.query_by("trd_date", mock_trd_date) if o.user_def.startswith("CANCEL:")]
     assert len(cancel_rows) == 0
 
 
@@ -308,7 +309,7 @@ async def test_cancel_rpc_failure_writes_57_no_trade(trader, fake_rpc_cancel, fa
     assert "broker 撤单失败" in body["msg"]
 
     # DB 验证: cancel-row status=57 + status_msg 含 broker msg
-    cancel_rows = [o for o in Orders.query_all() if o.user_def.startswith("CANCEL:")]
+    cancel_rows = [o for o in Orders.query_by("trd_date", mock_trd_date) if o.user_def.startswith("CANCEL:")]
     assert len(cancel_rows) == 1
     assert cancel_rows[0].status == "57"
     assert "broker 撤单失败" in cancel_rows[0].status_msg
@@ -338,7 +339,7 @@ async def test_cancel_rpc_exception_writes_57(trader, fake_rpc_cancel, fake_broa
     assert body["code"] == 1
 
     # cancel-row status=57
-    cancel_rows = [o for o in Orders.query_all() if o.user_def.startswith("CANCEL:")]
+    cancel_rows = [o for o in Orders.query_by("trd_date", mock_trd_date) if o.user_def.startswith("CANCEL:")]
     assert len(cancel_rows) == 1
     assert cancel_rows[0].status == "57"
     assert "RPC connection refused" in cancel_rows[0].status_msg
