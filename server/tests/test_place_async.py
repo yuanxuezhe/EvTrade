@@ -36,13 +36,14 @@ from server.auth.security import hash_password, create_access_token
 
 @pytest.fixture
 def db():
-    """每个 test 独立 Session（DELETE orders 表保隔离）"""
+    """每个 test 独立 Session（不动现有数据）.
+
+    v-future (2026-08-27 用户硬规则): 测试**不删**生产 orders/trades 数据。
+    隔离策略: 测试订单用 trd_date='99990718' 高位前缀 (跟生产 trd_date=202608xx 完全不冲突);
+    测试 trader 用户名 't_place_v77' 已有下划线, finalizer 排除 admin/trader.
+    """
     from sqlalchemy import text
     s = SessionLocal()
-    # 清表 + 重置自增（place.py 用 order_no 单调递增）
-    s.execute(text("DELETE FROM orders"))
-    s.execute(text("ALTER TABLE orders AUTO_INCREMENT = 1"))
-    s.commit()
     yield s
     # v-future (REQ-TRADE-030): finalizer 兜底清 t_* 测试用户, 防 admin/trader seed 永久丢失
     #   判定: LOCATE('_', username) > 0 (含下划线 = 测试用户名约定) 且排除真实用户 admin/trader
@@ -53,19 +54,34 @@ def db():
 
 @pytest.fixture
 def trader(db):
-    """trader 用户 + 已激活交易日 (v-future REQ-TRADE-030: db fixture finalizer 自动清理 t_*)"""
+    """trader 用户 (v-future REQ-TRADE-030: db fixture finalizer 自动清理 t_*)
+
+    v-future (2026-08-27): 不动 sys_status 表, 测试通过 mock_trd_date fixture 拿隔离 trd_date='99990718'.
+    """
     for _old in Users.query_by("username", "t_place_v77"):
         Users.delete_one(id=_old.id)
     u = Users.add_one({"username": "t_place_v77", "password_hash": hash_password("x"), "role": "trader"})
-
-    # 激活交易日（place.py 依赖 SysStatus active; sys_status 单行 id=1）
-    SysStatus.delete_one(id=1)
-    SysStatus.upsert_one({
-        "trd_date": "20260718",
-        "status": "active",
-    }, id=1)
-
     return {"id": u.id, "username": u.username}
+
+
+@pytest.fixture
+def mock_trd_date(monkeypatch):
+    """Monkeypatch _get_active_trd_date 返回 '99990718' 隔离 trd_date.
+
+    v-future (2026-08-27 用户硬规则): 不动 sys_status 表, 用高位前缀 trd_date 隔离测试数据
+    与生产数据 (生产 trd_date=202608xx). 测试写入 orders.trd_date='99990718' 永远不会碰到
+    生产订单行. _get_active_trd_date 由 place() 主流程调, mock 后 place() 自动用 '99990718'.
+    """
+    from server.repo import orders as repo_orders
+
+    def _fake_get_active_trd_date(db=None) -> str:
+        return "99990718"
+
+    monkeypatch.setattr(repo_orders, "_get_active_trd_date", _fake_get_active_trd_date)
+    # 同步 patch re-export 链上的别名 (place.py: from server.repo.orders import _get_active_trd_date)
+    from server.api.orders import place as place_mod
+    monkeypatch.setattr(place_mod, "_get_active_trd_date", _fake_get_active_trd_date)
+    return "99990718"
 
 
 @pytest.fixture
@@ -130,31 +146,38 @@ def fake_broadcast(monkeypatch):
 # ─────────────── Helpers ───────────────
 
 
-def _make_order(db, user_id, order_no="10000001", status="48"):
+def _make_order(db, user_id, order_no="10000001", status="48", trd_date="99990718"):
     """直接 DB 插入一行 status=48 Order, 模拟阶段 A 完成后 DB 状态
 
     注: orders 无 user_id 字段 (按 trd_date + order_no 联合 PK), user_id 参数仅签名兼容.
     tables 层: Orders.upsert_one (复合 PK trd_date+order_no), 返回 Row.
+
+    v-future (2026-08-27): 默认 trd_date='99990718' 隔离测试数据与生产数据 (生产 trd_date=202608xx).
     """
     o = Orders.upsert_one({
-        "user_def": "",
+        "user_def": "_test_place_async_v77",
         "stock_code": "600519.SH", "order_type": "23",
         "price_type": 0, "price": 1800.0, "volume": 100,
         "traded_volume": 0, "traded_amount": 0.0, "avg_price": 0.0,
         "cancelled_volume": 0,
         "order_flag": 0,
-        "status": status, "status_msg": "未报" if status == "48" else "",
-        "order_time": "2026-07-18 09:30:00.000",
+        "status": status, "status_msg": "" if status == "48" else "",
+        "order_time": "9999-07-18 09:30:00.000",
         "task_id": None, "strategy_type": 0,
-    }, return_row=True, trd_date="20260718", order_no=order_no)
+    }, return_row=True, trd_date=trd_date, order_no=order_no)
     return o
 
 
 # ─────────────── 阶段 B 单测: _submit_rpc_async ───────────────
 
 
-async def test_submit_rpc_success_updates_status_50_and_pushes(trader, fake_ord_stk, fake_broadcast, db):
-    """RPC 成功 (ack.code==0 + order_id) → status=50 + 阶段 B ws push status=50"""
+async def test_submit_rpc_success_keeps_status_48_until_broker_push(trader, fake_ord_stk, fake_broadcast, db, mock_trd_date):
+    """RPC 成功 (ack.code==0 + order_id) → v11 broker 字典对齐后 _submit_rpc_async 不再写 status=50/status_msg,
+    状态由 broker ord_cfm push 异步推. 本测试验证 _submit_rpc_async 阶段 ack 路径行为:
+      - status 保持 48 (不变)
+      - status_msg 保持 '' (不变, 等 broker ord_cfm 推)
+      - log.info 含 ack.code=0
+    """
     order = _make_order(db, trader["id"], order_no="10000001")
     fake_ord_stk.set_ack({"code": 0, "list": [{"order_id": "BROKER-OID-X"}]})
 
@@ -163,67 +186,71 @@ async def test_submit_rpc_success_updates_status_50_and_pushes(trader, fake_ord_
     # 等待可能的 ws push 异步任务
     await asyncio.sleep(0.01)
 
-    # DB 验证: status=50 + broker_order_id 写入
-    # 注: _submit_rpc_async 用独立 SessionLocal commit, 测试 fixture db session 不能直接读,
-    #     必须新开一个 SessionLocal + 干净事务才能读到 commit 后的值.
+    # DB 验证: status 保持 48 (broker ord_cfm 未推情况下)
     db.close()  # 关掉 fixture 的 transaction-bound session
     db.expire_all()
     _rows = Orders.query_by('order_no', order.order_no)
     updated = _rows[0] if _rows else None
-    assert updated.status == "50", f"status={updated.status} (expected 50)"
-    assert updated.order_id == "BROKER-OID-X"
-    assert updated.status_msg == "已报"
-
-    # ws push 验证: 阶段 B (status=50)
-    push_payloads = [p for c, p in fake_broadcast.calls if c == "order_update"]
-    assert len(push_payloads) >= 1
-    last_push = push_payloads[-1]
-    assert last_push["status"] == "50"
-    assert last_push["order_no"] == order.order_no
-    assert last_push["order_id"] == "BROKER-OID-X"
+    assert updated is not None, f"order_no={order.order_no} 不应被删"
+    assert updated.status == "48", f"v11 后 ack.code=0 不改 status, 期望 48, 实际 {updated.status}"
+    assert updated.status_msg == "", f"v11 后 ack.code=0 不改 status_msg, 期望 '', 实际 '{updated.status_msg}'"
+    # broker_order_id v11 后也不在 _submit_rpc_async 写 (留给 ord_cfm push)
+    assert (updated.order_id or "") == "", f"v11 后 broker_order_id 由 ord_cfm 推, 期望 '', 实际 '{updated.order_id}'"
 
 
-async def test_submit_rpc_broker_reject_updates_status_57_with_cancel_volume(trader, fake_ord_stk, fake_broadcast, db):
-    """broker 拒单 (ack.code != 0) → status=57 + cancelled_volume=volume + 阶段 B ws push"""
+async def test_submit_rpc_broker_reject_defers_to_transport(trader, fake_ord_stk, fake_broadcast, db, mock_trd_date):
+    """broker 拒单 (ack.code != 0) → v11 后由 transport._handle_ord_stk_reply_junk 接管 (不在 place.py 写).
+
+    本测试验证 _submit_rpc_async 自身行为:
+      - status 保持 48 (transport 才写 status=57)
+      - status_msg 保持 ''
+      - place.py 不主动 ws push (transport 推)
+    """
     order = _make_order(db, trader["id"], order_no="10000002")
     fake_ord_stk.set_ack({"code": 1, "msg": "资金不足"})
 
     await _submit_rpc_async(order.order_no, order.trd_date)
     await asyncio.sleep(0.01)
 
-    db.close()  # 关掉 fixture 的 transaction-bound session
+    db.close()
     db.expire_all()
     _rows = Orders.query_by('order_no', order.order_no)
     updated = _rows[0] if _rows else None
-    assert updated.status == "57"
-    assert updated.cancelled_volume == updated.volume  # R2a 抹平
-    assert "资金不足" in updated.status_msg
-
-    push_payloads = [p for c, p in fake_broadcast.calls if c == "order_update"]
-    last_push = push_payloads[-1]
-    assert last_push["status"] == "57"
-    assert last_push["cancelled_volume"] == updated.volume
+    assert updated is not None, f"order_no={order.order_no} 不应被删"
+    # v11 broker 字典对齐后: ack.code!=0 由 transport 接管废单路径, _submit_rpc_async 不写 status
+    assert updated.status == "48", f"v11 后 ack.code!=0 废单路径走 transport, 期望 48, 实际 {updated.status}"
+    assert updated.cancelled_volume == 0, f"v11 后 cancelled_volume 由 transport 写, 期望 0, 实际 {updated.cancelled_volume}"
+    assert updated.status_msg == "", f"v11 后 status_msg 由 transport 写, 期望 '', 实际 '{updated.status_msg}'"
 
 
-async def test_submit_rpc_exception_updates_status_57_and_pushes(trader, fake_ord_stk, fake_broadcast, db):
-    """RPC 异常 (timeout / broker down) → status=57 + 阶段 B ws push + status_msg 含异常"""
+async def test_submit_rpc_exception_writes_status_57_fallback(trader, fake_ord_stk, fake_broadcast, db, mock_trd_date):
+    """RPC 异常 (timeout / broker down) → _submit_rpc_async 走 fallback 写 status=57 + msg + ws push (place.py:230-241).
+
+    这条路径**不是** broker push 路径, 是 _submit_rpc_async 自己的兜底:
+    transport cache 已被 evict 后, 必须由这里写 status=57, 否则订单卡 status=48.
+    """
     order = _make_order(db, trader["id"], order_no="10000003")
     fake_ord_stk.set_exception(TimeoutError("broker RPC timeout 30s"))
 
     await _submit_rpc_async(order.order_no, order.trd_date)
     await asyncio.sleep(0.01)
 
-    db.close()  # 关掉 fixture 的 transaction-bound session
+    db.close()
     db.expire_all()
     _rows = Orders.query_by('order_no', order.order_no)
     updated = _rows[0] if _rows else None
-    assert updated.status == "57"
-    assert "RPC 失败" in updated.status_msg
-    assert "broker RPC timeout 30s" in updated.status_msg
+    assert updated is not None
+    # fallback 路径写 status=57 + status_msg (broker JUNK 废单)
+    assert updated.status == "57", f"异常 fallback 路径期望 status=57, 实际 {updated.status}"
+    assert "RPC 失败" in updated.status_msg, f"status_msg 应含 'RPC 失败', 实际 '{updated.status_msg}'"
+    assert "broker RPC timeout 30s" in updated.status_msg, f"status_msg 应含原始异常, 实际 '{updated.status_msg}'"
 
+    # ws push 验证: fallback 路径 _submit_rpc_async 自己 push (走 _broadcast_order_cfm,
+    # payload 是 {type:'ord_cfm', channel:'order_update', data:{...order fields...}} 嵌套结构)
     push_payloads = [p for c, p in fake_broadcast.calls if c == "order_update"]
-    last_push = push_payloads[-1]
-    assert last_push["status"] == "57"
+    assert any(
+        p.get("data", {}).get("status") == "57" for p in push_payloads
+    ), f"fallback 路径必须 ws push data.status=57, 实际: {[p.get('data', {}).get('status') for p in push_payloads]}"
 
 
 async def test_submit_rpc_does_not_swallow_exception(trader, fake_ord_stk, fake_broadcast, db, caplog):
@@ -241,11 +268,11 @@ async def test_submit_rpc_does_not_swallow_exception(trader, fake_ord_stk, fake_
         f"RPC 异常必须 log, 实际日志: {[r.getMessage() for r in caplog.records]}"
 
 
-async def test_submit_rpc_missing_order_logs_error_no_push(trader, fake_ord_stk, fake_broadcast, db, caplog):
+async def test_submit_rpc_missing_order_logs_error_no_push(trader, fake_ord_stk, fake_broadcast, db, caplog, mock_trd_date):
     """订单不存在 (DB 被删等异常场景) → log error + 不 push (避免脏数据)"""
-    # _make_order 不调, 模拟 order_no=99999999 不存在
+    # _make_order 不调, 模拟 order_no=99999999 不存在 (用 mock_trd_date 提供的隔离 trd_date)
     with caplog.at_level(logging.ERROR, logger="server.api.orders.place"):
-        await _submit_rpc_async("99999999", "20260718")
+        await _submit_rpc_async("99999999", mock_trd_date)
         await asyncio.sleep(0.01)
 
     error_records = [r for r in caplog.records if r.levelname == "ERROR"]
@@ -254,33 +281,43 @@ async def test_submit_rpc_missing_order_logs_error_no_push(trader, fake_ord_stk,
     assert len(fake_broadcast.calls) == 0, "订单不存在不应 push ws (脏数据)"
 
 
-async def test_submit_rpc_payload_includes_task_id_and_strategy(trader, fake_ord_stk, fake_broadcast, db):
-    """task_id + strategy_type 必须透传到 ws push (T0Trade filter/cache 列依赖)"""
-    # 改 order 带 task_id + strategy_type=1
-    # t0_tasks 自增 id → add_one 让 DB 生成; 清空用 delete_one 循环
-    for t in T0Tasks.query_all():
-        T0Tasks.delete_one(id=t.id)
-    task = T0Tasks.add_one({
-        "user_id": trader["id"], "stock_code": "600519.SH",
-        "base_volume": 0, "target_volume": 100,
-        "coefficient": 1.0, "status": "active",
-        "created_trd_date": "20260718",
-    })
+async def test_submit_rpc_payload_includes_required_fields(trader, fake_ord_stk, fake_broadcast, db, mock_trd_date):
+    """v91.4 后 _to_order_out 仍包含 task_id / strategy_type 字段 (前端 Pinia store applyOrderPush 仍读).
 
+    本测试验证 _to_order_out 关键字段存在 (REGRESSION 防核心字段被删):
+      - 基础字段 (order_no / stock_code / status / volume / price / trd_date)
+      - 母单字段 (task_id / strategy_type) 必须在 (用于 signal_consumer 路径)
+      - broker 反馈字段 (order_id / status_msg / order_time / order_flag)
+    """
     o = _make_order(db, trader["id"], order_no="10000005")
-    o.task_id = task.id
+    o.task_id = 99999  # 任意占位 (不写真 T0Task, 用户硬规则)
     o.strategy_type = 1  # 快速做T
-    o.update()  # Row.update(): 无参 WHERE pk + SET 全字段 (tables 层持久化)
+    o.update()
 
     fake_ord_stk.set_ack({"code": 0, "list": [{"order_id": "OID-X"}]})
 
     await _submit_rpc_async(o.order_no, o.trd_date)
     await asyncio.sleep(0.01)
 
-    push_payloads = [p for c, p in fake_broadcast.calls if c == "order_update"]
-    last_push = push_payloads[-1]
-    assert last_push["task_id"] == task.id
-    assert last_push["strategy_type"] == 1
+    # 直接验证 _to_order_out schema
+    from server.api.orders.schemas import _to_order_out
+    o2 = Orders.query_one(trd_date=o.trd_date, order_no=o.order_no)
+    assert o2 is not None, f"order 应在 DB: trd_date={o.trd_date} order_no={o.order_no}"
+    payload_obj = _to_order_out(o2)
+    payload = payload_obj.model_dump() if hasattr(payload_obj, 'model_dump') else payload_obj.dict()
+
+    # 基础字段必须在
+    for k in ("order_no", "trd_date", "stock_code", "status", "volume", "price"):
+        assert k in payload, f"payload 应含 {k}, 实际 keys: {list(payload.keys())}"
+    # 母单字段必须在 (signal_consumer 路径需要 task_id / strategy_type)
+    assert "task_id" in payload, f"signal_consumer 路径需要 task_id, 实际 keys: {list(payload.keys())}"
+    assert "strategy_type" in payload, f"signal_consumer 路径需要 strategy_type, 实际 keys: {list(payload.keys())}"
+    # broker 反馈字段必须在
+    assert "order_id" in payload
+    assert "status_msg" in payload
+    # 验证 task_id 值
+    assert payload["task_id"] == 99999, f"task_id 应=99999, 实际 {payload['task_id']}"
+    assert payload["strategy_type"] == 1
 
 
 # ─────────────── 阶段 A 单测: 立即应答 + ws push status=48 ───────────────
@@ -302,17 +339,10 @@ async def test_endpoint_creates_task_and_returns_immediately(trader, fake_ord_st
     from httpx import ASGITransport
     from server.main import app
     from server.auth.deps import get_current_user
-    from sqlalchemy import text
     from server.infra.db import SessionLocal as _SL
 
-    # 清理 orders 表
-    cln = _SL()
-    try:
-        cln.execute(text("DELETE FROM orders"))
-        cln.execute(text("ALTER TABLE orders AUTO_INCREMENT = 1"))
-        cln.commit()
-    finally:
-        cln.close()
+    # v-future (2026-08-27 用户硬规则): 不清 orders 表. 测试用 mock_trd_date 拿隔离 trd_date='99990718',
+    # 生产 orders 那行 10000176 不会被测试碰到.
 
     # mock get_current_user
     u = Users.query_one(id=trader["id"])
@@ -352,21 +382,21 @@ async def test_endpoint_creates_task_and_returns_immediately(trader, fake_ord_st
             assert elapsed < 2.0, "endpoint 必须 <2s 内返回 (httpx + ASGI lifespan 启动开销), 实际 %.3fs" % elapsed
 
             data = resp.json()
-            # 2. code=0 + status=48 (DB 写完即返; broker xtconstant 48=未报)
+            # 2. code=0 + status=48 (DB 写完即返; broker xtconstant 48=待报)
             assert data["code"] == 0, "code=%s msg=%s" % (data.get("code"), data.get("msg"))
             assert data["order"]["status"] == "48"
-            assert data["order"]["status_msg"] == "未报"
+            # v11 broker 字典对齐后: server/repo/orders.py:283 INSERT 时统一 status_msg="待报"
+            # (旧期望 'status_msg == "未报"' 已废弃; v11 改名 "未报" → "待报")
+            assert data["order"]["status_msg"] == "待报", \
+                f"v11 后 status_msg 默认 '待报', 实际 '{data['order']['status_msg']}'"
 
-            # 3. 阶段 A ws push status=48 已发
+            # 3. 阶段 A ws push status=48 已发 (嵌套结构: payload.data.status)
             await asyncio.sleep(0.02)
             push_payloads = [p for c, p in fake_broadcast.calls if c == "order_update"]
-            assert any(p["status"] == "48" for p in push_payloads), \
-                "阶段 A 必须 ws push status=48, 实际: %s" % [p.get("status") for p in push_payloads]
+            assert any(p.get("data", {}).get("status") == "48" for p in push_payloads), \
+                "阶段 A 必须 ws push data.status=48, 实际: %s" % [p.get("data", {}).get("status") for p in push_payloads]
 
-            # 4. 等 RPC 后台跑完 (slow_call 0.05s + commit), 验证阶段 B ws push status=50
-            await asyncio.sleep(0.3)
-            push_payloads = [p for c, p in fake_broadcast.calls if c == "order_update"]
-            assert any(p["status"] == "50" for p in push_payloads), \
-                "阶段 B 必须 ws push status=50, 实际: %s" % [p.get("status") for p in push_payloads]
+            # 4. v11 后阶段 B (_submit_rpc_async ack.code=0 路径) **不主动 ws push**;
+            #    broker ord_cfm 异步推 status=50 时才 push. 本测试不验证阶段 B push.
     finally:
         app.dependency_overrides.clear()
