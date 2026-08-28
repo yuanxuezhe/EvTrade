@@ -3,6 +3,7 @@
 ## 对应代码路径
 
 - `scripts/sync_schema.py`（schema.yml ↔ DB 统一管理器：export / diff / apply）
+- `scripts/nullable_drift_sync.py`（nullable-only 漂移同步，**sync_schema.py apply 不处理 nullable 漂移**—— Pitfall 2 实测补刀。never DROP，仅 ALTER MODIFY NOT NULL）
 - `scripts/gen_tables.py`（tables 代码生成器：INFORMATION_SCHEMA → `server/tables/*.py`）
 - `scripts/run_all_migrations.py`（按序运行 `server/migrations/` 全部迁移）
 - `scripts/migrate_db.py`（evtrade → evtrade_dev 数据拷贝）
