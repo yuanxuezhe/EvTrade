@@ -432,19 +432,22 @@ pytest 模式下 `conftest.py` 会检测 `PYTEST_CURRENT_TEST` 环境变量，�
 
 ## 十一、AI 助手 skill 速查表（2026-08-27 瘦身）
 
-> 旧版 Hermes 注入的 39 个 EvTrade skill 已 archive 到 `~/.hermes/skills/.archive/evtrade-*/`。遇到相关问题时，**先查知识库 + 脚本目录**，按下面速查表定位。
+> **2026-08-27 末态：EvTrade 项目 0 个专属 skill**。39 个全部 archive（137 个总 archive），
+> 用法写在 `scripts/evtrade_cli/` + `知识库/脚本工具/evtrade-cli.md` + 各业务模块 spec.md。
+> 遇到 EvTrade 相关问题，**先查知识库 + 脚本目录**，按下面速查表定位。
 
 ### A. 业务场景速查（最常用）
 
 | 场景 | 看这里 | 跑这个 |
 |------|--------|--------|
 | 起停服务 / 看健康状态 / 重启 | `知识库/脚本工具/启停脚本.md` | `scripts/evctl.py status\|restart <svc>` |
+| 调 EvTrade 后端 API（下单/查持仓/订阅WS） | `知识库/脚本工具/evtrade-cli.md` | `scripts/evtrade_cli/ev_login.py` + ev_api.py + ev_ws.py |
 | DB schema 漂移 / 加列 | `知识库/脚本工具/数据库迁移与Schema.md` | `scripts/sync_schema.py export/diff/apply` |
 | broker push 字段对不上 | `知识库/后端服务/RPC通信/` | 读 `server/services/push/*.py` |
 | 持仓没刷新 / pos_push 不通 | `知识库/后端服务/数据同步/` | `server/services/push/pos.py` |
 | RPC 健康灯不亮 / 503 | `知识库/后端服务/RPC通信/` | `server/services/rpc_health.py` |
 | WS 推送收不到 | `知识库/后端服务/WebSocket推送/` | `server/ws/manager.py` |
-| 下单/撤单 路径 | `知识库/后端服务/交易核心/` | `server/api/orders/` |
+| 下单/撤单 服务端 | `知识库/后端服务/交易核心/` | `server/api/orders/` |
 | T0 / 当日盈亏算错 | `知识库/后端服务/T0做T/` | `server/services/t0/aggregators.py` |
 | 前端某列不更新 | `client/src/utils/format.js` STATUS_LABEL/RANK | 读 store reactivity 设计 |
 | ETF 价格丢 0 | `client/src/utils/usePricePrecision.formatPrice` | 严禁自造 toFixed |
