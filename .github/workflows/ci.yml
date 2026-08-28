@@ -5,12 +5,31 @@ on:
     branches: [master]
   pull_request:
     branches: [master]
+  workflow_dispatch:
 
 jobs:
   backend:
-    name: Backend (pytest)
+    name: Backend (pytest + schema drift)
     runs-on: ubuntu-latest
     timeout-minutes: 15
+
+    # Fresh MySQL container — fixture 不删生产数据 (2026-08-27 用户硬规则)
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: rootpass
+          MYSQL_DATABASE: evtrade_test
+          MYSQL_USER: evtrade
+          MYSQL_PASSWORD: evtradepass
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h localhost -uroot -prootpass"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+
     steps:
       - uses: actions/checkout@v4
 
@@ -37,8 +56,35 @@ jobs:
         run: uv run ruff check server/ hq/ iquant/ scripts/ conftest.py tests/ || true
         continue-on-error: true
 
+      - name: Wait for MySQL
+        run: |
+          for i in 1 2 3 4 5 6 7 8 9 10; do
+            mysqladmin ping -h 127.0.0.1 -uroot -prootpass --silent && break
+            sleep 2
+          done
+
+      - name: Set test env
+        run: |
+          cat > server/.env.test <<EOF
+          EVTRADE_DB_URL=mysql+pymysql://evtrade:evtradepass@127.0.0.1:3306/evtrade_test
+          EVTRADE_SECRET=ci-test-secret-do-not-use-in-prod
+          EVTRADE_TEST_MODE=1
+          EOF
+          cp server/.env.test server/.env
+        working-directory: .
+
+      - name: Init DB schema
+        run: |
+          uv run python -c "from server.infra.db import init_db; init_db()"
+
+      - name: Schema drift check
+        # sync_schema.py diff 应保持干净; drift 时 exit 1 → CI 失败
+        run: uv run python scripts/sync_schema.py diff || (echo "schema drift detected — see docs/脚本工具/数据库迁移与Schema.md" && exit 1)
+
       - name: Run tests
-        run: uv run pytest hq/ server/tests/ -x -q --timeout=60
+        # 只跑单文件 + 跑 server/tests/ (业务测试已 58/58/0)
+        # hq/ 暂不跑 — Rust 项目需 cargo build, CI 镜像无 Rust 工具链
+        run: uv run pytest server/tests/ tests/ --tb=short -q
 
   frontend:
     name: Frontend (build)

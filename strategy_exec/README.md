@@ -19,7 +19,7 @@ cp .env.example .env
 # 2. 启动（用根 .venv 的 python）
 python -m strategy_exec.main --port 8001
 # 或
-python scripts/evctl_strategy_exec.py start
+uv run python ./scripts/evctl.py start strategy_exec
 ```
 
 ## 健康检查
@@ -66,8 +66,7 @@ strategy_exec/
 │   ├── signal/                # RabbitMQ publisher（publisher confirms + 重试）
 │   ├── market_data/           # hq_history(RabbitMQ) + hq_ws_client(hqserver WS)
 │   └── sandbox/               # 用户脚本 loader（沙箱）
-└── scripts/
-    └── evctl_strategy_exec.py  # start/stop/status/restart
+└── logs/                       # 运行时生成 (strategy_exec.pid, strategy_exec.log)
 ```
 
 ## 阶段进度
