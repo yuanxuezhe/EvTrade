@@ -111,7 +111,7 @@ EvTrade 部署在 Windows（开发/QMT 柜台）+ Linux（前后端服务），�
 | `EVTRADE_DB_URL` / `EVTRADE_RABBITMQ_URL` | 必填 | 复用 EvTrade 同库 / 同 RabbitMQ |
 
 - strategy_exec 复用 EvTrade 根 `.venv`（pydantic v2 + `pydantic-settings`），无独立 pyproject.toml/Dockerfile
-- 启动：`python -m strategy_exec.main --port 8001`，或 `uv run python ./scripts/evctl.py start|restart|stop strategy_exec`（已集成进 evctl.py）
+- 启动：`python -m strategy_exec.main --port 8001`，或 `uv run python ./scripts/evctl.py start|restart|stop strategy_exec`（`strategy_exec/scripts/evctl_strategy_exec.py` 已删，与 evctl.py 重叠）
 - 详见 [`strategy-exec/spec.md`](../strategy-exec/spec.md) REQ-SE-001（部署）/ REQ-SE-002（internal endpoint 鉴权）/ REQ-SE-004（RabbitMQ 拓扑）
 
 ### REQ-CFG-009: MySQL 数据库连接（v20 强制 MySQL-only 永久标准）

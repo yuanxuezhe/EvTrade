@@ -23,7 +23,7 @@ StrategyExec MUST 作为独立 Python 服务部署：
 
 - 监听 `STRATEGY_EXEC_HOST` / `STRATEGY_EXEC_PORT`（默认 `0.0.0.0:8001`）
 - 独立进程、独立日志、独立 `.env` 配置（`strategy_exec/.env`，不复用 `server/.env`）
-- 启动：`python -m strategy_exec.main --port 8001`，或 `uv run python ./scripts/evctl.py start|restart|stop strategy_exec`（已集成进 evctl.py，无独立 controller 脚本）
+- 启动：`python -m strategy_exec.main --port 8001`，或 `uv run python ./scripts/evctl.py start|restart|stop strategy_exec`（`strategy_exec/scripts/evctl_strategy_exec.py` 2026-08-27 删，与 evctl.py 重叠）
 - 健康检查：`GET /health` 返 200 + 服务版本
 - **依赖**：复用 EvTrade 根 `.venv`（pydantic v2 + `pydantic-settings`）。曾规划独立 `pyproject.toml`/`Dockerfile`，2026-08-09 决策改为复用根 .venv，两者已删除（commit `154a36b`）
 
