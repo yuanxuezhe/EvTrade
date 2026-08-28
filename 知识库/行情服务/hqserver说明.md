@@ -68,7 +68,7 @@ cd hq/hqserverd && cargo build --release
 cargo run --release
 
 # 或通过 evctl
-uv run python scripts/evctl.py start hqserver
+uv run python ./scripts/evctl.py start hqserver
 ```
 
 | 变量 | 默认值 | 说明 |

@@ -57,7 +57,7 @@ EvTrade 全部 21 张业务表的结构说明：表名、主键、关键列、�
 3. `uv run python scripts/sync_schema.py apply` —— 建表并自动重生成 `server/tables/<新表>.py` 与 `__init__.py`
 4. 需要初始数据则写 `server/migrations/YYYY-MM-DD-*.py` 迁移或扩展 `scripts/seed_missing_data.py`
 5. `git add server/schema.yml server/tables/`，schema 与生成代码**同一 commit**提交
-6. 重启 backend：`uv run python scripts/evctl.py restart backend`（启动体检会校验 yml↔DB 一致）
+6. 重启 backend：`uv run python ./scripts/evctl.py restart backend`（启动体检会校验 yml↔DB 一致）
 
 ### 加字段完整步骤
 
