@@ -85,6 +85,9 @@ def generate_mock_bars(
 
     bars: List[Dict[str, Any]] = []
     for stime in _iter_workdays(start_date, end_date):
+        # daily stime = YYYYMMDDHHMMSS (14 位, 对齐 broker 协议 + Backtrader 解析)
+        #   period=1d → 15:00:00 (A股收盘时刻, 15:00:00.000000)
+        stime_dt = f"{stime}150000"
         # 日涨跌幅 gauss(0, 0.02) → 0.02 σ (约 2% 日波)
         daily_return = rng.gauss(0.0, 0.02)
         open_price = last_close
@@ -101,7 +104,7 @@ def generate_mock_bars(
         volume = max(100_000, volume)
 
         bars.append({
-            "stime": stime,
+            "stime": stime_dt,
             "open": round(open_price, 4),
             "high": round(high_price, 4),
             "low": round(low_price, 4),

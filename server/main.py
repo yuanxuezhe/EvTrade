@@ -145,7 +145,21 @@ async def on_startup_rpc():
     from server.services import sysconfig
     if bool(sysconfig.get("rpc_test_mode", 0)):
         log.info("[INIT] TEST_MODE (sys_config rpc_test_mode=1): skip RPC client (mock replies)")
-        return
+    # change 2026-08-29-his-hq-mock: strategy_exec broker his_hq mock 状态打印
+    try:
+        from server.infra.db import SessionLocal
+        from sqlalchemy import text
+        with SessionLocal() as s:
+            his_hq_row = s.execute(text(
+                "SELECT cfg_val FROM sys_config WHERE user='0' AND cfg_key='his_hq_test_mode' LIMIT 1"
+            )).first()
+            his_hq_mode = his_hq_row[0] if his_hq_row else '0'
+            if str(his_hq_mode).strip() in ('1', 'true', 'True'):
+                log.info("[INIT] HIS_HQ_TEST_MODE=1: strategy_exec.fetch_his_bars 不连 broker, 本地生成 K 线")
+            else:
+                log.info(f"[INIT] HIS_HQ_TEST_MODE={his_hq_mode}: strategy_exec.fetch_his_bars 走真实 broker")
+    except Exception as e:
+        log.warning(f"[INIT] his_hq_test_mode 状态查询失败 (WARN): {e}")
     try:
         await get_rpc_client()
         # RPC 连接建立后启动资金定时同步 + 健康监测
