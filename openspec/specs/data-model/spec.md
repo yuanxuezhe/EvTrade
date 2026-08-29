@@ -559,6 +559,33 @@ DB 引擎实现在 `server/infra/db.py`（v20 起强制 MySQL-only）。
 - **AND** 返回 404 `{detail: "POOL_NOT_FOUND: id=999"}`
 - **AND** **不会** INSERT `stkpooldetail`（避免孤儿行）
 
+### 14. `minute_bars` — 历史分钟 K 线（his-quote-backfill，2026-08-30）
+
+| 列 | 类型 | 说明 |
+|---|---|---|
+| `stock_code` | String(16) | PK 证券代码 |
+| `stime` | String(16) | PK 14 位 `YYYYMMDDHHMMSS` |
+| `open`/`close`/`high`/`low` | Float | OHLC（元/股） |
+| `avg_price` | Float | 均价 VWAP = `amount/(volume*100)` 元/股 |
+| `volume` | Integer | 成交量（手） |
+
+- 复合 PK `(stock_code, stime)`，写入 `ON DUPLICATE KEY UPDATE` 幂等
+- 数据源 broker his_hq 1m；写入者 `server/services/quote_sync/`（前端驱动按日 + 启动自动增量）+ `scripts/fetch_minute_bars.py`
+
+### 15. `quote_sync_config` — 行情同步任务表/配置（his-quote-backfill，2026-08-30）
+
+| 列 | 类型 | 说明 |
+|---|---|---|
+| `stock_code` | String(16) | PK 证券代码 |
+| `start_date`/`end_date` | String(8) | 时间区间（end 空=开放到昨天） |
+| `last_loaded_date` | String(8) | 当前已加载到的日期 = `minute_bars` 该证券实际最大 stime 日期（按数据统计，非 +1） |
+| `auto_sync` | Integer | 启用自动同步标志（1/0，默认 1） |
+| `status`/`error_msg` | String | 最近操作记录（success/failed + 原因） |
+| `updated_at` | DateTime | 最近同步时间 |
+
+- 该表即"要跟踪并自动补全的证券"配置；启动时读 auto_sync=1 行从 `last_loaded_date+1` 增量补
+- 详见 [`his-quote-backfill/spec.md`](../his-quote-backfill/spec.md)
+
 ## Modification Workflow
 
 修改任何表结构时：
