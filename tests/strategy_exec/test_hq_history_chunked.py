@@ -175,21 +175,24 @@ async def test_chunked_fetch_aggregator_1d():
     """chunked 拼凑后调 aggregator (1d 跨周末跳过)"""
     client = HQHistoryClient()
 
-    # 第 1 段 (1-1 ~ 1-3 含 1-4 Sat): 模拟 1-2 周四, 1-3 周五
+    # 第 1 段 (1-1 ~ 1-5): 1-2 周四, 1-3 周五
     mock_chunk1 = [
         {"stime": "20250102093100", "close": "100.0"},
         {"stime": "20250102150000", "close": "105.0"},
         {"stime": "20250103093100", "close": "106.0"},
         {"stime": "20250103150000", "close": "110.0"},
     ]
-    # 第 2 段 (1-4 ~ 1-15): 1-4 Sat, 1-5 Sun 跳过; 1-6 周一
+    # 第 2 段 (1-6 ~ 1-10): 1-6 周一
     mock_chunk2 = [
         {"stime": "20250106093100", "close": "112.0"},
         {"stime": "20250106150000", "close": "118.0"},
     ]
+    # 第 3/4 段 (1-11 ~ 1-15, 1-15 ~ 1-15): 无数据
+    mock_chunk_empty: list = []
 
     with patch.object(
-        client, "_fetch_one_chunk", new=AsyncMock(side_effect=[mock_chunk1, mock_chunk2])
+        client, "_fetch_one_chunk",
+        new=AsyncMock(side_effect=[mock_chunk1, mock_chunk2, mock_chunk_empty, mock_chunk_empty])
     ), patch.object(client, "settings") as mock_settings:
         mock_settings.his_hq_chunk_enabled = True
         mock_settings.his_hq_chunk_days = 5
