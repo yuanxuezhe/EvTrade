@@ -41,28 +41,12 @@
           />
         </template>
         <template #column-status="{ row }">
-          <div class="status-cell">
-            <template v-if="_rs(row).busy">
-              <el-icon class="spin" :size="16"><Loading /></el-icon>
-              <span class="txt">同步中 {{ _rs(row).day || '' }}</span>
-            </template>
-            <template v-else-if="_rs(row).fail">
-              <el-tag type="danger" size="small">失败</el-tag>
-            </template>
-            <template v-else-if="_rs(row).done">
-              <el-tag type="success" size="small">已完成</el-tag>
-            </template>
-            <template v-else>
-              <el-tag type="info" size="small">{{ row.status === 'failed' ? '失败' : (row.status || '未开始') }}</el-tag>
-            </template>
-            <el-tooltip
-              v-if="_rs(row).fail || row.error_msg"
-              :content="(_rs(row).fail || row.error_msg || '').slice(0, 200)"
-              placement="top"
-            >
-              <span class="err">原因</span>
-            </el-tooltip>
-          </div>
+          <el-tag v-if="_rs(row).busy" type="info" size="small">同步中</el-tag>
+          <el-tag v-else-if="_rs(row).fail" type="danger" size="small">失败</el-tag>
+          <el-tag v-else-if="_rs(row).done" type="success" size="small">成功</el-tag>
+          <el-tag v-else-if="row.status === 'success'" type="success" size="small">成功</el-tag>
+          <el-tag v-else-if="row.status === 'failed'" type="danger" size="small">失败</el-tag>
+          <el-tag v-else type="info" size="small">未开始</el-tag>
         </template>
         <template #column-action="{ row }">
           <el-button size="small" link type="primary" :disabled="_rs(row).busy" @click.stop="onRun(row)">
@@ -116,7 +100,7 @@
 <script setup>
 import { computed, onMounted, onBeforeUnmount, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus, Refresh, Loading } from '@element-plus/icons-vue'
+import { Plus, Refresh } from '@element-plus/icons-vue'
 import DataTableView from '../components/DataTableView.vue'
 import { COL } from '../utils/tableColumns'
 import { useUiStore } from '../stores/ui'
@@ -316,11 +300,6 @@ onBeforeUnmount(() => { _unmounted = true })
 .filter-left, .filter-right { display: flex; gap: var(--space-2); align-items: center; }
 .hint { color: #909399; font-size: 12px; }
 .table-wrap { flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; }
-.status-cell { display: flex; align-items: center; gap: 6px; }
-.status-cell .spin { color: var(--el-color-primary, #409eff); animation: rot 1s linear infinite; }
-@keyframes rot { from { transform: rotate(0); } to { transform: rotate(360deg); } }
-.status-cell .txt { font-size: 12px; color: #606266; }
-.status-cell .err { font-size: 12px; color: var(--el-color-danger, #f56c6c); cursor: help; border-bottom: 1px dashed currentColor; }
 .text-mono { font-family: var(--font-mono, 'Consolas', monospace); }
 .tp-stock-code { font-family: var(--font-mono); font-weight: 600; }
 </style>
