@@ -444,7 +444,9 @@ def _build_create_table(tn, td):
         if not isinstance(cd, dict):
             continue
         col_def = _build_column_def(cn, cd)
-        if cn in pk:
+        if cn in pk and len(pk) == 1:
+            # 单主键: 内联 PRIMARY KEY. 复合主键(len>1) 只在末尾加 PRIMARY KEY(...),
+            # 否则每个 pk 列都内联 PRIMARY KEY → MySQL 1068 Multiple primary key defined
             col_def += " PRIMARY KEY"
         parts.append(f"    {col_def}")
     if len(pk) > 1:
