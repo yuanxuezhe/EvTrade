@@ -1,7 +1,7 @@
 #coding:gbk
 """
 ==============================================================================
-iQuant / QMT ���Է��񣺼����ı���Ӧ������ (���ع����������ݱջ����ѻ���)
+iQuant / QMT 策略服务：极简文本流应答引擎 (已重构，完美兼容闭环消费机制)
 ==============================================================================
 """
 
@@ -15,7 +15,7 @@ from msgpacket import MsgPacket, MSG_TYPE_ANSWER
 from typing import Callable, Dict, List, Optional, Tuple, Any
 
 # ================================================================
-# 1. ����������ȫ�ֶ���
+# 1. 基础配置与全局队列
 # ================================================================
 class Config:
     HOST = "192.168.10.2"
@@ -30,8 +30,8 @@ class Config:
 
 config = Config()
 
-GLOBAL_REQ_QUEUE = queue.Queue()   # ������� (MQ �߳� -> QMT ���߳�)
-GLOBAL_ANS_QUEUE = queue.Queue()   # Ӧ����� (QMT ���߳� -> MQ �߳�) [(target_queue, bytes)]
+GLOBAL_REQ_QUEUE = queue.Queue()   # 请求队列 (MQ 线程 -> QMT 主线程)
+GLOBAL_ANS_QUEUE = queue.Queue()   # 应答队列 (QMT 主线程 -> MQ 线程) [(target_queue, bytes)]
 
 GLOBAL_STORE = {
     "mq_conn": None,
@@ -39,10 +39,16 @@ GLOBAL_STORE = {
 }
 
 # ================================================================
-# 2. Handler ע����ַ�����
+# 2. Handler 注册与分发引擎
 # ================================================================
 HandlerReturn = Tuple[str, str, Optional[str]]
 HandlerFunc = Callable[[Any, MsgPacket], HandlerReturn]
+
+# END marker (change B): pushed to ans_queue after the daily loop so empty days
+# (weekend/holiday) return fast instead of waiting the client idle timeout.
+# ASCII only to keep this gbk file valid. Kept in sync with
+# server/services/quote_sync/broker.py END_OF_HIS_HQ_MARKER.
+END_OF_HIS_HQ_MARKER = "#END_OF_HIS_HQ#"
 
 _HANDLERS: Dict[str, HandlerFunc] = {}
 
@@ -67,7 +73,7 @@ def handle_trade_request(context, pkt: MsgPacket) -> HandlerReturn:
         return "99999", f"Execution error: {str(e)}", None
 
 # ================================================================
-# 3. ҵ�� Handler: �����ı�ƴ������ (his_hq)
+# 3. 业务 Handler: 极速文本拼接行情 (his_hq)
 # ================================================================
 @handler("his_hq")
 def _h_his_hq(context, pkt: MsgPacket) -> HandlerReturn:
@@ -80,7 +86,7 @@ def _h_his_hq(context, pkt: MsgPacket) -> HandlerReturn:
         period = pkt.get_value_str("period").strip()
 
     except (ValueError, TypeError) as e:
-        print(f"�������ʹ���: {e}")
+        print(f"参数类型错误: {e}")
 
     if not start_date_str or not stock_code or not ans_queue:
         return "10001", "Missing required parameters!", None
@@ -97,7 +103,7 @@ def _h_his_hq(context, pkt: MsgPacket) -> HandlerReturn:
     current_date = start_date
     total_days_processed = 0
 
-    print(f"[HQ Service] ��ʼ���ջ�ȡ����: {stock_code} ({start_date_str} ~ {end_date_str})...")
+    print(f"[HQ Service] 开始按日获取行情: {stock_code} ({start_date_str} ~ {end_date_str})...")
 
     query_fields = [f.strip() for f in fields_str.split(",") if f.strip()] if fields_str else ["close"]
     query_period = period.strip() if period else "1m"
@@ -139,24 +145,26 @@ def _h_his_hq(context, pkt: MsgPacket) -> HandlerReturn:
 
                 payload_str = "|".join(rows_str)
                 print(payload_str)
-                # ��Ŀ����к��ֽڴ����� GLOBAL_ANS_QUEUE
+                # 将目标队列和字节串塞入 GLOBAL_ANS_QUEUE
                 GLOBAL_ANS_QUEUE.put((ans_queue, (col_header + '\n' + payload_str).encode('utf-8')))
                 total_days_processed += 1
-                print(f"[HQ Service] �ɹ����� {day_str} ������ {ans_queue}���� {len(df)} ��")
+                print(f"[HQ Service] 成功推送 {day_str} 数据至 {ans_queue}，共 {len(df)} 行")
 
             except Exception as e:
-                print(f"[HQ Service] ���� {day_str} ����ƴ���쳣: {e}")
+                print(f"[HQ Service] 处理 {day_str} 数据拼接异常: {e}")
 
         current_date += datetime.timedelta(days=1)
 
-    print(f"[HQ Service] �����ȡ��ɣ���Ͷ�� {total_days_processed} �졣")
+    print(f"[HQ Service] 行情读取完成，共投递 {total_days_processed} 天。")
+    # change B: push end marker so empty days (weekend/holiday) return fast
+    GLOBAL_ANS_QUEUE.put((ans_queue, END_OF_HIS_HQ_MARKER.encode("utf-8")))
     return "00000", f"Success", None
 
 # ================================================================
-# 4. MQ �����߳� (ʹ��ģ������֤�ɹ��� channel.consume ģʽ)
+# 4. MQ 核心线程 (使用模板中验证成功的 channel.consume 模式)
 # ================================================================
 def rabbitmq_worker(ContextInfo):
-    print(f"[MQ �߳�] ��ʼ���� RabbitMQ ({config.HOST}:{config.PORT})...")
+    print(f"[MQ 线程] 开始连接 RabbitMQ ({config.HOST}:{config.PORT})...")
     conn = None
     try:
         credentials = pika.PlainCredentials(config.USER, config.PASS)
@@ -169,7 +177,7 @@ def rabbitmq_worker(ContextInfo):
 
         GLOBAL_STORE["mq_conn"] = conn
 
-        # ���� Exchange �� ���� Queue
+        # 声明 Exchange 和 请求 Queue
         channel.exchange_declare(exchange=config.EXCHANGE_NAME, exchange_type='topic', durable=True)
         channel.queue_declare(queue=config.QUEUE_REQ, durable=True)
         channel.queue_bind(queue=config.QUEUE_REQ, exchange=config.EXCHANGE_NAME, routing_key=config.QUEUE_REQ)
@@ -178,12 +186,12 @@ def rabbitmq_worker(ContextInfo):
         declared_queues = set()
 
         def process_send_queue():
-            """ˢ�� GLOBAL_ANS_QUEUE �еĴ������ݲ���̬Ͷ�ݵ��ͻ��˶���"""
+            """刷出 GLOBAL_ANS_QUEUE 中的待发数据并动态投递到客户端队列"""
             while not GLOBAL_ANS_QUEUE.empty():
                 try:
                     target_queue, msg_bytes = GLOBAL_ANS_QUEUE.get_nowait()
                     if channel.is_open:
-                        # ȷ���ͻ���Ŀ����д���
+                        # 确保客户端目标队列存在
                         if target_queue not in declared_queues:
                             channel.queue_declare(queue=target_queue, durable=True)
                             declared_queues.add(target_queue)
@@ -196,38 +204,38 @@ def rabbitmq_worker(ContextInfo):
                 except queue.Empty:
                     break
                 except Exception as e:
-                    print(f"[MQ �����쳣]: {e}")
+                    print(f"[MQ 发送异常]: {e}")
 
-        print("[MQ �߳�] ���ĳɹ��������շ�����ͨ��...")
+        print("[MQ 线程] 订阅成功，进入收发交替通道...")
 
-        # �����޸���ʹ�� consume ����ѭ������˽����뷢��
+        # 核心修复：使用 consume 驱动循环，兼顾接收与发送
         for message_metadata, properties, body in channel.consume(queue=config.QUEUE_REQ, inactivity_timeout=0.2):
             if not getattr(ContextInfo, 'is_running', False):
-                print("[MQ �߳�] �յ�����ֹͣ�źţ�׼���˳�ѭ��...")
+                print("[MQ 线程] 收到策略停止信号，准备退出循环...")
                 break
 
-            # A. ����ˢ��������������
+            # A. 优先刷出待发行情数据
             process_send_queue()
 
-            # B. �յ������ģ�����ȫ���������
+            # B. 收到请求报文，塞入全局请求队列
             if body is not None:
                 GLOBAL_REQ_QUEUE.put(body)
                 channel.basic_ack(delivery_tag=message_metadata.delivery_tag)
 
     except pika.exceptions.AMQPConnectionError:
-        print("[MQ �߳�] Socket �����ѱ�������������ͣ���̴߳�ϳɹ���")
+        print("[MQ 线程] Socket 连接已被主程序主动关停，线程打断成功。")
     except Exception as e:
-        print(f"[MQ �߳��쳣]: {e}")
+        print(f"[MQ 线程异常]: {e}")
     finally:
         GLOBAL_STORE["mq_conn"] = None
-        print("[MQ �߳�] ����ȫ�˳������٣�")
+        print("[MQ 线程] 已完全退出并销毁！")
 
 # ================================================================
-# 5. QMT ������������ & runtime ��ʱ��
+# 5. QMT 策略生命周期 & runtime 定时器
 # ================================================================
 def init(ContextInfo):
     print("==================================================")
-    print("iQuant ��ʷ���鼫�ٷ�����������...")
+    print("iQuant 历史行情极速服务引擎启动...")
     print("==================================================")
     ContextInfo.is_running = True
     ContextInfo.set_account(config.ACCOUNT_ID)
@@ -250,11 +258,11 @@ def check_and_process(ContextInfo):
         except queue.Empty:
             break
         except Exception as e:
-            print(f"[runtime �����쳣]: {e}")
+            print(f"[runtime 处理异常]: {e}")
 
 def stop(ContextInfo):
     print("\n==================================================")
-    print("�յ�ָֹͣ���ʼ��ͣ�������...")
+    print("收到停止指令，开始关停行情服务...")
     print("==================================================")
     ContextInfo.is_running = False
 
@@ -277,5 +285,5 @@ def stop(ContextInfo):
         try: GLOBAL_ANS_QUEUE.get_nowait()
         except queue.Empty: break
 
-    print("�������������ϣ��ɹ�ֹͣ��")
+    print("行情服务清理完毕，成功停止。")
 

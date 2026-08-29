@@ -147,3 +147,38 @@ async def test_sync_one_day_unexpected_exception_records_failure(monkeypatch):
         await sync_mod.sync_one_day("159992.SZ", "20260825")
     assert len(failed) == 1
     assert "db down" in failed[0][1]
+
+
+# ─────────────── 周末跳过 (方案 A: 本地跳, 不拉 broker) ───────────────
+
+
+def test_is_weekend():
+    """周六/周日 = True, 周一~五 = False."""
+    assert sync_mod._is_weekend("20260829") is True   # 周六
+    assert sync_mod._is_weekend("20260830") is True   # 周日
+    assert sync_mod._is_weekend("20260824") is False  # 周一
+    assert sync_mod._is_weekend("20260828") is False  # 周五
+
+
+@pytest.mark.asyncio
+async def test_sync_one_day_weekend_skips_broker(monkeypatch):
+    """周末: 不连 broker, 直接成功空 (record_success 用数据最大日期, 不变)."""
+    monkeypatch.setattr(repo, "get_config",
+                        lambda sc: _FakeRow(stock_code=sc, last_loaded_date="20260828"))
+    upserted = []
+    monkeypatch.setattr(repo, "upsert_minute_bars", lambda recs: upserted.append(1))
+    recorded = []
+    monkeypatch.setattr(repo, "record_success", lambda sc: recorded.append(sc) or "20260828")
+
+    class _C:
+        async def connect(self):
+            raise AssertionError("周末不该连 broker")
+    monkeypatch.setattr(sync_mod, "get_his_hq_client", lambda: _C())
+
+    res = await sync_mod.sync_one_day("159992.SZ", "20260829")  # 周六
+    assert res["ok"] is True
+    assert res["weekend"] is True
+    assert res["bars"] == 0
+    assert upserted == []          # 没写库
+    assert recorded == ["159992.SZ"]  # 记了成功
+    assert res["last_loaded_date"] == "20260828"  # 数据最大日期不变 (周末没数据)

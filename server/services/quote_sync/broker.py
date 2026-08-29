@@ -36,6 +36,11 @@ log = logging.getLogger(__name__)
 BROKER_FIELDS = ["open", "high", "low", "close", "volume", "amount"]
 _BROKER_PERIOD = "1m"
 
+# 结束标记 (broker change B): his_hq 每天循环结束后发一条, 让无数据日 (周末/假日)
+# 也能秒回, 不必等 idle 超时。旧 broker 不发此标记 → 客户端回退到 idle 超时 (兼容)。
+# 与 iquant/quota_his.py 的 END_OF_HIS_HQ_MARKER 保持一致。
+END_OF_HIS_HQ_MARKER = "#END_OF_HIS_HQ#"
+
 
 class BrokerError(Exception):
     """拉 broker 历史行情失败 (区分于「空日」— 空日不 raise)"""
@@ -172,16 +177,20 @@ class HisHqClient:
                 async for msg in it:
                     async with msg.process():
                         txt = msg.body.decode("utf-8")
+                        # 结束标记 (broker change B: 循环结束发一条, 无数据日也秒回):
+                        #   收到即 break, 不必等 idle 超时 (无数据日 0 根 → 秒返 [])
+                        if END_OF_HIS_HQ_MARKER in txt:
+                            break
                         rows.extend(row for _, row in _iter_rows(txt))
                     if expected and len(rows) >= expected * 240:
                         break
         except asyncio.TimeoutError:
-            # idle 超时 = 流结束, 直接返已收 rows。
+            # idle 超时 = 流结束 (旧 broker 无结束标记时的回退路径)。直接返已收 rows。
             #   交易日有数据 → rows 非空
-            #   假日/无数据 → rows 空 (broker 不推送, idle 超时) → 返 [] = 「成功空」
+            #   假日/无数据 (旧 broker 不推送) → rows 空 → 返 [] = 「成功空」
             # broker 日历工作日 (_weekdays_in) 分不清「市场假日」vs「broker 挂」,
-            # 两者都是日历工作日且 0 行 → 按需求 (假日=成功空, 游标照常推进) 一律返 []。
-            # 真正可区分的 broker 故障是连接级失败 (connect/publish 抛错), 那会自然上抛。
+            # 两者都是日历工作日且 0 行 → 一律返 [] (假日=成功空, 游标照常推进)。
+            # 真正可区分的 broker 故障是连接级失败 (connect/publish 抛错), 自然上抛。
             pass
         finally:
             try:
