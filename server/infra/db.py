@@ -466,22 +466,8 @@ def _run_seed_cantrdstktypes_via_session(engine) -> None:
                 print("[init_db] seeded sys_config.rpc_test_mode=0")
             else:
                 print(f"[init_db] sys_config.rpc_test_mode 已存在 val={rpc_row[0]}, 跳过")
-            # change 2026-08-29-his-hq-mock: strategy_exec broker his_hq 离线 mock 模式
-            # 0=关(默认, 走真实 broker msgpacket RabbitMQ)
-            # 1=开(不连 broker, 本地生成确定性 K 线, 让 Linux dev 无 QMT 时也能跑通回测)
-            his_hq_row = conn.execute(text(
-                "SELECT cfg_val FROM sys_config WHERE `user`='0' AND cfg_key='his_hq_test_mode' LIMIT 1"
-            )).first()
-            if his_hq_row is None:
-                conn.execute(text(
-                    "INSERT INTO sys_config (`user`, cfg_key, cfg_val, `desc`, updated_at, updated_by) "
-                    "VALUES ('0', 'his_hq_test_mode', '0', 'strategy_exec broker his_hq mock 模式: 0=关(走真实 broker) 1=开(本地生成 K 线, 不连 RabbitMQ)', NOW(), 'system')"
-                ))
-                print("[init_db] seeded sys_config.his_hq_test_mode=0")
-            else:
-                print(f"[init_db] sys_config.his_hq_test_mode 已存在 val={his_hq_row[0]}, 跳过")
     except Exception as e:
-        print(f"[init_db] seed cantrdstktypes/rpc_test_mode/his_hq_test_mode WARN: {e}")
+        print(f"[init_db] seed cantrdstktypes/rpc_test_mode WARN: {e}")
 
 
 # _admin_engine 占位 (兼容旧引用)
