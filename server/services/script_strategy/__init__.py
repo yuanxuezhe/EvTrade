@@ -32,10 +32,12 @@ from server.services.script_strategy.strategies import (
     delete_strategy,
 )
 from server.services.script_strategy.batches import (
+    STALE_CLEANUP_ERROR_MSG,
     create_backtest_batch,
     list_batches,
     list_batch_tasks,
     list_stale_queued_tasks,
+    mark_stale_queued_failed,
     retest_batch,
 )
 from server.services.script_strategy.tasks import (
@@ -72,6 +74,8 @@ __all__ = [
     "update_strategy", "delete_strategy",
     "create_backtest_batch", "list_batches", "list_batch_tasks",
     "list_stale_queued_tasks",
+    "mark_stale_queued_failed",
+    "STALE_CLEANUP_ERROR_MSG",
     "retest_batch",
     "list_tasks", "get_task", "create_task", "delete_task",
     "get_task_logs", "get_task_signals", "get_task_audit",
