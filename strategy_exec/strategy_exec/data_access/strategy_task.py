@@ -8,9 +8,9 @@ strategy_exec.data_access.strategy_task — 读 + 写 strategy_task / strategy_s
 - 重试 3 次 (读最新 version 再写)
 - 重试失败 → 抛 OptimisticLockError
 """
-
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from typing import Any, Dict, Optional
@@ -18,6 +18,9 @@ from typing import Any, Dict, Optional
 from sqlalchemy import text
 
 from strategy_exec.data_access.db import get_session
+from strategy_exec.signal.task_progress_publisher import (
+    get_task_progress_publisher,
+)
 
 log = logging.getLogger(__name__)
 
@@ -30,6 +33,47 @@ class OptimisticLockError(Exception):
 
 def _json_dumps(v: Any) -> Any:
     return json.dumps(v, ensure_ascii=False) if v is not None else None
+
+
+def _emit_progress(
+    task_id: int,
+    status: Optional[str] = None,
+    progress: Optional[Dict[str, Any]] = None,
+) -> None:
+    """写 DB 后置 hook: 通过 task_progress_publisher 推 RabbitMQ
+
+    节流判定 (best-effort):
+      - status='queued' 跳过 (无意义, queued 是预建状态)
+      - 节流由 TaskProgressPublisher.should_emit() 控制
+
+    设计: 不阻塞主流程
+      - 失败 → log warning (publish 内部已兜底)
+      - 在 event loop 内时尝试 schedule, 不在 loop 内 (e.g. to_thread 子线程)
+        → 用 run_coroutine_threadsafe 投到 publisher 绑定的 loop
+      - publisher 未初始化 → 直接 return (测试 / 早期调用兜底)
+    """
+    publisher = get_task_progress_publisher()
+    try:
+        if not publisher.should_emit(task_id, status, progress):
+            return
+        publisher.record_emit(task_id, status, progress)
+
+        coro = publisher.publish(task_id, status, progress)
+        # 主 loop 内 (FastAPI handler / asyncio task) → create_task
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(coro)
+        except RuntimeError:
+            # 不在 event loop 内 (asyncio.to_thread / 同步代码路径)
+            target_loop = publisher._loop  # type: ignore[attr-defined]
+            if target_loop is not None and not target_loop.is_closed():
+                import concurrent.futures
+                concurrent.futures.ThreadPoolExecutor(max_workers=1).submit(
+                    asyncio.run_coroutine_threadsafe, coro, target_loop,
+                )
+            # 否则静默放弃 (publisher.loop 未绑定 / 测试环境)
+    except Exception as e:  # noqa: BLE001
+        log.warning("[task:%d] _emit_progress hook failed (ignored): %s", task_id, e)
 
 
 def get_task(task_id: int) -> Optional[Dict[str, Any]]:
@@ -100,6 +144,7 @@ def update_task_status(
             session.commit()
             if result.rowcount > 0:
                 log.info("[task:%d] status='%s' (version %d→%d)", task_id, status, current_v, current_v + 1)
+                _emit_progress(task_id, status=status, progress=None)
                 return True
             log.warning("[task:%d] optimistic lock conflict (attempt %d/%d)", task_id, attempt, MAX_RETRIES)
     raise OptimisticLockError(f"task {task_id} update status conflict after {MAX_RETRIES} retries")
@@ -133,6 +178,7 @@ def update_task_progress(task_id: int, progress: Dict[str, Any]) -> bool:
             )
             session.commit()
             if result.rowcount > 0:
+                _emit_progress(task_id, status=None, progress=progress)
                 return True
             log.warning("[task:%d] progress update conflict (attempt %d/%d)", task_id, attempt, MAX_RETRIES)
     raise OptimisticLockError(f"task {task_id} update progress conflict after {MAX_RETRIES} retries")

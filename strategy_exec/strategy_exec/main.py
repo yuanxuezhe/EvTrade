@@ -48,9 +48,19 @@ async def lifespan(app: FastAPI):
     log.info("[strategy_exec] rabbitmq=%s", settings.evtrade_rabbitmq_url)
     log.info("[strategy_exec] hq_ws=%s", settings.hq_ws_url)
 
+    # 绑定 task_progress_publisher 的 event loop (跨线程 publish 用)
+    from strategy_exec.signal.task_progress_publisher import (
+        get_task_progress_publisher,
+    )
+    get_task_progress_publisher().attach_loop()
+
     yield  # 应用运行中
 
     log.info("[strategy_exec] shutting down...")
+    from strategy_exec.signal.task_progress_publisher import (
+        close_task_progress_publisher,
+    )
+    await close_task_progress_publisher()
 
 
 def create_app() -> FastAPI:
