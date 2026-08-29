@@ -266,53 +266,6 @@ def list_stale_queued_tasks(
     return out
 
 
-# ─────────────── change 2026-08-29-his-hq-mock ───────────────
-
-
-# 老 queued task 回填 (离线 mock 上线后 admin 一键清理)
-STALE_CLEANUP_ERROR_MSG = (
-    "broker his_hq unavailable (回填 2026-08-29 离线 mock 后) — 建议重测"
-)
-
-
-def mark_stale_queued_failed(
-    strategy_id: int,
-    threshold_hours: int = DEFAULT_STALE_THRESHOLD_HOURS,
-) -> int:
-    """把某 strategy 卡 queued > 阈值的 task 全部标 status='failed' (admin 操作).
-
-    仅 UPDATE status + error_msg, 不删行 (用户硬规则 2026-08-27).
-
-    Args:
-        strategy_id: 限定 strategy
-        threshold_hours: 时间窗口 (默认 24, 与 list_stale_queued_tasks 一致)
-
-    Returns:
-        rowcount (int cleaned_count)
-    """
-    from server.infra.db import engine as _engine
-    from sqlalchemy import text
-
-    with _engine.begin() as conn:
-        result = conn.execute(
-            text(
-                """
-                UPDATE strategy_task
-                   SET status = 'failed',
-                       error_msg = :msg,
-                       version = version + 1,
-                       updated_at = NOW()
-                 WHERE strategy_id = :sid
-                   AND status = 'queued'
-                   AND started_at IS NULL
-                   AND created_at < NOW() - INTERVAL :h HOUR
-                """
-            ),
-            {"sid": strategy_id, "h": threshold_hours, "msg": STALE_CLEANUP_ERROR_MSG},
-        )
-    return int(result.rowcount or 0)
-
-
 def _reconstruct_ranges(combos: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
     """从批次 task params 重建 sweep param_ranges (供 strategy_exec forward 计数/校验).
 

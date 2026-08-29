@@ -260,45 +260,6 @@ def stale_queued_endpoint(
     )
 
 
-# ─────────────── change 2026-08-29-his-hq-mock ───────────────
-
-
-@router.post(
-    "/strategies/{strategy_id}/stale-queued/cleanup",
-)
-def stale_queued_cleanup_endpoint(
-    strategy_id: int,
-    threshold_hours: int = 24,
-    user: Row = Depends(get_current_user),
-):
-    """admin 把卡 queued > 阈值的 task 全部标 status='failed' (仅改 status, 不删行).
-
-    非 admin → 403 FORBIDDEN
-    strategy 不存在 → 404 NO_STRATEGY
-    阈值默认 24h (与 list_stale_queued 一致).
-    """
-    if user.role != "admin":
-        raise HTTPException(
-            status_code=403,
-            detail={"code": "FORBIDDEN", "msg": "stale-queued cleanup 仅 admin 可访问"},
-        )
-
-    # 校验 strategy 存在 (与 GET endpoint 一致)
-    from server.services.script_strategy.access import resolve_strategy
-    if resolve_strategy(strategy_id, user.id, is_admin=True) is None:
-        raise HTTPException(
-            status_code=404,
-            detail={"code": "NO_STRATEGY", "msg": f"strategy_id {strategy_id} 不存在"},
-        )
-
-    cleaned = svc.mark_stale_queued_failed(strategy_id, threshold_hours=threshold_hours)
-    return {
-        "strategy_id": strategy_id,
-        "cleaned_count": cleaned,
-        "error_msg_template": svc.STALE_CLEANUP_ERROR_MSG,
-    }
-
-
 @router.post(
     "/strategies/{strategy_id}/batches/{batch_no}/retest",
     response_model=BacktestResponse,
