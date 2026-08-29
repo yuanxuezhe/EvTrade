@@ -35,6 +35,7 @@ from server.services.script_strategy.batches import (
     create_backtest_batch,
     list_batches,
     list_batch_tasks,
+    list_stale_queued_tasks,
     retest_batch,
 )
 from server.services.script_strategy.tasks import (
@@ -70,6 +71,7 @@ __all__ = [
     "list_strategies", "get_strategy", "create_strategy",
     "update_strategy", "delete_strategy",
     "create_backtest_batch", "list_batches", "list_batch_tasks",
+    "list_stale_queued_tasks",
     "retest_batch",
     "list_tasks", "get_task", "create_task", "delete_task",
     "get_task_logs", "get_task_signals", "get_task_audit",

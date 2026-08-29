@@ -32,6 +32,8 @@ from server.api.script_strategy.schemas import (
     BacktestRequest,
     BacktestResponse,
     BatchOut,
+    StaleQueuedOut,
+    StaleQueuedTaskOut,
     StrategyCreate,
     StrategyOut,
     StrategyUpdate,
@@ -217,6 +219,45 @@ def batch_tasks_endpoint(
             detail={"code": e.code, "msg": e.msg},
         )
     return out
+
+
+# ─────────────── change 2026-08-29-stale-queued-marker ───────────────
+
+
+@router.get(
+    "/strategies/{strategy_id}/stale-queued",
+    response_model=StaleQueuedOut,
+)
+def stale_queued_endpoint(
+    strategy_id: int,
+    threshold_hours: int = 24,
+    user: Row = Depends(get_current_user),
+):
+    """admin 监控: 查卡 queued > threshold_hours 的 task (默认 24h).
+
+    非 admin → 403 FORBIDDEN (避免泄漏其他用户的批次详情)
+    strategy 不存在 → 404 NO_STRATEGY
+    """
+    if user.role != "admin":
+        raise HTTPException(
+            status_code=403,
+            detail={"code": "FORBIDDEN", "msg": "stale-queued 查询仅 admin 可访问"},
+        )
+
+    # 校验 strategy 存在 (区分 NO_STRATEGY vs 空结果)
+    from server.services.script_strategy.access import resolve_strategy
+    if resolve_strategy(strategy_id, user.id, is_admin=True) is None:
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "NO_STRATEGY", "msg": f"strategy_id {strategy_id} 不存在"},
+        )
+
+    rows = svc.list_stale_queued_tasks(strategy_id, threshold_hours=threshold_hours)
+    return StaleQueuedOut(
+        strategy_id=strategy_id,
+        stale_count=len(rows),
+        stale_tasks=[StaleQueuedTaskOut(**r) for r in rows],
+    )
 
 
 @router.post(

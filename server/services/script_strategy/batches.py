@@ -205,6 +205,67 @@ def list_batch_tasks(
     return [task_row_to_dict(r) for r in rows]
 
 
+# ─────────────── change 2026-08-29-stale-queued-marker ───────────────
+
+
+# stale 阈值默认 24h (与前端 STALE_THRESHOLD_MS 对齐, 改两侧同步)
+DEFAULT_STALE_THRESHOLD_HOURS = 24
+
+
+def list_stale_queued_tasks(
+    strategy_id: int,
+    threshold_hours: int = DEFAULT_STALE_THRESHOLD_HOURS,
+) -> List[Dict[str, Any]]:
+    """查某 strategy 卡 queued > 阈值的 task (admin 监控用).
+
+    判定 (与前端 BatchTasksTable.isStaleQueued 保持一致):
+      1. strategy_id 匹配
+      2. status='queued'
+      3. started_at IS NULL (从未被 strategy_exec 调度)
+      4. progress 为 NULL 或 progress.phase='queued' (兜底, 防 strategy_exec 半路写脏 progress)
+      5. created_at < NOW() - INTERVAL :h HOUR
+
+    Returns:
+        [{task_id, batch_no, age_min, created_at}], 按 created_at 升序
+    """
+    from server.infra.db import engine as _engine
+    from sqlalchemy import text
+    from datetime import datetime
+
+    with _engine.connect() as conn:
+        rows = conn.execute(
+            text(
+                """
+                SELECT id, batch_no, created_at,
+                       TIMESTAMPDIFF(MINUTE, created_at, NOW()) AS age_min
+                  FROM strategy_task
+                 WHERE strategy_id = :sid
+                   AND status = 'queued'
+                   AND started_at IS NULL
+                   AND (
+                       progress IS NULL
+                       OR JSON_UNQUOTE(JSON_EXTRACT(progress, '$.phase')) = 'queued'
+                       OR JSON_EXTRACT(progress, '$.phase') IS NULL
+                   )
+                   AND created_at < NOW() - INTERVAL :h HOUR
+                 ORDER BY created_at ASC
+                """
+            ),
+            {"sid": strategy_id, "h": threshold_hours},
+        ).mappings().all()
+
+    out: List[Dict[str, Any]] = []
+    for r in rows:
+        created = r.get("created_at")
+        out.append({
+            "task_id": int(r["id"]),
+            "batch_no": int(r["batch_no"]),
+            "age_min": int(r["age_min"] or 0),
+            "created_at": created.isoformat() if isinstance(created, datetime) else (str(created) if created else None),
+        })
+    return out
+
+
 def _reconstruct_ranges(combos: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
     """从批次 task params 重建 sweep param_ranges (供 strategy_exec forward 计数/校验).
 

@@ -74,3 +74,23 @@ class BatchOut(BaseModel):
     metric: str = "sharpe"         # 批次排序指标 (sweep top1 选择)
     best_params: Optional[Dict[str, Any]] = None
     best_metric_value: Optional[float] = None
+
+
+# ─────────────── change 2026-08-29-stale-queued-marker ───────────────
+
+
+class StaleQueuedTaskOut(BaseModel):
+    """stale queued task 单行 — task 卡 queued > 24h 且从未被调度"""
+
+    task_id: int
+    batch_no: int
+    age_min: int              # 距 created_at 分钟数
+    created_at: Optional[str] = None
+
+
+class StaleQueuedOut(BaseModel):
+    """GET /strategies/{id}/stale-queued 响应 — admin 监控用"""
+
+    strategy_id: int
+    stale_count: int = 0
+    stale_tasks: list[StaleQueuedTaskOut] = Field(default_factory=list)

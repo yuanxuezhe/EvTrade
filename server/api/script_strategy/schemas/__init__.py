@@ -19,6 +19,8 @@ from server.api.script_strategy.schemas.strategies import (
     BacktestRequest,
     BacktestResponse,
     BatchOut,
+    StaleQueuedOut,
+    StaleQueuedTaskOut,
     StrategyCreate,
     StrategyOut,
     StrategyUpdate,
@@ -45,6 +47,8 @@ __all__ = [
     "BacktestRequest",
     "BacktestResponse",
     "BatchOut",
+    "StaleQueuedOut",
+    "StaleQueuedTaskOut",
     # strategy_orders
     "StrategyOrderCreate",
     "StrategyOrderOut",
