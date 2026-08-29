@@ -33,6 +33,7 @@ from server.api import quote as quote_api  # quote 查询/订阅
 from server.api import stocks as stocks_api  # stock-info-crawler
 from server.api import stkpool as stkpool_api  # add-stkpool-module
 from server.api import sync as sync_api  # stock-info-crawler
+from server.api import quote_sync as quote_sync_api  # his-quote-backfill
 from server.api.admin import sys_status as admin_sys_status, reconcile as admin_reconcile, session as admin_session
 from server.middleware.request_logging import RequestLoggingMiddleware
 from server.rpc.client import get_rpc_client, close_rpc_client
@@ -307,6 +308,35 @@ async def on_shutdown_auth_sweep():
             log.warning(f"[SHUTDOWN] auth sweep cancel: {e}")
 
 
+# ---- 历史行情补全 (his-quote-backfill): 启动自动增量同步 ----
+@app.on_event("startup")
+async def on_startup_quote_backfill():
+    """启动时后台自动增量补全: 读 quote_sync_config 全部 auto_sync=1 行,
+    对 last_loaded_date < 昨天 的证券从游标逐日补到追平昨天 (不阻塞启动)。
+
+    增量续传 + per-stock 锁 (与前端手动同步共用 sync_one_day, 不重复拉)。
+    skip pytest / 关闭模式。
+    """
+    if os.environ.get("PYTEST_CURRENT_TEST"):
+        log.info("[INIT] pytest mode: skip quote backfill")
+        return
+    try:
+        from server.services.quote_sync.manager import manager
+        await manager.start_startup_backfill()
+    except Exception as e:
+        log.warning(f"[INIT] quote backfill failed to start: {e}")
+
+
+@app.on_event("shutdown")
+async def on_shutdown_quote_backfill():
+    """停止未完成的启动自动补全任务。"""
+    try:
+        from server.services.quote_sync.manager import manager
+        await manager.shutdown()
+    except Exception as e:
+        log.warning(f"[SHUTDOWN] quote backfill cancel: {e}")
+
+
 # ---- Public routes ------------------------------------------------------
 app.include_router(auth_api.router, prefix="/api/auth", tags=["auth"])
 app.include_router(clock.router, prefix="/api/trading", tags=["trading-clock"])
@@ -334,6 +364,8 @@ app.include_router(stocks_api.router, prefix="/api/stocks", tags=["stocks"], dep
 app.include_router(stkpool_api.router, prefix="/api/stkpool", tags=["stkpool"], dependencies=_AUTH)  # add-stkpool-module
 # sync 管理 (admin only,内联守卫避免 _AUTH_ADMIN 未定义)
 app.include_router(sync_api.router, prefix="/api/sync", tags=["sync"], dependencies=[Depends(get_current_user)])
+# 历史行情补全 (his-quote-backfill, 全部 require_admin 内联守卫)
+app.include_router(quote_sync_api.router, prefix="/api/quote-sync", tags=["quote-sync"], dependencies=_AUTH)
 
 
 # ---- Admin routes (login required, role checked by handler) ----------------
