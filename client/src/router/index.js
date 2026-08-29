@@ -27,6 +27,8 @@ const AdminStockConfig = () => import('../views/AdminStockConfig.vue')
 const StkPool = () => import('../views/StkPool.vue')
 // stkpool-view-feature: 证券池只读视图 (仪表盘和交易下单之间, 自选用)
 const StkPoolView = () => import('../views/StkPoolView.vue')
+// his-quote-backfill: 数据补全 → 历史行情补全 (admin-only)
+const HistoryQuoteCompletion = () => import('../views/HistoryQuoteCompletion.vue')
 
 const routes = [
   {
@@ -69,6 +71,8 @@ const routes = [
   { path: '/admin/cache/trades', name: 'CacheTrades', component: CacheTrades, meta: { title: '交易查询: 成交', requiresAdmin: true } },
   // change stock-info-crawler: 证券信息设置 (admin-only, 含同步启动/停止/进度, sync_config 占位)
   { path: '/admin/stock-config', name: 'AdminStockConfig', component: AdminStockConfig, meta: { title: '证券信息设置', requiresAdmin: true } },
+  // his-quote-backfill: 数据补全 → 历史行情补全 (admin-only)
+  { path: '/data-completion/history-quote', name: 'HistoryQuoteCompletion', component: HistoryQuoteCompletion, meta: { title: '历史行情补全', requiresAdmin: true } },
   // add-stkpool-module: 证券池 (auth 通用鉴权, 不分 RBAC)
   { path: '/stkpool', name: 'StkPool', component: StkPool, meta: { title: '证券池' } },
   { path: '/:pathMatch(.*)*', redirect: '/' }

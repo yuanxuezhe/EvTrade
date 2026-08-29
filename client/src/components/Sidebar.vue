@@ -108,6 +108,9 @@ const menuItems = computed(() => {
     base.push({ path: '/admin/cache/positions', label: '持仓查询', icon: Box })
     base.push({ path: '/admin/cache/orders', label: '委托查询', icon: Tickets })
     base.push({ path: '/admin/cache/trades', label: '成交查询', icon: Document })
+    // his-quote-backfill: 数据补全
+    base.push({ divider: true, label: '数据补全' })
+    base.push({ path: '/data-completion/history-quote', label: '历史行情补全', icon: Refresh })
   }
   return base
 })
