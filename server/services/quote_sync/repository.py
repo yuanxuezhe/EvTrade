@@ -60,22 +60,28 @@ def add_config(stock_code: str, start_date: str, end_date: str, auto_sync: int) 
 
 
 def _init_last_loaded(stock_code: str, start_date: str) -> str:
-    """新配置的初始游标: 已落地数据的最大日期, 否则 start_date, 封顶昨天。"""
-    from datetime import datetime
-    engine = get_engine()
+    """新配置初始游标 =「已落地数据的最后日期」语义:
+    - 已有 minute_bars 数据 → MAX(该标 stime 日期) (续补从它+1)
+    - 无数据 → start_date 前一天 (使 next = start_date 当天, 不漏首日)
+    已有数据情况封顶昨天 (今天 1m 不全)。
+    """
+    from datetime import datetime, timedelta
     yesterday = _yesterday()
     max_day = ""
     try:
+        engine = get_engine()
         with engine.connect() as conn:
             row = conn.execute(
                 text("SELECT MAX(LEFT(stime,8)) FROM minute_bars WHERE stock_code=:c"),
                 {"c": stock_code},
             ).fetchone()
-            max_day = row[0] or "" if row else ""
+            max_day = (row[0] or "") if row else ""
     except Exception:
-        log.exception("_init_last_loaded: 查 minute_bars 最大日期失败, 用 start_date")
-    candidate = max_day or start_date
-    return min(yesterday, candidate) if candidate else start_date
+        log.exception("_init_last_loaded: 查 minute_bars 最大日期失败, 按无数据处理 %s", stock_code)
+    if max_day:
+        return min(max_day, yesterday)
+    # 无数据: 游标 = start_date 前一天 → next 补 start_date 当天
+    return (datetime.strptime(start_date, "%Y%m%d") - timedelta(days=1)).strftime("%Y%m%d")
 
 
 def _yesterday() -> str:
