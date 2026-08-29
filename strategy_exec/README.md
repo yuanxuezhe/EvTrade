@@ -81,28 +81,11 @@ strategy_exec/
 
 > 旧网格策略引擎（regime/grid）清理见 commit `aa70dae`；script-strategy 引擎迁移详见 `openspec/specs/strategy-exec/spec.md`。
 
-## 离线开发模式 (change `2026-08-29-his-hq-mock`)
+## broker 1m 拉 + 策略_exec 端聚合 (change `2026-08-30-his-hq-aggregate-bars`)
 
-Linux dev 环境无 xtquant / QMT broker 时，可开 mock 模式让回测端到端跑通（broker 仍在线时关闭走真链路，行为零变化）。
+broker his_hq 实际**只返 1m close**（其他字段 broker 端不返或返 0）。strategy_exec 端永远拉 1m，按用户 period 聚合 OHLCV（1m 透传 / 5m/15m/30m/60m 桶对齐 / 1d 跨周末）。**永远走实盘 broker**（无 mock 通道）— broker 不在线直接 502。
 
-**开启**:
-```sql
-UPDATE sys_config SET cfg_val='1' WHERE user='0' AND cfg_key='his_hq_test_mode';
-```
-
-**关闭**:
-```sql
-UPDATE sys_config SET cfg_val='0' WHERE user='0' AND cfg_key='his_hq_test_mode';
-```
-
-mock 模式下 `strategy_exec.market_data.hq_history.fetch_his_bars()` 不连 RabbitMQ，直接调 `generate_mock_bars()` 返确定性 K 线（同 stock_code 同区间 = 同数据，跨重启一致）。详见 `知识库/策略服务/历史行情.md` + `tests/strategy_exec/test_mock_history.py`。
-
-**老 queued 任务清理 (admin only)**：
-```
-POST /api/script-strategy/strategies/{strategy_id}/stale-queued/cleanup
-Authorization: Bearer <admin_token>
-```
-仅 UPDATE status='failed' + error_msg=回填原因（不删行，符合用户硬规则 2026-08-27）。
+详见 `知识库/策略服务/历史行情.md` + `tests/strategy_exec/test_aggregator.py`（22 cases）。
 
 ## 依赖
 
