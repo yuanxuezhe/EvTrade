@@ -4,7 +4,7 @@
 
 | 文件 | 说明 |
 |---|---|
-| `server/api/auth.py` | 登录/me/grant/改密/心跳/登出 REST（273 行） |
+| `server/api/auth.py` | 登录/me/改密/心跳/登出 REST（230 行） |
 | `server/auth/deps.py` | FastAPI 鉴权依赖 get_current_user / require_admin / require_trader（80 行） |
 | `server/auth/security.py` | JWT 签发校验 + bcrypt 工具（77 行） |
 | `server/auth/session.py` | token session cache（进程内 dict + RLock，140 行） |
@@ -21,14 +21,13 @@
 - **心跳保活**（`POST /api/auth/heartbeat`）：前端静止时每 5 分钟调一次，让 token touch 不过期（IDLE_TIMEOUT_SECONDS=600）
 - **登出**（`POST /api/auth/logout`）：`session.revoke(token)` 立即失效（即便前端 localStorage 还存着 token）
 - **重启失效语义**：cache 是进程内 dict，后端重启 = 所有 token 失效（用户期望行为）
-- **技能包授信**（`POST /api/auth/grant`）：环境变量 `EVTRADE_ALLOW_GRANT_TOKEN=1` 时，固定 token "hermesagent" 可换永久 JWT（exp 2099，admin id=6）
 - **RBAC 三级**：admin > trader > viewer；`require_admin`（仅 admin）、`require_trader`（admin+trader，viewer 403）
 
 ## 文件清单
 
 | 文件 | 行数 | 核心内容 |
 |---|---|---|
-| `server/api/auth.py` | 273 | login / me(PATCH) / grant / change-password / heartbeat / logout |
+| `server/api/auth.py` | 230 | login / me(PATCH) / change-password / heartbeat / logout |
 | `server/auth/security.py` | 77 | SECRET_KEY 加载、hash_password、verify_password、create_access_token、decode_token |
 | `server/auth/session.py` | 140 | register_token / touch / is_valid / revoke / sweep_expired / sweep_loop |
 | `server/auth/deps.py` | 80 | oauth2_scheme / get_current_user / require_admin / require_trader |
@@ -39,7 +38,6 @@
 |---|---|---|
 | ALGORITHM | HS256 | security.py |
 | ACCESS_TOKEN_EXPIRE_MINUTES | 60×24（24h） | security.py |
-| HERMES_AGENT_TOKEN | "hermesagent" | security.py |
 | IDLE_TIMEOUT_SECONDS | 600（10min） | session.py |
 | SWEEP_INTERVAL_SECONDS | 60 | session.py |
 | bcrypt rounds | 12 | security.py |
@@ -144,7 +142,7 @@ IDLE_TIMEOUT_SECONDS = 600; SWEEP_INTERVAL_SECONDS = 60
 _TOKEN_CACHE: dict = {}                     # PK = SHA256(token) hex（不存原文）
 _TOKEN_LOCK = threading.RLock()             # RLock 允许重入（is_valid 内 touch）
 
-def register_token(token, user_id, role):   # 登录/grant 时调用；幂等覆盖
+def register_token(token, user_id, role):   # 登录时调用；幂等覆盖
     _TOKEN_CACHE[_hash_token(token)] = {"user_id": ..., "role": ...,
                                         "created_at": time.time(), "last_seen_at": time.time()}
 def touch(token):                           # 每个鉴权请求调用；不存在静默 no-op
@@ -158,23 +156,7 @@ async def sweep_loop():                     # lifespan 启动的后台协程，6
 
 现状：**单进程** + 进程内 dict（多 worker 下 dict 不共享会跨进程 401，MySQL MEMORY 表方案曾有抖动）（微秒级、无锁竞争、重启清空语义保留）。**部署禁止 `--workers N`。**
 
-### 6. grant 永久 token（api/auth.py）
-
-```python
-@router.post("/grant", response_model=TokenResponse)
-async def grant(payload: dict):
-    if os.environ.get("EVTRADE_ALLOW_GRANT_TOKEN", "0") != "1":
-        raise HTTPException(403, "grant endpoint disabled")
-    if payload.get("token") != HERMES_AGENT_TOKEN: raise HTTPException(401, "invalid grant token")
-    data = {"sub": "6", "id": 6, "role": "admin", "username": "admin"}
-    expires = now + timedelta(days=365*30)                      # ~2099
-    permanent_token = jwt.encode({**data, "iat": now, "exp": expires}, SECRET_KEY, algorithm=ALGORITHM)
-    register_token(permanent_token, user_id=6, role="admin")    # 必须注册，否则 is_valid 401
-```
-
-WS 直连时 decode 失败但 token == HERMES_AGENT_TOKEN 也视为 admin(id=6)（同一事实源）。
-
-### 7. 其余端点
+### 6. 其余端点
 
 - `GET/PATCH /api/auth/me`：读/改自己 email/full_name（`Users.update_one(data, id=...)` 后回读）
 - `POST /api/auth/change-password`：**不校验旧密码、不限长度**（admin/admin123 seed 场景）；hash 走 threadpool；成功后 `must_change_password=False`
@@ -194,5 +176,4 @@ WS 直连时 decode 失败但 token == HERMES_AGENT_TOKEN 也视为 admin(id=6)�
 - **新增角色**：users 表 role 列 + `VALID_ROLES`（users.py）+ deps.py 加 `require_xxx` guard
 - **多进程部署**：必须先解决 session cache 共享（Redis 或 SQL 共享方案），否则跨 worker 401
 - **换 secret**：删 `server/auth/.secret_key` 或改 EVTRADE_SECRET 环境变量；**所有已发 token 立即失效**
-- **grant 收紧**：HERMES_AGENT_TOKEN 常量与 WS endpoint 的兜底判断是两处引用，改值需同步
 - **登录加图形验证码等**：加在 login 端点 bcrypt 校验之前；保持 401 文案统一（"用户名或密码错误"）防止用户名枚举

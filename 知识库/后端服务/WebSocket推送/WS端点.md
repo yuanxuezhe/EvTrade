@@ -3,15 +3,14 @@
 ## 对应代码路径
 
 - `server/ws/endpoint.py`（register_ws_endpoint / websocket_endpoint）
-- `server/ws/agent_handler.py`（agent_channel 业务消息分发 / send_agent_ready）
-- `server/auth/security.py`（decode_token / HERMES_AGENT_TOKEN）
+- `server/auth/security.py`（decode_token）
 - `server/auth/session.py`（touch）
 - `server/repo/quote_snapshots.py`（get_latest_multi / to_dict）
 - `server/tables/users.py`（sync_update admin 校验查库）
 
 ## 功能概述
 
-`/ws/{channel}` WebSocket 端点：`?token=JWT` 鉴权（也接受固定 hermesagent token 视为 admin），按 channel 接入 ws_manager；单向心跳（客户端 30s ping、服务端只回 pong、10 分钟无消息踢线）+ 订阅协议（subscribe/unsubscribe，仅 quote_update 频道）+ subscribe_ack 立即回最新快照。推送是单向 server→client，客户端其他消息仅作心跳续约。
+`/ws/{channel}` WebSocket 端点：`?token=JWT` 鉴权，按 channel 接入 ws_manager；单向心跳（客户端 30s ping、服务端只回 pong、10 分钟无消息踢线）+ 订阅协议（subscribe/unsubscribe，仅 quote_update 频道）+ subscribe_ack 立即回最新快照。推送是单向 server→client，客户端其他消息仅作心跳续约。
 
 ## 文件清单
 | 代码文件 | 作用 |
@@ -27,8 +26,9 @@
 
 ### 鉴权（_resolve_ws_user）
 1. `decode_token(token)`：合法 JWT → claims。
-2. `token == HERMES_AGENT_TOKEN`：返回 `{"sub":"6","id":6,"role":"admin","username":"admin"}`（hermes agent 直连，硬编码 admin 凭证，回收需改代码）。
-3. 否则 None → close 4001 "Invalid token"；无 token → close 4001 "Unauthorized"。
+2. 否则 None → close 4001 "Invalid token"；无 token → close 4001 "Unauthorized"。
+
+（2026-08-25 cleanup-ai-remove：删除固定 hermesagent 硬编码 admin 凭证捷径，WS 仅接受合法 JWT。）
 
 sync_update 频道额外用 SessionLocal 查 `users.role`（避免 JWT 缓存旧 role），非 admin → close 4003 "Admin required"。
 
@@ -70,13 +70,6 @@ unsubscribe：
 ### 主循环与清理
 `while True: receive_text()` → 刷新 last_recv → json 解析 → 分发 ping / subscribe / unsubscribe；其他消息忽略。finally 中 cancel idle_task + `ws_manager.disconnect(websocket, channel)`（清订阅索引）。
 
-### agent_channel 的 ready 语义（REQ-ARCH-008，2026-08-23 修复）
-
-- `channel == "agent_channel"`（AI 助手，第 6 个 channel）：连接建立后（`ws_manager.connect` 之后）**立即**推 `{"type":"ready","session_id":...}`（`send_agent_ready`），不等第一条 `user_message`。
-- **为什么必须连上即发**：前端 `AgentWSClient.connect()` 以收到 `ready` 事件为连接成功标志，在此之前**不会**发出首条 `user_message`。若后端等第一条 `user_message` 才发 `ready` → 前后端互相等待，首条消息永远发不出去（实际故障 2026-08-23「AI 对话框点击发送没用」）。
-- 业务消息（`user_message` / `confirmation`）分发到 `server/ws/agent_handler.handle_agent_channel_message`；该 handler **不**再重复推 `ready`。
-- `session_id` 为连接级标识（`u<user_id>-<uuid>` 前缀）；hermes run 的 run session 在 `_handle_user_message` 内另行生成。
-
 ### 注册方式
 `register_ws_endpoint(app)` 在 main.py 的 startup 之前调用，内部 `@app.websocket("/ws/{channel}")` 装饰器注册；端点闭包绑定模块级 ws_manager 单例。
 
@@ -85,8 +78,6 @@ unsubscribe：
 - 下游：auth/security、auth/session、ws_manager、repo/quote_snapshots、tables/users（sync_update 校验）
 
 ## 修改指南
-- **agent_channel 的 ready 必须连上即发，不能挪到第一条 user_message**（前后端互相等待死锁，2026-08-23 实际故障）。改 `_handle_user_message` 时不要加回 `ready` 推送。
 - 新增客户端消息类型：在主循环 `msg_type` 分支追加；保持"失败只 send 错误 ack、不打断连接"原则（一处未捕获异常曾导致连接静默死亡无限重连）。
 - 新增 admin 频道：加入 `WS_CHANNELS_REQUIRE_ADMIN`。
 - 调整 idle 阈值：改 `WS_IDLE_TIMEOUT`（与前端 30s ping 周期配套）。
-- 鉴权策略变更注意 hermesagent 硬编码 token 的回收风险（需改代码下线）。
