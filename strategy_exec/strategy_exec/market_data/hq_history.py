@@ -111,6 +111,51 @@ class HQHistoryClient:
         - broker his_hq 永远收 period='1m' + fields=['close'] (broker 单源真相)
         - strategy_exec 端按用户 period 聚合 (1m / 5m / 15m / 30m / 60m / 1d)
         - 1d 聚合按 A股交易日历 (周末跳过)
+
+        change 2026-08-30-his-hq-chunked-fetch:
+        - 长区间 (≥30 天) broker 单次 fetch 30s 超时 → 拆 N 段 (默认 10 天/批)
+        - 串行调 _fetch_one_chunk() → 拼凑 + sort by stime
+        - 任一段 raise → 立即 raise (不返部分数据)
+        """
+        # ── change 2026-08-30-his-hq-chunked-fetch: chunked 调度 ──
+        if self.settings.his_hq_chunk_enabled:
+            chunks = _iter_chunks(start_date, end_date, self.settings.his_hq_chunk_days)
+            log.info(
+                "[hq_history] chunked fetch enabled: stock=%s %s~%s → %d chunks (chunk_days=%d)",
+                stock_code, start_date, end_date, len(chunks), self.settings.his_hq_chunk_days,
+            )
+            all_bars: List[Dict[str, Any]] = []
+            for i, (cs, ce) in enumerate(chunks, 1):
+                log.info(
+                    "[hq_history] chunked fetch: stock=%s chunk %d/%d (%s~%s)",
+                    stock_code, i, len(chunks), cs, ce,
+                )
+                try:
+                    bars_i = await self._fetch_one_chunk(stock_code, cs, ce, period)
+                except HQHistoryError as e:
+                    raise HQHistoryError(
+                        f"chunked fetch failed at chunk {i}/{len(chunks)} ({cs}~{ce}): {e}"
+                    ) from e
+                all_bars.extend(bars_i)
+            # 拼凑后 sort by stime (broker 内部顺序可能乱)
+            all_bars.sort(key=lambda b: b.get("stime", ""))
+            return self._aggregate(all_bars, period)
+
+        # ── chunked 关闭: 1 次全拉 (向后兼容) ──
+        all_rows = await self._fetch_one_chunk(stock_code, start_date, end_date, period)
+        return self._aggregate(all_rows, period)
+
+    async def _fetch_one_chunk(
+        self,
+        stock_code: str,
+        start_date: str,
+        end_date: str,
+        period: str,
+    ) -> List[Dict[str, Any]]:
+        """单段 broker fetch + raw 1m close 数组. 内部 helper, 不做聚合.
+
+        Returns:
+            raw 1m K 线数组 (broker 1m close, stime 14位)
         """
         await self.connect()
         assert self._channel is not None
@@ -149,7 +194,7 @@ class HQHistoryClient:
         await ans_q.bind(exchange, routing_key=ans_queue)
         log.info(
             "[hq_history] fetching stock=%s %s~%s period=%s fields=%s ans_queue=%s",
-            stock_code, start_date, end_date, period, fields, ans_queue,
+            stock_code, start_date, end_date, period, _BROKER_FIELDS, ans_queue,
         )
 
         # ── 发布请求到 broker 监听的队列 ──
@@ -217,17 +262,70 @@ class HQHistoryClient:
 
         log.info("[hq_history] fetched %d raw 1m bars for %s %s~%s (broker period=%s)",
                  len(all_rows), stock_code, start_date, end_date, _BROKER_PERIOD)
+        return all_rows
 
-        # ── strategy_exec 端按用户 period 聚合 (broker 永远 1m + close) ──
+    def _aggregate(self, all_rows: List[Dict[str, Any]], period: str) -> List[Dict[str, Any]]:
+        """按用户 period 聚合 (broker 永远 1m + close) — 内部 helper."""
         if period == "1m":
             # 1m 直接返 (无聚合), open/high/low 用 close 兜底 (broker 1m 不返)
             out = all_rows
         else:
             out = aggregate_bars(all_rows, period)
 
-        log.info("[hq_history] aggregated %d 1m bars → %d %s bars for %s",
-                 len(all_rows), len(out), period, stock_code)
+        log.info("[hq_history] aggregated %d 1m bars → %d %s bars",
+                 len(all_rows), len(out), period)
         return out
+
+
+# ─────────────── change 2026-08-30-his-hq-chunked-fetch ───────────────
+
+
+def _iter_chunks(
+    start_date: str, end_date: str, chunk_days: int,
+) -> List[Tuple[str, str]]:
+    """把 [start_date, end_date] 拆成 N 段 (每段 ≤ chunk_days 天).
+
+    Args:
+        start_date / end_date: YYYYMMDD
+        chunk_days: 段大小 (1-30)
+
+    Returns:
+        [(chunk_start_1, chunk_end_1), (chunk_start_2, chunk_end_2), ...]
+        - chunk_start_i = start + (i-1) * chunk_days
+        - chunk_end_i = min(start + i * chunk_days - 1, end)
+        - 末段可能 < chunk_days
+        - 单日区间 (start==end) → 1 段
+        - 跨年正常处理 (datetime 会自动 rollover)
+
+    Examples:
+        _iter_chunks("20250101", "20250130", 10) → [
+          ("20250101", "20250110"),
+          ("20250111", "20250120"),
+          ("20250121", "20250130"),
+        ]
+        _iter_chunks("20250101", "20250131", 10) → 4 段 (末段 1-1)
+        _iter_chunks("20250101", "20250101", 10) → [("20250101", "20250101")]
+        _iter_chunks("20241201", "20250131", 30) → [
+          ("20241201", "20241230"),  # 30 天
+          ("20241231", "20250131"),  # 32 天 (跨年)
+        ]
+    """
+    import datetime as _dt
+
+    s = _dt.datetime.strptime(start_date, "%Y%m%d").date()
+    e = _dt.datetime.strptime(end_date, "%Y%m%d").date()
+    if s > e:
+        return []
+    if chunk_days < 1:
+        chunk_days = 1
+    from datetime import timedelta
+    out: List[Tuple[str, str]] = []
+    cur = s
+    while cur <= e:
+        chunk_end = min(cur + timedelta(days=chunk_days - 1), e)
+        out.append((cur.strftime("%Y%m%d"), chunk_end.strftime("%Y%m%d")))
+        cur = chunk_end + timedelta(days=1)
+    return out
 
 
 # 单例

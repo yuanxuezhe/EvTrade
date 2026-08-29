@@ -56,6 +56,9 @@ class Settings(BaseSettings):
     evtrade_his_hq_exchange_name: str = Field(default="quota_his.exchange", min_length=1)
     evtrade_his_hq_req_queue: str = Field(default="EvTrade.ReqHisHq", min_length=1)
     evtrade_his_hq_req_timeout: int = Field(default=30, ge=5, le=300)
+    # change 2026-08-30-his-hq-chunked-fetch: 长区间拆分 (默认 10 天/批, 避免 30s 单次超时)
+    his_hq_chunk_days: int = Field(default=10, ge=1, le=30)
+    his_hq_chunk_enabled: bool = Field(default=True)
 
     # ──── 行情 WS ────
     hq_ws_url: str = Field(default="ws://127.0.0.1:8765/quota.broadcast", min_length=10)
