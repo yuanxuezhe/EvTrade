@@ -87,6 +87,29 @@ tables:
         type: Integer
         nullable: false
         default: 0
+  quote_sync_config:
+    pk: ['stock_code']
+    columns:
+      stock_code:
+        type: String(16)
+        nullable: false
+        default:
+      start_date:
+        type: String(8)
+        nullable: false
+        default:
+      end_date:
+        type: String(8)
+        nullable: false
+        default:
+      last_loaded_date:
+        type: String(8)
+        nullable: false
+        default:
+      auto_sync:
+        type: Integer
+        nullable: false
+        default: 1
   order_no_seq:
     pk: ['seq_name']
     columns:

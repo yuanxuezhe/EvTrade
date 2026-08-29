@@ -12,10 +12,12 @@ from server.tables.base import (  # noqa: F401
 
 from server.tables._applied_migrations import AppliedMigrations  # noqa: F401
 from server.tables.assets import Assets  # noqa: F401
+from server.tables.minute_bars import MinuteBars  # noqa: F401
 from server.tables.order_no_seq import OrderNoSeq  # noqa: F401
 from server.tables.orders import Orders  # noqa: F401
 from server.tables.positions import Positions  # noqa: F401
 from server.tables.quote_snapshots import QuoteSnapshots  # noqa: F401
+from server.tables.quote_sync_config import QuoteSyncConfig  # noqa: F401
 from server.tables.reconcile_report import ReconcileReport  # noqa: F401
 from server.tables.stocks import Stocks  # noqa: F401
 from server.tables.stkpool import Stkpool  # noqa: F401
