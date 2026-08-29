@@ -9,7 +9,7 @@
 
 ## 功能概述
 
-EvTrade 全部 21 张业务表的结构说明：表名、主键、关键列、用途；以及加表/改字段的完整操作步骤。MySQL（utf8mb4/InnoDB），schema 以 `server/schema.yml` 为权威，代码访问层为 `server/tables/` 动态 ORM。
+EvTrade 全部 23 张业务表的结构说明：表名、主键、关键列、用途；以及加表/改字段的完整操作步骤。MySQL（utf8mb4/InnoDB），schema 以 `server/schema.yml` 为权威，代码访问层为 `server/tables/` 动态 ORM。
 
 ## 文件清单（全部表，按 schema.yml 顺序）
 
@@ -17,10 +17,12 @@ EvTrade 全部 21 张业务表的结构说明：表名、主键、关键列、�
 |------|------|--------|------|
 | `_applied_migrations` | `name` | `applied_at` | server/migrations 已应用记录 |
 | `assets` | `id` | `cash/available/frozen_cash/market_value/total_asset/last_asset/synced_at/synced_from` | 资金账户快照（单行，柜台同步） |
+| `minute_bars` | `stock_code, stime` | `stime(14位)/open/close/high/low/avg_price/volume` | 历史分钟 K 线（broker his_hq 1m；avg_price=VWAP 元/股） |
 | `order_no_seq` | `seq_name` | `last_value/updated_at` | 订单号序列（原子 UPSERT 取号，多 generator） |
 | `orders` | `trd_date, order_no` | `order_id/user_def/stock_code/order_type/price_type/price/volume/traded_volume/avg_price/status/task_id/strategy_type` | 当日委托单；6 个二级索引（trd_status/task_id/stock/order_id/user_def/strategy_type） |
 | `positions` | `stock_code` | `stock_name/last_vol/avl_vol/vol/cost_price/synced_at` | 持仓（每股票一行） |
 | `quote_snapshots` | `id`（自增） | `stock_code/last_price/open/high/low/prev_close/volume/amount/bid1-5_price_vol/ask1-5_price_vol/ts` | 行情快照落库（quote_cache 周期 flush）；索引 ts、(stock_code,ts) |
+| `quote_sync_config` | `stock_code` | `start_date/end_date/last_loaded_date/auto_sync` | 行情同步任务表/配置（要跟踪并自动补全的证券；last_loaded_date 续传游标） |
 | `reconcile_report` | `trd_date, mode, created_at` | `diffs_json/broker_asset_json/local_asset_json/broker_positions_json/local_positions_json/rpc_status` | 日初对账报告（LargeText 存 JSON） |
 | `stkpool` | `id`（自增） | `name/remark/created_at` | 证券池主表 |
 | `stkpooldetail` | `id, stock_code` | （仅 PK 两列）；索引 id | 证券池明细（share PK id + stock_code） |

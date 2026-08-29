@@ -2,7 +2,7 @@
 
 ## Purpose
 
-20 张表（业务 7 + 策略/脚本 6 + 系统/用户/证券 5 + 对账/序列 1 + 鉴权 1）的**单一事实源**（single source of truth）。
+22 张表（业务 7 + 策略/脚本 6 + 系统/用户/证券 5 + 对账/序列 1 + 鉴权 1 + 行情补全 2）的**单一事实源**（single source of truth）。
 
 > ⚠️ **2026-08-27 修订（change `2026-08-27-data-model-spec-drift`）**：v130 schema governance 实施后实际 ORM 类 21 个（`AppliedMigrations` 是迁移日志表不算业务表，net 业务表 = 20 张）。本文档原写"15 张表"严重过期，已重写 Tables Overview 与 §15-§19。
 
@@ -33,7 +33,7 @@ DB 引擎实现在 `server/infra/db.py`（v20 起强制 MySQL-only）。
 
 > ⚠️ **2026-08-27 修订**：本表已重写，对齐 `server/tables/*.py` 真实 21 个 `TableBase` 类（扣 `AppliedMigrations` 迁移日志表后，**20 张业务表**）。原 spec 漏登 7 张：`users` / `sys_config` / `stocks` / `t0_tasks` / `strategy` / `strategy_order` / `token_sessions`。
 
-按业务域分组（共 19 张业务表 + 1 张 `order_no_seq` 序列表）：
+按业务域分组（共 21 张业务表 + 1 张 `order_no_seq` 序列表，合计 22 张；2026-08-30 新增 `minute_bars` / `quote_sync_config`）：
 
 ### 📊 业务核心（v4 数据本地优先：本地 DB 是展示源）
 
@@ -74,6 +74,15 @@ DB 引擎实现在 `server/infra/db.py`（v20 起强制 MySQL-only）。
 |---|---|---|---|---|---|
 | 19 | `reconcile_report` | 历史 | `(trd_date, mode, created_at)` | 否 | `server/services/reconcile.py` |
 | 20 | `order_no_seq` | 序列 | `seq_name` | 否（多序列） | `server/services/order_no.py` |
+
+### 📈 行情补全（his-quote-backfill，2026-08-30 新增）
+
+| # | 表 | 分类 | 主键 | 单行？ | 业务入口 |
+|---|---|---|---|---|---|
+| 21 | `minute_bars` | 行情 | `(stock_code, stime)` 复合 | 否 | `server/services/quote_sync/` |
+| 22 | `quote_sync_config` | 行情 | `stock_code` | 否（多股） | `server/api/quote_sync.py` |
+
+> - **2026-08-30 his-quote-backfill**：新增 `minute_bars`（历史分钟 K 线，复合 PK `stock_code+stime`，avg_price=VWAP 元/股）+ `quote_sync_config`（行情同步任务表/配置，记录每证券 start/end/last_loaded_date 游标/auto_sync 标志）。Tables Overview 总业务表 20 → 22。详见 [`his-quote-backfill/spec.md`](../his-quote-backfill/spec.md)。
 
 > **删除的死表**（v130 schema governance 合并进 `sys_config`，本文档原 §Table Details §6-8 已移除，**§Table Details 历史仍保留**供查阅）：
 > - `trading_session` — 交易时段表（已合并）
