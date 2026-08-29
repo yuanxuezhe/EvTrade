@@ -130,7 +130,7 @@ mv openspec/changes/<name> openspec/changes/archive/<date>-<name>
 
 ## 当前活跃 change
 
-> 当前**1 个活跃 draft change**（`2026-08-23-ai-strategy-assistant` ScriptDev AI 生成脚本 — C0 调研完成，C1-C5 待拍板推进）。
+> 下表 ✅ 已归档行 = 历史索引（单一事实来源，本文件不重复）。进行中: `2026-08-25-cleanup-ai-remove`（AI 链路清理，代码层已在前几 commit 完成，收尾 KB 同步 + 归档）。
 
 | Change | 状态 | 解决什么 |
 |---|---|---|
