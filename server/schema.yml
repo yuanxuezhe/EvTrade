@@ -52,6 +52,41 @@ tables:
         type: String(16)
         nullable: false
         default: 
+  minute_bars:
+    pk: ['stock_code', 'stime']
+    columns:
+      stock_code:
+        type: String(16)
+        nullable: false
+        default:
+      stime:
+        type: String(16)
+        nullable: false
+        default:
+      open:
+        type: Float
+        nullable: false
+        default: 0.0
+      close:
+        type: Float
+        nullable: false
+        default: 0.0
+      high:
+        type: Float
+        nullable: false
+        default: 0.0
+      low:
+        type: Float
+        nullable: false
+        default: 0.0
+      avg_price:
+        type: Float
+        nullable: false
+        default: 0.0
+      volume:
+        type: Integer
+        nullable: false
+        default: 0
   order_no_seq:
     pk: ['seq_name']
     columns:
