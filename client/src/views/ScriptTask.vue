@@ -153,10 +153,23 @@
           >停止运行</el-button>
         </div>
       </template>
+      <!-- stale-queued 警告 banner (批次内含 ≥1 卡 queued > 24h 的任务时显示, 可关闭) -->
+      <el-alert
+        v-if="staleQueuedCount > 0 && !staleBannerDismissed"
+        class="st-stale-banner"
+        type="warning"
+        :closable="true"
+        :title="`批次内 ${staleQueuedCount} 个任务卡 queued > 24h，建议重测或联系 admin`"
+        :description="staleQueuedHint"
+        show-icon
+        @close="staleBannerDismissed = true"
+        data-el="st-stale-banner"
+      />
       <BatchTasksTable
         :tasks="batchTasksWithProgress"
         :schema="schema"
         :selected-id="selectedTaskId"
+        v-model:show-stale-only="showStaleOnly"
         @select="onTaskSelect"
       />
     </el-card>
@@ -503,6 +516,34 @@ const batchTasksWithProgress = computed(() => {
   })
 })
 
+// ─────────────── Stale-queued (change 2026-08-29-stale-queued-marker) ───────────────
+const STALE_THRESHOLD_MS = 24 * 3600 * 1000
+const showStaleOnly = ref(false)
+const staleBannerDismissed = ref(false)
+function _isStaleQueued(row) {
+  if (!row) return false
+  if (row.status !== 'queued') return false
+  if (row.started_at) return false
+  if (row.progress && row.progress.phase && row.progress.phase !== 'queued') return false
+  const created = row.created_at ? Date.parse(row.created_at) : NaN
+  if (!Number.isFinite(created)) return false
+  return (Date.now() - created) >= STALE_THRESHOLD_MS
+}
+const staleQueuedCount = computed(
+  () => batchTasksWithProgress.value.filter(_isStaleQueued).length
+)
+// banner 显示状态: 有 stale 且未被关闭
+const staleQueuedHint = computed(() => {
+  const oldest = batchTasksWithProgress.value
+    .filter(_isStaleQueued)
+    .map((r) => (r.created_at ? Date.parse(r.created_at) : 0))
+    .filter(Number.isFinite)
+    .sort((a, b) => a - b)[0]
+  if (!oldest) return ''
+  const hours = Math.floor((Date.now() - oldest) / 3600000)
+  return `最早一个已卡 ${hours} 小时`
+})
+
 function _scheduleReloadBatches() {
   if (_wsBatchTimer) return
   _wsBatchTimer = setTimeout(() => {
@@ -608,6 +649,9 @@ onBeforeUnmount(() => {
 .st-card { flex-shrink: 0; }
 .st-card-head { display: flex; align-items: center; gap: 10px; font-size: 14px; font-weight: 600; }
 .st-card-sub { font-size: 12px; font-weight: 400; color: var(--text-secondary); margin-right: auto; }
+.st-stale-banner {
+  margin-bottom: 8px;
+}
 .st-best-code { font-family: var(--font-mono, monospace); font-size: 12px; }
 .st-muted { color: var(--text-placeholder); }
 .up { color: var(--color-up, #f56c6c); font-weight: 600; }
