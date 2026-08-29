@@ -555,6 +555,110 @@ EvTrade 进程内:
 - **THEN** publisher 跳过，不发 RabbitMQ 消息
 - **AND** 前端 ws 不收到消息
 
+### REQ-SE-013: broker his_hq 离线 mock 模式 (2026-08-29)
+
+**Why**：Linux dev 环境无 xtquant / QMT broker，`fetch_his_bars()` 等 RabbitMQ 队列 30s 超时 → 0 rows → run_backtest 抛 BROKER_ERROR 502 → 回测永远卡 queued。需要一个**离线 mock 通道**，让 dev 环境也能跑通回测。
+
+#### 触发方式
+
+- `sys_config.user='0' AND cfg_key='his_hq_test_mode' = '1'` 时，`fetch_his_bars()` **不连 RabbitMQ**，直接调 `generate_mock_bars()` 返确定性 K 线
+- 默认 '0'（关），所有路径走真实 broker（行为不变）
+- 通过 SQL 直改 sys_config 切换：`UPDATE sys_config SET cfg_val='1' WHERE user='0' AND cfg_key='his_hq_test_mode'`
+- `server/infra/db.py` `init_db` 兜底 seed `his_hq_test_mode=0`（与 rpc_test_mode 对称）
+- 启动日志：`server/main.py` 打印 HIS_HQ_TEST_MODE 状态（连通 / 关闭）
+
+#### Mock K 线生成规则（确定性）
+
+- **seed 派生**：`abs(hash(stock_code)) % (2**31)` → 同 stock_code 同区间 = 同数据（跨重启一致）
+- **起始价**：`50 + (seed % 100)` → 50~150 区间
+- **随机游走**：`random.Random(seed).gauss(0.0, 0.02)` 日涨跌幅 → OHLC
+- **OHLC 关系**：high ≥ max(open, close)；low ≤ min(open, close)
+- **跳过周末**：Sat / Sun 不生成 bar
+- **period 适配**：
+  - `1d`：每个工作日 1 根 K 线，`stime = YYYYMMDD150000`（对齐 broker 协议 + Backtrader `format="%Y%m%d%H%MSS"`）
+  - `1m` / `5m` / `15m` / `30m` / `60m`：暂返空（仅 1d 完整实现，其他期后续扩展）
+- **volume**：基准 1000000 + seed 微扰
+
+#### sys_config 读 + 缓存
+
+- strategy_exec 端实现 `strategy_exec.data_access.sys_config.read(key, default=0)`
+- 直连 MySQL（共享 `EVTRADE_DB_URL`）
+- 内存缓存 5s（避免每次 fetch 打 DB）
+- 错误 / None / 缺失 → 返 default（不抛）
+- `globals()["_db_read"]()` 间接引用，monkeypatch 单测友好
+- `invalidate(key=None)` 清缓存（set_value 后立即生效）
+
+#### Scenario: 离线开发模式回测
+
+- **GIVEN** `sys_config.his_hq_test_mode = '1'`
+- **WHEN** EvTrade POST `/internal/run-task` 回测（admin token + sid=12 single）
+- **THEN** strategy_exec 不连 RabbitMQ
+- **AND** `fetch_his_bars('159992.SZ', '20250101', '20250601', '1d')` 返 ~108 根工作日 K 线（确定性数据）
+- **AND** run_backtest 正常完成 → DB `status='finished'`，pnl / trades_count / backtest_result 全有
+- **AND** 前端 ws 收到 4 条 task_progress_update（load_script / build → / running / done）
+
+实测：task19 sid=12 batch=10000014 status=finished pnl=-832.60 trades_count=5 (mock mode on)
+
+#### Scenario: 关闭 mock 走真实 broker
+
+- **GIVEN** `sys_config.his_hq_test_mode = '0'`（默认）
+- **WHEN** strategy_exec 调 `fetch_his_bars`
+- **THEN** 走真实 RabbitMQ 流程（与原行为一致）
+- **AND** broker 不响应时返 `HQHistoryError`（BROKER_ERROR 502）— 与原行为一致
+
+实测：admin 关闭 mock 后立即 502（与原行为一致）
+
+### REQ-SE-014: stale-queued cleanup (admin only, 2026-08-29)
+
+**Why**：dev 环境无 broker 时，老 queued 任务永远卡 queued。前端看到「排队中」但实际是历史遗留。
+
+#### 端点
+
+```
+POST /api/script-strategy/strategies/{strategy_id}/stale-queued/cleanup?threshold_hours=24
+```
+
+- admin only：非 admin 返 403 FORBIDDEN
+- strategy 不存在：返 404 NO_STRATEGY
+- 阈值默认 24h（与 stale-queued 视觉标记一致）
+
+#### helper `server.services.script_strategy.batches.mark_stale_queued_failed`
+
+- 单 SQL:
+  ```sql
+  UPDATE strategy_task
+     SET status = 'failed',
+         error_msg = 'broker his_hq unavailable (回填 2026-08-29 离线 mock 后) — 建议重测',
+         version = version + 1,
+         updated_at = NOW()
+   WHERE strategy_id = :sid
+     AND status = 'queued'
+     AND started_at IS NULL
+     AND created_at < NOW() - INTERVAL :h HOUR
+  ```
+- 返 rowcount (int cleaned_count)
+- **不删行**，仅 UPDATE status + error_msg
+
+#### 数据安全（用户硬规则 2026-08-27）
+
+- 不 drop / truncate / delete from / ALTER
+- 不动 strategy_task schema
+- 仅 UPDATE status（行保留，owner/admin 决定后续重测）
+
+#### Scenario: admin cleanup 老 queued
+
+- **GIVEN** admin token + strategy 有 N 条老 queued（started_at IS NULL + age > 24h）
+- **WHEN** admin POST `/strategies/{id}/stale-queued/cleanup`
+- **THEN** 返 `200 {strategy_id, cleaned_count, error_msg_template}`
+- **AND** DB 中老 task status 从 'queued' → 'failed', error_msg 记录 cleanup 原因
+- **AND** 行数不变（不删行）
+- **WHEN** 非 admin 调
+- **THEN** 返 `403 FORBIDDEN`
+- **WHEN** strategy 不存在
+- **THEN** 返 `404 NO_STRATEGY`
+
+实测：sid=3 cleanup cleaned_count=3 (id 3/4/5)；sid=12 cleaned_count=1 (id 14)；sid=5 cleaned_count=1 (id 6)；task 15/16/17/20 (created_at < 24h) 不变 — 用户硬规则遵守
+
 ## Cross References
 
 - EvTrade 端 script-strategy REST API / 数据模型 / 前端：`strategy/spec.md` REQ-STRAT-014~017（CRUD 仍在 EvTrade，仅**运行引擎**迁到本服务）
