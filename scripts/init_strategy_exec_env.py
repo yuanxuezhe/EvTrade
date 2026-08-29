@@ -4,30 +4,30 @@ scripts/init_strategy_exec_env.py — strategy_exec 初始化脚本
 
 功能:
 1. 生成 STRATEGY_EXEC_API_TOKEN (两服务通信密钥)
-2. 生成 EVTRADE_SERVICE_TOKEN (signal_consumer 调 /api/orders/place 用)
-3. 生成 RabbitMQ exchange/queue 声明 (幂等)
-4. 输出推荐的环境变量配置
+2. 生成 RabbitMQ exchange/queue 声明 (幂等)
+3. 输出推荐的环境变量配置
 
 用法:
     # 生成配置
     python scripts/init_strategy_exec_env.py
 
-    # 一键初始化 (请求 grant token)
-    python scripts/init_strategy_exec_env.py --grant http://127.0.0.1:8000
+    # 跳过 RabbitMQ 声明 (本机无 broker / 测试环境)
+    python scripts/init_strategy_exec_env.py --skip-rabbitmq
 
 前提:
-    - EvTrade 服务已启动
-    - RabbitMQ 已运行
+    - RabbitMQ 已运行 (或 --skip-rabbitmq 跳过)
     - strategy_exec 的 .env 已准备好
+
+注:
+    signal_consumer 调 /api/orders/place 的鉴权已改为 EVTRADE_SERVICE_TOKEN /
+    EVTRADE_ADMIN_TOKEN 直配 (2026-08-25 cleanup-ai-remove 删 /api/auth/grant),
+    本脚本不再请求 grant token, 请在 server/.env 直接配 EVTRADE_SERVICE_TOKEN。
 """
 
 import argparse
-import json
 import os
 import secrets
 import sys
-import urllib.request
-import urllib.error
 from pathlib import Path
 
 
@@ -80,36 +80,6 @@ def declare_exchange_and_queue(rabbitmq_url: str, exchange: str, queue: str) -> 
         return False
 
 
-def request_grant_token(evtrade_url: str) -> str | None:
-    """POST /api/auth/grant 获取永久 JWT"""
-    grant_url = f"{evtrade_url.rstrip('/')}/api/auth/grant"
-    payload = json.dumps({"token": "hermesagent"}).encode("utf-8")
-
-    req = urllib.request.Request(
-        grant_url,
-        data=payload,
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            data = json.loads(resp.read())
-            token = data.get("access_token")
-            if token:
-                print(f"  [OK] 获取 grant token 成功 (exp: {data.get('expires_in', '?')}s)")
-                return token
-            else:
-                print(f"  [!] grant 响应无 access_token: {data}")
-                return None
-    except urllib.error.HTTPError as e:
-        body = e.read().decode()
-        print(f"  [!] grant 失败 HTTP {e.code}: {body}")
-        return None
-    except Exception as e:
-        print(f"  [!] grant 请求失败: {e}")
-        return None
-
-
 def update_strategy_exec_env(env_file: Path, api_token: str) -> None:
     """更新 strategy_exec/.env 文件"""
     lines = []
@@ -134,11 +104,6 @@ def update_strategy_exec_env(env_file: Path, api_token: str) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="strategy_exec 环境初始化")
-    parser.add_argument(
-        "--grant",
-        metavar="URL",
-        help="EvTrade 服务地址 (自动请求 grant token, 例 http://127.0.0.1:8000)",
-    )
     parser.add_argument(
         "--rabbitmq-url",
         default=os.environ.get("RABBITMQ_URL", ""),
@@ -190,31 +155,14 @@ def main() -> None:
     else:
         print("\n[2] 跳过 RabbitMQ 声明 (--skip-rabbitmq)")
 
-    # ── 4. Grant token ─────────────────────────────────
-    evtrade_token = None
-    if args.grant:
-        print(f"\n[3] 请求 EVTRADE_SERVICE_TOKEN (grant → {args.grant}) ...")
-        evtrade_token = request_grant_token(args.grant)
-    else:
-        print("\n[3] 跳过 EVTRADE_SERVICE_TOKEN (无 --grant 参数)")
-        print("      若需 signal_consumer 工作，请手动:")
-        print("        1. 启动 EvTrade (含 grant 端点)")
-        print("        2. curl -X POST http://localhost:8000/api/auth/grant \\")
-        print('           -H "Content-Type: application/json" \\')
-        print('           -d \'{"token": "hermesagent"}\'')
-        print("        3. 把返回的 access_token 设为 EVTRADE_SERVICE_TOKEN")
-
-    # ── 5. 输出汇总 ─────────────────────────────────────
+    # ── 4. 输出汇总 ─────────────────────────────────────
     print("\n" + "=" * 60)
     print("推荐环境变量配置")
     print("=" * 60)
 
     # EvTrade 侧
     print("\n## EvTrade (server/.env 或 docker-compose.yml) ##")
-    if evtrade_token:
-        print(f"EVTRADE_SERVICE_TOKEN={evtrade_token}")
-    else:
-        print("# EVTRADE_SERVICE_TOKEN=  # 请从 /grant 获取后填入")
+    print("# EVTRADE_SERVICE_TOKEN=  # signal_consumer 调 /api/orders/place 用, 直配 (cleanup-ai-remove 后无 /grant)")
     print(f"STRATEGY_EXEC_API_URL=http://127.0.0.1:8001")
     print(f"STRATEGY_EXEC_API_TOKEN={api_token}")
     print(f"STRATEGY_EXEC_API_TOKEN两边必须一致!")
