@@ -60,6 +60,39 @@ phase-2 把 `client/src/stores/ws.js`（347 行 3 类职责）拆分为:
 }
 ```
 
+#### task_progress_update 频道 payload (2026-08-29 扩展, change 2026-08-29-strategy-progress-realtime)
+
+`data` 字段为 strategy_exec 推过来的 task_progress_update payload 原样透传：
+
+```json
+{
+  "type": "task_progress",
+  "channel": "task_progress_update",
+  "ts": "<server 时间>",
+  "data": {
+    "type": "task_progress_update",
+    "task_id": 14,
+    "status": "running" | "finished" | "failed" | "stopped",
+    "progress": {
+      "phase": "load_script" | "build_cerebro" | "running" | "live_running"
+              | "writing_result" | "done" | "failed" | "stopped" | "queued",
+      "msg": "<str, 描述当前阶段>",
+      "bar_idx": 42,
+      "total_bars": 240,
+      "current": 3,
+      "total": 4,
+      "updated_at": "<ISO 时间>"
+    },
+    "ts": "<ISO 时间>"
+  }
+}
+```
+
+**触发源（2026-08-29 起 2 处）**：
+
+1. `server/services/strategy/signal_consumer.py::_broadcast_task_progress` — signal 流触发（live task BUY/SELL/INFO 信号时推，保留 v91.4 起旧语义）
+2. `server/services/strategy/task_progress_consumer.py` — task phase / status 变化触发（回测 4 阶段 + status 转换）
+
 `type` → store 分发表:
 
 | type | channel | 调用 |

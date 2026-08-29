@@ -2646,3 +2646,68 @@ This change SHALL NOT modify:
 - `form.volume` 默认 100 与 `:min="100"` `:step="100"` 不变（最低限兜底）
 - 不动 T0Trade / StrategyOrder 页面
 - 后端 API / store 接口 / WS 频道不变
+
+### REQ-FE-546: ScriptTask 页进度可视化 + trades 行可展开 + 轮询 fallback（2026-08-29）
+
+ScriptTask 页 MUST 提供实时任务进度可视化，覆盖回测 4 阶段（load_script → build_cerebro → running → done）+ 老 queued 兜底轮询。
+
+#### 进度环可视化
+
+- **GIVEN** user 打开 ScriptTask 页，选中 1 个 running 批次
+- **WHEN** ws 推 1 条 `{task_id, status: 'running', progress: {phase: 'running', bar_idx: 42, total_bars: 240}}`
+- **THEN** BatchTasksTable 对应行「状态」列显示：
+  - `<el-progress type="circle" :percentage="42/240*100">` 圆环 + 文字 "42/240"
+- **AND** 行 hover 0.5s 后 `<el-tooltip>` 显示 "回测中 bar=42/240"
+- **WHEN** ws 推 `{status: 'finished', progress: {phase: 'done'}}`
+- **THEN** 圆环变 `<el-tag type="success">完成</el-tag>`
+
+实现细节：
+- 前端维护 `taskProgressMap: Map<task_id, progress>`，ws 推过来时 set（new Map 整体替换触发 reactive）
+- BatchTasksTable 接收 `tasks` props（计算属性 `batchTasksWithProgress` = batchTasks 跟 taskProgressMap 合并）
+- 仅 `status === 'running' && row._progress.total_bars` 才显示圆环；其他状态显示原 tag
+- `_progressPct(p)` = `bar_idx / total_bars * 100`，钳 [0, 100]
+
+#### trades 行可展开 + tooltip
+
+- **GIVEN** user 选中 1 个 finished task，进入 TaskDetail 详情
+- **WHEN** 切到「交易明细」tab
+- **THEN** trades 表加 `type="expand"` 控制列
+- **WHEN** user 点开某 1 行
+- **THEN** 展开面板显示完整 signal JSON（按 `stime_side` key 关联 signal_log）：
+  - 触发原因（msg）
+  - 指标（indicators key=value 列表，`<el-tag>` 渲染）
+  - 持仓（state.position，触发时持仓）
+  - 现金（state.cash，触发时现金）
+  - trace_id（`<code>` 渲染）
+  - 价格类型（limit/market → 限价/市价）
+  - 信号时间（ts）
+- **AND** 列头 hover 0.5s 后 `<el-tooltip>` 显示该列含义说明
+
+实现细节：
+- `tradesWithSignal` 计算属性按 `stime_side` key 关联 `signal_log`（`signal_log.signal_type` 用作 side）
+- 找不到对应 signal 的 trade（老数据 / live 信号）显示 "无对应 signal 记录"
+- `signal_log` 来源：`task.backtest_result.best.signal_log` 优先，回退 `task.backtest_result.signal_log`
+
+#### 3s 轮询 fallback
+
+- **GIVEN** user 打开 ScriptTask 页，选中 1 个 batch 含 queued/running task
+- **WHEN** 页面 mount 后 ws 未推 task_progress
+- **THEN** 自动启动 3s 周期轮询 `loadBatches()` + `loadBatchTasks()`
+- **AND** ws 推送与轮询并存（不互斥，节流刷新共用 _scheduleReloadTasks）
+- **WHEN** 批次内所有 task 进入 finished/failed/stopped/abandoned
+- **THEN** `_hasActiveTask` computed 变 false → watch 触发 `_stopPolling()`
+- **WHEN** user 切换 batch / 切换策略 / 卸载组件
+- **THEN** `onBeforeUnmount` 清轮询 timer
+
+实现细节：
+- `POLL_INTERVAL_MS = 3000`
+- `_startPolling()` 检查 `_pollTimer` 存在性，避免重复启动
+- 轮询只在 `_hasActiveTask.value` 为 true 时执行（防御性，避免 race）
+- 卸载 / 切策略时 `_stopPolling()` 必须调用，否则 timer 泄漏
+
+#### Scenario: 老 queued 任务视觉标记（轻量）
+
+- **GIVEN** 批次内 task 卡 queued > 24h（created_at 距今 ≥ 24h 且 started_at IS NULL）
+- **WHEN** 显示在 BatchTasksTable
+- **THEN** 行加灰色背景 + 「已超时」tag（仅视觉提示，不改数据；用户硬规则：禁清表数据）
+- **AND** 不主动删除 / 改 status

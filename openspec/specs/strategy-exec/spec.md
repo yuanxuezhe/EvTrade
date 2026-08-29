@@ -463,6 +463,98 @@ EvTrade 母单路径下，`LiveRunner` MUST 接受并透传母单元数据，使
 - **AND** LiveRunner `_parent_task_id is None` + `_strategy_name == ''`
 - **AND** publish payload 同上，EvTrade signal_consumer 按 v122 旧逻辑处理（task_id=None, strategy_type=1 兼容）
 
+### REQ-SE-012: task_progress 实时推送
+
+strategy_exec MUST 在 task phase / status 变化时通过 RabbitMQ 实时推送到 EvTrade，由 EvTrade 端 consumer 广播到 `task_progress_update` WS 频道。
+
+**Why**：原 `_broadcast_task_progress` 只在 signal 流到达时触发，回测 4 阶段（load_script → build_cerebro → running → done）期间用户看不到任何 phase 变化，UX 卡"排队中"无反馈。
+
+**链路**：
+
+```text
+strategy_exec 进程内:
+  update_task_progress(...) / update_task_status(...)
+    ↓ data_access/strategy_task.py:_emit_progress() (集中节流)
+  signal/task_progress_publisher.py:TaskProgressPublisher.publish()
+    ↓ exchange="strategy.exchange" routing_key="task.progress.{task_id}" payload=JSON
+  RabbitMQ broker
+
+EvTrade 进程内:
+  server/services/strategy/task_progress_consumer.py
+    ↓ 订阅 queue="EvTrade.TaskProgress" routing_key="task.progress.*"
+  ws_manager.broadcast("task_progress_update", payload)
+    ↓
+  前端 ws task_progress_update 频道 → ws_dispatch.js _onTaskProgress()
+    ↓
+  useWsStore().lastTaskProgress → ScriptTask.vue watch 节流刷新批次表格 + 就地更新 detail.progress
+```
+
+**payload schema**：
+
+```json
+{
+  "type": "task_progress_update",
+  "task_id": 14,
+  "status": "running",
+  "progress": {
+    "phase": "load_script" | "build_cerebro" | "running" | "live_running"
+            | "writing_result" | "done" | "failed" | "stopped",
+    "msg": "<str, 描述当前阶段>",
+    "bar_idx": 42,
+    "total_bars": 240,
+    "current": 3,
+    "total": 4,
+    "updated_at": "<ISO 时间>"
+  },
+  "ts": "<ISO 时间>"
+}
+```
+
+**节流规则**：
+
+| 条件 | 推送 |
+|---|---|
+| `status` 变化 (queued→running / running→finished/failed/stopped) | ✅ 立即推 |
+| `progress.phase` 变化 (load_script→build_cerebro→running→done) | ✅ 立即推 |
+| `progress.bar_idx` 增量 ≥ 5% 且距上次 ≥ 2s | ✅ 推 |
+| `progress.bar_idx` 增量 < 5% 或距上次 < 2s | ❌ 跳过 |
+| `status='queued'` | ❌ 跳过（无意义）|
+| `progress is None` 且 status 未变 | ❌ 跳过 |
+
+**数据源约束**：
+
+- 共享 RabbitMQ broker（`EVTRADE_RABBITMQ_URL`）
+- 共用 `strategy.exchange`（durable, topic）— 避免新增 exchange 拓扑
+- routing_key 命名空间 `task.progress.*`（与 signal 路由 `stock_code` 命名空间隔离）
+- queue `EvTrade.TaskProgress`（durable，EvTrade 端 consumer 独占）
+- 复用 signal_publisher 的 aio_pika connection（单连接多 exchange / routing_key）
+
+#### Scenario: 回测 4 阶段全程推送
+
+- **GIVEN** user 提交 4 组合 sweep batch
+- **WHEN** strategy_exec 跑第 1 个组合 task
+- **THEN** RabbitMQ 收到 4 条消息（4 个 phase 变化）：load_script → build_cerebro → running → done
+- **AND** 每条 message 5s 内被 consumer ack
+- **AND** 前端 ws task_progress_update 收到 4 条推送
+- **AND** ScriptTask.vue 批次表格内对应行 status 从 queued → running → finished
+
+#### Scenario: bar_idx 节流
+
+- **GIVEN** task 状态 running，bar_idx=100/240，距上次推 0.5s
+- **WHEN** strategy_exec 写 progress bar_idx=110/240（增量 4.2%，< 5%）
+- **THEN** 跳过推送
+- **WHEN** bar_idx=112/240（增量 5%，但距上次 0.8s，仍 < 2s）
+- **THEN** 跳过推送
+- **WHEN** bar_idx=120/240（增量 ~9%，且距上次 ≥ 2s）
+- **THEN** 推送 payload 含 bar_idx=120
+
+#### Scenario: 老 queued 任务不推
+
+- **GIVEN** task status='queued'，started_at=None，progress=None
+- **WHEN** strategy_exec update_task_status('queued')（如 sweep batch 预建 task 时）
+- **THEN** publisher 跳过，不发 RabbitMQ 消息
+- **AND** 前端 ws 不收到消息
+
 ## Cross References
 
 - EvTrade 端 script-strategy REST API / 数据模型 / 前端：`strategy/spec.md` REQ-STRAT-014~017（CRUD 仍在 EvTrade，仅**运行引擎**迁到本服务）
