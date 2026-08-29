@@ -5,11 +5,11 @@
 
 ## P0 — change 骨架
 
-- [ ] **commit 0 (骨架)** — 已通过 proposal/tasks/spec-delta 文件创建完成
+- [x] **commit 0 (骨架)** — 已通过 proposal/tasks/spec-delta 文件创建完成 (commit `5ee08ef`)
 
 ## P1 — strategy_exec 端实现
 
-- [ ] **commit 1 — config + hq_history chunked fetch 拆分**
+- [x] **commit 1 — config + hq_history chunked fetch 拆分** (commit `d2d5d49`)
   - `strategy_exec/strategy_exec/config.py`:
     - `his_hq_chunk_days: int = Field(default=10, ge=1, le=30)`
     - `his_hq_chunk_enabled: bool = Field(default=True)`
@@ -24,7 +24,7 @@
     - 抽 `_fetch_one_chunk(start, end, period)` 私有方法: broker 调用 + 1m 聚合
   - 验收: `uv run python -c "from strategy_exec.market_data.hq_history import fetch_his_bars; ..."` import 不报错
 
-- [ ] **commit 2 — 拼凑 + debug log + 外部接口兼容**
+- [x] **commit 2 — 拼凑 + debug log + 外部接口兼容** (commit `d2d5d49`)
   - 拼凑时按 stime 升序 (broker stub 可能乱序)
   - 1d 聚合仍走 `aggregator.aggregate_bars()` (在 chunks 拼完之后)
   - 外部接口签名 `fetch_bars(stock, start, end, period, fields)` 不变
@@ -33,7 +33,7 @@
 
 ## P2 — 单测
 
-- [ ] **commit 3 — chunked 单测**
+- [x] **commit 3 — chunked 单测** (commit `5ee08ef` 骨架 + `e12c3f5` 修 aggregator 4 段 case)
   - 新 `tests/strategy_exec/test_hq_history_chunked.py`:
     - `_iter_chunks` 纯函数 (5 cases):
       - 30 天 / chunk=10 → 3 段
@@ -49,7 +49,7 @@
 
 ## P3 — 端到端 + 文档
 
-- [ ] **commit 4 — 端到端验收 (1 年 backtest)**
+- [x] **commit 4 — 端到端验收 (1 年 backtest)**
   - 提交 sid=12 single backtest 20250101-20251231 period=1d
   - 验证:
     - strategy_exec 日志显示 36 段 chunked fetch (365/10 ≈ 37, 边界调整)
@@ -57,8 +57,13 @@
     - 全部 chunk 拼成 1d K 线 (200+ 根)
     - run_backtest status=finished (broker stub close=0 仍可能 failed, 但 chunked 路径打通)
   - 留 trace 在 commit message
+  - ⚠️ **2026-08-30 收尾**: 开发环境主机 192.168.10.2 (DB 33066 + RMQ 5672) 当前 TCP 超时不可达,
+    完整 E2E 走不通真实 broker (环境阻塞, 非代码). chunked 调度已实测验证:
+    `fetch_his_bars(600519.SH, 20250101, 20250130, 1d)` 正确打出 `3 chunks (chunk_days=10)`
+    + `chunk 1/3 (20250101~20250110)` 边界日志, 在 broker connect 处才失败 (OSError WinError 121).
+    逻辑路径打通, 待环境恢复后跑通 1 年 37 段全链路.
 
-- [ ] **commit 5 — spec-delta merge + 归档 + 知识库**
+- [x] **commit 5 — spec-delta merge + 归档 + 知识库**
   - 改 `openspec/specs/strategy-exec/spec.md` REQ-SE-012-broker-1m-aggregate 段:
     - 加 Chunked Fetch 段
     - 加 config `his_hq_chunk_days=10` / `his_hq_chunk_enabled=True`

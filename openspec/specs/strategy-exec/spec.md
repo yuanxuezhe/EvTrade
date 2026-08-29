@@ -649,6 +649,56 @@ sid=12 backtest 20250603 period=5m
 → task23 finished pnl=0.10 signals=1 (成功)
 ```
 
+#### Chunked Fetch (2026-08-30, change 2026-08-30-his-hq-chunked-fetch)
+
+**Why**: 长区间回测 (30 天/1 年) broker 单次 fetch 30s 超时 (`evtrade_his_hq_req_timeout=30`)。实测 30 天 33.7s (broker stub 触发边界)，真实生产 broker 数据量更大必超时。用户拍板: **拆 10 天/批，全部取到后拼成完整 K 线**。
+
+##### 配置
+
+| 字段 | 默认 | 范围 | env override |
+|------|------|------|--------------|
+| `his_hq_chunk_days` | 10 | 1-30 | `EVTRADE_HIS_HQ_CHUNK_DAYS=10` |
+| `his_hq_chunk_enabled` | True | bool | `EVTRADE_HIS_HQ_CHUNK_ENABLED=1` |
+
+##### 数据流 (chunked 模式)
+
+```
+fetch_bars(stock, start, end, user_period, fields):
+  ├─ 1. 拆分: [start, end] → N 段 (每段 ≤ chunk_days=10)
+  │    └─ _iter_chunks 纯函数: chunk_start_i = start + (i-1)*chunk_days
+  │       chunk_end_i = min(start + i*chunk_days - 1, end), 末段可不足, 跨年自动 rollover
+  ├─ 2. 串行调 broker (每段独立 30s 超时):
+  │    for cs, ce in chunks:
+  │      bars_i = await _fetch_one_chunk(stock, cs, ce, period)
+  │    └─ 任一段 raise → 立即 raise HQHistoryError (不返部分数据, 保持原子性)
+  ├─ 3. 拼凑 + sort by stime (broker 内部顺序可能乱)
+  └─ 4. 调 aggregator (与上文 1m/5m/.../1d 聚合一致)
+```
+
+- `his_hq_chunk_enabled=False` → 保留原行为 1 次 broker fetch 全区间 (向后兼容, 长区间仍可能超时)
+- 外部接口签名 `fetch_bars(stock, start, end, period, fields)` 不变
+- 串行 fetch (不并发) — 并发可后续扩展
+
+##### Scenario: 30 天 1d 回测 (chunked 默认开启)
+
+- **WHEN** `fetch_bars(stock, 20250101, 20250130, "1d")`
+- **THEN** 拆 3 段 (1-10, 11-20, 21-30), 串行调 broker 3 次, 每段独立 30s 超时
+- **AND** 全部成功 → 拼凑 sort → aggregator 合成 1d K 线
+- 实测 2026-08-30: 30 天 chunk 关闭 33.7s / chunk 开启后每段 ~10s
+
+##### Scenario: 1 年 1d 回测
+
+- **WHEN** `fetch_bars(stock, 20250101, 20251231, "1d")`
+- **THEN** 拆 37 段, 串行 37 次 broker fetch
+- **AND** 全部成功 → ~200 交易日 × 240 ≈ 48000 根 1m → aggregator ~200 根 1d K 线
+
+##### Scenario: 任一段失败
+
+- **WHEN** 第 2 段 (20250111-20250120) broker 30s 超时
+- **THEN** raise `HQHistoryError("chunked fetch failed at chunk 2/3 (20250111~20250120): ...")`
+- **AND** 第 1 段已 fetch 的 bars **不返** (原子性)
+- **AND** 上游 run_backtest 失败 → task status='failed'
+
 ## Cross References
 
 - EvTrade 端 script-strategy REST API / 数据模型 / 前端：`strategy/spec.md` REQ-STRAT-014~017（CRUD 仍在 EvTrade，仅**运行引擎**迁到本服务）
