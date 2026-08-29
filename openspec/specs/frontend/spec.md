@@ -2711,3 +2711,52 @@ ScriptTask 页 MUST 提供实时任务进度可视化，覆盖回测 4 阶段（
 - **WHEN** 显示在 BatchTasksTable
 - **THEN** 行加灰色背景 + 「已超时」tag（仅视觉提示，不改数据；用户硬规则：禁清表数据）
 - **AND** 不主动删除 / 改 status
+
+####实现细节（change 2026-08-29-stale-queued-marker）
+
+**判定函数 `_isStaleQueued(row)`** — 满足**全部**4 条件才算 stale：
+1. `row.status === 'queued'`
+2. `row.started_at` 为空（从未被 strategy_exec 调度过）
+3. `row.progress` 为空 **或** `row.progress.phase === 'queued'`（兜底 strategy_exec 半路写脏 progress）
+4. `(Date.now() - Date.parse(row.created_at)) >= 24 * 3600 * 1000`
+
+**视觉表现**（`BatchTasksTable.vue`）：
+- 行加 `:class="{ 'bf-row-stale': isStaleQueued(row) }"`
+- CSS: `.bf-row-stale { background: var(--bg-secondary, #f7f8fa) !important; opacity: 0.78; }` + `.bf-row-stale td { color: var(--text-secondary); }`
+- 「状态」列 stale 时：保留原 `<el-tag type="info">排队中</el-tag>` + 追加 `<el-tag size="small" type="warning" effect="dark">已超时</el-tag>`
+- 行 hover `<el-tooltip :show-after="500">` 显示 "卡 N 小时，建议重测或联系 admin"
+
+**过滤功能**：
+- BatchTasksTable 加 `v-model:show-stale-only` prop + `<el-checkbox>只看超时任务 (N)</el-checkbox>` 顶部工具栏
+- 默认 false
+- 勾选后 computed `filteredTasks` = `tasks.filter(isStaleQueued)`
+- `:data` 绑 `filteredTasks`
+
+**批次卡片 banner**（`ScriptTask.vue`）：
+- 顶部条件显示 `<el-alert type="warning" :closable="true" show-icon>`：
+  - title: `批次内 ${staleQueuedCount} 个任务卡 queued > 24h，建议重测或联系 admin`
+  - description: `staleQueuedHint`（最早一个已卡 N 小时）
+- `v-if="staleQueuedCount > 0 && !staleBannerDismissed"`（可关闭，session 内不重显）
+- computed `staleQueuedCount` = `batchTasksWithProgress.value.filter(_isStaleQueued).length`
+
+#### Scenario: 后端 stale-queued 查询（admin-only）
+
+- **GIVEN** admin 调 `GET /api/script-strategy/strategies/{strategy_id}/stale-queued?threshold_hours=24`
+- **WHEN** 该 strategy 存在 ≥1 stale queued task
+- **THEN** 返 `200 {strategy_id, stale_count, stale_tasks: [{task_id, batch_no, age_min, created_at}]}`
+- **WHEN** strategy 不存在或 stale_count=0
+- **THEN** 返 `200 {strategy_id, stale_count: 0, stale_tasks: []}` 或 `404 NO_STRATEGY`（strategy 不存在时）
+- **WHEN** 非 admin 用户调
+- **THEN** 返 `403 FORBIDDEN`（不暴露给 owner 隐私）
+- **AND** owner 也能在批次列表前端看到 stale 标记（不依赖此端点）
+
+**后端 helper** `server.services.script_strategy.batches.list_stale_queued_tasks(strategy_id, threshold_hours=24)`：
+- SQL: `SELECT id, batch_no, created_at, TIMESTAMPDIFF(MINUTE, created_at, NOW()) AS age_min FROM strategy_task WHERE strategy_id=:sid AND status='queued' AND started_at IS NULL AND (progress IS NULL OR JSON_UNQUOTE(JSON_EXTRACT(progress, '$.phase'))='queued' OR JSON_EXTRACT(progress, '$.phase') IS NULL) AND created_at < NOW() - INTERVAL :h HOUR ORDER BY created_at ASC`
+- 返 `[{task_id, batch_no, age_min, created_at}]`
+
+**数据安全（用户硬规则 2026-08-27）**：
+- 不动 MySQL 任何表/列/行
+- 不 drop / truncate / delete from
+- 不重建 schema，不跑 sync_schema.py apply
+- 不主动 abandon / 改 status 老 task
+- 视觉标记纯前端衍生，与 task_progress_update ws 推送解耦
