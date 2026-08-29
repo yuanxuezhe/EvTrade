@@ -64,7 +64,7 @@ strategy_exec/
 │   │   └── backtrader/        # adapter(ProjectStrategy) + backtest + live(LiveRunner)
 │   ├── data_access/           # db + strategy_script + strategy_task（乐观锁）
 │   ├── signal/                # RabbitMQ publisher（publisher confirms + 重试）
-│   ├── market_data/           # hq_history(RabbitMQ) + hq_ws_client(hqserver WS)
+│   ├── market_data/           # hq_history(RabbitMQ + mock 短路) + hq_ws_client(hqserver WS) + mock_history(K 线生成器)
 │   └── sandbox/               # 用户脚本 loader（沙箱）
 └── logs/                       # 运行时生成 (strategy_exec.pid, strategy_exec.log)
 ```
@@ -80,6 +80,29 @@ strategy_exec/
 | 5 | ✅ | 默认 demo 模板 + spec + 迁移指南 |
 
 > 旧网格策略引擎（regime/grid）清理见 commit `aa70dae`；script-strategy 引擎迁移详见 `openspec/specs/strategy-exec/spec.md`。
+
+## 离线开发模式 (change `2026-08-29-his-hq-mock`)
+
+Linux dev 环境无 xtquant / QMT broker 时，可开 mock 模式让回测端到端跑通（broker 仍在线时关闭走真链路，行为零变化）。
+
+**开启**:
+```sql
+UPDATE sys_config SET cfg_val='1' WHERE user='0' AND cfg_key='his_hq_test_mode';
+```
+
+**关闭**:
+```sql
+UPDATE sys_config SET cfg_val='0' WHERE user='0' AND cfg_key='his_hq_test_mode';
+```
+
+mock 模式下 `strategy_exec.market_data.hq_history.fetch_his_bars()` 不连 RabbitMQ，直接调 `generate_mock_bars()` 返确定性 K 线（同 stock_code 同区间 = 同数据，跨重启一致）。详见 `知识库/策略服务/历史行情.md` + `tests/strategy_exec/test_mock_history.py`。
+
+**老 queued 任务清理 (admin only)**：
+```
+POST /api/script-strategy/strategies/{strategy_id}/stale-queued/cleanup
+Authorization: Bearer <admin_token>
+```
+仅 UPDATE status='failed' + error_msg=回填原因（不删行，符合用户硬规则 2026-08-27）。
 
 ## 依赖
 
