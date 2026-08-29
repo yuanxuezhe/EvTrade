@@ -39,9 +39,10 @@ def upsert_minute_bars(records: List[Dict[str, Any]]) -> int:
 
 
 def add_config(stock_code: str, start_date: str, end_date: str, auto_sync: int) -> Row:
-    """新增 quote_sync_config 行 (last_loaded_date 由调用方先算好传入 via 第 5 参? 不, 内部初始化)。
+    """新增 quote_sync_config 行, 返写入的 Row。
 
-    last_loaded_date 初始化 = MIN(昨天, COALESCE(MAX(minute_bars 该标日期), start_date))。
+    last_loaded_date 自动初始化 = MIN(昨天, COALESCE(MAX(minute_bars 该标日期), start_date))
+    (按已有 minute_bars 记录, 从最后日期+1 续补)。
     """
     last = _init_last_loaded(stock_code, start_date)
     return QuoteSyncConfig.upsert_one(
@@ -51,7 +52,10 @@ def add_config(stock_code: str, start_date: str, end_date: str, auto_sync: int) 
             "end_date": end_date,
             "last_loaded_date": last,
             "auto_sync": 1 if auto_sync else 0,
-        }
+            "status": "idle",  # 显式写, 避免 base upsert 对 NOT NULL 缺省列自动填 ""
+            "error_msg": "",
+        },
+        return_row=True,
     )
 
 
