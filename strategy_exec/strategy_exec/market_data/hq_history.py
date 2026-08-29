@@ -22,8 +22,22 @@ import aio_pika
 from aio_pika.abc import AbstractRobustConnection
 
 from strategy_exec.config import get_settings
+from strategy_exec.data_access.sys_config import read as _read_sys_config
 
 log = logging.getLogger(__name__)
+
+
+# ─────────────── change 2026-08-29-his-hq-mock ───────────────
+
+
+def _is_his_hq_mock_mode() -> bool:
+    """读 sys_config.user='0' AND cfg_key='his_hq_test_mode', 缓存 5s.
+
+    切换: scripts/evctl.py set-his-hq-test-mode 0|1
+    默认 '0' (关, 走真实 broker).
+    """
+    val = _read_sys_config("his_hq_test_mode", default="0")
+    return str(val).strip() in ("1", "true", "True", "TRUE", "yes", "on")
 
 
 class HQHistoryError(Exception):
@@ -98,7 +112,23 @@ class HQHistoryClient:
         period: str = "1d",
         fields: Optional[List[str]] = None,
     ) -> List[Dict[str, Any]]:
-        """拉历史 K 线, 返 list of dict [{stime, open, high, low, close, volume, ...}]"""
+        """拉历史 K 线, 返 list of dict [{stime, open, high, low, close, volume, ...}]
+
+        mock 模式 (sys_config his_hq_test_mode=1):
+          - 不连 RabbitMQ
+          - 直接调 generate_mock_bars() 返确定性 K 线
+          - 用于 Linux dev 环境无 xtquant / QMT broker 时端到端跑通回测
+        """
+        # mock 分支 (change 2026-08-29-his-hq-mock): sys_config 开关短路 broker
+        if _is_his_hq_mock_mode():
+            from strategy_exec.market_data.mock_history import generate_mock_bars
+            log.info(
+                "[hq_history] MOCK mode (sys_config his_hq_test_mode=1): skip RabbitMQ, "
+                "stock=%s %s~%s period=%s",
+                stock_code, start_date, end_date, period,
+            )
+            return generate_mock_bars(stock_code, start_date, end_date, period=period)
+
         await self.connect()
         assert self._channel is not None
 
