@@ -22,22 +22,15 @@ import aio_pika
 from aio_pika.abc import AbstractRobustConnection
 
 from strategy_exec.config import get_settings
-from strategy_exec.data_access.sys_config import read as _read_sys_config
+from strategy_exec.market_data.aggregator import aggregate_bars
 
 log = logging.getLogger(__name__)
 
 
-# ─────────────── change 2026-08-29-his-hq-mock ───────────────
-
-
-def _is_his_hq_mock_mode() -> bool:
-    """读 sys_config.user='0' AND cfg_key='his_hq_test_mode', 缓存 5s.
-
-    切换: scripts/evctl.py set-his-hq-test-mode 0|1
-    默认 '0' (关, 走真实 broker).
-    """
-    val = _read_sys_config("his_hq_test_mode", default="0")
-    return str(val).strip() in ("1", "true", "True", "TRUE", "yes", "on")
+# ─────────────── change 2026-08-30-his-hq-aggregate-bars ───────────────
+# broker 永远 1m + fields=['close'], strategy_exec 端按用户 period 聚合
+_BROKER_PERIOD = "1m"
+_BROKER_FIELDS = ["close"]
 
 
 class HQHistoryError(Exception):
@@ -112,30 +105,17 @@ class HQHistoryClient:
         period: str = "1d",
         fields: Optional[List[str]] = None,
     ) -> List[Dict[str, Any]]:
-        """拉历史 K 线, 返 list of dict [{stime, open, high, low, close, volume, ...}]
+        """拉历史 K 线, 返 list of dict [{stime, open, high, low, close, volume}, ...]
 
-        mock 模式 (sys_config his_hq_test_mode=1):
-          - 不连 RabbitMQ
-          - 直接调 generate_mock_bars() 返确定性 K 线
-          - 用于 Linux dev 环境无 xtquant / QMT broker 时端到端跑通回测
+        change 2026-08-30-his-hq-aggregate-bars:
+        - broker his_hq 永远收 period='1m' + fields=['close'] (broker 单源真相)
+        - strategy_exec 端按用户 period 聚合 (1m / 5m / 15m / 30m / 60m / 1d)
+        - 1d 聚合按 A股交易日历 (周末跳过)
         """
-        # mock 分支 (change 2026-08-29-his-hq-mock): sys_config 开关短路 broker
-        if _is_his_hq_mock_mode():
-            from strategy_exec.market_data.mock_history import generate_mock_bars
-            log.info(
-                "[hq_history] MOCK mode (sys_config his_hq_test_mode=1): skip RabbitMQ, "
-                "stock=%s %s~%s period=%s",
-                stock_code, start_date, end_date, period,
-            )
-            return generate_mock_bars(stock_code, start_date, end_date, period=period)
-
         await self.connect()
         assert self._channel is not None
 
-        if fields is None:
-            fields = ["open", "close", "high", "low", "volume"]
-
-        # ── 构造 msgpacket 格式请求 (与 quota_his_test.py 完全一致) ──
+        # ── 构造 msgpacket 格式请求 (固定 period='1m' + fields=['close']) ──
         try:
             from msgpacket import MSG_TYPE_REQUEST, MsgPacket
         except ImportError:
@@ -150,8 +130,8 @@ class HQHistoryClient:
         pkt.set_value("start_date", start_date)
         pkt.set_value("end_date", end_date)
         pkt.set_value("ans_queue", ans_queue)  # 放 body 里，不是 reply_to
-        pkt.set_value("fields", ",".join(fields))
-        pkt.set_value("period", period)
+        pkt.set_value("fields", ",".join(_BROKER_FIELDS))
+        pkt.set_value("period", _BROKER_PERIOD)  # 永远 1m
         pkt.finalize()
         _, req_bytes = pkt.encode()
 
@@ -235,9 +215,19 @@ class HQHistoryClient:
             except Exception:
                 pass
 
-        log.info("[hq_history] fetched %d bars for %s %s~%s",
-                 len(all_rows), stock_code, start_date, end_date)
-        return all_rows
+        log.info("[hq_history] fetched %d raw 1m bars for %s %s~%s (broker period=%s)",
+                 len(all_rows), stock_code, start_date, end_date, _BROKER_PERIOD)
+
+        # ── strategy_exec 端按用户 period 聚合 (broker 永远 1m + close) ──
+        if period == "1m":
+            # 1m 直接返 (无聚合), open/high/low 用 close 兜底 (broker 1m 不返)
+            out = all_rows
+        else:
+            out = aggregate_bars(all_rows, period)
+
+        log.info("[hq_history] aggregated %d 1m bars → %d %s bars for %s",
+                 len(all_rows), len(out), period, stock_code)
+        return out
 
 
 # 单例
