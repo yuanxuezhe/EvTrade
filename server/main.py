@@ -246,6 +246,33 @@ async def on_shutdown_signal_consumer():
         log.warning(f"[SHUTDOWN] signal_consumer stop error: {e}")
 
 
+# ---- change 2026-08-29-strategy-progress-realtime ----
+# task_progress_consumer: 订阅 strategy.exchange/task.progress.* → 推 ws task_progress_update
+# 启停顺序: 先起 task_progress_consumer (无依赖), 再起 signal_consumer (无依赖)
+# 停止: 先停 signal_consumer, 再停 task_progress_consumer
+
+@app.on_event("startup")
+async def on_startup_task_progress_consumer():
+    try:
+        from server.services.strategy.task_progress_consumer import (
+            start_task_progress_consumer,
+        )
+        await start_task_progress_consumer()
+    except Exception as e:
+        log.warning(f"[STARTUP] task_progress_consumer start failed (non-fatal): {e}")
+
+
+@app.on_event("shutdown")
+async def on_shutdown_task_progress_consumer():
+    try:
+        from server.services.strategy.task_progress_consumer import (
+            stop_task_progress_consumer,
+        )
+        await stop_task_progress_consumer()
+    except Exception as e:
+        log.warning(f"[SHUTDOWN] task_progress_consumer stop error: {e}")
+
+
 # ---- REQ-AUTH-IDLE-001: token session cache 后台 sweep ----
 _auth_sweep_task = None  # type: ignore[var-annotated]
 

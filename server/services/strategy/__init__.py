@@ -15,8 +15,15 @@ from server.services.strategy.quote_consumer import (
 from server.services.strategy.signal_consumer import (
     SignalConsumer, get_signal_consumer, start_signal_consumer, stop_signal_consumer,
 )
+from server.services.strategy.task_progress_consumer import (
+    TaskProgressConsumer, get_task_progress_consumer,
+    start_task_progress_consumer, stop_task_progress_consumer, reset_for_test as _tpc_reset,
+)
 
 __all__ = [
     "QuoteConsumer", "get_quote_consumer", "close_quote_consumer",
     "SignalConsumer", "get_signal_consumer", "start_signal_consumer", "stop_signal_consumer",
+    "TaskProgressConsumer", "get_task_progress_consumer",
+    "start_task_progress_consumer", "stop_task_progress_consumer",
+    "_tpc_reset",
 ]
