@@ -154,7 +154,7 @@
         </div>
       </template>
       <BatchTasksTable
-        :tasks="batchTasks"
+        :tasks="batchTasksWithProgress"
         :schema="schema"
         :selected-id="selectedTaskId"
         @select="onTaskSelect"
@@ -463,9 +463,46 @@ async function onCreateStrategy() {
   }
 }
 
+// ─────────────── 轮询 fallback (queued/running 时启, 全部完成停) ───────────────
+let _pollTimer = null
+const POLL_INTERVAL_MS = 3000
+
+const _hasActiveTask = computed(() => {
+  return batchTasks.value.some((t) => t.status === 'queued' || t.status === 'running')
+})
+
+function _startPolling() {
+  if (_pollTimer) return
+  _pollTimer = setInterval(() => {
+    // 只在还有活跃 task 时拉 (watch _hasActiveTask 控制启停)
+    if (_hasActiveTask.value) {
+      loadBatches()
+      loadBatchTasks()
+    }
+  }, POLL_INTERVAL_MS)
+}
+function _stopPolling() {
+  if (_pollTimer) {
+    clearInterval(_pollTimer)
+    _pollTimer = null
+  }
+}
+
 // ─────────────── ws 实时刷新 (task_progress_update) ───────────────
+// 进度暂存: task_id → 最新 progress (用于表格行 _progress 字段, 不依赖 reload)
+const taskProgressMap = ref(new Map())
 let _wsBatchTimer = null
 let _wsTaskTimer = null
+
+// 把 batchTasks 跟 taskProgressMap 合并, 给 BatchTasksTable 用 (row._progress)
+const batchTasksWithProgress = computed(() => {
+  const m = taskProgressMap.value
+  return batchTasks.value.map((t) => {
+    const p = m.get(t.id)
+    return p ? { ...t, _progress: p } : t
+  })
+})
+
 function _scheduleReloadBatches() {
   if (_wsBatchTimer) return
   _wsBatchTimer = setTimeout(() => {
@@ -480,6 +517,12 @@ function _scheduleReloadTasks() {
     loadBatchTasks()
   }, 800)
 }
+
+// 启动/停轮询 (watch 当前 batch 的活跃 task 数)
+watch(_hasActiveTask, (has) => {
+  if (has) _startPolling()
+  else _stopPolling()
+}, { immediate: true })
 
 onMounted(async () => {
   currentUserId.value = Number(useAuthStore().user?.id) || null
@@ -500,6 +543,13 @@ watch(() => wsStore.lastTaskProgress, (msg) => {
   if (msg.task_id == null) return
   const inBatch = batchTasks.value.some((t) => t.id === msg.task_id)
   if (!inBatch) return
+  // 暂存 progress → 表格行立即显示进度环 (无需等 reload)
+  if (msg.progress) {
+    // Map 不可直接 reactive.set 触发 watch; 用 new Map + 整体替换
+    const m = new Map(taskProgressMap.value)
+    m.set(msg.task_id, msg.progress)
+    taskProgressMap.value = m
+  }
   _scheduleReloadTasks()
   if (msg.task_id === selectedTaskId.value && detail.value && (msg.status || msg.progress)) {
     detail.value = {
@@ -516,6 +566,7 @@ watch(() => wsStore.lastTaskProgress, (msg) => {
 onBeforeUnmount(() => {
   if (_wsBatchTimer) clearTimeout(_wsBatchTimer)
   if (_wsTaskTimer) clearTimeout(_wsTaskTimer)
+  _stopPolling()
 })
 </script>
 

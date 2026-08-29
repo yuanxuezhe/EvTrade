@@ -35,9 +35,32 @@
       </template>
     </el-table-column>
 
-    <el-table-column label="状态" width="90">
+    <el-table-column label="状态" width="120">
       <template #default="{ row }">
-        <el-tag size="small" :type="_statusType(row.status)">{{ _statusLabel(row.status) }}</el-tag>
+        <!-- running 时显示进度环 (bar/total) + phase 标签 -->
+        <template v-if="row.status === 'running' && row._progress && row._progress.total_bars">
+          <el-tooltip :show-after="500" placement="top">
+            <template #content>
+              <div>{{ _phaseLabel(row._progress.phase) }} ·
+                {{ row._progress.bar_idx }}/{{ row._progress.total_bars }}</div>
+              <div v-if="row._progress.msg">{{ row._progress.msg }}</div>
+            </template>
+            <el-progress
+              type="circle"
+              :percentage="_progressPct(row._progress)"
+              :stroke-width="6"
+              :width="44"
+              :status="row._progress.phase === 'failed' ? 'exception' : ''"
+            />
+          </el-tooltip>
+          <span class="bf-progress-label">{{ row._progress.bar_idx }}/{{ row._progress.total_bars }}</span>
+        </template>
+        <template v-else-if="row.status === 'running'">
+          <el-tag size="small" :type="_statusType(row.status)">{{ _statusLabel(row.status) }}</el-tag>
+        </template>
+        <template v-else>
+          <el-tag size="small" :type="_statusType(row.status)">{{ _statusLabel(row.status) }}</el-tag>
+        </template>
       </template>
     </el-table-column>
 
@@ -130,6 +153,25 @@ function _statusLabel(s) {
   }[s] || (s || '—')
 }
 
+// progress.phase 中文映射
+const PHASE_LABELS = {
+  start: '启动',
+  load_script: '加载脚本',
+  build_cerebro: '构造引擎',
+  running: '回测中',
+  live_running: '实盘运行',
+  writing_result: '写结果',
+  done: '完成',
+  failed: '失败',
+}
+function _phaseLabel(phase) {
+  return PHASE_LABELS[phase] || phase || '—'
+}
+function _progressPct(p) {
+  if (!p || !p.total_bars || p.bar_idx == null) return 0
+  return Math.min(100, Math.max(0, Math.round((Number(p.bar_idx) / Number(p.total_bars)) * 100)))
+}
+
 function _metricClass(v) {
   if (v === null || v === undefined) return ''
   return v > 0 ? 'up' : v < 0 ? 'down' : ''
@@ -141,4 +183,11 @@ function _metricClass(v) {
 .down { color: var(--color-down, #67c23a); font-weight: 600; }
 .bf-muted { color: var(--text-placeholder); }
 .bf-error { color: var(--color-down, #f56c6c); font-size: 12px; }
+.bf-progress-label {
+  font-size: 11px;
+  color: var(--text-secondary);
+  margin-left: 4px;
+  vertical-align: middle;
+  font-family: var(--font-mono, monospace);
+}
 </style>

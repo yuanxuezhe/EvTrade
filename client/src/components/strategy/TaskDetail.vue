@@ -176,21 +176,107 @@
         </el-tab-pane>
 
         <el-tab-pane label="交易明细" name="trades">
-          <el-table :data="task.backtest_result.best?.trades || []" size="small" border>
-            <el-table-column label="时间" prop="stime" width="140" />
-            <el-table-column label="方向" width="60">
+          <!-- trades 表 (展开行显示完整 signal 信息: 触发原因/指标/持仓/单号) -->
+          <el-table
+            :data="tradesWithSignal"
+            size="small"
+            border
+            max-height="500"
+            row-key="__key"
+            data-el="td-trades-table"
+          >
+            <el-table-column type="expand">
               <template #default="{ row }">
-                <el-tag size="small" :type="row.side === 'BUY' ? 'success' : 'danger'">{{ row.side }}</el-tag>
+                <div class="td-trade-expand" v-if="row.__signal">
+                  <el-descriptions :column="2" border size="small">
+                    <el-descriptions-item label="触发原因" :span="2">
+                      {{ row.__signal.msg || '—' }}
+                    </el-descriptions-item>
+                    <el-descriptions-item
+                      v-if="row.__signal.indicators && Object.keys(row.__signal.indicators).length"
+                      label="指标"
+                      :span="2"
+                    >
+                      <el-tag
+                        v-for="(v, k) in row.__signal.indicators"
+                        :key="k"
+                        size="small"
+                        type="info"
+                        style="margin-right: 4px"
+                      >{{ k }}={{ typeof v === 'number' ? v.toFixed(4) : v }}</el-tag>
+                    </el-descriptions-item>
+                    <el-descriptions-item v-if="row.__signal.state" label="触发时持仓">
+                      <span v-if="row.__signal.state.position !== undefined">
+                        {{ row.__signal.state.position }} 股
+                      </span>
+                      <span v-else class="td-muted">—</span>
+                    </el-descriptions-item>
+                    <el-descriptions-item v-if="row.__signal.state" label="触发时现金">
+                      <span v-if="row.__signal.state.cash !== undefined">
+                        ¥{{ Number(row.__signal.state.cash).toFixed(2) }}
+                      </span>
+                      <span v-else class="td-muted">—</span>
+                    </el-descriptions-item>
+                    <el-descriptions-item v-if="row.__signal.trace_id" label="trace_id">
+                      <code class="td-order-no">{{ row.__signal.trace_id }}</code>
+                    </el-descriptions-item>
+                    <el-descriptions-item v-if="row.__signal.price_type" label="价格类型">
+                      {{ row.__signal.price_type === 'market' ? '市价' : '限价' }}
+                    </el-descriptions-item>
+                    <el-descriptions-item v-if="row.__signal.ts" label="信号时间" :span="2">
+                      {{ row.__signal.ts }}
+                    </el-descriptions-item>
+                  </el-descriptions>
+                </div>
+                <div v-else class="td-muted" style="padding: 8px 12px;">
+                  无对应 signal 记录 (老数据 / live 信号)
+                </div>
               </template>
             </el-table-column>
-            <el-table-column label="价格" prop="price" width="80" />
-            <el-table-column label="数量" prop="volume" width="80" />
+            <el-table-column label="时间" prop="stime" width="140">
+              <template #default="{ row }">
+                <el-tooltip :show-after="500" placement="top">
+                  <template #content>触发该笔成交的 K 线时间 (YYYYMMDDHHMMSS)</template>
+                  <span>{{ row.stime }}</span>
+                </el-tooltip>
+              </template>
+            </el-table-column>
+            <el-table-column label="方向" width="60">
+              <template #default="{ row }">
+                <el-tooltip :show-after="500" placement="top">
+                  <template #content>BUY=买入, SELL=卖出</template>
+                  <el-tag size="small" :type="row.side === 'BUY' ? 'success' : 'danger'">{{ row.side }}</el-tag>
+                </el-tooltip>
+              </template>
+            </el-table-column>
+            <el-table-column label="价格" prop="price" width="90">
+              <template #default="{ row }">
+                <el-tooltip :show-after="500" placement="top">
+                  <template #content>成交价 (按标的精度)</template>
+                  <span>{{ _fmtPrice(row.price, props.task?.stock_code) }}</span>
+                </el-tooltip>
+              </template>
+            </el-table-column>
+            <el-table-column label="数量" prop="volume" width="80">
+              <template #default="{ row }">
+                <el-tooltip :show-after="500" placement="top">
+                  <template #content>本次成交股数</template>
+                  <span>{{ row.volume }}</span>
+                </el-tooltip>
+              </template>
+            </el-table-column>
             <el-table-column label="盈亏" width="100" align="right">
               <template #default="{ row }">
-                <span :class="row.pnl > 0 ? 'up' : row.pnl < 0 ? 'down' : ''">{{ (row.pnl || 0).toFixed(2) }}</span>
+                <el-tooltip :show-after="500" placement="top">
+                  <template #content>仅 SELL 行有值 (BUY 行 = 持仓)</template>
+                  <span :class="row.pnl > 0 ? 'up' : row.pnl < 0 ? 'down' : ''">{{ (row.pnl || 0).toFixed(2) }}</span>
+                </el-tooltip>
               </template>
             </el-table-column>
           </el-table>
+          <div v-if="!tradesWithSignal.length" class="td-muted" style="padding: 12px 0;">
+            本次回测无交易记录
+          </div>
         </el-tab-pane>
 
         <el-tab-pane :label="`执行日志 (${executionLog.length})`" name="execution">
@@ -355,6 +441,26 @@ const filteredExecutionLog = computed(() => {
   })
 })
 
+// ──── trades 表 ↔ signal_log 关联 (按 stime + side 匹配) ────
+const tradesWithSignal = computed(() => {
+  const trades = props.task?.backtest_result?.best?.trades || []
+  const signals = props.task?.backtest_result?.best?.signal_log
+    || props.task?.backtest_result?.signal_log
+    || []
+  // 建 signal 索引: {stime_side: signal}
+  const idx = new Map()
+  for (const sig of signals) {
+    const side = sig.signal_type || sig.type || sig.side
+    const stime = sig.stime
+    if (stime && side) idx.set(`${stime}_${side}`, sig)
+  }
+  return trades.map((t, i) => ({
+    ...t,
+    __key: `trade-${i}-${t.stime}-${t.side}`,
+    __signal: idx.get(`${t.stime}_${t.side}`) || null,
+  }))
+})
+
 // ──── 状态/信号映射 ────
 function _statusType(s) {
   return {
@@ -477,6 +583,10 @@ onBeforeUnmount(() => _disposeChart())
   color: var(--color-down, #f56c6c); background: var(--bg-base);
   padding: 8px; border-radius: 4px; font-size: 12px; white-space: pre-wrap;
   margin: 0;
+}
+.td-trade-expand {
+  padding: 8px 12px;
+  background: var(--bg-secondary, #f7f8fa);
 }
 .td-params { margin-bottom: 8px; }
 .td-wrap h4 {
