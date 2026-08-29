@@ -44,35 +44,39 @@ def _cap_day(end_date: str) -> str:
 
 
 async def sync_one_day(stock_code: str, day: str) -> Dict[str, Any]:
-    """同步单只证券某一天。成功 (含假日空) 返结果; 失败 raise BrokerError。
+    """同步单只证券某一天 + 写操作记录到 quote_sync_config。
 
-    Returns: {ok:bool, day:str, bars:int, last_loaded_date:str}
+    - 成功 (含假日 0 根): upsert minute_bars → **重算** last_loaded_date
+      (= minute_bars 该证券实际最大 stime 日期) → status=success, 清 error_msg。
+    - 失败 (broker 连不上/异常): status=failed + error_msg, last_loaded_date 不动,
+      然后 re-raise BrokerError (API 返 code:1 + 原因; 前端停止循环显示原因)。
+
+    Returns (成功时): {ok:bool, day:str, bars:int, last_loaded_date:str}
     """
     cfg = repo.get_config(stock_code)
     if cfg is None:
+        await asyncio.to_thread(repo.record_failure, stock_code,
+                                f"NO_CONFIG: {stock_code} 无配置行")
         raise BrokerError(f"NO_CONFIG: {stock_code} 无 quote_sync_config 配置行")
 
     client = get_his_hq_client()
-    await client.connect()
     try:
+        await client.connect()
         rows = await client.fetch_one_day(stock_code, day)
-    except BrokerError:
+        records = [to_record(stock_code, r) for r in rows]
+        # 同步 IO 放线程 (broker 拉取已 await, 落库是同步 SQLAlchemy)
+        n = await asyncio.to_thread(repo.upsert_minute_bars, records)
+    except BrokerError as e:
+        await asyncio.to_thread(repo.record_failure, stock_code, str(e))
         raise
     except Exception as e:
-        log.exception("[quote_sync] fetch_one_day %s %s 异常", stock_code, day)
-        raise BrokerError(f"BROKER_ERROR: {e}") from e
+        log.exception("[quote_sync] sync_one_day %s %s 未预期异常", stock_code, day)
+        await asyncio.to_thread(repo.record_failure, stock_code, f"SYNC_ERROR: {e}")
+        raise BrokerError(f"SYNC_ERROR: {e}") from e
 
-    records = [to_record(stock_code, r) for r in rows]
-    # 同步 IO 放线程 (broker 拉取已 await, 落库是同步 SQLAlchemy)
-    n = await asyncio.to_thread(repo.upsert_minute_bars, records)
-    # 成功 (含假日 0 根) 推进游标 — 单调向前
-    cur = cfg.last_loaded_date or ""
-    if day > cur:
-        await asyncio.to_thread(repo.advance_cursor, stock_code, day)
-        new_last = day
-    else:
-        new_last = cur
-    log.info("[quote_sync] %s %s → %d bars (last_loaded=%s)",
+    # 成功: 重算游标 (以 minute_bars 实际最大日期为准) + 记 success
+    new_last = await asyncio.to_thread(repo.record_success, stock_code)
+    log.info("[quote_sync] %s %s → %d bars (last_loaded=%s, status=success)",
              stock_code, day, n, new_last)
     return {"ok": True, "day": day, "bars": n, "last_loaded_date": new_last}
 

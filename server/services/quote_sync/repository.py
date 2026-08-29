@@ -79,15 +79,46 @@ def _yesterday() -> str:
     return (datetime.now() - timedelta(days=1)).strftime("%Y%m%d")
 
 
-def advance_cursor(stock_code: str, day: str) -> None:
-    """成功同步一天后推进游标 (单调向前, 不后退)。"""
-    existing = QuoteSyncConfig.query_one(stock_code=stock_code)
-    if existing is None:
-        log.warning("advance_cursor: %s 无配置行, 跳过", stock_code)
-        return
-    cur = existing.last_loaded_date or ""
-    if day > cur:
-        QuoteSyncConfig.update_one({"last_loaded_date": day}, stock_code=stock_code)
+def recalc_last_loaded(stock_code: str) -> str:
+    """根据 minute_bars 已有记录重算「当前同步到的日期」= 该证券实际最大 stime 日期。
+
+    操作记录语义: 每次同步后调用, 让 last_loaded_date 始终反映真实落地数据的最后日期
+    (假日/周末没数据就不推进, 而非盲目向前)。无数据返 ''。
+    """
+    engine = get_engine()
+    try:
+        with engine.connect() as conn:
+            row = conn.execute(
+                text("SELECT MAX(LEFT(stime,8)) FROM minute_bars WHERE stock_code=:c"),
+                {"c": stock_code},
+            ).fetchone()
+        return (row[0] or "") if row else ""
+    except Exception:
+        log.exception("recalc_last_loaded: 查 minute_bars 失败 %s", stock_code)
+        return ""
+
+
+def record_success(stock_code: str) -> str:
+    """成功操作记录: 重算 last_loaded_date + status=success + 清 error_msg + 更新 updated_at。
+    返重算后的 last_loaded_date。"""
+    from datetime import datetime
+    last = recalc_last_loaded(stock_code)
+    QuoteSyncConfig.update_one(
+        {"last_loaded_date": last, "status": "success", "error_msg": "",
+         "updated_at": datetime.now()},
+        stock_code=stock_code,
+    )
+    return last
+
+
+def record_failure(stock_code: str, error_msg: str) -> None:
+    """失败操作记录: status=failed + error_msg (last_loaded_date 不动, 下次续跑从它+1)。"""
+    from datetime import datetime
+    QuoteSyncConfig.update_one(
+        {"status": "failed", "error_msg": (error_msg or "")[:255],
+         "updated_at": datetime.now()},
+        stock_code=stock_code,
+    )
 
 
 def list_configs() -> List[Row]:

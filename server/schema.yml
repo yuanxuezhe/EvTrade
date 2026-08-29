@@ -110,6 +110,17 @@ tables:
         type: Integer
         nullable: false
         default: 1
+      status:
+        type: String(16)
+        nullable: false
+        default: idle
+      error_msg:
+        type: String(255)
+        nullable: false
+        default:
+      updated_at:
+        type: DateTime
+        nullable: true
   order_no_seq:
     pk: ['seq_name']
     columns:
