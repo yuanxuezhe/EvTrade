@@ -44,7 +44,15 @@ def read(key: str, default: Any = 0) -> Any:
         if (now - ts) < _CACHE_TTL_S:
             return val
 
-    val = _db_read(key, default)
+    try:
+        val = globals()["_db_read"](key, default)
+    except Exception as e:  # noqa: BLE001
+        log.warning("[sys_config.read] key=%s _db_read raised (return default=%r): %s",
+                    key, default, e)
+        val = default
+    # normalize: DB 未找到 / 显式 None → 用 default (避免 cache 把 None 当合法值永久缓存)
+    if val is None:
+        val = default
     _cache[key] = (val, now)
     return val
 
