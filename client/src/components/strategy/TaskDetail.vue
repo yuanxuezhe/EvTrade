@@ -149,32 +149,6 @@
           </el-table>
         </el-tab-pane>
 
-        <el-tab-pane :label="`进度 (${progressData.length} bar)`" name="progress">
-          <div class="td-progress-summary" v-if="progressData.length">
-            <el-tag>总 bar 数: {{ progressData.length }}</el-tag>
-            <el-tag type="info">权益范围: {{ progressMinEquity.toFixed(2) }} ~ {{ progressMaxEquity.toFixed(2) }}</el-tag>
-            <el-tag type="success">期末权益: {{ progressData[progressData.length - 1]?.equity?.toFixed(2) }}</el-tag>
-          </div>
-          <el-table :data="progressData" size="small" border max-height="400" data-el="td-progress-table">
-            <el-table-column label="#" prop="bar_idx" width="60" />
-            <el-table-column label="时间" prop="stime" width="140" />
-            <el-table-column label="收盘" prop="close" width="80">
-              <template #default="{ row }">{{ Number(row.close).toFixed(4) }}</template>
-            </el-table-column>
-            <el-table-column label="持仓" prop="position" width="80" align="right" />
-            <el-table-column label="现金" width="100" align="right">
-              <template #default="{ row }">{{ Number(row.cash).toFixed(2) }}</template>
-            </el-table-column>
-            <el-table-column label="权益" min-width="100" align="right">
-              <template #default="{ row }">
-                <span :class="row.equity > (row.cash + row.position * row.close) ? 'up' : ''">
-                  {{ Number(row.equity).toFixed(2) }}
-                </span>
-              </template>
-            </el-table-column>
-          </el-table>
-        </el-tab-pane>
-
         <el-tab-pane label="交易明细" name="trades">
           <!-- trades 表 (展开行显示完整 signal 信息: 触发原因/指标/持仓/单号) -->
           <el-table
@@ -376,7 +350,6 @@ const props = defineProps({
 const subTab = ref('signals')
 const signalFilter = ref('')
 const signalData = ref({ signals: [], progress: [], total_signals: 0, truncated: false })
-const progressData = ref([])
 const executionFilter = ref('')
 const chartRef = ref(null)
 let chart = null
@@ -423,11 +396,6 @@ const progressPhaseTagType = computed(() => {
   const phase = props.task?.progress?.phase
   return PHASE_LABELS[phase]?.type || 'info'
 })
-
-const progressMinEquity = computed(() => progressData.value.length
-  ? Math.min(...progressData.value.map(p => p.equity || 0)) : 0)
-const progressMaxEquity = computed(() => progressData.value.length
-  ? Math.max(...progressData.value.map(p => p.equity || 0)) : 0)
 
 const executionLog = computed(() => props.task?.backtest_result?.execution_log || [])
 const filteredExecutionLog = computed(() => {
@@ -501,18 +469,26 @@ async function loadSignals() {
       type: signalFilter.value || null, limit: 500,
     })
     signalData.value = data
-    progressData.value = data.progress || []
   } catch (e) { /* ignored */ }
 }
 
 // ──── 权益曲线 (echarts) ────
+// change 2026-08-30-drop-fullbar-progress: 权益线改用 execution_log 信号 bar 的 {stime, equity}
+// (不再依赖全量 progress_log/equity_curve); 收盘价 series 一并移除 (全量数据已不落地)。
 function _disposeChart() {
   if (chart) { chart.dispose(); chart = null }
 }
 function renderChart() {
-  if (!chartRef.value || !props.task?.backtest_result?.best?.equity_curve) return
-  const best = props.task.backtest_result.best
-  const eq = best.equity_curve
+  if (!chartRef.value) return
+  const execLog = props.task?.backtest_result?.execution_log || []
+  // 信号 bar: phase==='bar' 且带 equity (起始权益用 initial_cash 兜底, 曲线从成本基准起)
+  const initialCash = props.task?.backtest_result?.initial_cash || 0
+  const sigBars = execLog
+    .filter(e => e.phase === 'bar' && e.stime && e.equity != null)
+    .map(e => ({ stime: e.stime, equity: e.equity }))
+  // 起点 (回测开始权益) + 各信号 bar → 有起点才画线
+  const eq = sigBars.length ? [{ stime: 'start', equity: initialCash }, ...sigBars] : []
+  const best = props.task?.backtest_result?.best || {}
   const trades = best.trades || []
   const tradeBuyData = []
   const tradeSellData = []
@@ -521,10 +497,10 @@ function renderChart() {
     if (t.side === 'BUY') tradeBuyData.push(point)
     else if (t.side === 'SELL') tradeSellData.push(point)
   }
-  const closeSeries = (best.progress_log || []).map(p => ({ stime: p.stime, value: p.close }))
+  if (!eq.length) return  // 无信号且无基准 → 不画 (旧任务 progress 空时)
   if (!chart) chart = echarts.init(chartRef.value)
   chart.setOption({
-    legend: { top: 0, left: 'center', data: ['权益', '收盘价', 'BUY', 'SELL'] },
+    legend: { top: 0, left: 'center', data: ['权益', 'BUY', 'SELL'] },
     grid: { left: 60, right: 60, top: 40, bottom: 60 },
     dataZoom: [{ type: 'inside' }, { type: 'slider', height: 20, bottom: 20 }],
     xAxis: { type: 'category', data: eq.map(e => e.stime), splitLine: { show: false } },
@@ -542,7 +518,6 @@ function renderChart() {
     },
     series: [
       { name: '权益', data: eq.map(e => e.equity), type: 'line', smooth: true, yAxisIndex: 0, areaStyle: { opacity: 0.15 } },
-      ...(closeSeries.length ? [{ name: '收盘价', data: closeSeries, type: 'line', yAxisIndex: 1, showSymbol: false, lineStyle: { type: 'dashed', width: 1, opacity: 0.5 } }] : []),
       { name: 'BUY', data: tradeBuyData, type: 'scatter', yAxisIndex: 1, symbol: 'triangle', symbolSize: 12, itemStyle: { color: '#67c23a' } },
       { name: 'SELL', data: tradeSellData, type: 'scatter', yAxisIndex: 1, symbol: 'triangle', symbolRotate: 180, symbolSize: 12, itemStyle: { color: '#f56c6c' } },
     ],
@@ -551,8 +526,7 @@ function renderChart() {
 
 watch(() => props.task?.id, async (id) => {
   _disposeChart()
-  signalData.value = { signals: [], progress: [], total_signals: 0, truncated: false }
-  progressData.value = []
+  signalData.value = { signals: [], total_signals: 0, truncated: false }
   executionFilter.value = ''
   subTab.value = 'signals'
   if (id == null) return
