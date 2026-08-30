@@ -28,7 +28,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from server.auth.deps import get_current_user
 from server.services import script_strategy as svc
 from server.services.script_strategy.strategies import StrategyError
-from server.api.script_strategy.forward import _forward_run_task, _forward_run_sweep
+from server.api.script_strategy.forward import _forward_run_batch
 from server.api.script_strategy.schemas import (
     BacktestRequest,
     BacktestResponse,
@@ -149,35 +149,20 @@ async def backtest_endpoint(
         raise HTTPException(status_code=500, detail={"code": "INTERNAL", "msg": str(e)})
 
     # 转发 strategy_exec
-    if req.mode == "sweep":
-        await _forward_run_sweep({
-            "user_id": user.id,
-            "strategy_id": strategy_id,
-            "script_id": batch["script_id"],
-            "stock_code": batch["stock_code"],
-            "backtest_start_date": batch["backtest_start_date"],
-            "backtest_end_date": batch["backtest_end_date"],
-            "batch_no": batch["batch_no"],
-            "param_ranges": req.param_ranges,
-            "metric": req.metric,
-            "concurrency": req.concurrency,
-            "period": req.period,
-            "task_ids": batch["task_ids"],
-        })
-    else:
-        await _forward_run_task(batch["task_ids"][0], {
-            "task_id": batch["task_ids"][0],
-            "user_id": user.id,
-            "strategy_id": strategy_id,
-            "script_id": batch["script_id"],
-            "stock_code": batch["stock_code"],
-            "mode": "backtest",
-            "params": req.params or {},
-            "backtest_start_date": batch["backtest_start_date"],
-            "backtest_end_date": batch["backtest_end_date"],
-            "period": req.period,
-            "fields": req.fields,
-        })
+    # change 2026-08-30-sweep-worker-queue: single (1 行) + sweep (N 行) 统一走 run-batch
+    # (worker 池 FIFO 队列 + 堵塞自愈); 不再分 sweep/single 两条转发路径。
+    await _forward_run_batch({
+        "user_id": user.id,
+        "strategy_id": strategy_id,
+        "script_id": batch["script_id"],
+        "stock_code": batch["stock_code"],
+        "backtest_start_date": batch["backtest_start_date"],
+        "backtest_end_date": batch["backtest_end_date"],
+        "batch_no": batch["batch_no"],
+        "metric": req.metric,
+        "concurrency": req.concurrency,
+        "period": req.period,
+    })
 
     log.info("[backtest] strategy_id=%d batch_no=%d total_runs=%d forwarded OK",
              strategy_id, batch["batch_no"], batch["total_runs"])
@@ -296,35 +281,19 @@ async def retest_batch_endpoint(
         raise HTTPException(status_code=500, detail={"code": "INTERNAL", "msg": str(e)})
 
     # 转发 strategy_exec (与原 backtest 提交一致)
-    if batch["mode"] == "sweep":
-        await _forward_run_sweep({
-            "user_id": user.id,
-            "strategy_id": strategy_id,
-            "script_id": batch["script_id"],
-            "stock_code": batch["stock_code"],
-            "backtest_start_date": batch["backtest_start_date"],
-            "backtest_end_date": batch["backtest_end_date"],
-            "batch_no": batch["batch_no"],
-            "param_ranges": batch["param_ranges"],
-            "metric": batch["metric"],
-            "concurrency": batch["concurrency"],
-            "period": batch["period"],
-            "task_ids": batch["task_ids"],
-        })
-    else:
-        await _forward_run_task(batch["task_ids"][0], {
-            "task_id": batch["task_ids"][0],
-            "user_id": user.id,
-            "strategy_id": strategy_id,
-            "script_id": batch["script_id"],
-            "stock_code": batch["stock_code"],
-            "mode": "backtest",
-            "params": batch["params"],
-            "backtest_start_date": batch["backtest_start_date"],
-            "backtest_end_date": batch["backtest_end_date"],
-            "period": batch["period"],
-            "fields": batch["fields"],
-        })
+    # change 2026-08-30-sweep-worker-queue: 统一走 run-batch (worker 池)
+    await _forward_run_batch({
+        "user_id": user.id,
+        "strategy_id": strategy_id,
+        "script_id": batch["script_id"],
+        "stock_code": batch["stock_code"],
+        "backtest_start_date": batch["backtest_start_date"],
+        "backtest_end_date": batch["backtest_end_date"],
+        "batch_no": batch["batch_no"],
+        "metric": batch["metric"],
+        "concurrency": batch.get("concurrency", 2),
+        "period": batch.get("period"),
+    })
 
     log.info("[retest] strategy_id=%d batch_no=%d→%d total_runs=%d forwarded OK",
              strategy_id, batch_no, batch["batch_no"], batch["total_runs"])
