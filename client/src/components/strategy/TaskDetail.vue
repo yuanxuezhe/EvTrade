@@ -283,7 +283,7 @@
           <div v-if="executionLog.length" class="td-exec-summary">
             <el-tag>总阶段: {{ executionLog.length }}</el-tag>
             <el-tag type="info">耗时: {{ executionLog[executionLog.length - 1]?.elapsed_ms || 0 }} ms</el-tag>
-            <el-tag type="success">bars: {{ executionLog.filter(e => e.phase === 'bar').length }}</el-tag>
+            <el-tag type="success">信号 bar: {{ executionLog.filter(e => e.phase === 'bar').length }}</el-tag>
           </div>
           <el-input
             v-model="executionFilter"

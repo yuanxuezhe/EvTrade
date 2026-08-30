@@ -84,6 +84,7 @@ strategy_exec 暴露 4 个 internal endpoint（EvTrade 端转发用）：
 策略执行 MUST 基于 **Backtrader**（业界标准回测/实盘框架），位于 `strategy_exec/strategy_exec/engines/backtrader/`：
 
 - **回测**：`run_backtest()` 在 `asyncio.to_thread` 中同步跑 `bt.Cerebro.run()`，逐 bar 调用户脚本 `next()`，结束后写 `strategy_task.backtest_result`（含 `signal_log` / `progress_log` / `trades` / `equity_curve` / `win_rate` / `pnl` / `pnl_pct`）+ `pnl` / `trades_count` / `best_params`，并按 phase 写 `progress`
+  - **execution_log**（执行日志）：阶段时间轴 + **仅触发 buy/sell_signal 的 bar**（`_build_signal_bar_entries(signals, progress_log)` 按 stime 查回 bar_idx/close/position/equity）。不逐 bar 全量（防前端消息刷屏）；全量逐 bar 由 `best.progress_log` / `best.equity_curve` 承担（权益曲线/进度 Tab）
 - **实盘**：`LiveRunner` 异步启动，订阅 hqserver WS tick → 累积 1m K 线 → 调用户脚本 `next()` → 生成 signal
 - **数据源**：
   - 历史 K 线：`market_data/hq_history.py::fetch_his_bars`，走 broker his_hq RabbitMQ（`quota_his.exchange` + `EvTrade.ReqHisHq` 队列，`EVTRADE_HIS_HQ_*` env），超时 30s

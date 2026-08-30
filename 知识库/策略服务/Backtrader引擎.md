@@ -65,7 +65,7 @@ def run_backtest(task_id, user_id, script_id, stock_code, params, bars,
 - `patched_next`：每根 bar 后记录 `progress_log` 条目 `{bar_idx, stime, close, position, cash, equity}`（供权益曲线/进度 Tab）；节流 ≥0.5s 上报 `update_task_progress(task_id, {phase:"running", bar_idx, total_bars})`。
 - `patched_buy/patched_sell`：先调原 `buy_signal/sell_signal`（推 RabbitMQ），拿到 trace_id 后**同时下 Backtrader 市价单**（下一 bar 成交）使 broker 持仓/现金/盈亏真实累积；维护长仓口径 `pos_tracker`（size/avg 均价），SELL 计算 `realized = (price - avg) * close_vol` 作为信号 pnl；collector 记录含 `state/pnl/trace_id/stime/mode="backtest"` 的完整信号 dict。
 
-执行日志 `exec_log`：阶段时间轴（start/load_script/sandbox_ok/build_cerebro/running/writing_result/done，含 elapsed_ms）+ 逐 bar 记录（超 2000 条抽样防 JSON 膨胀）。
+执行日志 `exec_log`：阶段时间轴（start/load_script/sandbox_ok/build_cerebro/running/writing_result/done，含 elapsed_ms）+ **仅触发信号的 bar**（`_build_signal_bar_entries(signals, progress_log)`：遍历 buy/sell_signal 命中，按 stime 查回 bar_idx/close/position/equity，msg=`signal_type vol=<v> (<策略 msg>)`）。不再逐 bar 全量灌入（原超 2000 条采样逻辑已删——消息太多）；全量逐 bar 由 `best.progress_log` / `best.equity_curve` 承担（权益曲线/进度 Tab）。
 
 ### live.py — 实盘引擎
 
