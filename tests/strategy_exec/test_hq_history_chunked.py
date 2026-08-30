@@ -110,12 +110,19 @@ async def test_chunked_fetch_merges_and_sorts_bars():
         {"stime": "20250115093200", "close": "201.0"},
     ]
 
-    with patch.object(
-        client, "_fetch_one_chunk", new=AsyncMock(side_effect=[mock_bars_chunk1, mock_bars_chunk2])
-    ), patch.object(client, "settings") as mock_settings:
-        mock_settings.his_hq_chunk_enabled = True
-        mock_settings.his_hq_chunk_days = 10
-        result = await client.fetch_bars("600519.SH", "20250102", "20250115", "1d")
+    with patch(
+            "strategy_exec.data_access.minute_bars.query_minute_bars",
+            new=AsyncMock(return_value=[]),  # cache MISS (老测试)
+        ), patch(
+            "strategy_exec.data_access.minute_bars.upsert_minute_bars",
+            new=AsyncMock(return_value=0),
+        ), patch.object(
+            client, "_fetch_one_chunk", new=AsyncMock(side_effect=[mock_bars_chunk1, mock_bars_chunk2])
+        ) as mock_fetch, patch.object(client, "settings") as mock_settings:
+            mock_settings.his_hq_cache_enabled = True  # cache 开, 但空
+            mock_settings.his_hq_chunk_enabled = True
+            mock_settings.his_hq_chunk_days = 10
+            result = await client.fetch_bars("600519.SH", "20250102", "20250115", "1d")
 
     # 1d 聚合: 同日 09:31 / 09:32 / 09:33 都归 1-2 (1d) / 1-15 (1d) → 2 根
     assert len(result) == 2
@@ -132,10 +139,17 @@ async def test_chunked_fetch_disabled_legacy_behavior():
 
     mock_bars = [{"stime": "20250102093100", "close": "100.0"}]
 
-    with patch.object(
+    with patch(
+        "strategy_exec.data_access.minute_bars.query_minute_bars",
+        new=AsyncMock(return_value=[]),  # cache MISS (老 chunked 测试不依赖 cache)
+    ), patch(
+        "strategy_exec.data_access.minute_bars.upsert_minute_bars",
+        new=AsyncMock(return_value=0),
+    ), patch.object(
         client, "_fetch_one_chunk", new=AsyncMock(return_value=mock_bars)
     ) as mock_fetch, patch.object(client, "settings") as mock_settings:
-        mock_settings.his_hq_chunk_enabled = False
+        mock_settings.his_hq_cache_enabled = True  # cache 开
+        mock_settings.his_hq_chunk_enabled = False  # chunked 关
         mock_settings.his_hq_chunk_days = 10
         result = await client.fetch_bars("600519.SH", "20250101", "20250130", "1d")
 
@@ -190,10 +204,17 @@ async def test_chunked_fetch_aggregator_1d():
     # 第 3/4 段 (1-11 ~ 1-15, 1-15 ~ 1-15): 无数据
     mock_chunk_empty: list = []
 
-    with patch.object(
+    with patch(
+        "strategy_exec.data_access.minute_bars.query_minute_bars",
+        new=AsyncMock(return_value=[]),
+    ), patch(
+        "strategy_exec.data_access.minute_bars.upsert_minute_bars",
+        new=AsyncMock(return_value=0),
+    ), patch.object(
         client, "_fetch_one_chunk",
         new=AsyncMock(side_effect=[mock_chunk1, mock_chunk2, mock_chunk_empty, mock_chunk_empty])
     ), patch.object(client, "settings") as mock_settings:
+        mock_settings.his_hq_cache_enabled = True
         mock_settings.his_hq_chunk_enabled = True
         mock_settings.his_hq_chunk_days = 5
         result = await client.fetch_bars("600519.SH", "20250101", "20250115", "1d")

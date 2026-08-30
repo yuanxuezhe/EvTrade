@@ -173,6 +173,27 @@ class HQHistoryClient:
         (broker fetch 自身 cache 命中后会很快 — 30s/段 vs 5s/段, 且 cached 已覆盖)
         """
         all_bars = list(cached_bars) if cached_bars else []
+        # chunked_enabled=False → 1 次拉全区间 (向后兼容, 不拆段)
+        if not self.settings.his_hq_chunk_enabled:
+            log.info(
+                "[hq_history] chunked disabled (cache-augmented): stock=%s %s~%s → 1 broker fetch (cache_writeback)",
+                stock_code, start_date, end_date,
+            )
+            try:
+                broker_bars = await self._fetch_one_chunk(stock_code, start_date, end_date, period)
+            except HQHistoryError as e:
+                raise HQHistoryError(f"broker fetch failed: {e}") from e
+            all_bars.extend(broker_bars)
+            if broker_bars:
+                try:
+                    n = await upsert_fn(stock_code, broker_bars)
+                    if n:
+                        log.info("[hq_history] cache write-back: stock=%s wrote %d rows (1-shot)",
+                                 stock_code, n)
+                except Exception as e:  # noqa: BLE001
+                    log.warning("[hq_history] cache write-back failed (non-fatal): %s", e)
+            all_bars.sort(key=lambda b: b.get("stime", ""))
+            return self._aggregate(all_bars, period)
         chunks = _iter_chunks(start_date, end_date, self.settings.his_hq_chunk_days)
         log.info(
             "[hq_history] chunked fetch (cache-augmented): stock=%s %s~%s → %d chunks (cached=%d bars)",
