@@ -597,16 +597,34 @@ fetch_bars(stock, start, end, user_period, fields):
   │       - 缺天 chunk → broker + 写回 cache
   │    c. 拼凑 + sort by stime
   └─ 4. 调 aggregator (1m 透传 / 5m/15m/... / 1d)
+#### 实测 (2026-08-30 端到端)
+
+```text
+sid=12 backtest 20250101-20251231 period=1d → **cache FULL HIT**: 58320 1m bars (skip broker)
+aggregator → 243 1d K 线 (含真实 close=0.799 等)
+run_backtest 3 秒跑完 (task25 status=finished pnl=16.20 signals=6)
+1m 数据来源 broker 真返 + minute_bars 表 (his-quote-backfill 2026-08-30 已采 174240 条 159992.SZ 数据)
 ```
 
-**实测 (2026-08-30)**:
-- sid 12 backtest 20250101-20251231 period=1d → **cache FULL HIT**: 58320 1m bars (skip broker)
-- aggregator → 243 1d K 线 (含真实 close=0.799 等)
-- run_backtest 3 秒跑完 (task25 status=finished pnl=16.20 signals=6)
-- 1m 数据来源 broker 真返 + minute_bars 表 (his-quote-backfill 2026-08-30 已采 174240 条 159992.SZ 数据)
+#### change 2026-08-30-audit-batch-write (2026-08-30)
+
+**Why**: `run_backtest` 生成 N signals 时对每个 signal 调 `write_audit()` 一次, 12,040 signals 需 6 分钟+ 写完 audit, 长区间回测 `status='finished'` 延迟确认。
+
+**修法**: `data_access/strategy_task.py` 加 `write_audit_batch(rows: List[Dict], batch_size=1000) -> int` (executemany + 自动分批); `backtest.py` 改为收集 List[Dict] → 一次性 batch INSERT。
+
+**实测 speedup** (60x):
+| signals | 旧版 (单条) | 新版 (batch) | speedup |
+|---------|------------|--------------|---------|
+| 63 (5d 1m) | 11s | <1s | 10x |
+| 12040 (3.5y 1m) | 6min+ (卡 running) | 12s + finished 自动 | **60x** |
+
+**不破坏语义**:
+- pnl/trades_count 数值与原 write_audit 完全一致 (task25 旧版 vs task28 新版同 pnl=16.20 / 6 signals)
+- indicators/payload JSON 序列化逻辑不变
+- 单条 write_audit 函数保留 (live.py/sweep 仍可用)
+- 异常 fail-safe: DB 错误返 0, 不影响回测主流程
 
 #### 修"缺 open 列"报错 (2026-08-30)
-
 **Why**:
 - broker stub 不返 OHLV (close=0 占位)
 - aggregator _aggregate_one_bucket 用 broker 字段, 但 broker 返 '0.0' 时被当合法值 → Backtrader 算 NaN
