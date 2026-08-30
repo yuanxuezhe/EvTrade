@@ -51,7 +51,7 @@ def run_backtest(task_id, user_id, script_id, stock_code, params, bars,
 6. 结果：`pnl = broker.getvalue() - 100000`；每条 signal 写 `write_audit(...)`（strategy_script_audit 表）。
 7. `backtest_result` dict 落库（契约对齐前端 ScriptTask.vue）：
    - 顶层：`pnl / pnl_pct / final_value / initial_cash / bars_count / sharpe / signal_log / total_bars / execution_log`
-   - `best`：`{pnl, pnl_pct(小数), win_rate, trades_count, trades, equity_curve, signal_log, progress_log}`（pnl_pct/win_rate 存小数，前端 ×100）
+   - `best`：`{pnl, pnl_pct(小数), win_rate, trades_count, trades, signal_log}`（pnl_pct/win_rate 存小数，前端 ×100）。**不含 `progress_log`/`equity_curve`**（change 2026-08-30-drop-fullbar-progress：全量逐 bar 不再落库）
 8. `_update_task_results(...)` 上下文管理器：直接 SQL 乐观锁（version 字段）写 `backtest_result/pnl/trades_count/backtest_metric_value`，冲突重试 3 次；随后 `update_task_status(task_id, "finished", finished_at=...)`（终态统一 `finished`）。
 9. `update_strategy_best=True` 且成功 → `update_strategy_best_params(strategy_id, params)` 回写 `strategy.best_params`（扫描批次内为 False，由 sweep 统一写）。
 
@@ -62,10 +62,10 @@ def run_backtest(task_id, user_id, script_id, stock_code, params, bars,
 对用户策略类的 4 个方法打补丁：
 
 - `patched_init`：原 init 后调 `_set_task_meta(task_id, user_id, script_id, mode="backtest")`。
-- `patched_next`：每根 bar 后记录 `progress_log` 条目 `{bar_idx, stime, close, position, cash, equity}`（供权益曲线/进度 Tab）；节流 ≥0.5s 上报 `update_task_progress(task_id, {phase:"running", bar_idx, total_bars})`。
+- `patched_next`：每根 bar 后记录 `progress_log` 条目 `{bar_idx, stime, close, position, cash, equity}`（**run 内内存缓冲，不落地** — 仅供 `_build_signal_bar_entries` 取信号 bar 快照）；节流 ≥0.5s 上报 `update_task_progress(task_id, {phase:"running", bar_idx, total_bars})`（运行进度环数据源，保留）。
 - `patched_buy/patched_sell`：先调原 `buy_signal/sell_signal`（推 RabbitMQ），拿到 trace_id 后**同时下 Backtrader 市价单**（下一 bar 成交）使 broker 持仓/现金/盈亏真实累积；维护长仓口径 `pos_tracker`（size/avg 均价），SELL 计算 `realized = (price - avg) * close_vol` 作为信号 pnl；collector 记录含 `state/pnl/trace_id/stime/mode="backtest"` 的完整信号 dict。
 
-执行日志 `exec_log`：阶段时间轴（start/load_script/sandbox_ok/build_cerebro/running/writing_result/done，含 elapsed_ms）+ **仅触发信号的 bar**（`_build_signal_bar_entries(signals, progress_log)`：遍历 buy/sell_signal 命中，按 stime 查回 bar_idx/close/position/equity，msg=`signal_type vol=<v> (<策略 msg>)`）。不再逐 bar 全量灌入（原超 2000 条采样逻辑已删——消息太多）；全量逐 bar 由 `best.progress_log` / `best.equity_curve` 承担（权益曲线/进度 Tab）。
+执行日志 `exec_log`：阶段时间轴（start/load_script/sandbox_ok/build_cerebro/running/writing_result/done，含 elapsed_ms）+ **仅触发信号的 bar**（`_build_signal_bar_entries(signals, progress_log)`：遍历 buy/sell_signal 命中，按 stime 查回 bar_idx/close/position/equity，msg=`signal_type vol=<v> (<策略 msg>)`）。不逐 bar 全量。**全量逐 bar（progress_log/equity_curve）不再落库**（change 2026-08-30-drop-fullbar-progress）；前端「进度」Tab 已删，权益曲线改用 execution_log 信号 bar 的 `{stime, equity}` 绘制（起点 `initial_cash`）。
 
 ### live.py — 实盘引擎
 
@@ -111,5 +111,5 @@ def run_backtest(task_id, user_id, script_id, stock_code, params, bars,
 - 加分析器（如 max_drawdown）：backtest.py 第 3 步 `cerebro.addanalyzer` + 结果提取；calmar 指标当前因缺 max_drawdown 恒 None，补 analyzer 即可激活。
 - 改初始资金/手续费：backtest.py `setcash` / `setcommission`（注意前端 pnl_pct 按 100000 计算）。
 - live 周期扩展：`_BarAggregator` 目前固定 1m；如需其他周期需改聚合桶逻辑。
-- 改 backtest_result 结构：必须同步前端 ScriptTask.vue（signal_log/progress_log/trades/equity_curve/win_rate 契约）与 server `_convert.py` 的指标提取语义。
+- 改 backtest_result 结构：必须同步前端 TaskDetail.vue（best 的 signal_log/trades/win_rate + execution_log 契约；progress_log/equity_curve 已不落地）与 server `_convert.py` 的指标提取语义。
 - `_wrap_strategy` 是直接改类方法（非子类），若 Backtrader 升级需验证 next()/buy_signal 钩子仍生效。
