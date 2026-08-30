@@ -93,6 +93,76 @@ async def query_minute_bars(
     return await asyncio.to_thread(_query_sync, stock_code, start_date, end_date)
 
 
+def _upsert_sync(stock_code: str, bars: List[Dict[str, Any]]) -> int:
+    """sync sqlalchemy 批量 upsert minute_bars (executemany + ON DUPLICATE KEY UPDATE, 幂等).
+
+    复用 scripts/fetch_minute_bars.py 的 upsert 逻辑:
+    - avg_price = amount/volume (VWAP 元/股)
+    - broker raw bars 通常没 amount, 默认 0 → avg_price=0 (broker 真有 amount 时自动算)
+    """
+    from sqlalchemy import text
+
+    if not bars:
+        return 0
+
+    # 提取字段: 兼容 {stime, open, close, high, low, volume} (broker raw 1m)
+    # 或 {stime, open, close, high, low, avg_price, volume} (minute_bars 格式)
+    recs = []
+    for b in bars:
+        stime = b.get("stime", "")
+        if not stime or len(stime) < 14:
+            continue
+        vol = float(b.get("volume", 0) or 0)
+        amt = float(b.get("amount", 0) or 0)
+        # avg_price = amount / volume (VWAP) ; 无 amount 则用 broker 已有 avg_price 或 0
+        avg_price = (amt / vol) if vol > 0 else float(b.get("avg_price", 0) or 0)
+        recs.append({
+            "stock_code": stock_code,
+            "stime": stime[:14],
+            "open": float(b.get("open", 0) or 0),
+            "close": float(b.get("close", 0) or 0),
+            "high": float(b.get("high", 0) or 0),
+            "low": float(b.get("low", 0) or 0),
+            "avg_price": avg_price,
+            "volume": int(vol),
+        })
+
+    if not recs:
+        return 0
+
+    sql = text(
+        "INSERT INTO minute_bars "
+        "(stock_code, stime, open, close, high, low, avg_price, volume) "
+        "VALUES (:stock_code, :stime, :open, :close, :high, :low, :avg_price, :volume) "
+        "ON DUPLICATE KEY UPDATE open=VALUES(open), close=VALUES(close), "
+        "high=VALUES(high), low=VALUES(low), avg_price=VALUES(avg_price), volume=VALUES(volume)"
+    )
+
+    try:
+        with _get_engine().begin() as conn:
+            conn.execute(sql, recs)
+        return len(recs)
+    except Exception as e:  # noqa: BLE001
+        log.warning("[minute_bars.upsert] %s stock=%s bars=%d: %s",
+                    type(e).__name__, stock_code, len(bars), e)
+        return 0
+
+
+async def upsert_minute_bars(
+    stock_code: str, bars: List[Dict[str, Any]],
+) -> int:
+    """批量 upsert minute_bars (异步包装).
+
+    Args:
+        stock_code: 证券代码
+        bars: 1m K 线数组 (broker raw 或 minute_bars 格式)
+
+    Returns:
+        写入条数 (含 upsert 覆盖)
+    """
+    return await asyncio.to_thread(_upsert_sync, stock_code, bars)
+
+
 def _covered_dates(bars: List[Dict[str, Any]]) -> set:
     """bars 中所有 stime[:8] 的 date 集合 (实际覆盖的交易日)."""
     return {b["stime"][:8] for b in bars if b.get("stime")}
