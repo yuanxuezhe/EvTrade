@@ -118,6 +118,91 @@ def create_task(
     return get_task(task_id, user_id, is_admin=True)
 
 
+def create_tasks_batch(
+    user_id: int,
+    strategy_id: int,
+    stock_code: str,
+    combos: List[Dict[str, Any]],
+    *,
+    description: str = "",
+    backtest_start_date: Optional[str] = None,
+    backtest_end_date: Optional[str] = None,
+    period: Optional[str] = None,
+    fields: Optional[str] = None,
+    mode: str = "backtest",
+    batch_no: Optional[int] = None,
+    status: str = "queued",
+    metric: Optional[str] = None,
+) -> List[int]:
+    """批量创建 task (sweep 一次 N 行) — executemany 单往返, 替代逐行 create_task。
+
+    change 2026-08-30-sweep-worker-queue: sweep 对 N 组合逐行 create_task = ~2N 次串行
+    DB 往返 (Strategy SELECT + INSERT), 大扫描吃满前端 15s 超时。改为:
+    - Strategy 权限校验只查 1 次 (循环外)
+    - N 行 INSERT 走 executemany (单 session, 单往返)
+    - 回填 id 用 `WHERE batch_no=? AND strategy_id=? ORDER BY id` (同批次连续自增, 顺序稳定)
+
+    Args: 同 create_task, 但 `combos` = 参数 dict 列表 (每 1 个 = 1 行 task)。
+    Returns: task id 列表 (按 combos 顺序, 长度 = len(combos))。
+    Raises: ValueError: 策略不存在 / 权限 / combos 为空。
+    """
+    from server.tables import Strategy
+    from server.tables.base import get_engine
+    from sqlalchemy import text
+
+    strat = Strategy.query_one(strategy_id=strategy_id)
+    if strat is None:
+        raise ValueError(f"strategy_id {strategy_id} 不存在")
+    if getattr(strat, "_data", {}).get("user_id") != user_id:
+        raise ValueError(f"strategy_id {strategy_id} 不属于 user_id={user_id}")
+    if not combos:
+        raise ValueError("create_tasks_batch: combos 不能为空")
+
+    now = datetime.now()
+    rows = []
+    for c in combos:
+        rows.append({
+            "user_id": user_id,
+            "strategy_id": strategy_id,
+            "batch_no": batch_no,
+            "description": description,
+            "stock_code": stock_code,
+            "mode": mode,
+            "status": status,
+            "params": json_dumps(c),
+            "period": period or "1d",
+            "fields": fields or "open,close,high,low",
+            "pnl": 0.0,
+            "trades_count": 0,
+            "started_at": None,
+            "finished_at": None,
+            "backtest_start_date": backtest_start_date,
+            "backtest_end_date": backtest_end_date,
+            "metric": metric,
+            "created_at": now,
+            "updated_at": now,
+        })
+
+    cols = list(rows[0].keys())
+    col_list = ", ".join(f"`{c}`" for c in cols)
+    val_list = ", ".join(f":{c}" for c in cols)
+    engine = get_engine()
+    with engine.begin() as conn:
+        conn.execute(text(f"INSERT INTO `strategy_task` ({col_list}) VALUES ({val_list})"), rows)
+        # 回填 id: 同批次连续自增, 按 id 升序 = combos 顺序
+        r = conn.execute(text(
+            "SELECT id FROM strategy_task "
+            "WHERE strategy_id=:sid AND batch_no=:bn ORDER BY id"
+        ), {"sid": strategy_id, "bn": batch_no}).mappings().all()
+    ids = [row["id"] for row in r]
+    if len(ids) != len(combos):
+        raise ValueError(
+            f"create_tasks_batch: 回填 {len(ids)} id != combos {len(combos)} (batch_no={batch_no})"
+        )
+    return ids
+
+
+
 def delete_task(task_id: int, user_id: int, is_admin: bool = False) -> bool:
     from server.tables import StrategyTask
     row = StrategyTask.query_one(id=task_id)

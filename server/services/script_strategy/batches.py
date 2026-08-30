@@ -21,7 +21,7 @@ from server.services.script_strategy._convert import (
 from server.services.script_strategy.errors import StrategyError
 from server.services.script_strategy.params import expand_param_ranges, validate_params_keys
 from server.services.script_strategy.access import require_backtest_access
-from server.services.script_strategy.tasks import create_task
+from server.services.script_strategy.tasks import create_tasks_batch
 
 
 def create_backtest_batch(
@@ -96,19 +96,18 @@ def create_backtest_batch(
         raise StrategyError("INVALID_MODE", f"mode 必须是 single|sweep, 收到 {mode!r}")
 
     batch_no = int(next_seq("task_batch"))
-    task_ids = []
-    for c in combos:
-        t = create_task(
-            user_id=user_id, strategy_id=strategy_id, stock_code=effective_stock,
-            params=c,
-            description=sd.get("name", "") or f"strategy-{strategy_id}",
-            backtest_start_date=backtest_start_date,
-            backtest_end_date=backtest_end_date,
-            period=period, fields=fields,
-            mode="backtest", batch_no=batch_no, status="queued",
-            metric=metric,  # 批次排序指标落库 (重测还原用)
-        )
-        task_ids.append(t["id"])
+    # change 2026-08-30-sweep-worker-queue: N 行批量 INSERT (executemany 单往返),
+    # 替代逐行 create_task (~2N 次 DB 往返, 大扫描吃满前端 15s 超时)。
+    task_ids = create_tasks_batch(
+        user_id=user_id, strategy_id=strategy_id, stock_code=effective_stock,
+        combos=combos,
+        description=sd.get("name", "") or f"strategy-{strategy_id}",
+        backtest_start_date=backtest_start_date,
+        backtest_end_date=backtest_end_date,
+        period=period, fields=fields,
+        mode="backtest", batch_no=batch_no, status="queued",
+        metric=metric,  # 批次排序指标落库 (重测还原用)
+    )
 
     return {
         "batch_no": batch_no,
@@ -329,19 +328,17 @@ def retest_batch(
     combos = [json_loads(t._data.get("params"), default={}) for t in rows]
     is_sweep = len(combos) > 1
     new_batch_no = int(next_seq("task_batch"))
-    task_ids = []
-    for c in combos:
-        t = create_task(
-            user_id=user_id, strategy_id=strategy_id, stock_code=first.get("stock_code"),
-            params=c,
-            description=sd.get("name", "") or f"strategy-{strategy_id}",
-            backtest_start_date=first.get("backtest_start_date"),
-            backtest_end_date=first.get("backtest_end_date"),
-            period=first.get("period"), fields=first.get("fields"),
-            mode="backtest", batch_no=new_batch_no, status="queued",
-            metric=metric,
-        )
-        task_ids.append(t["id"])
+    # change 2026-08-30-sweep-worker-queue: 批量 INSERT (同 create_backtest_batch)
+    task_ids = create_tasks_batch(
+        user_id=user_id, strategy_id=strategy_id, stock_code=first.get("stock_code"),
+        combos=combos,
+        description=sd.get("name", "") or f"strategy-{strategy_id}",
+        backtest_start_date=first.get("backtest_start_date"),
+        backtest_end_date=first.get("backtest_end_date"),
+        period=first.get("period"), fields=first.get("fields"),
+        mode="backtest", batch_no=new_batch_no, status="queued",
+        metric=metric,
+    )
 
     # 4. 原批次全部 task → abandoned (废弃)
     StrategyTask.update_by_fields(
