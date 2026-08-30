@@ -1,7 +1,7 @@
 """
 server/tables/strategy_task.py — 自动生成 (tables-codegen skill)
 
-表: `strategy_task`  (29 字段, 主键: ['id'])
+表: `strategy_task`  (30 字段, 主键: ['id'])
 描述: 脚本策略任务：回测 / 实盘运行态 + 结果
 
 ⚠️ 不要手动修改本文件 — 任何字段/主键变更请重新跑 tables-codegen
@@ -59,7 +59,8 @@ class StrategyTask(TableBase):
         'strategy_id': '→ strategy.strategy_id',
         'batch_no': '回测/实盘批次号 (序号表 task_batch)',
         'metric': '批次排序指标 (sweep top1 选择, 重测还原用)',
-        'backtest_metric_value': '单 run 指标值 (sharpe→total_return→pnl/initial_cash)'
+        'backtest_metric_value': '单 run 指标值 (sharpe→total_return→pnl/initial_cash)',
+        'run_generation': '回测任务代际+重跑计数 (worker 队列堵塞自愈: claim+1, 写带 WHERE 代际, 超上限标 failed)'
     }
 
     __field_types__: ClassVar[dict] = {
@@ -91,7 +92,8 @@ class StrategyTask(TableBase):
         'strategy_id': 'int',
         'batch_no': 'int',
         'metric': 'varchar(16)',
-        'backtest_metric_value': 'float'
+        'backtest_metric_value': 'float',
+        'run_generation': 'int'
     }
 
     # 字段 type hints (IDE 智能提示用, 运行时不影响行为)

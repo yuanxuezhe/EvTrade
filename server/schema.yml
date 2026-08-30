@@ -829,6 +829,10 @@ tables:
       backtest_metric_value:
         type: Float
         nullable: true
+      run_generation:
+        type: Integer
+        nullable: false
+        server_default: ''0''
     indexes:
       ix_strategy_task_user_status: ['user_id', 'status']
       ix_strategy_task_script_mode: ['mode']
