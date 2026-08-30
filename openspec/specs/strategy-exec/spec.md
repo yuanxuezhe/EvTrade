@@ -257,6 +257,10 @@ DB `strategy_task` 表加 3 字段（migration `2026-08-09-strategy-task-exec-fi
 
 > **来源 change**：`2026-08-10-strategy-params-sweep-best-live`（v122）
 > **设计**：`openspec/changes/2026-08-10-strategy-params-sweep-best-live/design.md` §2
+>
+> **⚠️ 执行模型已两次演进（以下 v122 原文的 sweep_id/summary_task/param_grid 已被取代）：**
+> 1. `strategy-batch-task-model`：批次由 **EvTrade 预建 N 行 `strategy_task`（strategy_id + batch_no + params）**，strategy_exec 不自建 task/summary；sweep 参数改 `param_ranges`（类型化展开），endpoint `POST /internal/run-sweep-task`。
+> 2. **`2026-08-30-sweep-worker-queue`（当前）**：执行改 **worker 池 FIFO 有界并发队列 + 堵塞自愈**，`/internal/run-sweep-task` 与新增 `/internal/run-batch` 都转调 `worker.run_worker_pool`；`run_sweep_batch`（gather 一把梭）**DEPRECATED**。single（1 行）+ sweep（N 行）统一走队列。详见下方 **REQ-SE-012: 回测任务执行队列（worker 池）**。
 
 StrategyExec MUST 支持一次提交多组参数组合的回测，并按指定指标排序挑 best。
 
@@ -835,3 +839,75 @@ This change SHALL NOT modify any of:
 - 沙箱与回测行为
 
 仅做 except 收窄（裸 → `queue.Empty`）。
+
+### REQ-SE-013: 回测任务执行队列（worker 池 + 堵塞自愈）（2026-08-30）
+
+> **来源 change**：`2026-08-30-sweep-worker-queue`
+> 取代 REQ-SE-008 旧 `asyncio.gather` 一把梭执行。single（1 行）+ sweep（N 行）**统一**走本队列。
+
+StrategyExec MUST 用 worker 池从 DB 队列按序执行回测任务，支持堵塞自愈 + 代际隔离，且提交立即返回（不等执行）。
+
+#### API
+
+新增统一 endpoint：
+
+```
+POST /internal/run-batch
+```
+
+Request：
+
+```jsonc
+{
+    "user_id": 6, "strategy_id": 100, "script_id": "mas_v1",
+    "stock_code": "159992.SZ",
+    "backtest_start_date": "20250101", "backtest_end_date": "20260701",
+    "batch_no": 42,            // EvTrade 预建批次号（序号表 task_batch）
+    "metric": "sharpe",
+    "concurrency": 2,
+    "period": "1d"
+}
+```
+
+Response（202 Accepted，异步）：`{ "batch_no": 42, "total_runs": 16, "msg": "batch accepted, running in background worker pool" }`
+
+`POST /internal/run-sweep-task` 保留兼容，内部转调 `worker.run_worker_pool`（同一队列）。`run_sweep_batch`（gather）标记 DEPRECATED，不再被端点调用。
+
+#### 行为约束
+
+- **提交不执行**：EvTrade 预建批次 N 行 `strategy_task`（`status='queued'`，`run_generation=0`）→ 调 `/internal/run-batch` → 立即 202 + `asyncio.create_task(run_worker_pool(...))`，**不在请求内跑回测**（提交性能另见 EvTrade 侧批量 INSERT + to_thread）。
+- **K 线共享**：worker 池启动拉 1 次 `fetch_his_bars`，全批次共用。
+- **worker 池**：`asyncio.gather(*[_worker(i) for i in range(concurrency)])`，N=`concurrency`（默认 2），**FIFO 有界并发**。
+- **原子领取**：`claim_next_queued(strategy_id, batch_no, execution_pid, gen_cap)` — `SELECT … FOR UPDATE SKIP LOCKED` 锁行 + 乐观 `UPDATE … WHERE status='queued' AND run_generation=当前`（`rowcount>0` 才算领到）；领取时 `run_generation = run_generation + 1`。防 N worker / 多实例抢同一 task。
+- **单 task 执行**：`asyncio.wait_for(to_thread(run_backtest, …, run_generation=本次代际), timeout=backtest_task_timeout_seconds)`（默认 600s）。
+- **堵塞自愈**：单 task 超时（`TimeoutError`）→ `requeue_or_fail_on_timeout(task_id, run_generation, max_retries)`：
+  - `run_generation >= backtest_max_retries`（默认 3）→ 标 `status='failed'`（防无限重跑）
+  - 否则 → 回 `status='queued'`（清 execution_pid），待 worker 再次领取重跑
+  - worker **复位状态**继续领下一个（非重启进程）。
+- **代际隔离（孤儿线程治理）**：`to_thread` 线程杀不掉，超时复位的 task 旧线程仍在后台跑。`strategy_task.run_generation`（INT NOT NULL DEFAULT 0，兼代际 + 重跑计数）隔离：`run_backtest` 入口 `set_run_generation(本次代际)`（ContextVar，线程私有）；`update_task_status` / `update_task_progress` / 结果 blob 写（`_update_task_results`）带**代际守卫**——写前行 `run_generation` ≠ 本线程代际（已复位重跑，本线程是孤儿）→ **静默 no-op**，不覆盖新一次结果/心跳。`run_generation=None`（默认）不过滤，兼容 live / 旧单任务。
+- **逐 task 通知**：每个 task `run_backtest` 内 `update_task_status('finished')` → `task_progress` WS 推送（复用现有通道），前端 `BatchTasksTable` 逐行刷新。
+- **批次完成**：worker 池领空后 `_finalize_batch` 读 DB 终态 → 按 `backtest_metric_value` 取 finished top1 → `update_strategy_best_params`；全失败不写。
+- **config**：`backtest_task_timeout_seconds`（600）/ `backtest_max_retries`（3）/ `worker_poll_interval_seconds`（0.5）。
+
+#### Scenario: 16 组合 sweep 走 worker 队列
+
+- **WHEN** EvTrade 预建 16 行 queued task（batch_no=42），POST /internal/run-batch（concurrency=2）
+- **THEN** 立即 202，起 2 个 worker
+- **AND** 两 worker FIFO 领取（claim 时 run_generation+1）→ 有界并发跑 backtest（一次最多 2 个）
+- **AND** 每完成一个 task → `update_task_status('finished')` → WS 逐 task 推前端
+- **AND** 16 个全非 queued 后，`_finalize_batch` 按 metric 取 top1 → `update_strategy_best_params`
+
+#### Scenario: 单 task 超时被自愈重跑
+
+- **WHEN** worker 领到 task X（gen=1），`wait_for` 超时（> backtest_task_timeout_seconds）
+- **THEN** X 回 `status='queued'`（gen 仍 1，下次领取 +1=2），worker 复位领下一个
+- **AND** X 被再次领取（gen=2）重跑
+- **AND** 旧线程（gen=1）晚到的 result/progress/status 写因代际守卫（行 gen=2 ≠ 线程 gen=1）→ no-op
+- **AND** 若 X 连续超时达 `backtest_max_retries`（gen≥3）→ `status='failed'`
+
+#### Scenario: 提交立即返回（不阻塞）
+
+- **WHEN** 512 组合 sweep 提交
+- **THEN** EvTrade 批量 INSERT 512 行 queued task（executemany 单往返）+ to_thread 包装不阻塞 event loop
+- **AND** `/internal/run-batch` 立即 202（不在请求内跑回测）
+- **AND** 前端 axios 不因提交耗时超时

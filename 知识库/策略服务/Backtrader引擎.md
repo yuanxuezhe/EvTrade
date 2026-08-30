@@ -9,16 +9,17 @@
 
 ## 功能概述
 
-engines/backtrader/ 是策略执行核心：用户脚本继承 `ProjectStrategy`（bt.Strategy 子类），通过 `buy_signal()/sell_signal()` 推送信号；backtest.py 同步跑完整回测并落库；live.py 以 LiveRunner 常驻订阅行情 WS 逐 bar 驱动 `next()`；sweep.py 按批次模型并发跑多组参数回测并回写最优参数。
+`engines/backtrader/` 是策略执行核心：用户脚本继承 `ProjectStrategy`（bt.Strategy 子类），通过 `buy_signal()/sell_signal()` 推送信号；backtest.py 同步跑完整回测并落库；live.py 以 LiveRunner 常驻订阅行情 WS 逐 bar 驱动 `next()`；**worker.py 以 worker 池 FIFO 有界并发从 DB 队列领 task 跑回测 + 堵塞自愈**（change 2026-08-30-sweep-worker-queue，取代旧 sweep gather 一把梭）；sweep.py 保留参数展开纯函数（执行已弃用）。
 
 ## 文件清单
 
 | 代码文件 | 作用 |
 |----------|------|
 | `adapter.py` | `ProjectStrategy` 基类：任务元数据注入、信号推送、持仓/现金查询 |
-| `backtest.py` | `run_backtest()` 主流程 + `_wrap_strategy()` 类装饰 + `_update_task_results()` 乐观锁写结果 |
+| `backtest.py` | `run_backtest()` 主流程 + `_wrap_strategy()` 类装饰 + `_update_task_results()` 乐观锁写结果（含代际守卫） |
 | `live.py` | `_BarAggregator`（tick→1m K 线）、`LiveRunner`、`_LiveRunnerManager` 单例 |
-| `sweep.py` | 参数展开纯函数 + `run_sweep_batch()` 批次并发执行 |
+| `worker.py` | 回测任务执行队列：`run_worker_pool()` 起 N worker FIFO 有界并发（claim→run→复位超时→下一）+ `_finalize_batch()` top1 回写 best_params（change 2026-08-30-sweep-worker-queue） |
+| `sweep.py` | 参数展开纯函数（`_expand_values`/`iter_param_ranges`/`extract_metric_value` 等，worker 复用）；`run_sweep_batch()` 已 **DEPRECATED**（端点改走 worker 池，函数仅测试/回退参考） |
 
 ## 核心实现
 
@@ -100,6 +101,34 @@ def run_backtest(task_id, user_id, script_id, stock_code, params, bars,
 5. finished 组合按 metric 降序取 top1 → `update_strategy_best_params(strategy_id, best_params)`；全失败不写。
 
 返回：`{strategy_id, batch_no, total_runs, best_params, best_metric_value, succeeded, failed}`。
+
+> **⚠️ `run_sweep_batch` 已 DEPRECATED**（change 2026-08-30-sweep-worker-queue）：端点改走下方 `worker.py` 队列，本函数不再被任何端点调用（仅测试/回退参考）。sweep.py 保留的是**参数展开纯函数**（`_expand_values` / `iter_param_ranges` / `count_param_ranges` / `extract_metric_value` 等），worker 复用 `extract_metric_value`。
+
+### worker.py — 回测任务执行队列（strategy-worker-queue, 2026-08-30）
+
+取代 `run_sweep_batch` 的 gather 一把梭。**single (1 行) + sweep (N 行) 统一**走此队列：EvTrade 提交时只把批次 task 行建为 `status='queued'` + 立即 202（不等执行），strategy_exec 起 worker 池执行。
+
+`run_worker_pool(strategy_id, batch_no, user_id, script_id, stock_code, backtest_start_date, backtest_end_date, *, period="1d", concurrency=2, metric="sharpe") -> Dict`：
+
+1. `get_batch_tasks` 校验批次存在（不存在 → RuntimeError）。
+2. `fetch_his_bars` 拉一次 K 线，全批次共享。
+3. `asyncio.gather(*[_worker(i) for i in range(concurrency)])` 起 N 个 worker **FIFO 有界并发**。
+4. 领空后 `_finalize_batch` 读 DB 终态 → 按 `backtest_metric_value` 取 finished top1 → `update_strategy_best_params`；全失败不写。
+
+`_worker` 循环（每 worker 独立）：
+- `claim_next_queued(strategy_id, batch_no, execution_pid, gen_cap=max_retries)` **原子领取**下一个 queued task（`SELECT … FOR UPDATE SKIP LOCKED` + 乐观 `UPDATE WHERE status='queued' AND run_generation=当前`，`rowcount>0` 才算领到 → 防 N worker / 多实例抢同一 task；领取时 `run_generation+1`）。
+- `asyncio.wait_for(to_thread(run_backtest, ..., run_generation=本次代际), timeout=backtest_task_timeout_seconds)` 跑回测。
+- **超时自愈**：`TimeoutError` → `requeue_or_fail_on_timeout`（`run_generation >= max_retries` → 标 failed 防无限重跑；否则回 queued 待重领）；worker 复位去领下一个（**复位状态，非重启进程**）。
+- 队列空（`claim` 返 None）→ 短睡 `worker_poll_interval_seconds` 再查一次（防"最后一个 task 刚被超时复位"竞态）→ 仍空则收工。
+
+**代际隔离（孤儿线程治理）**：`to_thread` 线程杀不掉，超时复位的 task 旧线程仍在后台跑。`strategy_task.run_generation`（列，兼作代际+重跑计数）隔离：
+- `run_backtest` 入口 `set_run_generation(本次代际)`（ContextVar，线程私有）
+- `data_access.update_task_status` / `update_task_progress` / 结果 blob 写（`_update_task_results`）都带**代际守卫**：写前读行 `run_generation`，≠本线程代际（任务已被复位重跑，本线程是孤儿）→ **静默 no-op**，不覆盖新一次的结果/心跳
+- `None`（默认）= 不过滤，兼容 live / 旧单任务路径
+
+**逐 task 通知前端**：每个 task `run_backtest` 内 `update_task_status('finished')` → `task_progress` WS 推送（现有通道），`BatchTasksTable` 逐行刷新 status + 进度环；点任务进 `TaskDetail` 看详情。前端无需改。
+
+config（`strategy_exec/config.py`）：`backtest_task_timeout_seconds`（默认 600s，单 task 超时阈值）、`backtest_max_retries`（默认 3，重跑上限）、`worker_poll_interval_seconds`（默认 0.5s，队列空轮询间隔）。
 
 ## 依赖关系
 

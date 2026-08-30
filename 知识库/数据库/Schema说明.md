@@ -31,7 +31,7 @@ EvTrade 全部 23 张业务表的结构说明：表名、主键、关键列、�
 | `strategy_order` | `id`（自增） | `task_id/user_id/strategy_id/stock_code/status/active_task_id/run_count` | 策略下单母单（可重复启停，子单按 parent_task_id 归因） |
 | `strategy_script` | `user_id, id` | `name/code(LargeText)/params_schema(JSON)/description/status/is_public` | 用户 Python 策略源码 + 参数 schema；索引 (user_id,status) |
 | `strategy_script_audit` | `id`（BIGINT 自增） | `task_id/stime/trd_date/phase/trigger_type/stock_code/price/volume/indicators/state/order_no/payload` | 策略执行审计流水（JSON 多列）；索引 (task_id,created_at)、(task_id,trd_date) |
-| `strategy_task` | `id`（自增） | `user_id/stock_code/mode/status/params(JSON)/backtest_result(JSON)/pnl/live_signals/progress/execution_service/strategy_id/batch_no/metric/backtest_metric_value/version` | 回测/实盘任务运行态 + 结果；索引 user_status、mode、(strategy_id,batch_no,status) |
+| `strategy_task` | `id`（自增） | `user_id/stock_code/mode/status/params(JSON)/backtest_result(JSON)/pnl/live_signals/progress/execution_service/strategy_id/batch_no/metric/backtest_metric_value/run_generation/version` | 回测/实盘任务运行态 + 结果；索引 user_status、mode、(strategy_id,batch_no,status)。`run_generation`（INT NOT NULL DEFAULT 0）= 回测任务代际+重跑计数（worker 队列堵塞自愈，2026-08-30） |
 | `sys_config` | `user, cfg_key` | `cfg_val/desc/updated_by` | 系统配置 KV |
 | `sys_status` | `id` | `trd_date/status/is_half_day/initialized_at/closed_at` | 交易日状态机（open/closed，日初切换） |
 | `t0_tasks` | `id`（自增） | `user_id/stock_code/base_volume/target_volume/coefficient/status/created_trd_date` | T0 做T任务；索引 user_status、(status,created_at)、stock_code |
