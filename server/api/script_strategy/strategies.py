@@ -19,6 +19,7 @@ REST 端点 (前缀 /api/script-strategy):
 批次创建不执行; 运行时转发到独立服务 strategy_exec (8001), 202 Accepted 立即返回。
 请求/响应 schema 在 schemas.py, 转发 helpers 在 forward.py (经本模块命名空间引入以兼容 monkeypatch)。
 """
+import asyncio
 import logging
 from typing import List, Optional
 
@@ -119,7 +120,10 @@ async def backtest_endpoint(
         user.username, strategy_id, req.mode, req.stock_code, req.metric,
     )
     try:
-        batch = svc.create_backtest_batch(
+        # change 2026-08-30-sweep-worker-queue: DB 写 (N 行批量 INSERT) 用 to_thread 包装,
+        # 不阻塞单进程 uvicorn event loop (async 路由调同步 IO 会卡全进程 — CLAUDE.md §七)。
+        batch = await asyncio.to_thread(
+            svc.create_backtest_batch,
             user.id, strategy_id,
             mode=req.mode,
             stock_code=req.stock_code,
@@ -273,7 +277,10 @@ async def retest_batch_endpoint(
     """
     log.info("[retest] user=%s strategy_id=%d batch_no=%d", user.username, strategy_id, batch_no)
     try:
-        batch = svc.retest_batch(strategy_id, batch_no, user.id, user.role == "admin")
+        # change 2026-08-30-sweep-worker-queue: to_thread 包装 (同 backtest_endpoint)
+        batch = await asyncio.to_thread(
+            svc.retest_batch, strategy_id, batch_no, user.id, user.role == "admin"
+        )
     except StrategyError as e:
         code_map = {
             "NO_STRATEGY": 404,
