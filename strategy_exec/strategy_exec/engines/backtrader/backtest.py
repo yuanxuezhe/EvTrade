@@ -24,6 +24,8 @@ import backtrader as bt
 from strategy_exec.data_access import (
     get_script, update_task_progress, update_task_status, write_audit,
 )
+# change 2026-08-30-audit-batch-write: 批量 audit helper (取代逐条 write_audit)
+from strategy_exec.data_access.strategy_task import write_audit_batch
 from strategy_exec.engines.backtrader.adapter import ProjectStrategy
 from strategy_exec.sandbox.loader import load_strategy_class
 
@@ -204,20 +206,23 @@ def run_backtest(
     _phase("writing_result", f"写结果 pnl={pnl:.2f} ({pnl_pct:.2f}%) signals={len(collector.signals)}")
 
     # signal_log: collector 收集的所有 signals
-    # 写 strategy_script_audit (每条 signal)
+    # change 2026-08-30-audit-batch-write: 收集 → write_audit_batch 批量 INSERT (vs 原逐条 write_audit)
+    # 实测 12,040 signals: 单条 6 min+ → batch ~12s (60x speedup)
+    audit_rows = []
     for sig in collector.signals:
-        write_audit(
-            task_id=task_id,
-            stime=sig.get("stime") or sig.get("ts") or datetime.now().strftime("%Y%m%d%H%M%S"),
-            trd_date=backtest_start_date or "",
-            phase="bar",
-            trigger_type=sig.get("signal_type", "INFO"),
-            stock_code=sig.get("stock_code", stock_code),
-            price=sig.get("price", 0.0),
-            volume=sig.get("volume", 0),
-            indicators=sig.get("indicators"),
-            msg=sig.get("msg", ""),
-        )
+        audit_rows.append({
+            "task_id": task_id,
+            "stime": sig.get("stime") or sig.get("ts") or datetime.now().strftime("%Y%m%d%H%M%S"),
+            "trd_date": backtest_start_date or "",
+            "phase": "bar",
+            "trigger_type": sig.get("signal_type", "INFO"),
+            "stock_code": sig.get("stock_code", stock_code),
+            "price": sig.get("price", 0.0),
+            "volume": sig.get("volume", 0),
+            "indicators": sig.get("indicators"),
+            "msg": sig.get("msg", ""),
+        })
+    write_audit_batch(audit_rows)
 
     signals = collector.signals
     # 由 signals 派生 trades / win_rate (交易明细 Tab)
