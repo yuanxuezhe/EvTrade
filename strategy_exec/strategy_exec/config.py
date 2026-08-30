@@ -62,6 +62,16 @@ class Settings(BaseSettings):
     # change 2026-08-30-his-hq-cache-minute-bars: 回测前查 minute_bars (避免重复拉 broker)
     his_hq_cache_enabled: bool = Field(default=True)
 
+    # ──── 回测任务队列 (change 2026-08-30-sweep-worker-queue) ────
+    # 单 task 执行超时 (秒): worker 用 asyncio.wait_for 包住 to_thread(run_backtest),
+    # 超此值判"堵塞" → 复位该 task (回 queued 重跑, 或超限标 failed), worker 复位去领下一个。
+    # 远大于正常单 task 时长, 只兜真正的卡死。
+    backtest_task_timeout_seconds: int = Field(default=600, ge=30, le=7200)
+    # 单 task 重跑上限 (基于 run_generation): 超过 → 标 failed, 防无限重跑
+    backtest_max_retries: int = Field(default=3, ge=1, le=10)
+    # worker 空闲领取轮询间隔 (秒): 批次队列空时短暂休眠再查, 避免忙等
+    worker_poll_interval_seconds: float = Field(default=0.5, ge=0.05, le=10.0)
+
     # ──── 行情 WS ────
     hq_ws_url: str = Field(default="ws://127.0.0.1:8765/quota.broadcast", min_length=10)
     hq_ws_reconnect_base_delay: int = Field(default=1000, ge=100)

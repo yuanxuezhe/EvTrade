@@ -11,6 +11,7 @@ strategy_exec.data_access.strategy_task — 读 + 写 strategy_task / strategy_s
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import json
 import logging
 from typing import Any, Dict, Optional
@@ -25,6 +26,29 @@ from strategy_exec.signal.task_progress_publisher import (
 log = logging.getLogger(__name__)
 
 MAX_RETRIES = 3
+
+# change 2026-08-30-sweep-worker-queue: 代际 (run_generation) 上下文。
+# worker 每次 to_thread(run_backtest) 跑一个 task 时设本次代际; 该线程内所有
+# update_task_status/progress 若未显式传 run_generation → 读此上下文做孤儿线程守卫。
+# None (默认) = 不过滤, 兼容 live / 旧单任务路径。
+_run_generation_ctx: contextvars.ContextVar[Optional[int]] = contextvars.ContextVar(
+    "task_run_generation", default=None
+)
+
+
+def set_run_generation(gen: Optional[int]) -> contextvars.Token:
+    """设当前上下文的代际 (run_backtest 入口调用). 返 Token 供 reset."""
+    return _run_generation_ctx.set(gen)
+
+
+def get_run_generation() -> Optional[int]:
+    """读当前上下文的代际 (默认 None = 不过滤)."""
+    return _run_generation_ctx.get()
+
+
+def _resolve_generation(explicit: Optional[int]) -> Optional[int]:
+    """显式参数优先, 否则回退上下文."""
+    return explicit if explicit is not None else _run_generation_ctx.get()
 
 
 class OptimisticLockError(Exception):
@@ -103,21 +127,33 @@ def update_task_status(
     execution_service: str = "strategy_exec",
     execution_pid: Optional[int] = None,
     finished_at: Optional[str] = None,
+    run_generation: Optional[int] = None,
 ) -> bool:
     """写 task.status (乐观锁)
 
-    Returns: True=成功, False=task 不存在
-    Raises: OptimisticLockError (3 次重试仍冲突)
+    run_generation (change 2026-08-30-sweep-worker-queue): 代际守卫。worker 传本次领取的
+    代际; 写入前若行的 run_generation 已不等于本代际 (任务被复位重跑, 本线程是孤儿) →
+    **静默 return False** (不重试不报错), 防止孤儿线程覆盖新那次的状态。None=不过滤(兼容旧调用)。
+
+    Returns: True=成功, False=task 不存在 / 代际不匹配 (孤儿线程)
+    Raises: OptimisticLockError (version 冲突 3 次重试仍失败)
     """
     for attempt in range(1, MAX_RETRIES + 1):
         with get_session() as session:
             row = session.execute(
-                text("SELECT version FROM strategy_task WHERE id = :i LIMIT 1"),
+                text("SELECT version, run_generation FROM strategy_task WHERE id = :i LIMIT 1"),
                 {"i": task_id},
             ).first()
             if row is None:
                 return False
             current_v = row[0]
+            gen = _resolve_generation(run_generation)
+            if gen is not None and row[1] != gen:
+                log.warning(
+                    "[task:%d] status update skipped (stale generation: thread=%s row=%s) — orphan thread",
+                    task_id, gen, row[1],
+                )
+                return False
 
             result = session.execute(
                 text("""
@@ -150,8 +186,13 @@ def update_task_status(
     raise OptimisticLockError(f"task {task_id} update status conflict after {MAX_RETRIES} retries")
 
 
-def update_task_progress(task_id: int, progress: Dict[str, Any]) -> bool:
+def update_task_progress(task_id: int, progress: Dict[str, Any],
+                         run_generation: Optional[int] = None) -> bool:
     """写 task.progress 字段 (乐观锁)
+
+    run_generation (change 2026-08-30-sweep-worker-queue): 代际守卫 — 孤儿线程 (任务被复位
+    重跑后本线程旧代际) 的 progress 写会静默 no-op, 防止它推进 updated_at 骗过 watchdog
+    (让新那次的阻塞检测失灵)。None=不过滤(兼容旧调用)。
 
     Raises: OptimisticLockError
     """
@@ -159,12 +200,19 @@ def update_task_progress(task_id: int, progress: Dict[str, Any]) -> bool:
     for attempt in range(1, MAX_RETRIES + 1):
         with get_session() as session:
             row = session.execute(
-                text("SELECT version FROM strategy_task WHERE id = :i LIMIT 1"),
+                text("SELECT version, run_generation FROM strategy_task WHERE id = :i LIMIT 1"),
                 {"i": task_id},
             ).first()
             if row is None:
                 return False
             current_v = row[0]
+            gen = _resolve_generation(run_generation)
+            if gen is not None and row[1] != gen:
+                log.warning(
+                    "[task:%d] progress update skipped (stale generation: thread=%s row=%s) — orphan thread",
+                    task_id, gen, row[1],
+                )
+                return False
 
             result = session.execute(
                 text("""
@@ -354,6 +402,41 @@ def write_audit_batch(
 # 批次完成后把 best 写回 strategy.best_params. 不再自建 task / summary task.
 
 
+def update_task_metric(task_id: int, metric_value: Optional[float],
+                       run_generation: Optional[int] = None) -> bool:
+    """写 task.backtest_metric_value (批次完成 top1 判定用, 代际守卫).
+
+    change 2026-08-30-sweep-worker-queue: worker 跑完一个 task 后写该 metric 值;
+    批次完成时按此列取 finished top1 (不重新解析大 blob)。
+    Returns: True=成功, False=task 不存在/代际不匹配 (孤儿线程)
+    """
+    for attempt in range(1, MAX_RETRIES + 1):
+        with get_session() as session:
+            row = session.execute(
+                text("SELECT version, run_generation FROM strategy_task WHERE id = :i LIMIT 1"),
+                {"i": task_id},
+            ).first()
+            if row is None:
+                return False
+            gen = _resolve_generation(run_generation)
+            if gen is not None and row[1] != gen:
+                return False
+            result = session.execute(
+                text("""
+                    UPDATE strategy_task
+                       SET backtest_metric_value = :mv,
+                           version = version + 1,
+                           updated_at = NOW()
+                     WHERE id = :i AND version = :v
+                """),
+                {"i": task_id, "v": row[0], "mv": metric_value},
+            )
+            session.commit()
+            if result.rowcount > 0:
+                return True
+    return False
+
+
 def get_batch_tasks(strategy_id: int, batch_no: int) -> List[Dict[str, Any]]:
     """按 (strategy_id, batch_no) 读批次内全部 task (含已解析 JSON 字段).
 
@@ -379,6 +462,111 @@ def get_batch_tasks(strategy_id: int, batch_no: int) -> List[Dict[str, Any]]:
                     pass
         out.append(d)
     return out
+
+
+def claim_next_queued(
+    strategy_id: int, batch_no: int, execution_pid: Optional[int],
+    gen_cap: Optional[int] = None,
+) -> Optional[Dict[str, Any]]:
+    """worker 原子领取下一个 queued task (change 2026-08-30-sweep-worker-queue).
+
+    单事务内: SELECT ... FOR UPDATE SKIP LOCKED 锁行 (多 worker/多实例不互相阻塞, 也不抢同一行)
+    → UPDATE 领取 (status=running, execution_pid, run_generation+1)。
+
+    Args:
+        strategy_id / batch_no: 限定领取范围 (单批次 worker 池)
+        execution_pid: 领取者 pid (记录到 task, 排查用)
+        gen_cap: 若给, 只领 run_generation < gen_cap 的 (防无限重跑, worker 侧判定)
+
+    Returns:
+        {task_id, run_generation, params} (params 已解析) — 领取成功; None = 队列空/无合格行
+    """
+    gen_clause = " AND run_generation < :gc" if gen_cap is not None else ""
+    with get_session() as session:
+        row = session.execute(
+            text(f"""
+                SELECT id, run_generation, params FROM strategy_task
+                 WHERE strategy_id = :sid AND batch_no = :bn
+                   AND status = 'queued'{gen_clause}
+                 ORDER BY id LIMIT 1
+                 FOR UPDATE SKIP LOCKED
+            """),
+            ({"sid": strategy_id, "bn": batch_no, "gc": gen_cap} if gen_cap is not None
+             else {"sid": strategy_id, "bn": batch_no}),
+        ).first()
+        if row is None:
+            session.commit()  # 释放 (无锁可放, 但结束事务)
+            return None
+        task_id, cur_gen, params_raw = row[0], row[1], row[2]
+        new_gen = (cur_gen or 0) + 1
+        res = session.execute(
+            text("""
+                UPDATE strategy_task
+                   SET status = 'running',
+                       execution_pid = :ep,
+                       run_generation = :ng,
+                       started_at = COALESCE(started_at, NOW()),
+                       updated_at = NOW(),
+                       version = version + 1
+                 WHERE id = :i AND status = 'queued' AND run_generation = :cg
+            """),
+            {"i": task_id, "ep": execution_pid, "ng": new_gen, "cg": cur_gen},
+        )
+        session.commit()
+        if res.rowcount == 0:
+            return None  # 竞争失败 (理论上 SKIP LOCKED 已避免, 双保险)
+        try:
+            params = json.loads(params_raw) if params_raw else {}
+        except (ValueError, TypeError):
+            params = {}
+        log.info("[task:%d] claimed by pid=%s gen=%s→%s", task_id, execution_pid, cur_gen, new_gen)
+        return {"task_id": task_id, "run_generation": new_gen, "params": params}
+
+
+def requeue_or_fail_on_timeout(
+    task_id: int, run_generation: int, max_retries: int,
+) -> str:
+    """task 执行超时后的处置 (change 2026-08-30-sweep-worker-queue).
+
+    判定基于当前 run_generation (= 该 task 已被 claim 的次数):
+    - run_generation >= max_retries → 标 status='failed' (防无限重跑), 返 'failed'
+    - 否则 → 回 status='queued' (清 execution_pid), 等待 worker 再次领取 (重跑), 返 'requeued'
+
+    Returns: 'failed' | 'requeued'
+    """
+    with get_session() as session:
+        if run_generation >= max_retries:
+            res = session.execute(
+                text("""
+                    UPDATE strategy_task
+                       SET status = 'failed',
+                           execution_pid = NULL,
+                           error_msg = :em,
+                           finished_at = NOW(),
+                           updated_at = NOW(),
+                           version = version + 1
+                     WHERE id = :i
+                """),
+                {"i": task_id, "em": f"blocked: 执行超时且重跑达上限 ({max_retries} 次), 已放弃"},
+            )
+            session.commit()
+            log.warning("[task:%d] FAILED (timeout, retries exhausted gen=%s)", task_id, run_generation)
+            return "failed" if res.rowcount > 0 else "requeued"
+        res = session.execute(
+            text("""
+                UPDATE strategy_task
+                   SET status = 'queued',
+                       execution_pid = NULL,
+                       updated_at = NOW(),
+                       version = version + 1
+                 WHERE id = :i
+            """),
+            {"i": task_id},
+        )
+        session.commit()
+        log.warning("[task:%d] REQUEUED (timeout, gen=%s<%s, will retry)",
+                    task_id, run_generation, max_retries)
+        return "requeued" if res.rowcount > 0 else "failed"
 
 
 def update_strategy_best_params(strategy_id: int, best_params: Optional[Dict[str, Any]]) -> bool:

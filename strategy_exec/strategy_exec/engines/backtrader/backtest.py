@@ -24,6 +24,8 @@ import backtrader as bt
 from strategy_exec.data_access import (
     get_script, update_task_progress, update_task_status, write_audit,
 )
+# change 2026-08-30-sweep-worker-queue: 代际上下文 (worker 传 run_generation → 线程内写守卫)
+from strategy_exec.data_access import set_run_generation
 # change 2026-08-30-audit-batch-write: 批量 audit helper (取代逐条 write_audit)
 from strategy_exec.data_access.strategy_task import write_audit_batch
 from strategy_exec.engines.backtrader.adapter import ProjectStrategy
@@ -108,6 +110,7 @@ def run_backtest(
     period: str = "1d",
     strategy_id: Optional[int] = None,
     update_strategy_best: bool = False,
+    run_generation: Optional[int] = None,
 ) -> Dict[str, Any]:
     """跑一次回测, 返结果 dict (pnl / trades / signal_log)
 
@@ -116,12 +119,17 @@ def run_backtest(
     - strategy_id: 任务所属策略 (仅用于回写 best_params 定位)
     - update_strategy_best: True=本次回测成功后把 params 写 strategy.best_params
       (单次回测=True; 扫描批次内组合任务=False, best 由 sweep engine 统一回写)
+    - run_generation: worker 领取时的代际 (change 2026-08-30-sweep-worker-queue)。非 None 时,
+      本次线程内所有 status/progress 写都带代际守卫 — 任务被复位重跑后, 本线程(旧代际)晚到的
+      写会被 data_access 静默丢弃 (防孤儿线程覆盖新一次结果)。None = 不过滤 (live/旧单任务路径)。
 
     Raises:
         SandboxViolationError / ValueError / RuntimeError
     """
-    log.info("[backtest task=%d] start stock=%s bars=%d params=%s",
-             task_id, stock_code, len(bars), params)
+    if run_generation is not None:
+        set_run_generation(run_generation)
+    log.info("[backtest task=%d] start stock=%s bars=%d params=%s gen=%s",
+             task_id, stock_code, len(bars), params, run_generation)
 
     update_task_status(task_id, "running", execution_pid=_get_pid())
 
@@ -507,9 +515,14 @@ def _update_task_results(
     """
     from contextlib import contextmanager
     from strategy_exec.data_access.db import get_session
+    from strategy_exec.data_access import get_run_generation
     from sqlalchemy import text
 
     metric_value = _metric_value_from_result(backtest_result)
+    # change 2026-08-30-sweep-worker-queue: 代际守卫 — 结果 blob 走直接 SQL (绕过 update_task_status),
+    # 必须单独判: 若 task 当前 run_generation 已 != 本线程代际 (被复位重跑, 本线程是孤儿) → 跳过,
+    # 防旧 run 的 backtest_result/pnl 覆盖新一次。gen=None (live/旧单任务) 不过滤。
+    gen = get_run_generation()
 
     @contextmanager
     def ctx():
@@ -517,11 +530,17 @@ def _update_task_results(
             # 直接 SQL (更新非 version 字段, 简单 UPDATE 不需乐观锁)
             # 但 pnl 写冲突也可能, 用乐观锁
             for attempt in range(3):
-                row = s.execute(text("SELECT version FROM strategy_task WHERE id = :i"),
-                                 {"i": task_id}).first()
+                row = s.execute(text(
+                    "SELECT version, run_generation FROM strategy_task WHERE id = :i"
+                ), {"i": task_id}).first()
                 if row is None:
                     raise ValueError(f"task {task_id} not found")
                 v = row[0]
+                if gen is not None and row[1] != gen:
+                    log.warning("[backtest task=%d] result write skipped (stale gen thread=%s row=%s) — orphan",
+                                task_id, gen, row[1])
+                    yield
+                    return
                 result = s.execute(text("""
                     UPDATE strategy_task
                        SET backtest_result = :r,
