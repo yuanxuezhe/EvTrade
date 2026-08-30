@@ -10,6 +10,17 @@ strategy_exec.main — FastAPI app 入口
 
 from __future__ import annotations
 
+# ── change 2026-08-30-his-hq-cache-minute-bars ──
+# strategy_exec 直连 EvTrade DB (复用 server.infra.db.engine), 需要把 EvTrade
+# 根目录加 sys.path 才能 `import server` (strategy_exec cwd 是它自己的子目录,
+# 默认找不到 EvTrade 根). _PROJECT_ROOT = strategy_exec/strategy_exec 的祖父目录
+import sys as _sys
+from pathlib import Path as _Path
+_EVTRADE_ROOT = _Path(__file__).resolve().parent.parent.parent  # strategy_exec/strategy_exec/main.py → EvTrade/
+if str(_EVTRADE_ROOT) not in _sys.path:
+    _sys.path.insert(0, str(_EVTRADE_ROOT))
+# ── end ──
+
 import argparse
 import logging
 from contextlib import asynccontextmanager
