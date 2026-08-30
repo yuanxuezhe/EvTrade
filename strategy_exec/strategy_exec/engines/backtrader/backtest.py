@@ -42,8 +42,15 @@ class _SignalCollector:
 
 
 def _make_pandas_data_feed(bars: List[Dict[str, Any]]):
-    """bars → bt.feeds.PandasData (OHLCV)"""
+    """bars → bt.feeds.PandasData (OHLCV)
+
+    change 2026-08-30-his-hq-cache-minute-bars:
+    - broker stub 可能返 '0.0' 占位 open/high/low, Backtrader 算指标 NaN
+    - 改为: open 列全 NaN 时用 close 列填充 (无 raise)
+    - close 列全 NaN 时 raise (保留原报错, 但极少见)
+    """
     import pandas as pd
+    from backtrader import feeds
 
     df = pd.DataFrame(bars)
     # 标准化列名
@@ -57,9 +64,34 @@ def _make_pandas_data_feed(bars: List[Dict[str, Any]]):
     if "stime" in df.columns:
         df["dt"] = pd.to_datetime(df["stime"], format="%Y%m%d%H%M%S", errors="coerce")
         df = df.set_index("dt")
+    # change 2026-08-30-his-hq-cache-minute-bars: open NaN 用 close 兜底
     if "open" not in df.columns:
-        raise ValueError("bars 数据缺 'open' 列")
-    return bt.feeds.PandasData(dataname=df)
+        if "close" not in df.columns:
+            raise ValueError("bars 数据缺 'open' 列 (且无 close 列可兜底)")
+        # close 列也在 → 用 close 兜底 open (避免 Backtrader 计算 NaN)
+        import logging
+        log = logging.getLogger(__name__)
+        log.warning("[backtest] bars 缺 'open' 列, 用 'close' 列兜底 (%d bars)", len(df))
+        df["open"] = df["close"]
+    elif df["open"].isna().all() and "close" in df.columns:
+        # open 列全 NaN → 用 close 兜底
+        import logging
+        log = logging.getLogger(__name__)
+        log.warning("[backtest] bars 'open' 列全 NaN, 用 'close' 列兜底 (%d bars)", len(df))
+        df["open"] = df["close"]
+    # high/low 同理兜底
+    for col in ("high", "low"):
+        if col not in df.columns:
+            if "close" in df.columns:
+                df[col] = df["close"]
+        elif df[col].isna().all() and "close" in df.columns:
+            df[col] = df["close"]
+    # volume: 缺则补 0 (Backtrader 不要求 volume 非空)
+    if "volume" not in df.columns:
+        df["volume"] = 0
+    elif df["volume"].isna().any():
+        df["volume"] = df["volume"].fillna(0)
+    return feeds.PandasData(dataname=df)
 
 
 def run_backtest(

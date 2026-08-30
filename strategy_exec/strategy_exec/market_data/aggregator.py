@@ -175,14 +175,16 @@ def _aggregate_one_bucket(
         c = _to_float(bar.get("close"))
         if c is not None:
             closes.append(c)
+        # change 2026-08-30-his-hq-cache-minute-bars: broker stub 返 '0.0' 占位
+        # 时不应当合法值, 跳过让 close 兜底 (避免 Backtrader 计算 NaN)
         o = _to_float(bar.get("open"))
-        if o is not None:
+        if o is not None and o != 0.0:
             opens.append(o)
         h = _to_float(bar.get("high"))
-        if h is not None:
+        if h is not None and h != 0.0:
             highs.append(h)
         l = _to_float(bar.get("low"))
-        if l is not None:
+        if l is not None and l != 0.0:
             lows.append(l)
         v = _to_float(bar.get("volume"))
         if v is not None:
