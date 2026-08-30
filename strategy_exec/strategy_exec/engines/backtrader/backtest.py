@@ -239,19 +239,16 @@ def run_backtest(
     sells = [s for s in signals if s.get("signal_type") == "SELL"]
     wins = [s for s in sells if (s.get("pnl") or 0) > 0]
     win_rate = round(len(wins) / len(sells), 4) if sells else 0.0
-    equity_curve = [
-        {"stime": p.get("stime"), "equity": p.get("equity")}
-        for p in progress_log
-    ]
 
-    # 执行日志只补「触发信号的 bar」 (change 2026-08-30-backtest-exec-log-signal-bars):
-    # 原逐 bar 全量灌入 (超限采样 2000) → 消息太多; 改为仅 buy/sell_signal 命中的 K 线。
-    # progress_log 全量保留不动 — 权益曲线 (equity_curve) 与进度 Tab 仍消费它。
+    # change 2026-08-30-drop-fullbar-progress: 不再逐 bar 全量落库 (progress_log/equity_curve)。
+    # progress_log 仅作为本次 run 的**内存缓冲**: 供 _build_signal_bar_entries 取触发信号 bar 的
+    # equity/close/position (写进 execution_log)。回测结束即丢弃, 不进 backtest_result。
     exec_log.extend(_build_signal_bar_entries(signals, progress_log))
     _phase("done", f"回测完成 pnl={pnl:.2f} ({pnl_pct:.2f}%)")
 
-    # 更新 strategy_task — 契约对齐前端 ScriptTask.vue:
-    #   best.{signal_log, progress_log, trades, equity_curve, win_rate, trades_count, pnl, pnl_pct}
+    # 更新 strategy_task — 契约对齐前端 TaskDetail.vue:
+    #   best.{signal_log, trades, win_rate, trades_count, pnl, pnl_pct}
+    #   逐 bar 全量 (progress_log/equity_curve) 已删; 权益曲线改用 execution_log 信号 bar 的 {stime, equity}。
     #   pnl_pct / win_rate 存小数 (前端 *100 得百分比); 顶层 summary 兼容历史
     backtest_result = {
         "pnl": pnl,
@@ -269,9 +266,7 @@ def run_backtest(
             "win_rate": win_rate,
             "trades_count": len(signals),
             "trades": trades,
-            "equity_curve": equity_curve,
             "signal_log": signals,
-            "progress_log": progress_log,
         },
     }
 
@@ -323,10 +318,11 @@ def _build_signal_bar_entries(
 ) -> List[Dict[str, Any]]:
     """执行日志的 bar 段 — 只取「触发 buy/sell_signal 的 K 线」 (非逐 bar 全量)。
 
-    change 2026-08-30-backtest-exec-log-signal-bars: 原逻辑把 progress_log 全量 (超限采样 2000)
-    灌进 execution_log → 前端执行日志消息太多。改为遍历 signals, 每条按 stime 从 progress_log
-    查回 bar_idx/close/position/equity (同源, 供 TaskDetail.vue 列渲染), 拼一条 phase="bar" 记录。
-    progress_log 本身全量保留 (权益曲线/进度 Tab 仍消费)。
+    遍历 signals, 每条按 stime 从 progress_log 查回 bar_idx/close/position/equity
+    (供 TaskDetail.vue 列渲染), 拼一条 phase="bar" 记录。
+
+    change 2026-08-30-drop-fullbar-progress: progress_log 现在是**逐 bar 内存缓冲** (不落地),
+    仅服务于本函数取信号 bar 的快照; 用完即弃, 不进 backtest_result / 权益曲线。
 
     - signals 空 → 返 [] (执行日志只剩阶段时间轴)。
     - 信号 stime 在 progress_log 查不到 → bar_idx/position/equity=None, close 兜底用信号 price。
@@ -365,8 +361,9 @@ def _wrap_strategy(
 ) -> None:
     """装饰用户策略类 — 注入 _set_task_meta + hook buy/sell_signal + 采集逐 bar 进度
 
-    逐 bar 进度 (progress_log): 每根 K 线 next() 后记录 broker 真实持仓/现金/权益,
-    供前端 进度 Tab / 权益曲线 / 执行日志 Tab 展示。
+    逐 bar 进度 (progress_log): 每根 K 线 next() 后记录 broker 真实持仓/现金/权益。
+    **内存缓冲, 不落地** — 仅供 _build_signal_bar_entries 取触发信号 bar 的快照写进
+    execution_log (权益曲线已改用 execution_log 信号 bar), 回测结束即丢弃。
     节流上报 (bar_idx/total_bars → task.progress): 长回测时前端进度条实时走动。
     """
     original_init = strategy_cls.__init__
