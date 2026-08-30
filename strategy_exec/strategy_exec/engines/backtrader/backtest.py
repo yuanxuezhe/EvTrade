@@ -244,25 +244,10 @@ def run_backtest(
         for p in progress_log
     ]
 
-    # 执行日志补逐 bar 记录 (与 progress_log 同源, 数据量超限抽样, 防 JSON 膨胀)
-    _MAX_BAR_ENTRIES = 2000
-    if len(progress_log) > _MAX_BAR_ENTRIES:
-        step = len(progress_log) / _MAX_BAR_ENTRIES
-        bar_entries = [progress_log[int(i * step)] for i in range(_MAX_BAR_ENTRIES)]
-    else:
-        bar_entries = progress_log
-    for p in bar_entries:
-        exec_log.append({
-            "phase": "bar",
-            "bar_idx": p.get("bar_idx"),
-            "stime": p.get("stime"),
-            "close": p.get("close"),
-            "position": p.get("position"),
-            "equity": p.get("equity"),
-            "msg": "",
-            "ts": p.get("stime", ""),
-            "elapsed_ms": 0,
-        })
+    # 执行日志只补「触发信号的 bar」 (change 2026-08-30-backtest-exec-log-signal-bars):
+    # 原逐 bar 全量灌入 (超限采样 2000) → 消息太多; 改为仅 buy/sell_signal 命中的 K 线。
+    # progress_log 全量保留不动 — 权益曲线 (equity_curve) 与进度 Tab 仍消费它。
+    exec_log.extend(_build_signal_bar_entries(signals, progress_log))
     _phase("done", f"回测完成 pnl={pnl:.2f} ({pnl_pct:.2f}%)")
 
     # 更新 strategy_task — 契约对齐前端 ScriptTask.vue:
@@ -330,6 +315,43 @@ def _get_analyzer_value(d: Dict[str, Any]) -> Optional[float]:
         return float(v)
     except (TypeError, ValueError):
         return None
+
+
+def _build_signal_bar_entries(
+    signals: List[Dict[str, Any]],
+    progress_log: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """执行日志的 bar 段 — 只取「触发 buy/sell_signal 的 K 线」 (非逐 bar 全量)。
+
+    change 2026-08-30-backtest-exec-log-signal-bars: 原逻辑把 progress_log 全量 (超限采样 2000)
+    灌进 execution_log → 前端执行日志消息太多。改为遍历 signals, 每条按 stime 从 progress_log
+    查回 bar_idx/close/position/equity (同源, 供 TaskDetail.vue 列渲染), 拼一条 phase="bar" 记录。
+    progress_log 本身全量保留 (权益曲线/进度 Tab 仍消费)。
+
+    - signals 空 → 返 [] (执行日志只剩阶段时间轴)。
+    - 信号 stime 在 progress_log 查不到 → bar_idx/position/equity=None, close 兜底用信号 price。
+    """
+    prog_by_stime = {p.get("stime"): p for p in progress_log if p.get("stime")}
+    entries: List[Dict[str, Any]] = []
+    for sig in signals:
+        stime = sig.get("stime") or ""
+        prog = prog_by_stime.get(stime)
+        sig_msg = (sig.get("msg") or "").strip()
+        exec_msg = f"{sig.get('signal_type', '?')} vol={sig.get('volume', '')}"
+        if sig_msg:
+            exec_msg += f" ({sig_msg})"
+        entries.append({
+            "phase": "bar",
+            "bar_idx": prog.get("bar_idx") if prog else None,
+            "stime": stime,
+            "close": prog.get("close") if prog else sig.get("price"),
+            "position": prog.get("position") if prog else None,
+            "equity": prog.get("equity") if prog else None,
+            "msg": exec_msg,
+            "ts": stime,
+            "elapsed_ms": 0,
+        })
+    return entries
 
 
 def _wrap_strategy(
