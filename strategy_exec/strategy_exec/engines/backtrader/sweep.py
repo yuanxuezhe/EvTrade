@@ -214,6 +214,10 @@ async def run_sweep_batch(
 ) -> Dict[str, Any]:
     """跑一个已预建好的扫描批次: 读批次 task → 并发 backtest → 写 strategy.best_params.
 
+    ⚠️ DEPRECATED (change 2026-08-30-sweep-worker-queue): 端点已改走 worker 池
+    (`engines.backtrader.worker.run_worker_pool`, FIFO 有界并发 + 堵塞自愈), 本函数不再被
+    任何端点调用。保留仅供单测/回退参考; 新代码请用 worker.run_worker_pool。
+
     Args:
         strategy_id: 策略主键 (best_params 回写目标)
         batch_no: 批次号 (strategy_task.batch_no, EvTrade 预生成)

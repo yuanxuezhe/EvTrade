@@ -22,7 +22,6 @@ from strategy_exec.engines.backtrader.live import (
     start_live_runner, stop_live_runner, is_running,
 )
 from strategy_exec.engines.backtrader.sweep import (
-    run_sweep_batch,
     count_param_ranges,
     SWEEP_HARD_LIMIT,
     ALLOWED_METRICS,
@@ -143,6 +142,34 @@ class RunSweepTaskResponse(BaseModel):
     batch_no: int
     total_runs: int
     msg: str = "sweep accepted, running in background"
+
+
+# ──────────── batch (统一回测任务队列, change 2026-08-30-sweep-worker-queue) ────────────
+
+
+class RunBatchRequest(BaseModel):
+    """批次执行请求 — 批次 task 行已由 EvTrade 预建 (status='queued'), strategy_exec 起 worker 池跑.
+
+    single (1 行) + sweep (N 行) 统一走此端点. 不含 param_ranges (组合已展开落库).
+    body: {user_id, strategy_id, script_id, stock_code, backtest_start_date,
+           backtest_end_date, batch_no, metric, concurrency, period}
+    """
+    user_id: int = Field(ge=0)
+    strategy_id: int = Field(ge=1)
+    script_id: str = Field(min_length=1, max_length=64)
+    stock_code: str = Field(min_length=1, max_length=16)
+    backtest_start_date: str = Field(pattern=r"^\d{8}$")
+    backtest_end_date: str = Field(pattern=r"^\d{8}$")
+    batch_no: int = Field(ge=1)
+    metric: str = Field(default="sharpe")
+    concurrency: int = Field(default=2, ge=1, le=16)
+    period: Optional[str] = Field(default=None, pattern=r"^(1d|1m|5m|15m|30m|60m)$")
+
+    @model_validator(mode="after")
+    def _validate_metric(self):
+        if self.metric not in ALLOWED_METRICS:
+            raise ValueError(f"metric 必须是 {ALLOWED_METRICS} 之一, 收到: {self.metric!r}")
+        return self
 
 
 class TaskStatusResponse(BaseModel):
@@ -401,40 +428,82 @@ async def receive_progress(task_id: int, req: ProgressRequest) -> ProgressRespon
         )
 
 
-# ──────────── sweep endpoint ────────────
+# ──────────── batch (统一回测任务队列, change 2026-08-30-sweep-worker-queue) ────────────
+# 旧 run_sweep_batch (asyncio.gather 一把梭) 已弃用 → 统一走 worker 池. 保留 run_sweep_batch
+# 函数体 (测试/兼容) 但端点不再调它.
 
 
-async def _run_sweep_batch_background(
-    strategy_id: int, batch_no: int, user_id: int, script_id: str, stock_code: str,
-    param_ranges: Dict[str, Dict[str, Any]], metric: str,
-    backtest_start_date: str, backtest_end_date: str,
-    period: str, concurrency: int,
-) -> None:
-    """后台跑已预建的扫描批次 (异常时仅 log, 不影响已落库的 task)"""
-    log.info(
-        "[sweep strategy=%d batch=%d] background start: user=%d script=%s stock=%s metric=%s runs=%d",
-        strategy_id, batch_no, user_id, script_id, stock_code, metric,
-        count_param_ranges(param_ranges),
-    )
+async def _connect_publisher() -> None:
+    """预连接 signal publisher 并绑定主 loop.
+
+    缺失时首次 publish 在回测线程 (asyncio.to_thread) 内走 asyncio.run → 临时 loop, 关闭后
+    后续 publish 报 "Event loop is closed" → 整批任务 signal 失败. 每个批次触发前调一次.
+    """
+    from strategy_exec.signal.publisher import get_publisher
     try:
-        result = await run_sweep_batch(
+        await get_publisher().connect()
+    except Exception as e:
+        log.warning("[worker] publisher connect failed (will retry on publish): %s", e)
+
+
+async def _dispatch_batch(
+    *, strategy_id: int, batch_no: int, user_id: int, script_id: str, stock_code: str,
+    backtest_start_date: str, backtest_end_date: str,
+    metric: str, concurrency: int, period: str,
+) -> int:
+    """起 worker 池后台跑批次 (立即返, 不阻塞). 返批次 task 总数 (前端展示用).
+
+    K 线拉取在 worker 池内部 (失败 → log + 批次 task 保持 queued, 不 502 — 提交已成功入库).
+    实际执行 + best_params 回写全在后台.
+    """
+    from strategy_exec.data_access import get_batch_tasks
+    from strategy_exec.engines.backtrader.worker import run_worker_pool
+
+    tasks = get_batch_tasks(strategy_id, batch_no)
+    total_runs = len(tasks)
+    log.info(
+        "[dispatch_batch] strategy_id=%d batch_no=%d user=%d script=%s stock=%s metric=%s runs=%d concurrency=%d",
+        strategy_id, batch_no, user_id, script_id, stock_code, metric, total_runs, concurrency,
+    )
+    await _connect_publisher()
+    asyncio.create_task(
+        run_worker_pool(
             strategy_id=strategy_id, batch_no=batch_no,
             user_id=user_id, script_id=script_id, stock_code=stock_code,
-            param_ranges=param_ranges, metric=metric,
-            backtest_start_date=backtest_start_date,
-            backtest_end_date=backtest_end_date,
-            period=period, concurrency=concurrency,
-        )
-        log.info(
-            "[sweep strategy=%d batch=%d] background done: total=%d succeeded=%d failed=%d best_metric=%.4f",
-            strategy_id, batch_no, result["total_runs"], result["succeeded"],
-            result["failed"], result.get("best_metric_value") or 0.0,
-        )
-    except Exception as e:
-        log.error(
-            "[sweep strategy=%d batch=%d] background failed: %s",
-            strategy_id, batch_no, e,
-        )
+            backtest_start_date=backtest_start_date, backtest_end_date=backtest_end_date,
+            period=period, concurrency=concurrency, metric=metric,
+        ),
+        name=f"worker-pool-{strategy_id}-{batch_no}",
+    )
+    return total_runs
+
+
+class RunBatchResponse(BaseModel):
+    """202 Accepted — 批次已入队, worker 池后台执行"""
+    batch_no: int
+    total_runs: int
+    msg: str = "batch accepted, running in background worker pool"
+
+
+@router.post(
+    "/run-batch",
+    response_model=RunBatchResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    dependencies=[Depends(verify_internal_token)],
+)
+async def run_batch(req: RunBatchRequest) -> RunBatchResponse:
+    """统一回测批次执行入口 — 立即 202, 后台起 worker 池 FIFO 有界并发跑.
+
+    change 2026-08-30-sweep-worker-queue: single (1 行) + sweep (N 行) 统一走此端点。
+    EvTrade 已预建批次 task 行 (status='queued'), strategy_exec 只起 worker 池执行。
+    """
+    total_runs = await _dispatch_batch(
+        strategy_id=req.strategy_id, batch_no=req.batch_no,
+        user_id=req.user_id, script_id=req.script_id, stock_code=req.stock_code,
+        backtest_start_date=req.backtest_start_date, backtest_end_date=req.backtest_end_date,
+        metric=req.metric, concurrency=req.concurrency, period=req.period or "1d",
+    )
+    return RunBatchResponse(batch_no=req.batch_no, total_runs=total_runs)
 
 
 @router.post(
@@ -444,39 +513,15 @@ async def _run_sweep_batch_background(
     dependencies=[Depends(verify_internal_token)],
 )
 async def run_sweep_task(req: RunSweepTaskRequest) -> RunSweepTaskResponse:
-    """sweep 启动端点 — 立即返 202 + batch_no, 后台异步跑.
+    """sweep 启动端点 (兼容旧接口) — 立即返 202 + batch_no, 转调统一 worker 池.
 
-    EvTrade 已预建批次内 task 行 (strategy_id + batch_no + params 落库).
-    strategy_exec 只读批次跑 backtest, 不再自建 task / summary task.
+    change 2026-08-30-sweep-worker-queue: 旧 asyncio.gather 一把梭已弃用, 改走 worker 队列。
+    param_ranges 仅用于算 total_runs (展示); 实际 task 已按组合落库。
     """
-    from strategy_exec.signal.publisher import get_publisher
-
-    total_runs = count_param_ranges(req.param_ranges)
-    log.info(
-        "[run_sweep_task] strategy_id=%d batch_no=%d user=%d script=%s stock=%s metric=%s runs=%d",
-        req.strategy_id, req.batch_no, req.user_id, req.script_id, req.stock_code,
-        req.metric, total_runs,
+    total_runs = await _dispatch_batch(
+        strategy_id=req.strategy_id, batch_no=req.batch_no,
+        user_id=req.user_id, script_id=req.script_id, stock_code=req.stock_code,
+        backtest_start_date=req.backtest_start_date, backtest_end_date=req.backtest_end_date,
+        metric=req.metric, concurrency=req.concurrency, period=req.period or "1d",
     )
-
-    # 预连接 publisher 并绑定主 loop (与 run_task 一致). 缺失时首次 publish 在
-    # 回测线程 (asyncio.to_thread) 内走 asyncio.run → 临时 loop, 关闭后后续
-    # publish 报 "Event loop is closed" → 整批任务 failed.
-    try:
-        await get_publisher().connect()
-    except Exception as e:
-        log.warning("[run_sweep_task] publisher connect failed (will retry on publish): %s", e)
-
-    asyncio.create_task(
-        _run_sweep_batch_background(
-            strategy_id=req.strategy_id, batch_no=req.batch_no,
-            user_id=req.user_id, script_id=req.script_id, stock_code=req.stock_code,
-            param_ranges=req.param_ranges, metric=req.metric,
-            backtest_start_date=req.backtest_start_date,
-            backtest_end_date=req.backtest_end_date,
-            period=req.period or "1d",
-            concurrency=req.concurrency,
-        ),
-        name=f"sweep-batch-{req.strategy_id}-{req.batch_no}",
-    )
-
     return RunSweepTaskResponse(batch_no=req.batch_no, total_runs=total_runs)
