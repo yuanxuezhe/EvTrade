@@ -563,7 +563,64 @@ EvTrade 进程内:
 - 删除 `his_hq_test_mode` mock 模式（用户要求永远走实盘 broker）
 - 解决方案: **strategy_exec 端永远拉 1m close，按用户 period 聚合**
 
-#### 数据流
+#### change 2026-08-30-his-hq-cache-minute-bars 增量（2026-08-30）
+
+**Why**: 长区间回测（30 天/1 年）每次都跑 broker 慢；broker his_hq 不在线/响应慢时用户看到「数据不出来」。修复方案：**回测前先查 minute_bars 表 → 缺天调 broker → 写回 cache**。
+
+**新增配置**:
+
+| 字段 | 默认 | env override |
+|------|------|--------------|
+| `his_hq_cache_enabled` | True | `EVTRADE_HIS_HQ_CACHE_ENABLED=1` |
+
+**新增模块** `strategy_exec/data_access/minute_bars.py`:
+- `query_minute_bars(stock, start, end)` - 直连 MySQL 查 minute_bars (async + asyncio.to_thread)
+- `upsert_minute_bars(stock, bars)` - 批量 upsert (executemany + ON DUPLICATE KEY UPDATE, 幂等)
+- `is_full_cover(cached, start, end)` - cached 是否覆盖 >= 50% 区间
+- `_chunk_fully_cached(cached, cs, ce)` - cached 是否完整覆盖某 chunk (按日, 跳周末)
+
+**数据流 (cache 开启)**)**):
+```
+fetch_bars(stock, start, end, user_period, fields):
+  ├─ 1. cache 查 (新):
+  │    cached_bars = await query_minute_bars(stock, start, end)
+  │    covered_days = unique(stime[:8] for b in cached_bars)
+  │    total_days = (end - start).days + 1
+  │
+  ├─ 2. case A — 完全覆盖 (covered >= 50% total):
+  │    返 cached_bars (不走 broker, 不写回)
+  │
+  ├─ 3. case B/C — 部分/无覆盖:
+  │    a. chunked_enabled=False: 1 次拉全区间 + 写回
+  │    b. chunked_enabled=True: 拆 N 段 (默认 10 天/批):
+  │       - 完全覆盖 chunk → 跳 broker
+  │       - 缺天 chunk → broker + 写回 cache
+  │    c. 拼凑 + sort by stime
+  └─ 4. 调 aggregator (1m 透传 / 5m/15m/... / 1d)
+```
+
+**实测 (2026-08-30)**:
+- sid 12 backtest 20250101-20251231 period=1d → **cache FULL HIT**: 58320 1m bars (skip broker)
+- aggregator → 243 1d K 线 (含真实 close=0.799 等)
+- run_backtest 3 秒跑完 (task25 status=finished pnl=16.20 signals=6)
+- 1m 数据来源 broker 真返 + minute_bars 表 (his-quote-backfill 2026-08-30 已采 174240 条 159992.SZ 数据)
+
+#### 修"缺 open 列"报错 (2026-08-30)
+
+**Why**:
+- broker stub 不返 OHLV (close=0 占位)
+- aggregator _aggregate_one_bucket 用 broker 字段, 但 broker 返 '0.0' 时被当合法值 → Backtrader 算 NaN
+- _make_pandas_data_feed `if "open" not in df.columns: raise` → Backtrader 计算失败 (报"缺 open 列")
+
+**修法**:
+1. `aggregator._aggregate_one_bucket`:
+   - broker 返 '0.0' 或 None → 跳过该字段, fallback close (不当合法值)
+2. `_make_pandas_data_feed`:
+   - open 列全 NaN → 用 close 列填充 (无 raise)
+   - close 列全 NaN → raise ValueError (保留原报错, 但极少见)
+   - log warning `[backtest] bars N 根 open 为 NaN, 用 close 兜底`
+
+## Cross References
 
 ```
 1. strategy_exec.market_data.hq_history.fetch_bars(stock, start, end, user_period, fields):
