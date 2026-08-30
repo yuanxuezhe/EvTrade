@@ -116,7 +116,108 @@ class HQHistoryClient:
         - 长区间 (≥30 天) broker 单次 fetch 30s 超时 → 拆 N 段 (默认 10 天/批)
         - 串行调 _fetch_one_chunk() → 拼凑 + sort by stime
         - 任一段 raise → 立即 raise (不返部分数据)
+
+        change 2026-08-30-his-hq-cache-minute-bars:
+        - 回测前先查 minute_bars 表 (复用 his-quote-backfill 已采集的 1m K 线)
+        - 完全覆盖 → 直接返, 不走 broker
+        - 部分覆盖 → 缺天走 chunked fetch + 写回 minute_bars
+        - 无覆盖 → 全走 broker + 写回 minute_bars
         """
+        # ── change 2026-08-30-his-hq-cache-minute-bars: 先查 minute_bars ──
+        if self.settings.his_hq_cache_enabled:
+            from strategy_exec.data_access.minute_bars import (
+                query_minute_bars, upsert_minute_bars, is_full_cover,
+            )
+            cached_bars = await query_minute_bars(stock_code, start_date, end_date)
+            if cached_bars and is_full_cover(cached_bars, start_date, end_date):
+                log.info(
+                    "[hq_history] cache FULL HIT: stock=%s %s~%s → %d 1m bars (skip broker)",
+                    stock_code, start_date, end_date, len(cached_bars),
+                )
+                return self._aggregate(cached_bars, period)
+
+            if cached_bars:
+                log.info(
+                    "[hq_history] cache PARTIAL: stock=%s %s~%s → %d bars (need broker for missing)",
+                    stock_code, start_date, end_date, len(cached_bars),
+                )
+            else:
+                log.info(
+                    "[hq_history] cache MISS: stock=%s %s~%s (need broker)",
+                    stock_code, start_date, end_date,
+                )
+            # 走 chunked fetch (含 broker + 写回 cache)
+            return await self._chunked_fetch_with_cache(
+                stock_code, start_date, end_date, period,
+                cached_bars=cached_bars,
+                upsert_fn=upsert_minute_bars,
+            )
+
+        # ── cache 关闭: 走原 chunked fetch 路径 (不写 cache) ──
+        return await self._chunked_fetch_only(
+            stock_code, start_date, end_date, period,
+        )
+
+    async def _chunked_fetch_with_cache(
+        self,
+        stock_code: str,
+        start_date: str,
+        end_date: str,
+        period: str,
+        cached_bars: List[Dict[str, Any]],
+        upsert_fn,
+    ) -> List[Dict[str, Any]]:
+        """chunked fetch + 部分覆盖场景: cached 已覆盖 + 缺天 broker 补 + 写回.
+
+        简化: 不做精细"差几天"判断, 直接全区间 chunked fetch 然后 union cached.
+        (broker fetch 自身 cache 命中后会很快 — 30s/段 vs 5s/段, 且 cached 已覆盖)
+        """
+        all_bars = list(cached_bars) if cached_bars else []
+        chunks = _iter_chunks(start_date, end_date, self.settings.his_hq_chunk_days)
+        log.info(
+            "[hq_history] chunked fetch (cache-augmented): stock=%s %s~%s → %d chunks (cached=%d bars)",
+            stock_code, start_date, end_date, len(chunks), len(all_bars),
+        )
+        for i, (cs, ce) in enumerate(chunks, 1):
+            # 跳过完全覆盖的 chunk (cached 已有数据)
+            if all_bars and _chunk_fully_cached(all_bars, cs, ce):
+                log.debug(
+                    "[hq_history] chunked fetch: chunk %d/%d (%s~%s) FULLY CACHED, skip",
+                    i, len(chunks), cs, ce,
+                )
+                continue
+            log.info(
+                "[hq_history] chunked fetch: stock=%s chunk %d/%d (%s~%s)",
+                stock_code, i, len(chunks), cs, ce,
+            )
+            try:
+                bars_i = await self._fetch_one_chunk(stock_code, cs, ce, period)
+            except HQHistoryError as e:
+                raise HQHistoryError(
+                    f"chunked fetch failed at chunk {i}/{len(chunks)} ({cs}~{ce}): {e}"
+                ) from e
+            all_bars.extend(bars_i)
+            # 写回 minute_bars (broker raw → minute_bars)
+            if bars_i:
+                try:
+                    n = await upsert_fn(stock_code, bars_i)
+                    if n:
+                        log.info("[hq_history] cache write-back: stock=%s chunk=%d/%d wrote %d rows",
+                                 stock_code, i, len(chunks), n)
+                except Exception as e:  # noqa: BLE001
+                    log.warning("[hq_history] cache write-back failed (non-fatal): %s", e)
+        # 拼凑后 sort by stime
+        all_bars.sort(key=lambda b: b.get("stime", ""))
+        return self._aggregate(all_bars, period)
+
+    async def _chunked_fetch_only(
+        self,
+        stock_code: str,
+        start_date: str,
+        end_date: str,
+        period: str,
+    ) -> List[Dict[str, Any]]:
+        """原 chunked fetch 路径 (cache 关闭时用) — 不查表, 不写表."""
         # ── change 2026-08-30-his-hq-chunked-fetch: chunked 调度 ──
         if self.settings.his_hq_chunk_enabled:
             chunks = _iter_chunks(start_date, end_date, self.settings.his_hq_chunk_days)
@@ -137,7 +238,6 @@ class HQHistoryClient:
                         f"chunked fetch failed at chunk {i}/{len(chunks)} ({cs}~{ce}): {e}"
                     ) from e
                 all_bars.extend(bars_i)
-            # 拼凑后 sort by stime (broker 内部顺序可能乱)
             all_bars.sort(key=lambda b: b.get("stime", ""))
             return self._aggregate(all_bars, period)
 
@@ -278,6 +378,33 @@ class HQHistoryClient:
 
 
 # ─────────────── change 2026-08-30-his-hq-chunked-fetch ───────────────
+
+
+def _chunk_fully_cached(cached_bars: List[Dict[str, Any]], chunk_start: str, chunk_end: str) -> bool:
+    """判断 cached_bars 是否完整覆盖 [chunk_start, chunk_end] 区间 (按日).
+
+    Args:
+        cached_bars: 已缓存 bars (stime 14位 YYYYMMDDHHMMSS)
+        chunk_start / chunk_end: YYYYMMDD
+
+    Returns:
+        True = 区间内所有交易日都已缓存; False = 有缺.
+    """
+    if not cached_bars:
+        return False
+    import datetime as _dt
+    covered = {b["stime"][:8] for b in cached_bars if b.get("stime")}
+    s = _dt.datetime.strptime(chunk_start, "%Y%m%d").date()
+    e = _dt.datetime.strptime(chunk_end, "%Y%m%d").date()
+    cur = s
+    while cur <= e:
+        # 跳过周末 (broker 1m 数据自动跳过)
+        if cur.weekday() < 5:
+            date_str = cur.strftime("%Y%m%d")
+            if date_str not in covered:
+                return False
+        cur += _dt.timedelta(days=1)
+    return True
 
 
 def _iter_chunks(

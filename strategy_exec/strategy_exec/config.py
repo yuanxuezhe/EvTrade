@@ -59,6 +59,8 @@ class Settings(BaseSettings):
     # change 2026-08-30-his-hq-chunked-fetch: 长区间拆分 (默认 10 天/批, 避免 30s 单次超时)
     his_hq_chunk_days: int = Field(default=10, ge=1, le=30)
     his_hq_chunk_enabled: bool = Field(default=True)
+    # change 2026-08-30-his-hq-cache-minute-bars: 回测前查 minute_bars (避免重复拉 broker)
+    his_hq_cache_enabled: bool = Field(default=True)
 
     # ──── 行情 WS ────
     hq_ws_url: str = Field(default="ws://127.0.0.1:8765/quota.broadcast", min_length=10)
