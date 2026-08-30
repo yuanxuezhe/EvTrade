@@ -85,7 +85,13 @@ strategy_exec/
 
 broker his_hq 实际**只返 1m close**（其他字段 broker 端不返或返 0）。strategy_exec 端永远拉 1m，按用户 period 聚合 OHLCV（1m 透传 / 5m/15m/30m/60m 桶对齐 / 1d 跨周末）。**永远走实盘 broker**（无 mock 通道）— broker 不在线直接 502。
 
-详见 `知识库/策略服务/历史行情.md` + `tests/strategy_exec/test_aggregator.py`（22 cases）。
+详见 `知识库/策略服务/历史行情.md` + `tests/strategy_exec/test_aggregator.py`（22 cases）+ `tests/strategy_exec/test_aggregator_fallback.py`（5 cases broker 0.0 兜底）。
+
+## minute_bars cache (change `2026-08-30-his-hq-cache-minute-bars`)
+
+长区间回测复用 his-quote-backfill 已采集的 1m K 线（`minute_bars` 表）。fetch_bars 入口先查表 → 缺天走 chunked fetch + 写回 cache。FULL HIT → 跳过 broker 30s 等待，3 秒完成 1 年回测。
+
+详见 `知识库/策略服务/历史行情.md` + `tests/strategy_exec/test_minute_bars_cache.py`（13 cases）。
 
 ## 依赖
 
