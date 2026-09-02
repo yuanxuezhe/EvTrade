@@ -29,7 +29,7 @@
  *   JWT_TOKEN=eyJhbGc... node examples/external_quote_subscriber.js
  *
  * 依赖: ws (Node.js 库, 项目 client/node_modules 已装)
- * 运行: cd /root/workspcae/codespace/EvTrade && node examples/external_quote_subscriber.js
+ * 运行: cd /root/workspace/codespace/EvTrade && node examples/external_quote_subscriber.js
  *
  * 登录: quota / quota (viewer 角色, 行情 demo 专用账号)
  *

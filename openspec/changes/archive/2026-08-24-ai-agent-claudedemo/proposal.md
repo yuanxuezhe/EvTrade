@@ -5,7 +5,7 @@
 EvTrade 后端 AI 助手自 2026-08-23 起基于 Hermes API server `/v1/runs` REST + SSE 链路（`server/services/agent/hermes_serve_client.py` + `server/ws/agent_handler.py` + `server/ws/endpoint.py` agent_channel 处理），存在以下问题：
 
 1. **过度工程**：Vue AgentPanel → WS → endpoint → agent_handler → hermes_serve_client → Hermes SSE → MCP tool → EvTrade REST，5+ 段链路
-2. **重复造轮子**：自己实现了 JSON-RPC over WS、self-built SSE event protocol、ConfirmRegistry 高危拦截，claudedemo（`/root/workspcae/codespace/claudedemo`）用 `claude -p --mcp-config http://...` 2 段链路就解决同样问题
+2. **重复造轮子**：自己实现了 JSON-RPC over WS、self-built SSE event protocol、ConfirmRegistry 高危拦截，claudedemo（`/root/workspace/codespace/claudedemo`）用 `claude -p --mcp-config http://...` 2 段链路就解决同样问题
 3. **后端进程 vs 客户端 LLM 混在一起**：Hermes API server 是常驻 daemon，claude CLI 是 stateless per-turn process，混用导致状态管理复杂
 
 ## 目标
@@ -80,7 +80,7 @@ EvTrade 后端 AI 助手自 2026-08-23 起基于 Hermes API server `/v1/runs` RE
 - spec：`openspec/specs/ai-agent/spec.md`（REQ-AI-001~006）
 - 知识库：暂无专用文件（前端 AgentPanel.vue / 后端 server/ai/* 自带 docstring）
 - skill：`~/.hermes/skills/evtrade/evtrade-ai-claudedemo/SKILL.md`（AI 助手进 EvTrade 第一步必加载）
-- 设计参考：`/root/workspcae/codespace/claudedemo/src/{agent,mcp,ui}/*`
+- 设计参考：`/root/workspace/codespace/claudedemo/src/{agent,mcp,ui}/*`
 - 上线 commit：bb0d6ea（docs）+ a14a558（refactor）+ 9422e3f（feat）+ 前端归一化层（commit 提交时补）
 
 ## Pitfall Bank

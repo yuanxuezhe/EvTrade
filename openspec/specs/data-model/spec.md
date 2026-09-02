@@ -933,8 +933,8 @@ python scripts/sync_schema_to_target.py   # dev → prod 一次到位
 
 ```bash
 # 每天凌晨跑一次 dev→prod 同步, 任何 drift 一票否决
-0 3 * * *  cd /root/workspcae/codespace/EvTrade && \
-  /root/workspcae/codespace/EvTrade/.venv/bin/python \
+0 3 * * *  cd /root/workspace/codespace/EvTrade && \
+  /root/workspace/codespace/EvTrade/.venv/bin/python \
   scripts/sync_schema_to_target.py --strict \
   >> /var/log/evtrade_schema_sync.log 2>&1
 ```

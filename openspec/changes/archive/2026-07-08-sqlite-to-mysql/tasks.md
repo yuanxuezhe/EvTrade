@@ -11,7 +11,7 @@
 > - `d4f0c03` Stage 3 commit 4: migrations 兼容 + data import
 > - `bdd83d3` Stage 4: sync REQ-CFG-009/010 进入 specs/configuration/spec.md
 >
-> **Stage 3 commit 1**: 外部服务 `docker/mysql/`（in `/root/workspcae/docker/mysql/`，不在 EvTrade git 仓）
+> **Stage 3 commit 1**: 外部服务 `docker/mysql/`（in `/root/workspace/docker/mysql/`，不在 EvTrade git 仓）
 > **端到端 runtime 验证 deferred to ops**（项目预存在 python 3.13 + missing deps 问题不在本 PR scope）
 
 ## Stage 1（草稿）
@@ -25,7 +25,7 @@
 
 ### Commit 1: Docker MySQL 服务 + 初始化
 
-- [x] 建 `/root/workspcae/docker/mysql/docker-compose.yml`：基于 `mysql:8.0`，bind 127.0.0.1:33066
+- [x] 建 `/root/workspace/docker/mysql/docker-compose.yml`：基于 `mysql:8.0`，bind 127.0.0.1:33066
 - [x] 写 `config/01-evtrade-user.sql`：
   - `CREATE DATABASE IF NOT EXISTS evtrade CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`
   - `CREATE USER IF NOT EXISTS 'EvTrade'@'%' IDENTIFIED BY 'p@ssw0rd'`
