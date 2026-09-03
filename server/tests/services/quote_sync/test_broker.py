@@ -125,3 +125,50 @@ def test_cap_day_end_after_yesterday_capped():
 def test_cap_day_end_before_yesterday_kept():
     """end_date 早于昨天 → 用 end_date."""
     assert _cap_day("20260101") == "20260101"
+
+
+# ─────────────── msgpacket fields 分隔符 (broker-fields-delimiter) ───────────────
+
+
+def test_msgpacket_fields_comma_truncated_to_first_field():
+    """msgpacket C 库把 ',' 当作字段值终止符 — 客户端绝不能用 ',' 拼 fields.
+
+    实测: set_value_str("fields", "open,high,low,close,volume,amount") (35 字节)
+    → decode 后只 'open' (4 字节, 截到第一个 ',' 前). 这是 broker 只返 open 的根因.
+    """
+    pytest.importorskip("msgpacket")
+    from msgpacket import MSG_TYPE_REQUEST, MsgPacket
+    pkt = MsgPacket(MSG_TYPE_REQUEST)
+    pkt.set_func("his_hq")
+    pkt.set_headers(6, "stock_code,start_date,end_date,ans_queue,fields,period")
+    pkt.add_row()
+    pkt.set_value("fields", "open,high,low,close,volume,amount")
+    pkt.finalize()
+    _, req = pkt.encode()
+    pkt2 = MsgPacket.decode(req)
+    v = pkt2.get_value_str("fields")
+    # 证明 ',' delimiter 会把 fields 截到 'open'
+    assert v == "open"
+    assert "," in v or len(v) == 4  # broker 实际收到的字段数 = 1
+
+
+def test_msgpacket_fields_pipe_keeps_full_string():
+    """改用 '|' 分隔后, broker 收到完整 6 字段 (跟客户端 fetch_bars 一致).
+
+    HisHqClient.fetch_bars 用 '|'.join(DEFAULT_FIELDS) 拼 fields (见 his_hq_client.py fetch_bars 注释).
+    """
+    pytest.importorskip("msgpacket")
+    from msgpacket import MSG_TYPE_REQUEST, MsgPacket
+    pkt = MsgPacket(MSG_TYPE_REQUEST)
+    pkt.set_func("his_hq")
+    pkt.set_headers(6, "stock_code,start_date,end_date,ans_queue,fields,period")
+    pkt.add_row()
+    pkt.set_value("fields", "open|high|low|close|volume|amount")
+    pkt.finalize()
+    _, req = pkt.encode()
+    pkt2 = MsgPacket.decode(req)
+    v = pkt2.get_value_str("fields")
+    assert v == "open|high|low|close|volume|amount"
+    # broker 端 split("|") 应分出 6 个字段
+    fields_list = [f.strip() for f in v.split("|") if f.strip()]
+    assert fields_list == ["open", "high", "low", "close", "volume", "amount"]
