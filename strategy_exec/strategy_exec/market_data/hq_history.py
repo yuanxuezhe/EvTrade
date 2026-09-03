@@ -23,14 +23,16 @@ from aio_pika.abc import AbstractRobustConnection
 
 from strategy_exec.config import get_settings
 from strategy_exec.market_data.aggregator import aggregate_bars
+from strategy_exec.market_data.his_hq_client import DEFAULT_FIELDS
 
 log = logging.getLogger(__name__)
 
 
-# ─────────────── change 2026-08-30-his-hq-aggregate-bars ───────────────
-# broker 永远 1m + fields=['close'], strategy_exec 端按用户 period 聚合
+# ─────────────── change 2026-09-04 sql-aggregated-backtest ───────────────
+# broker 1m + 全字段 (OHLCV+amount), 回测拉取后 upsert minute_bars,
+# 再用 SQL 按用户 period 聚合查询 (open=首/close=末/high=max/low=min/volume=sum/avg_price=VWAP).
 _BROKER_PERIOD = "1m"
-_BROKER_FIELDS = ["close"]
+_BROKER_FIELDS = DEFAULT_FIELDS
 
 
 class HQHistoryError(Exception):
@@ -105,28 +107,26 @@ class HQHistoryClient:
         period: str = "1d",
         fields: Optional[List[str]] = None,
     ) -> List[Dict[str, Any]]:
-        """拉历史 K 线, 返 list of dict [{stime, open, high, low, close, volume}, ...]
+        """拉历史 K 线, 返 list of dict [{stime, open, high, low, close, volume, avg_price}, ...]
 
-        change 2026-08-30-his-hq-aggregate-bars:
-        - broker his_hq 永远收 period='1m' + fields=['close'] (broker 单源真相)
-        - strategy_exec 端按用户 period 聚合 (1m / 5m / 15m / 30m / 60m / 1d)
-        - 1d 聚合按 A股交易日历 (周末跳过)
+        change 2026-09-04-sql-aggregated-backtest:
+        - broker 1m + 全字段 (OHLCV+amount) 拉取 → upsert minute_bars
+        - 按 period 用 SQL 聚合查询 (open=首/close=末/high=max/low=min/volume=sum/avg_price=VWAP)
+        - cache 命中 (full cover): 跳过 broker, 直接 SQL 聚合
+        - cache 部分覆盖: 缺天 broker 补 + 写回 → SQL 聚合重查
+        - cache 关闭: broker 全拉 + upsert → SQL 聚合重查
+        - 所有路径最终都走 query_bars_aggregated (DB 聚合, 六字段全输出)
 
         change 2026-08-30-his-hq-chunked-fetch:
         - 长区间 (≥30 天) broker 单次 fetch 30s 超时 → 拆 N 段 (默认 10 天/批)
         - 串行调 _fetch_one_chunk() → 拼凑 + sort by stime
         - 任一段 raise → 立即 raise (不返部分数据)
-
-        change 2026-08-30-his-hq-cache-minute-bars:
-        - 回测前先查 minute_bars 表 (复用 his-quote-backfill 已采集的 1m K 线)
-        - 完全覆盖 → 直接返, 不走 broker
-        - 部分覆盖 → 缺天走 chunked fetch + 写回 minute_bars
-        - 无覆盖 → 全走 broker + 写回 minute_bars
         """
-        # ── change 2026-08-30-his-hq-cache-minute-bars: 先查 minute_bars ──
+        # ── change 2026-09-04 sql-aggregated-backtest: 先查 minute_bars ──
         if self.settings.his_hq_cache_enabled:
             from strategy_exec.data_access.minute_bars import (
                 query_minute_bars, upsert_minute_bars, is_full_cover,
+                query_bars_aggregated,
             )
             cached_bars = await query_minute_bars(stock_code, start_date, end_date)
             if cached_bars and is_full_cover(cached_bars, start_date, end_date):
@@ -134,7 +134,7 @@ class HQHistoryClient:
                     "[hq_history] cache FULL HIT: stock=%s %s~%s → %d 1m bars (skip broker)",
                     stock_code, start_date, end_date, len(cached_bars),
                 )
-                return self._aggregate(cached_bars, period)
+                return await query_bars_aggregated(stock_code, start_date, end_date, period)
 
             if cached_bars:
                 log.info(
@@ -146,17 +146,17 @@ class HQHistoryClient:
                     "[hq_history] cache MISS: stock=%s %s~%s (need broker)",
                     stock_code, start_date, end_date,
                 )
-            # 走 chunked fetch (含 broker + 写回 cache)
-            return await self._chunked_fetch_with_cache(
+            # 走 chunked fetch (broker + 写回 cache) → 最后 SQL 聚合重查
+            await self._chunked_fetch_with_cache(
                 stock_code, start_date, end_date, period,
                 cached_bars=cached_bars,
                 upsert_fn=upsert_minute_bars,
             )
+            return await query_bars_aggregated(stock_code, start_date, end_date, period)
 
-        # ── cache 关闭: 走原 chunked fetch 路径 (不写 cache) ──
-        return await self._chunked_fetch_only(
-            stock_code, start_date, end_date, period,
-        )
+        # ── cache 关闭: 走原 chunked fetch 路径 (仍 upsert + SQL 聚合重查) ──
+        await self._chunked_fetch_only(stock_code, start_date, end_date, period)
+        return await query_bars_aggregated(stock_code, start_date, end_date, period)
 
     async def _chunked_fetch_with_cache(
         self,
@@ -166,13 +166,12 @@ class HQHistoryClient:
         period: str,
         cached_bars: List[Dict[str, Any]],
         upsert_fn,
-    ) -> List[Dict[str, Any]]:
+    ) -> None:
         """chunked fetch + 部分覆盖场景: cached 已覆盖 + 缺天 broker 补 + 写回.
 
-        简化: 不做精细"差几天"判断, 直接全区间 chunked fetch 然后 union cached.
-        (broker fetch 自身 cache 命中后会很快 — 30s/段 vs 5s/段, 且 cached 已覆盖)
+        change 2026-09-04: 不再做 Python 聚合, 只负责 fetch + upsert.
+        聚合由调用方 fetch_bars 统一走 query_bars_aggregated (SQL).
         """
-        all_bars = list(cached_bars) if cached_bars else []
         # chunked_enabled=False → 1 次拉全区间 (向后兼容, 不拆段)
         if not self.settings.his_hq_chunk_enabled:
             log.info(
@@ -183,7 +182,6 @@ class HQHistoryClient:
                 broker_bars = await self._fetch_one_chunk(stock_code, start_date, end_date, period)
             except HQHistoryError as e:
                 raise HQHistoryError(f"broker fetch failed: {e}") from e
-            all_bars.extend(broker_bars)
             if broker_bars:
                 try:
                     n = await upsert_fn(stock_code, broker_bars)
@@ -192,16 +190,15 @@ class HQHistoryClient:
                                  stock_code, n)
                 except Exception as e:  # noqa: BLE001
                     log.warning("[hq_history] cache write-back failed (non-fatal): %s", e)
-            all_bars.sort(key=lambda b: b.get("stime", ""))
-            return self._aggregate(all_bars, period)
+            return
         chunks = _iter_chunks(start_date, end_date, self.settings.his_hq_chunk_days)
         log.info(
             "[hq_history] chunked fetch (cache-augmented): stock=%s %s~%s → %d chunks (cached=%d bars)",
-            stock_code, start_date, end_date, len(chunks), len(all_bars),
+            stock_code, start_date, end_date, len(chunks), len(cached_bars),
         )
         for i, (cs, ce) in enumerate(chunks, 1):
             # 跳过完全覆盖的 chunk (cached 已有数据)
-            if all_bars and _chunk_fully_cached(all_bars, cs, ce):
+            if cached_bars and _chunk_fully_cached(cached_bars, cs, ce):
                 log.debug(
                     "[hq_history] chunked fetch: chunk %d/%d (%s~%s) FULLY CACHED, skip",
                     i, len(chunks), cs, ce,
@@ -217,7 +214,6 @@ class HQHistoryClient:
                 raise HQHistoryError(
                     f"chunked fetch failed at chunk {i}/{len(chunks)} ({cs}~{ce}): {e}"
                 ) from e
-            all_bars.extend(bars_i)
             # 写回 minute_bars (broker raw → minute_bars)
             if bars_i:
                 try:
@@ -227,9 +223,7 @@ class HQHistoryClient:
                                  stock_code, i, len(chunks), n)
                 except Exception as e:  # noqa: BLE001
                     log.warning("[hq_history] cache write-back failed (non-fatal): %s", e)
-        # 拼凑后 sort by stime
-        all_bars.sort(key=lambda b: b.get("stime", ""))
-        return self._aggregate(all_bars, period)
+        return
 
     async def _chunked_fetch_only(
         self,
@@ -237,8 +231,17 @@ class HQHistoryClient:
         start_date: str,
         end_date: str,
         period: str,
-    ) -> List[Dict[str, Any]]:
-        """原 chunked fetch 路径 (cache 关闭时用) — 不查表, 不写表."""
+    ) -> None:
+        """原 chunked fetch 路径 (cache 关闭时用) — 不查表, 但仍 upsert 落库.
+
+        change 2026-09-04: 不再 Python 聚合返回, 只 fetch + upsert.
+        聚合由调用方 fetch_bars 统一走 query_bars_aggregated (SQL).
+        """
+        from strategy_exec.data_access.minute_bars import upsert_minute_bars
+
+        async def _upsert(bars: List[Dict[str, Any]]) -> int:
+            return await upsert_minute_bars(stock_code, bars)
+
         # ── change 2026-08-30-his-hq-chunked-fetch: chunked 调度 ──
         if self.settings.his_hq_chunk_enabled:
             chunks = _iter_chunks(start_date, end_date, self.settings.his_hq_chunk_days)
@@ -246,7 +249,6 @@ class HQHistoryClient:
                 "[hq_history] chunked fetch enabled: stock=%s %s~%s → %d chunks (chunk_days=%d)",
                 stock_code, start_date, end_date, len(chunks), self.settings.his_hq_chunk_days,
             )
-            all_bars: List[Dict[str, Any]] = []
             for i, (cs, ce) in enumerate(chunks, 1):
                 log.info(
                     "[hq_history] chunked fetch: stock=%s chunk %d/%d (%s~%s)",
@@ -258,13 +260,21 @@ class HQHistoryClient:
                     raise HQHistoryError(
                         f"chunked fetch failed at chunk {i}/{len(chunks)} ({cs}~{ce}): {e}"
                     ) from e
-                all_bars.extend(bars_i)
-            all_bars.sort(key=lambda b: b.get("stime", ""))
-            return self._aggregate(all_bars, period)
+                if bars_i:
+                    try:
+                        await _upsert(bars_i)
+                    except Exception as e:  # noqa: BLE001
+                        log.warning("[hq_history] upsert failed (non-fatal): %s", e)
+            return
 
         # ── chunked 关闭: 1 次全拉 (向后兼容) ──
         all_rows = await self._fetch_one_chunk(stock_code, start_date, end_date, period)
-        return self._aggregate(all_rows, period)
+        if all_rows:
+            try:
+                await _upsert(all_rows)
+            except Exception as e:  # noqa: BLE001
+                log.warning("[hq_history] upsert failed (non-fatal): %s", e)
+        return
 
     async def _fetch_one_chunk(
         self,
@@ -386,9 +396,11 @@ class HQHistoryClient:
         return all_rows
 
     def _aggregate(self, all_rows: List[Dict[str, Any]], period: str) -> List[Dict[str, Any]]:
-        """按用户 period 聚合 (broker 永远 1m + close) — 内部 helper."""
+        """[已废弃] 按 period Python 聚合 — 保留供 broker 兜底/单测, 回测主路径改走 SQL.
+
+        change 2026-09-04: fetch_bars 主路径统一用 query_bars_aggregated (SQL 聚合).
+        """
         if period == "1m":
-            # 1m 直接返 (无聚合), open/high/low 用 close 兜底 (broker 1m 不返)
             out = all_rows
         else:
             out = aggregate_bars(all_rows, period)

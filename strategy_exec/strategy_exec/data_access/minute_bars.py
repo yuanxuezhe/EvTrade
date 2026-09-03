@@ -29,6 +29,16 @@ from typing import Any, Dict, List
 
 log = logging.getLogger(__name__)
 
+# period → 桶分钟数 (1m 不聚合; 1d 按交易日; 其余按 N 分钟对齐)
+_PERIOD_TO_BUCKET_MIN = {
+    "1m": 1,
+    "5m": 5,
+    "15m": 15,
+    "30m": 30,
+    "60m": 60,
+    "1h": 60,   # alias
+}
+
 
 def _get_engine():
     """懒加载 DB engine (复用 server.infra.db.engine, 共享连接池)"""
@@ -91,6 +101,128 @@ async def query_minute_bars(
         按 stime 升序. 错误/不存在 → 返 [].
     """
     return await asyncio.to_thread(_query_sync, stock_code, start_date, end_date)
+
+
+# ─────────────────────── SQL 周期聚合查询 ───────────────────────
+
+
+def _bucket_sql_expr(period: str) -> str:
+    """生成 SQL 桶表达式: 14位 stime → bucket_key (按 period 对齐).
+
+    - 1m: bucket_key = stime (不聚合, 每行一桶)
+    - 1d: bucket_key = LEFT(stime,8) || '150000' (按交易日)
+    - 5m/15m/30m/60m/1h: 按总分钟数 FLOOR 对齐到 N 分钟桶起点
+      (e.g. 09:33 → 5m 桶 09:30; 09:37 → 09:35)
+
+    Args:
+        period: '1m'/'5m'/'15m'/'30m'/'60m'/'1h'/'1d'
+
+    Returns:
+        MySQL 表达式字符串 (无分号, 可嵌入 CTE)
+    """
+    if period == "1m":
+        return "stime"
+    if period == "1d":
+        return "CONCAT(LEFT(stime, 8), '150000')"
+    minutes = _PERIOD_TO_BUCKET_MIN[period]
+    # 总分钟 = HH*60 + MM (stime 第9-10位 HH, 11-12位 MM)
+    # 注意: 必须用括号包裹整个表达式, 否则 FLOOR(hh*60 + mm / N) 因 / 优先级高于 +
+    # 会算成 hh*60 + (mm/N) 导致桶错位
+    total_min = (
+        "(CAST(SUBSTRING(stime, 9, 2) AS UNSIGNED) * 60 "
+        "+ CAST(SUBSTRING(stime, 11, 2) AS UNSIGNED))"
+    )
+    bucket_min = f"FLOOR({total_min} / {minutes}) * {minutes}"
+    return (
+        "CONCAT(LEFT(stime, 8), "
+        f"LPAD(({bucket_min}) DIV 60, 2, '0'), "
+        f"LPAD(({bucket_min}) MOD 60, 2, '0'), "
+        "'00')"
+    )
+
+
+def _query_aggregated_sync(
+    stock_code: str, start_date: str, end_date: str, period: str,
+) -> List[Dict[str, Any]]:
+    """sync sqlalchemy: 查 minute_bars 并按 period SQL 聚合. 错误/不存在 → 返 [].
+
+    聚合规则:
+    - open  = 桶内首根 (stime 升序最早)
+    - close = 桶内末根 (stime 升序最晚)
+    - high  = max(high)
+    - low   = min(low)
+    - volume= sum(volume)
+    - avg_price = sum(avg_price * volume) / sum(volume)  (VWAP 重算)
+    """
+    from sqlalchemy import text
+
+    bucket = _bucket_sql_expr(period)
+    start_stime = f"{start_date}000000"
+    end_stime = f"{end_date}235959"
+
+    sql = text(f"""
+        WITH ranked AS (
+            SELECT {bucket} AS bucket_key,
+                   stime, open, high, low, close, volume, avg_price,
+                   ROW_NUMBER() OVER (PARTITION BY {bucket} ORDER BY stime ASC)  AS rn_first,
+                   ROW_NUMBER() OVER (PARTITION BY {bucket} ORDER BY stime DESC) AS rn_last
+              FROM minute_bars
+             WHERE stock_code = :stock
+               AND stime BETWEEN :start AND :end
+        )
+        SELECT bucket_key AS stime,
+               MAX(CASE WHEN rn_first = 1 THEN open END)   AS open,
+               MAX(high)                                     AS high,
+               MIN(low)                                      AS low,
+               MAX(CASE WHEN rn_last  = 1 THEN close END)  AS close,
+               COALESCE(SUM(volume), 0)                     AS volume,
+               COALESCE(SUM(avg_price * volume) / NULLIF(SUM(volume), 0), 0)
+                                                              AS avg_price
+          FROM ranked
+         GROUP BY bucket_key
+         ORDER BY bucket_key
+    """)
+
+    try:
+        with _get_engine().connect() as conn:
+            rows = conn.execute(
+                sql, {"stock": stock_code, "start": start_stime, "end": end_stime},
+            ).fetchall()
+        return [
+            {
+                "stime": str(r[0]),
+                "open": float(r[1] or 0.0),
+                "high": float(r[2] or 0.0),
+                "low": float(r[3] or 0.0),
+                "close": float(r[4] or 0.0),
+                "volume": int(r[5] or 0),
+                "avg_price": float(r[6] or 0.0),
+            }
+            for r in rows
+        ]
+    except Exception as e:  # noqa: BLE001
+        log.warning("[minute_bars.query_agg] %s stock=%s %s~%s period=%s: %s",
+                    type(e).__name__, stock_code, start_date, end_date, period, e)
+        return []
+
+
+async def query_bars_aggregated(
+    stock_code: str, start_date: str, end_date: str, period: str,
+) -> List[Dict[str, Any]]:
+    """查 minute_bars 并按 period SQL 聚合 (异步包装).
+
+    Args:
+        stock_code: 证券代码
+        start_date / end_date: YYYYMMDD (8位)
+        period: '1m'/'5m'/'15m'/'30m'/'60m'/'1h'/'1d'
+
+    Returns:
+        聚合后 K 线 [{stime, open, high, low, close, volume, avg_price}, ...]
+        按 stime 升序. 错误/不存在 → 返 [].
+    """
+    return await asyncio.to_thread(
+        _query_aggregated_sync, stock_code, start_date, end_date, period,
+    )
 
 
 def _upsert_sync(stock_code: str, bars: List[Dict[str, Any]]) -> int:
