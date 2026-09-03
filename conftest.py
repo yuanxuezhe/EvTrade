@@ -74,6 +74,10 @@ except ImportError:
 _ROOT = Path(__file__).resolve().parent
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
+# 1b. strategy_exec 公共模块 (broker_client 等跨服务模块), 见 unify-his-hq-broker-client
+_STRATEGY_EXEC_ROOT = _ROOT / "strategy_exec"
+if str(_STRATEGY_EXEC_ROOT) not in sys.path:
+    sys.path.insert(0, str(_STRATEGY_EXEC_ROOT))
 
 # 2. 预加载 server.* 包内模块
 import server.infra.db as _server_db

@@ -35,15 +35,6 @@ def _next_day(day: str) -> str:
     return d.strftime("%Y%m%d")
 
 
-def _is_weekend(day: str) -> bool:
-    """周六/周日 (A股不交易) — 本地直接跳过, 不调 broker, 避免无数据日 30s idle 空等。
-
-    只跳周末 (铁定不交易, 零风险); 法定节假日 (落在周一~五) 不跳, 仍查 broker
-    (无数据返 0 根=成功空, 下个交易日数据进来游标即追上, 自愈)。不维护节假日表。
-    """
-    return datetime.strptime(day, "%Y%m%d").weekday() >= 5
-
-
 def _cap_day(end_date: str) -> str:
     """补全末天 = min(end_date 或 昨天, 昨天)。end_date 空=开放到昨天。"""
     y = _yesterday()
@@ -68,17 +59,15 @@ async def sync_one_day(stock_code: str, day: str) -> Dict[str, Any]:
                                 f"NO_CONFIG: {stock_code} 无配置行")
         raise BrokerError(f"NO_CONFIG: {stock_code} 无 quote_sync_config 配置行")
 
-    # 周末 (Sat/Sun): A股不交易, 不拉 broker, 直接记成功空 (秒过, 避免无数据日 30s idle 空等)
-    if _is_weekend(day):
-        new_last = await asyncio.to_thread(repo.record_success, stock_code)
-        log.info("[quote_sync] %s %s 周末无数据, 跳过 (last_loaded=%s)",
-                 stock_code, day, new_last)
-        return {"ok": True, "day": day, "bars": 0, "last_loaded_date": new_last, "weekend": True}
-
+    # 不提前按周末/假日跳过 — 走 broker his_hq 拉取 (空日 / 节假日由 broker
+    # 返 END_OF_HIS_HQ 标记或 idle 超时空返 [], 视为成功空, 游标照常推进)。
+    # 这样 `last_loaded_date` 跟实际有数据的天一致 (即使中间隔了周末/假日)。
     client = get_his_hq_client()
     try:
         await client.connect()
-        rows = await client.fetch_one_day(stock_code, day)
+        # change 2026-09-03 unify-his-hq-broker-client: 统一调 HisHqClient.fetch_bars
+        # (代替旧 HisHqClient.fetch_one_day, 跨 server/scripts/strategy_exec 一致)
+        rows = await client.fetch_bars(stock_code, day, day)
         records = [to_record(stock_code, r) for r in rows]
         # 同步 IO 放线程 (broker 拉取已 await, 落库是同步 SQLAlchemy)
         n = await asyncio.to_thread(repo.upsert_minute_bars, records)

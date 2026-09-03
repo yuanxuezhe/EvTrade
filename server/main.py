@@ -16,7 +16,18 @@ main.py — FastAPI app 入口（phase-2 拆分后）
 """
 import logging
 import os
+import sys
 import asyncio
+from pathlib import Path
+
+# change 2026-09-03 unify-his-hq-broker-client: 把 strategy_exec/ 加到 sys.path,
+# 让 server 服务能 import strategy_exec.market_data.his_hq_client (公共 broker client).
+# 路径相对 main.py 所在目录的 strategy_exec/ 子目录 (跟脚本仓库平级).
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+_STRATEGY_EXEC_ROOT = _PROJECT_ROOT / "strategy_exec"
+if str(_STRATEGY_EXEC_ROOT) not in sys.path:
+    sys.path.insert(0, str(_STRATEGY_EXEC_ROOT))
+
 from fastapi import FastAPI, Depends
 
 log = logging.getLogger(__name__)
