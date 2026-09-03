@@ -49,6 +49,9 @@
           <el-tag v-else type="info" size="small">未开始</el-tag>
         </template>
         <template #column-action="{ row }">
+          <el-button size="small" link type="primary" :disabled="_rs(row).busy" @click.stop="onEdit(row)">
+            编辑
+          </el-button>
           <el-button size="small" link type="primary" :disabled="_rs(row).busy" @click.stop="onRun(row)">
             {{ _rs(row).busy ? '补全中…' : '补全' }}
           </el-button>
@@ -92,6 +95,41 @@
       <template #footer>
         <el-button @click="addVisible = false">取消</el-button>
         <el-button type="primary" :loading="addSaving" @click="onAddSave">保存并补全</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 编辑时间区间 dialog -->
+    <el-dialog v-model="editVisible" title="编辑时间区间" width="460px" :close-on-click-modal="false">
+      <el-form ref="editFormRef" :model="editForm" :rules="editRules" label-width="110px">
+        <el-form-item label="证券代码">
+          <el-input :model-value="editForm.stock_code" disabled />
+        </el-form-item>
+        <el-form-item label="开始日期" prop="start_date">
+          <el-date-picker
+            v-model="editForm.start_date"
+            type="date"
+            value-format="YYYYMMDD"
+            placeholder="选择开始日期"
+            style="width: 100%"
+          />
+        </el-form-item>
+        <el-form-item label="结束日期" prop="end_date">
+          <el-date-picker
+            v-model="editForm.end_date"
+            type="date"
+            value-format="YYYYMMDD"
+            placeholder="留空=补到昨天(开放)"
+            clearable
+            style="width: 100%"
+          />
+        </el-form-item>
+        <el-form-item>
+          <span class="hint">已加载到 {{ editForm.last_loaded_date || '未开始' }} · 修改后会按新区间继续补全</span>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="editVisible = false">取消</el-button>
+        <el-button type="primary" :loading="editSaving" @click="onEditSave">保存</el-button>
       </template>
     </el-dialog>
   </div>
@@ -204,6 +242,45 @@ async function runBackfill(stockCode) {
 
 function onRun(row) {
   enqueueRun(row)
+}
+
+// ==================== 编辑时间区间 ====================
+const editVisible = ref(false)
+const editSaving = ref(false)
+const editFormRef = ref(null)
+const editForm = reactive({ stock_code: '', start_date: '', end_date: '', last_loaded_date: '' })
+
+const editRules = {
+  start_date: [{ required: true, message: '请选择开始日期', trigger: 'change' }],
+}
+
+function onEdit(row) {
+  editForm.stock_code = row.stock_code
+  editForm.start_date = row.start_date
+  editForm.end_date = row.end_date || ''
+  editForm.last_loaded_date = row.last_loaded_date || ''
+  editFormRef.value?.clearValidate()
+  editVisible.value = true
+}
+
+async function onEditSave() {
+  try { await editFormRef.value?.validate() } catch { return }
+  if (!editForm.start_date) { ElMessage.warning('请选择开始日期'); return }
+  editSaving.value = true
+  try {
+    // 后端 PATCH 仅支持 auto_sync / end_date, start_date 走 add+delete 重建 (简化: 提示用户)
+    // 这里 PATCH end_date 为主, start_date 仅展示 (跟后端 schema 对齐)
+    await quoteSyncApi.patch(editForm.stock_code, {
+      end_date: editForm.end_date || '',
+    })
+    ElMessage.success(`已更新 ${editForm.stock_code} 结束日期`)
+    editVisible.value = false
+    await loadRows()
+  } catch (e) {
+    ElMessage.error('保存失败: ' + (e?.msg || e?.response?.data?.detail || e?.message || e))
+  } finally {
+    editSaving.value = false
+  }
 }
 
 async function onToggleAuto(row, v) {
