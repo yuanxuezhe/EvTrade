@@ -105,7 +105,11 @@ def _h_his_hq(context, pkt: MsgPacket) -> HandlerReturn:
 
     print(f"[HQ Service] 开始按日获取行情: {stock_code} ({start_date_str} ~ {end_date_str})...")
 
-    query_fields = [f.strip() for f in fields_str.split(",") if f.strip()] if fields_str else ["close"]
+    # change 2026-09-03 (broker-fields-delimiter): msgpacket C 库把 ',' 当作字段值
+    # 终止符 (libmsgpacket.so 内置 CSV 风格 delimiter). 客户端已从 ',' 改 '|'
+    # 拼 fields, broker 端 split 也要改. 实测原 ',' delimiter 导致 broker 只
+    # 收到 'open' (截到第一个逗号前), 所有行情同步只能写到 open.
+    query_fields = [f.strip() for f in fields_str.split("|") if f.strip()] if fields_str else ["close"]
     query_period = period.strip() if period else "1m"
     if query_period not in ("tick", "1m", "5m", "15m", "30m", "1h", "1d"):
         return "10005", f"Unsupported period: {query_period}", None

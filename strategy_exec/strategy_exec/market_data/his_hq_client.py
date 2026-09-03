@@ -304,12 +304,16 @@ class HisHqClient:
         pkt.set_func("his_hq")
         pkt.set_headers(6, "stock_code,start_date,end_date,ans_queue,fields,period")
         pkt.add_row()
+        # change 2026-09-03 (broker-fields-delimiter): msgpacket C 库把 ',' 当作字段值
+        # 终止符 (libmsgpacket.so 内置 CSV 风格 delimiter), 所以 fields 串必须
+        # 用竖线 '|' 分隔 (broker 端 iquant/quota_his.py 同步改 fields_str.split("|")).
+        # 实测: set_value_str("fields", "open,high,...") → broker decode 仅 'open'.
         for k, v in [
             ("stock_code", stock_code),
             ("start_date", start_date),
             ("end_date", end_date),
             ("ans_queue", ans),
-            ("fields", ",".join(fields)),
+            ("fields", "|".join(fields)),
             ("period", period),
         ]:
             pkt.set_value(k, v)
