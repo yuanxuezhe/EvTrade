@@ -7,20 +7,25 @@
 - `159992.SZ` 等标的的分钟 K 线需从 broker 历史落地到 `minute_bars`（回测/分析数据源）
 - 需要可管理、可续传、失败可见的补全机制：加一行配置 = 声明跟踪该证券；启动/开页面自动增量补平；从"已加载到的最后一天"一天一天往前拉
 - **当前同步到的日期** 必须按 `minute_bars` 实际数据统计（`MAX(stime 日期)`），不是盲目 +1
+- **统一入口 (change 2026-09-03 unify-his-hq-broker-client)**: 所有历史行情拉取/解析/VWAP 计算
+  走 `strategy_exec.market_data.his_hq_client` 公共 client (server 端 + scripts + strategy_exec 三处共用).
+  server 的 `services/quote_sync/broker.py` 改为薄壳 (继承公共 client + 注入 server settings).
 
 ## 驱动模型
 
-- **后端按日接口**：`POST /api/quote-sync/sync {stock_code, date}` → 拉当日 1m → upsert `minute_bars` → 写操作记录（成功/失败）
+- **后端按日接口**：`POST /api/quote-sync/sync {stock_code, date}` → 调公共 client 拉当日 1m (7 字段: stime/open/high/low/close/volume/amount) → upsert `minute_bars` → 写操作记录（成功/失败）
 - **前端一天天调用**：从 `last_loaded_date+1` 到 `min(end_date||昨天, 昨天)` 逐日调；成功进下一天，失败停止
 - **启动自动补全**：`on_startup` 读 `auto_sync=1` 且未追平的证券，后台从游标逐日增量补平（不阻塞启动）
 - **昨天封顶**：今天 1m 数据不全不进
+- **CLI 补全（`scripts/fetch_minute_bars.py`）**：按日 chunk 调公共 client, 默认 10 天/段
 
 ## Requirements
 
 ### REQ-QSB-001: 后端按日同步接口
 
 `POST /api/quote-sync/sync` body `{stock_code, date}`（require_admin）：
-- 拉 `date` 当日 1m K 线（broker his_hq，server 进程自包含客户端，不 import strategy_exec）
+- 调 `HisHqClient.fetch_bars(stock, day, day, fields=DEFAULT_FIELDS)` (period 写死 1m)
+- DEFAULT_FIELDS = `[open, high, low, close, volume, amount]` (broker 端 col_header 自动加 stime)
 - upsert `minute_bars`（`ON DUPLICATE KEY UPDATE` 幂等）
 - 成功（含假日 0 根）→ `record_success`：重算 `last_loaded_date`（= minute_bars 实际最大日期）+ status=success + 清 error_msg
 - 失败（broker 连不上/异常）→ `record_failure`（status=failed + error_msg，游标不动）+ re-raise
@@ -30,9 +35,9 @@
 - **WHEN** sync {159992.SZ, 20260828}（周五）
 - **THEN** broker 返 240 根 → upsert → last_loaded_date=20260828, status=success
 
-#### Scenario: 周末（本地跳过）
+#### Scenario: 周末（走 broker, END marker / idle 超时秒返）
 - **WHEN** sync {159992.SZ, 20260829}（周六）
-- **THEN** `_is_weekend` 命中 → **不拉 broker**，直接 record_success，bars=0（秒过，方案 A）
+- **THEN** 仍调 broker (方案 B: 不本地提前跳过) → broker 循环结束发 `#END_OF_HIS_HQ#` 或 idle 超时 → 客户端返 [] → record_success（bars=0，~0.9s）
 
 #### Scenario: 假日（落工作日，broker 结束标记）
 - **WHEN** sync {159992.SZ, 20260901}（中秋周二）
@@ -41,6 +46,11 @@
 #### Scenario: broker 连不上
 - **WHEN** sync 但 broker 不可达
 - **THEN** BrokerError 上抛 → record_failure（status=failed + 原因）→ 返 code:1 + msg，游标不动
+
+#### Scenario: broker 返 OHLCV 字段不全（xtquant 实盘只返 close）
+- **WHEN** broker 返 0 占位的 open/high/low/volume/amount (xtquant 实盘只返 close)
+- **THEN** `to_record()` 兜底: open/high/low = close (单 1m bar 内 H=L=O=C); volume=0 → avg_price=0.0
+- **WHY** xtquant 实盘 1m close 是唯一真实数据 (2026-08-30 实测确认)
 
 ### REQ-QSB-002: 配置表 CRUD
 
