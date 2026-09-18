@@ -2,8 +2,10 @@
   DataTableView.vue — 通用表格组件 (排序 + 分页 + 每页大小)
 
   Props:
-    - columns: Array — 列定义 [{ key, label, width, minWidth, align, headerAlign, sortable, fixed, vBind, type, reserveSelection, selectable }]
+    - columns: Array — 列定义 [{ key, label, width, minWidth, align, headerAlign, sortable, fixed, vBind, type, reserveSelection, selectable, sortFn }]
                       type='selection' → 渲染勾选列 (width 默认 48, 不参与排序)
+                      sortFn: (row) => any — 可选派生排序 key (缺省 fallback row[key])，用于行字段不在数据上的计算列
+                                (如持仓表的市值/浮盈/收益率由 store getter 计算)
     - data: Array — 完整数据 (组件内部做排序+分页)
     - rowKey: String | Function — 行唯一标识 (默认 'id'; 勾选/高亮行依赖它)
     - loading: Boolean — 表格加载态 (内部 v-loading)
@@ -119,6 +121,7 @@
 
 <script setup>
 import { computed, ref, watch } from 'vue'
+import { sortCompare, getSortValue } from '../utils/tableSort'
 
 const props = defineProps({
   columns: { type: Array, required: true },
@@ -150,28 +153,28 @@ const sortProp = ref('')
 const sortOrder = ref('')
 
 /**
- * 排序比较函数
+ * 当前排序列定义 (供 sortedData 与 onSortChange 共用)
  */
-function sortCompare(va, vb, dir) {
-  if (va == null && vb == null) return 0
-  if (va == null) return dir
-  if (vb == null) return -dir
-  if (typeof va === 'number' && typeof vb === 'number') return (va - vb) * dir
-  return String(va).localeCompare(String(vb)) * dir
-}
+const sortColumn = computed(() => {
+  const prop = sortProp.value || props.defaultSort?.prop
+  if (!prop) return null
+  return props.columns.find((c) => c.key === prop) || null
+})
 
 /**
  * 客户端排序
  * - 有用户排序 → 用用户排序
  * - 无用户排序但有 defaultSort → 用 defaultSort
  * - 否则原样返回
+ * - 排序 key 来源：列定义 sortFn(row) > row[col.key] (向后兼容)
  */
 const sortedData = computed(() => {
   const prop = sortProp.value || props.defaultSort?.prop
   const order = sortProp.value ? (sortOrder.value || 'descending') : props.defaultSort?.order
   if (!prop || !order) return props.data
+  const col = sortColumn.value
   const dir = order === 'ascending' ? 1 : -1
-  return [...props.data].sort((a, b) => sortCompare(a[prop], b[prop], dir))
+  return [...props.data].sort((a, b) => sortCompare(getSortValue(a, col), getSortValue(b, col), dir))
 })
 
 // 分页

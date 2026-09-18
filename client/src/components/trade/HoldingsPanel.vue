@@ -224,6 +224,10 @@ function formatPercent(v) {
 }
 
 // 列定义
+// 排序契约 (REQ-FE-540):
+//   - 4 个数值列 (market_value / day_pnl / profit / return_rate) 通过 sortFn 从 store getter 派生排序 key
+//   - sortFn 内部先 void quoteTickTrigger.value 让 DataTableView sortedData computed
+//     把 quoteTickTrigger 加入响应式依赖 → 行情 tick 时自动重排
 const holdingsColumns = [
   { key: 'stock_code', label: '标的', vBind: COL.STOCK_TARGET },
   { key: 'last_vol', label: '期初', vBind: COL.NUMBER },
@@ -231,10 +235,35 @@ const holdingsColumns = [
   { key: 'avl_vol', label: '可用', vBind: COL.NUMBER },
   { key: 'cost_price', label: '成本', vBind: COL.PRICE },
   { key: 'last_price', label: '最新价(涨跌幅)', width: 140, sortable: false },  // 用 LivePriceCell, 列名更新
-  { key: 'market_value', label: '市值', vBind: COL.MONEY, sortable: false },
-  { key: 'day_pnl', label: '当日盈亏', vBind: COL.MONEY, sortable: false },
-  { key: 'profit', label: '浮动盈亏', vBind: COL.MONEY, sortable: false },
-  { key: 'return_rate', label: '收益率', fixed: 'right', vBind: COL.NUMBER, sortable: false },
+  {
+    key: 'market_value',
+    label: '市值',
+    vBind: COL.MONEY,
+    // sortFn: 实时价 × vol, 行情未到 → null (升序末位 / 降序首位, 与原 DataTableView 行为一致)
+    sortFn: (row) => { void quoteTickTrigger.value; return getMarketValue(row) },
+  },
+  {
+    key: 'day_pnl',
+    label: '当日盈亏',
+    vBind: COL.MONEY,
+    // sortFn: day_pnl 已在 row.day_pnl (holdings_daypnl.recomputeAll 写入), 行字段排序
+    sortFn: (row) => row.day_pnl,
+  },
+  {
+    key: 'profit',
+    label: '浮动盈亏',
+    vBind: COL.MONEY,
+    // sortFn: 扣费浮动盈亏, 行情未到 → null
+    sortFn: (row) => { void quoteTickTrigger.value; return getProfit(row) },
+  },
+  {
+    key: 'return_rate',
+    label: '收益率',
+    fixed: 'right',
+    vBind: COL.NUMBER,
+    // sortFn: profit / 成本市值, 行情未到或成本为 0 → null
+    sortFn: (row) => { void quoteTickTrigger.value; return getReturnRate(row) },
+  },
 ]
 </script>
 
