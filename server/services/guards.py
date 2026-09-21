@@ -1,23 +1,29 @@
 """
-guards.py — 交易屏障层（SysStatus 单行宽表, id=1）
+guards.py — 交易屏障层（SysStatus 单行宽表, id=1）+ RBAC page_key 守卫
 
 - require_trading_day: 未做日初 → 503 TRADING_DAY_NOT_INIT
 - require_trading_session: 非交易时段 → 503 OUTSIDE_TRADING_SESSION
 - require_trader: 角色校验（直接复用 auth.deps）
-- require_admin: admin 角色校验
+- require_admin: admin 角色校验（users.role 字符串, 保留向后兼容）
+- require_page_key: 页面权限校验 (RBAC 角色 → page_keys, 角色 v—roles-module change)
 
 sys_status 为单行宽表 (id=1): 无 "status='active'" 多行概念;
 切日判定看 id=1 行的 status 字段 + trd_date 字段。
 """
 from datetime import datetime
-from fastapi import HTTPException, Depends
+from fastapi import HTTPException, Depends, Request
 from typing import Optional
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session  # noqa: F401  (existing type hint 用)
 
 from server.infra.db import db_session
 from server.repo.system import TradingClock, get_active_trd_date, get_active_sysstatus
 from server.auth.deps import get_current_user
 from server.tables import Row
+from server.services.rbac import (
+    get_user_role_names,
+    get_user_page_keys,
+    user_has_page_key,
+)
 
 
 def resolve_active_trd_date(db: Session) -> Optional[str]:
@@ -96,10 +102,45 @@ def require_trader(current_user: Row = Depends(get_current_user)) -> Row:
 
 
 def require_admin(current_user: Row = Depends(get_current_user)) -> Row:
-    """屏障：admin 角色校验（日初处理用）"""
+    """屏障：admin 角色校验（日初处理用）— 保留 users.role 字符串 fallback"""
     if current_user.role != 'admin':
         raise HTTPException(
             status_code=403,
             detail={"code": "FORBIDDEN", "msg": f"角色 {current_user.role} 无权管理"}
         )
     return current_user
+
+
+# ── RBAC 页面权限守卫 (v—roles-module) ────────────────────────────────────
+
+def require_page_key(page_key: str):
+    """FastAPI dep 工厂: 检查当前用户的 role 集合是否含 page_key.
+
+    用法:
+        @router.get("/foo")
+        def foo(_guard = Depends(require_page_key("trade.t0"))):
+            ...
+
+    行为:
+      - 任一 role 含 '*' (super_admin 通配) → 通过
+      - 查 user_roles → roles → role_permissions 合并 set, page_key ∈ set → 通过
+      - 无 role 或 不含 page_key → 403 FORBIDDEN
+
+    兼容性:
+      - 当前用户是 admin (users.role 字符串 admin) → 旧逻辑保留 (require_admin 单独用, 本函数不接管)
+      - 新 admin 用户 (user_roles 命中 super_admin) → '*' 通配通过
+    """
+    def _dep(current_user: Row = Depends(get_current_user)) -> Row:
+        with db_session() as db:
+            keys = get_user_page_keys(db, current_user.id)
+            if '*' in keys or page_key in keys:
+                return current_user
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "code": "FORBIDDEN",
+                    "msg": f"无权访问 {page_key} (当前角色集合不含此页面权限)",
+                },
+            )
+    _dep.__name__ = f"require_page_key_{page_key.replace('.', '_').replace('-', '_')}"
+    return _dep

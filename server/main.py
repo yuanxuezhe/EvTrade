@@ -34,7 +34,7 @@ log = logging.getLogger(__name__)
 from fastapi.middleware.cors import CORSMiddleware
 
 from server.auth.deps import get_current_user
-from server.api import positions, holdings, orders, trades, asset, auth as auth_api, users as users_api
+from server.api import positions, holdings, orders, trades, asset, auth as auth_api, users as users_api, roles as roles_api
 from server.api import clock, fee_config, sysconfig as sysconfig_api  # 统一配置
 from server.api import system as system_api  # 系统级查询（active-day）
 from server.api import t0_stats, t0_aggregate
@@ -382,6 +382,7 @@ app.include_router(quote_sync_api.router, prefix="/api/quote-sync", tags=["quote
 # ---- Admin routes (login required, role checked by handler) ----------------
 _AUTH_ADMIN = [Depends(get_current_user)]
 app.include_router(users_api.router, prefix="/api/users", tags=["users"], dependencies=_AUTH_ADMIN)
+app.include_router(roles_api.router, prefix="/api/roles", tags=["roles"], dependencies=_AUTH_ADMIN)
 app.include_router(admin_sys_status.router, prefix="/api/admin/sys-status", tags=["admin-sys-status"], dependencies=_AUTH_ADMIN)
 app.include_router(admin_reconcile.router, prefix="/api/admin/reconcile", tags=["admin-reconcile"], dependencies=_AUTH_ADMIN)
 app.include_router(admin_session.router, prefix="/api/admin/trading-session", tags=["admin-session"], dependencies=_AUTH_ADMIN)
