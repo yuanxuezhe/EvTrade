@@ -439,6 +439,55 @@ tables:
         nullable: true
     indexes:
       ix_reconcile_report_trd: ['trd_date']
+  roles:
+    pk: ['id']
+    columns:
+      id:
+        type: Integer
+        nullable: false
+        autoincrement: true
+      name:
+        type: String(64)
+        nullable: false
+        default: 
+      display_name:
+        type: String(128)
+        nullable: false
+        default: 
+      description:
+        type: String(255)
+        nullable: true
+      is_builtin:
+        type: TinyInt
+        nullable: false
+        default: 0
+      created_at:
+        type: DateTime
+        nullable: false
+        default: 
+      updated_at:
+        type: DateTime
+        nullable: false
+        default: 
+    indexes:
+      uk_roles_name: ['name']
+  role_permissions:
+    pk: ['role_id', 'page_key']
+    columns:
+      role_id:
+        type: Integer
+        nullable: false
+        default: 0
+      page_key:
+        type: String(64)
+        nullable: false
+        default: 
+      granted_at:
+        type: DateTime
+        nullable: false
+        default: 
+    indexes:
+      ix_role_permissions_role: ['role_id']
   stkpool:
     pk: ['id']
     columns:
@@ -1040,6 +1089,27 @@ tables:
     indexes:
       ix_trades_order_no: ['order_no']
       ix_trades_trd_stock: ['trd_date', 'stock_code']
+  user_roles:
+    pk: ['user_id', 'role_id']
+    columns:
+      user_id:
+        type: Integer
+        nullable: false
+        default: 0
+      role_id:
+        type: Integer
+        nullable: false
+        default: 0
+      granted_at:
+        type: DateTime
+        nullable: false
+        default: 
+      granted_by:
+        type: Integer
+        nullable: true
+    indexes:
+      ix_user_roles_user: ['user_id']
+      ix_user_roles_role: ['role_id']
   users:
     pk: ['id']
     columns:
