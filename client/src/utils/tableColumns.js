@@ -7,8 +7,8 @@
  *   - 渐进式迁移: 新表直接用, 老表 (T0Trade.vue) 下轮再说
  *
  * 6 类常量:
- *   1. STOCK_CODE   — 证券代码 (单列, mono + tp-stock-code)
- *   2. STOCK_TARGET — 标的 (代码+名称合并, 仿 T0Trade.vue 标的列)
+ *   1. STOCK_CODE   — 证券代码 (单列, mono + tp-stock-code 全局类)
+ *   2. STOCK_TARGET — 标的 (代码+名称合并, 用 cells/StockTargetCell 渲染)
  *   3. TIME         — 时间 (下单时间/委托时间, 容纳 String(23) "YYYY-MM-DD HH:MM:SS.fff")
  *   4. NUMBER       — 数量 (成交量/委托量/撤单量, 千分位 mono 右对齐)
  *   5. MONEY        — 价格/金额 (委托价/成交均价/成交金额, 2 位小数 mono 右对齐)
@@ -28,7 +28,8 @@
 /**
  * 1. STOCK_CODE — 证券代码单列
  *    适用: 单列显示 stock_code, 不含名称
- *    模板: <span class="text-mono tp-stock-code">{{ row.xxx }}</span>
+ *    模板: <StockTargetCell :stock-code="row.stock_code" :show-name="false" />
+ *    (StockTargetCell 内部用 .text-mono + .tp-stock-code 全局类, 保持视觉一致)
  */
 export const STOCK_CODE = {
   width: 100,
@@ -39,7 +40,7 @@ export const STOCK_CODE = {
 /**
  * 2. STOCK_TARGET — 标的 (代码+名称合并)
  *    适用: 单列显示 stock_code + 名称 (仿 T0Trade.vue 标的列)
- *    模板: <span class="text-mono tp-stock-code">{{ code }}</span> + 6px + <span class="text-secondary">{{ name }}</span>
+ *    模板: <StockTargetCell :stock-code="row.stock_code" />
  *    固定 width=270 + show-overflow-tooltip (防名称过长撑爆列)
  */
 export const STOCK_TARGET = {

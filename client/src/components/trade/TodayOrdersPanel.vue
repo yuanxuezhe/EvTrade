@@ -36,8 +36,8 @@
             <span v-else class="text-secondary">委托</span>
           </template>
           <template #column-stock_code="{ row }">
-            <span class="text-mono tp-stock-code">{{ row.stock_code }}</span>
-            <span class="text-secondary" style="margin-left: 6px" v-t0-badge="row.stock_code">{{ stockName(row.stock_code) || '—' }}</span>
+            <!-- change stock-target-cell-unify: 抽 cells/StockTargetCell 全站统一 -->
+            <StockTargetCell :stock-code="row.stock_code" />
           </template>
           <template #column-direction="{ row }">
             <span class="tp-dir-chip" :class="row.order_type === '23' ? 'buy' : 'sell'">
@@ -109,8 +109,8 @@
             <span v-else class="text-secondary">成交</span>
           </template>
           <template #column-stock_code="{ row }">
-            <span class="text-mono tp-stock-code">{{ row.stock_code }}</span>
-            <span class="text-secondary" style="margin-left: 6px" v-t0-badge="row.stock_code">{{ stockName(row.stock_code) || '—' }}</span>
+            <!-- change stock-target-cell-unify: 抽 cells/StockTargetCell 全站统一 -->
+            <StockTargetCell :stock-code="row.stock_code" />
           </template>
           <template #column-direction="{ row }">
             <span class="tp-dir-chip" :class="row.order_type === '23' ? 'buy' : 'sell'">
@@ -142,6 +142,7 @@
 import { computed, nextTick, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import DataTableView from '../DataTableView.vue'
+import StockTargetCell from '../cells/StockTargetCell.vue'  // 标的通用 cell
 import { formatMoney, formatNumber, priceTypeLabel } from '../../utils/format'
 import { formatPrice } from '../../composables/usePricePrecision'
 import { stockName } from '../../utils/stockNames'
@@ -289,11 +290,6 @@ const tradeColumns = [
   flex: 1 1 0;
   min-height: 0;
   overflow: hidden;
-}
-
-.tp-stock-code {
-  font-family: var(--font-mono);
-  font-weight: 600;
 }
 
 :deep(.el-table__row) {

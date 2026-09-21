@@ -180,3 +180,92 @@ async def test_sync_one_day_weekend_calls_broker(monkeypatch):
     assert upserted == [[]]            # 调了 broker (broker 返 [], upsert 也跑了, 0 行)
     assert recorded == ["159992.SZ"]  # 记了成功
     assert res["last_loaded_date"] == "20260828"  # 数据最大日期不变 (broker 0 行)
+
+
+# ─────────────── sync_chunk (change 2026-09-04 quote-sync-chunk-days) ───────────────
+
+
+@pytest.mark.asyncio
+async def test_sync_chunk_uses_default_chunk_days_from_sysconfig(monkeypatch):
+    """sync_chunk 不传 chunk_days 时, 从 sys_config.quote_sync_chunk_days 读默认 (10)."""
+    monkeypatch.setattr(sync_mod, "get_his_hq_client",
+                        lambda: _fake_client(rows=[{"stime": "20240101093100", "open": "0.5"}]))
+    monkeypatch.setattr("server.services.quote_sync.sync.repo.get_config",
+                        lambda sc: _FakeRow(stock_code=sc, last_loaded_date="20231231"))
+    monkeypatch.setattr("server.services.quote_sync.sync.repo.upsert_minute_bars",
+                        lambda recs: len(recs or []))
+    monkeypatch.setattr("server.services.quote_sync.sync.repo.record_success",
+                        lambda sc: "20240120")
+
+    # mock sysconfig.get
+    fake_sysconfig = {"quote_sync_chunk_days": 5}
+    def _fake_get(key, default=None, user="0"):
+        return fake_sysconfig.get(key, default)
+    monkeypatch.setattr("server.services.sysconfig.get", _fake_get)
+
+    # 区间 1 月 1 日 ~ 1 月 20 日 (20 天), chunk_days=5 → 应跑 4 批 (5+5+5+5)
+    res = await sync_mod.sync_chunk("159992.SZ", "20240101", "20240120")
+    assert res["ok"] is True
+    assert res["days"] == 20
+    assert res["total_bars"] == 20  # 每天 1 根 mock
+    assert res["failed_day"] is None
+
+
+@pytest.mark.asyncio
+async def test_sync_chunk_invalid_range_raises(monkeypatch):
+    """start > end → BrokerError INVALID_RANGE."""
+    monkeypatch.setattr("server.services.quote_sync.sync.repo.get_config",
+                        lambda sc: _FakeRow(stock_code=sc))
+    with pytest.raises(sync_mod.BrokerError, match="INVALID_RANGE"):
+        await sync_mod.sync_chunk("X", "20240110", "20240101", chunk_days=3)
+
+
+@pytest.mark.asyncio
+async def test_sync_chunk_partial_failure_returns_failed_day(monkeypatch):
+    """一批内某天 broker 失败 → failed_day 设值, 但 days 仍算成功天."""
+    # 让 day=20240105 抛 BrokerError, 其它天返 mock 数据
+    def _raise_on_target(sc, sd, ed, *, fields=None, period="1m"):
+        if sd == "20240105":
+            raise sync_mod.BrokerError("broker 失败 20240105")
+        return [{"stime": f"{sd}093100", "open": "0.5"}]
+
+    class _C:
+        async def connect(self): pass
+        async def fetch_bars(self, sc, sd, ed, *, fields=None, period="1m"):
+            return _raise_on_target(sc, sd, ed, fields=fields, period=period)
+        async def close(self): pass
+
+    monkeypatch.setattr(sync_mod, "get_his_hq_client", lambda: _C())
+    monkeypatch.setattr("server.services.quote_sync.sync.repo.get_config",
+                        lambda sc: _FakeRow(stock_code=sc, last_loaded_date="20240101"))
+    monkeypatch.setattr("server.services.quote_sync.sync.repo.upsert_minute_bars",
+                        lambda recs: len(recs or []))
+    monkeypatch.setattr("server.services.quote_sync.sync.repo.record_success",
+                        lambda sc: "20240110")
+    monkeypatch.setattr("server.services.quote_sync.sync.repo.record_failure",
+                        lambda sc, msg: None)
+
+    res = await sync_mod.sync_chunk("159992.SZ", "20240101", "20240110", chunk_days=3)
+    # 第一批 1~3 成功 3 天, 20240105 失败 (下一批起点), 5~7/8~10
+    assert res["failed_day"] == "20240105"
+    assert res["ok"] is False
+    assert res["days"] >= 3  # 至少 1~3 成功
+
+
+@pytest.mark.asyncio
+async def test_sync_chunk_all_failed_raises(monkeypatch):
+    """第一天就失败 → 抛 BrokerError (跟单日语义一致)."""
+    class _C:
+        async def connect(self): pass
+        async def fetch_bars(self, sc, sd, ed, *, fields=None, period="1m"):
+            raise sync_mod.BrokerError("all fail")
+        async def close(self): pass
+
+    monkeypatch.setattr(sync_mod, "get_his_hq_client", lambda: _C())
+    monkeypatch.setattr("server.services.quote_sync.sync.repo.get_config",
+                        lambda sc: _FakeRow(stock_code=sc, last_loaded_date="20240101"))
+    monkeypatch.setattr("server.services.quote_sync.sync.repo.record_failure",
+                        lambda sc, msg: None)
+
+    with pytest.raises(sync_mod.BrokerError, match="chunk 全部失败"):
+        await sync_mod.sync_chunk("159992.SZ", "20240101", "20240105", chunk_days=2)

@@ -32,8 +32,8 @@
         class="hp-data-table"
       >
         <template #column-stock_code="{ row }">
-          <span class="tp-stock-code">{{ row.stock_code }}</span>
-          <span class="text-secondary" style="margin-left: 6px" v-t0-badge="row.stock_code">{{ stockName(row.stock_code) || '—' }}</span>
+          <!-- change stock-target-cell-unify: 抽 cells/StockTargetCell 全站统一 -->
+          <StockTargetCell :stock-code="row.stock_code" />
         </template>
 
         <template #column-last_vol="{ row }">
@@ -99,6 +99,7 @@
 import { computed, ref } from 'vue'
 import DataTableView from '../DataTableView.vue'
 import LivePriceCell from '../cells/LivePriceCell.vue'  // 最新价+涨跌幅合并 cell
+import StockTargetCell from '../cells/StockTargetCell.vue'  // 标的通用 cell
 import { formatNumber, formatMoney } from '../../utils/format'
 import { formatPrice } from '../../composables/usePricePrecision'
 import { stockName } from '../../utils/stockNames'
@@ -320,11 +321,6 @@ const holdingsColumns = [
 :deep(.hp-filter .el-input__inner) {
   height: 24px;
   font-size: 12px;
-}
-
-.tp-stock-code {
-  font-family: var(--font-mono);
-  font-weight: 600;
 }
 
 .text-muted {

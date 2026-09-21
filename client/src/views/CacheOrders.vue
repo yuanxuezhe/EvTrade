@@ -70,8 +70,8 @@
           <span v-else class="text-secondary">委托</span>
         </template>
         <template #column-stock_code="{ row }">
-          <span class="text-mono tp-stock-code">{{ row.stock_code }}</span>
-          <span class="text-secondary" style="margin-left: 6px" v-t0-badge="row.stock_code">{{ stockName(row.stock_code) || '—' }}</span>
+          <!-- change stock-target-cell-unify: 抽 cells/StockTargetCell 全站统一 -->
+          <StockTargetCell :stock-code="row.stock_code" />
         </template>
         <template #column-direction="{ row }">
           <span class="dir-chip" :class="row.order_type === '23' ? 'buy' : 'sell'">
@@ -117,9 +117,9 @@
 import { computed, onMounted, ref } from 'vue'
 import { Refresh } from '@element-plus/icons-vue'
 import DataTableView from '../components/DataTableView.vue'
+import StockTargetCell from '../components/cells/StockTargetCell.vue'  // 标的通用 cell
 import { formatMoney, formatNumber, priceTypeLabel } from '../utils/format'
 import { formatPrice } from '../composables/usePricePrecision'
-import { stockName } from '../utils/stockNames'
 import { COL } from '../utils/tableColumns'
 import OrderStatusBadge from '../components/OrderStatusBadge.vue'
 import { useUiStore } from '../stores/ui'
@@ -223,6 +223,5 @@ const orderColumns = [
 .dir-chip { display: inline-flex; align-items: center; justify-content: center; padding: 2px 10px; border-radius: var(--radius-xs); font-size: 12px; font-weight: 600; }
 .dir-chip.buy { background: var(--color-up-bg); color: var(--color-up); }
 .dir-chip.sell { background: var(--color-down-bg); color: var(--color-down); }
-.tp-stock-code { font-family: var(--font-mono); font-weight: 600; }
 .table-wrap { flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; }
 </style>

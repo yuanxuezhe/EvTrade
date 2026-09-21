@@ -33,6 +33,10 @@ DEFAULT_CONFIGS: list[dict] = [
     {"cfg_key": "must_change_password_required", "cfg_val": "1", "desc": "首次登录强制改密 (0=关/1=开; 关掉后 seed 用户 must_change_password=True 也不再拦截)"},
     # 可交易证券类型列表 (stktype 逗号分隔) — 默认 0(股票)+1(ETF)
     {"cfg_key": "cantrdstktypes", "cfg_val": "0,1", "desc": "可交易的证券类型 (stktype 逗号分隔, e.g. 0,1)"},
+    # 历史行情同步: 一次查 N 天写库 (默认 10 天/次; 修改后启动自动补全/前端逐日
+    # 补全都按这个数分批拉。broker 单日 30s idle 超时风险 → 批量拉比逐日快)
+    # change 2026-09-04 (quote-sync-chunk-days)
+    {"cfg_key": "quote_sync_chunk_days", "cfg_val": "10", "desc": "历史行情同步单批天数 (1-30, 默认10); 启动补全/前端补全按这个数分批 chunk 拉取"},
 ]
 
 # user → {cfg_key → cfg_val}

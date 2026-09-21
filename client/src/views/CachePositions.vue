@@ -30,8 +30,8 @@
         @row-dblclick="(row) => { if (row.stock_code) stockCode = row.stock_code }"
       >
         <template #column-stock_code="{ row }">
-          <span class="text-mono tp-stock-code">{{ row.stock_code }}</span>
-          <span class="text-secondary" style="margin-left: 6px" v-t0-badge="row.stock_code">{{ stockName(row.stock_code) || '—' }}</span>
+          <!-- change stock-target-cell-unify: 抽 cells/StockTargetCell 全站统一 -->
+          <StockTargetCell :stock-code="row.stock_code" />
         </template>
         <template #column-last_vol="{ row }">
           <span class="text-mono">{{ formatNumber(row.last_vol) }}</span>
@@ -128,10 +128,10 @@ import { ElMessage } from 'element-plus'
 import { Search } from '@element-plus/icons-vue'
 import DataTableView from '../components/DataTableView.vue'
 import LivePriceCell from '../components/cells/LivePriceCell.vue'  // 最新价+涨跌幅通用 cell
+import StockTargetCell from '../components/cells/StockTargetCell.vue'  // 标的通用 cell
 import { api } from '../api'
 import { formatMoney, formatNumber } from '../utils/format'
 import { formatPrice } from '../composables/usePricePrecision'
-import { stockName } from '../utils/stockNames'
 import { COL } from '../utils/tableColumns'
 import { loadAllPositions } from '../stores/holdings_idb'
 import { useUiStore } from '../stores/ui'
@@ -212,6 +212,5 @@ const positionColumns = [
 .filter-left { display: flex; gap: var(--space-2); align-items: center; }
 .text-mono { font-family: var(--font-mono, 'JetBrains Mono', 'Consolas', monospace); }
 .text-secondary { color: var(--text-secondary); }
-.tp-stock-code { font-family: var(--font-mono); font-weight: 600; }
 .table-wrap { flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; }
 </style>

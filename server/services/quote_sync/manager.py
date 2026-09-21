@@ -49,14 +49,25 @@ class QuoteSyncManager:
         log.info("[quote_sync] 启动自动补全任务已派发")
 
     async def _run_startup_guarded(self) -> None:
-        """逐日补平, 单只内逐日且持 per-stock 锁。"""
+        """逐日补平, 单只内逐日且持 per-stock 锁。change 2026-09-04: 改 chunk 拉取。
+
+        按 sysconfig `quote_sync_chunk_days` 把 [next_day, cap] 拆成 N 天/批,
+        串行调 sync_one_day (同 sync_chunk 内部行为; 这里自己循环保持 per-stock
+        锁外层可见, 可中断可恢复).
+        """
+        from server.services.quote_sync.sync import _cap_day, _next_day
+        from server.services.quote_sync import repository as repo
+        from server.services.sysconfig import get
+
         pending = await asyncio.to_thread(sync_mod.read_auto_pending)
         if not pending:
             log.info("[quote_sync] 启动自动补全: 无 pending 证券")
             return
-        log.info("[quote_sync] 启动自动补全: %d 只 (%s)", len(pending), ", ".join(pending))
-        from server.services.quote_sync.sync import _cap_day, _next_day
-        from server.services.quote_sync import repository as repo
+        chunk_days = int(get("quote_sync_chunk_days", default=10))
+        if not (1 <= chunk_days <= 30):
+            chunk_days = 10
+        log.info("[quote_sync] 启动自动补全: %d 只 (chunk_days=%d) %s",
+                 len(pending), chunk_days, ", ".join(pending))
 
         for stock in pending:
             lk = self._lock_for(stock)
@@ -67,9 +78,24 @@ class QuoteSyncManager:
                 cap = _cap_day(cfg.end_date or "")
                 day = _next_day(cfg.last_loaded_date or cfg.start_date)
                 try:
-                    while day <= cap:
-                        await sync_mod.sync_one_day(stock, day)
-                        day = _next_day(day)
+                    # change 2026-09-04: 按 chunk_days 分批拉, 一天失败则整批跳到下一批
+                    from datetime import datetime, timedelta
+                    cur = datetime.strptime(day, "%Y%m%d").date()
+                    ed = datetime.strptime(cap, "%Y%m%d").date()
+                    while cur <= ed:
+                        chunk_end = min(cur + timedelta(days=chunk_days - 1), ed)
+                        d = cur
+                        while d <= chunk_end:
+                            ds = d.strftime("%Y%m%d")
+                            try:
+                                await sync_mod.sync_one_day(stock, ds)
+                            except sync_mod.BrokerError as e:
+                                log.warning("[quote_sync] %s %s 启动补全失败: %s (跳过本批, 下次启动续)",
+                                            stock, ds, e)
+                                d = chunk_end + timedelta(days=1)
+                                break
+                            d += timedelta(days=1)
+                        cur = d
                     log.info("[quote_sync] %s 已追平到 %s", stock, cap)
                 except Exception as e:
                     log.warning("[quote_sync] %s 启动补全在 %s 中断: %s (下次启动续)",

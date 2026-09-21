@@ -21,8 +21,8 @@
       v-bind="$attrs"
     >
       <template #column-stock_code="{ row }">
-        <span class="text-mono tp-stock-code">{{ row.stock_code }}</span>
-        <span class="text-secondary" style="margin-left: 6px" v-t0-badge="row.stock_code">{{ row.stock_name || '—' }}</span>
+        <!-- change stock-target-cell-unify: 抽 cells/StockTargetCell 全站统一 -->
+        <StockTargetCell :stock-code="row.stock_code" />
       </template>
 
       <template #column-last_vol="{ row }">
@@ -57,6 +57,7 @@
 
 <script setup>
 import DataTableView from './DataTableView.vue'
+import StockTargetCell from './cells/StockTargetCell.vue'  // 标的通用 cell
 import { formatNumber } from '../utils/format'
 import { COL } from '../utils/tableColumns'
 

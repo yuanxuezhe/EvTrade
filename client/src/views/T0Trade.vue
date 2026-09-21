@@ -148,8 +148,8 @@
             <span class="text-mono">#{{ row.id }}</span>
           </template>
           <template #column-stock_code="{ row }">
-            <span class="text-mono tp-stock-code">{{ row.stock_code }}</span>
-            <span class="text-secondary" style="margin-left: 6px" v-t0-badge="row.stock_code">{{ stockName(row.stock_code) || '—' }}</span>
+            <!-- change stock-target-cell-unify: 抽 cells/StockTargetCell 全站统一 -->
+            <StockTargetCell :stock-code="row.stock_code" />
           </template>
           <template #column-initial_position="{ row }">
             <span class="text-mono">{{ formatNumber(holdingsStore.positions?.find(p=>p.stock_code===row.stock_code)?.last_vol ?? 0) }}</span>
@@ -223,8 +223,8 @@
             <span v-else class="text-secondary">委托</span>
           </template>
           <template #column-stock_code="{ row }">
-            <span class="text-mono tp-stock-code">{{ row.stock_code }}</span>
-            <span class="text-secondary" style="margin-left: 6px" v-t0-badge="row.stock_code">{{ stockName(row.stock_code) || '—' }}</span>
+            <!-- change stock-target-cell-unify: 抽 cells/StockTargetCell 全站统一 -->
+            <StockTargetCell :stock-code="row.stock_code" />
           </template>
           <template #column-order_type="{ row }">
             <el-tag :type="row.order_type === '23' ? 'danger' : 'success'" size="small">
@@ -331,6 +331,7 @@ import T0TaskDetail from '../components/trade/T0TaskDetail.vue'
 import T0TaskCreateDialog from '../components/trade/T0TaskCreateDialog.vue'
 import HoldingsPanel from '../components/trade/HoldingsPanel.vue'
 import LivePriceCell from '../components/cells/LivePriceCell.vue'  // 最新价+涨跌幅通用 cell
+import StockTargetCell from '../components/cells/StockTargetCell.vue'  // 标的（代码+名称+T0徽章）通用 cell
 import PriceTypeInput from '../components/PriceTypeInput.vue'
 import { PriceType } from '../constants/priceType.js'
 import { useT0OrderSubmit } from '../composables/useT0OrderSubmit'
@@ -338,7 +339,6 @@ import { useQuoteSubscription } from '../composables/useQuoteSubscription'
 import { formatNumber, formatMoney, priceTypeLabel } from '../utils/format'
 import { formatPrice } from '../composables/usePricePrecision'
 import { STATUS_LABEL, STATUS_TYPE } from '../utils/format'
-import { stockName } from '../utils/stockNames'
 import { COL } from '../utils/tableColumns'
 import { useUiStore } from '../stores/ui'
 import { makeLogger } from '../utils/logger'

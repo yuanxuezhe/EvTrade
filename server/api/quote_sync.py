@@ -19,6 +19,7 @@ from pydantic import BaseModel, Field
 from server.auth.deps import require_admin
 from server.services.quote_sync import repository as repo
 from server.services.quote_sync.broker import BrokerError
+from server.services.quote_sync import sync as sync_mod  # sync_chunk 用
 from server.services.quote_sync.sync import sync_one_day
 from server.services.quote_sync.manager import manager
 
@@ -43,6 +44,18 @@ class ConfigPatch(BaseModel):
 class DaySyncRequest(BaseModel):
     stock_code: str = Field(min_length=1, max_length=16)
     date: str = Field(pattern=r"^\d{8}$")
+
+
+class ChunkSyncRequest(BaseModel):
+    """change 2026-09-04 (quote-sync-chunk-days): 区间按 sysconfig 批量同步.
+
+    按 sys_config.quote_sync_chunk_days (默认10) 一次拉 N 天写库, 失败天跳过,
+    按顺序往后推进. chunk_days=0 = 用 sysconfig 默认值.
+    """
+    stock_code: str = Field(min_length=1, max_length=16)
+    start_date: str = Field(pattern=r"^\d{8}$")
+    end_date: str = Field(pattern=r"^\d{8}$")
+    chunk_days: int = Field(default=0, ge=0, le=30)
 
 
 # ─────────────── 配置 CRUD ───────────────
@@ -118,4 +131,32 @@ async def sync_day(body: DaySyncRequest):
         "msg": "ok",
         "bars": result["bars"],
         "last_loaded_date": result["last_loaded_date"],
+    }
+
+
+@router.post("/sync_chunk", dependencies=[Depends(require_admin)])
+async def sync_chunk_endpoint(body: ChunkSyncRequest):
+    """change 2026-09-04 (quote-sync-chunk-days): 区间按 sysconfig 批量同步.
+
+    按 sys_config.quote_sync_chunk_days (默认10) 把 [start_date, end_date] 拆成
+    N 天/批, 串行调 sync_one_day. 一批内某天失败 → 跳到下一批 (不影响其它天).
+
+    返回 {code, msg, days, total_bars, last_loaded_date, failed_day}
+    """
+    try:
+        result = await sync_mod.sync_chunk(
+            body.stock_code, body.start_date, body.end_date,
+            chunk_days=body.chunk_days,
+        )
+    except BrokerError as e:
+        return {"code": 1, "msg": str(e)}
+    except Exception as e:
+        return {"code": 1, "msg": f"CHUNK_ERROR: {e}"}
+    return {
+        "code": 0 if result["ok"] else 1,
+        "msg": "ok" if result["ok"] else f"部分失败: failed_day={result['failed_day']}",
+        "days": result["days"],
+        "total_bars": result["total_bars"],
+        "last_loaded_date": result["last_loaded_date"],
+        "failed_day": result["failed_day"],
     }

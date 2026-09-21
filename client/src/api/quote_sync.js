@@ -2,11 +2,13 @@
  * quoteSync API 客户端 (his-quote-backfill change)
  *
  * 端点 (前缀 /api/quote-sync, http baseURL 已含 /api, 路径不带 /api):
- * - GET    /quote-sync              列行情同步任务表 (配置)
- * - POST   /quote-sync              新增配置行
- * - DELETE /quote-sync/{stock}      删配置 (不删 minute_bars 数据)
- * - PATCH  /quote-sync/{stock}      改 auto_sync / end_date
- * - POST   /quote-sync/sync         按日同步 {stock_code, date} → 成功 {code:0,...} / 失败 {code:1,msg}
+ * - GET    /quote-sync                列行情同步任务表 (配置)
+ * - POST   /quote-sync                新增配置行
+ * - DELETE /quote-sync/{stock}        删配置 (不删 minute_bars 数据)
+ * - PATCH  /quote-sync/{stock}        改 auto_sync / end_date
+ * - POST   /quote-sync/sync           按日同步 {stock_code, date} → 成功 {code:0,...} / 失败 {code:1,msg}
+ * - POST   /quote-sync/sync_chunk     区间按 N 天分批同步 {stock_code, start_date, end_date, chunk_days?}
+ *                                       (change 2026-09-04 quote-sync-chunk-days)
  *
  * 鉴权: 全部 require_admin
  * 注意: /sync 失败体 {code:1, msg} 不含 list/data, 不走 http 拦截器全局 toast,
@@ -31,4 +33,17 @@ export const quoteSyncApi = {
    *  code:0 成功 (含假日 0 根) / code:1 失败 (msg=原因) */
   syncDay: (stockCode, date) =>
     http.post('/quote-sync/sync', { stock_code: stockCode, date }).then((r) => r.data),
+
+  /** change 2026-09-04 quote-sync-chunk-days: 区间按 N 天/批同步
+   *  body: {stock_code, start_date, end_date, chunk_days?}
+   *  chunk_days=0 → 后端从 sys_config.quote_sync_chunk_days 读默认 (10)
+   *  返 {code, msg, days, total_bars, last_loaded_date, failed_day}
+   *  code:0 全成功 / code:1 全部失败 / 部分失败也 code:0 但 failed_day 有值 */
+  syncChunk: (stockCode, startDate, endDate, chunkDays = 0) =>
+    http.post('/quote-sync/sync_chunk', {
+      stock_code: stockCode,
+      start_date: startDate,
+      end_date: endDate,
+      chunk_days: chunkDays,
+    }).then((r) => r.data),
 }

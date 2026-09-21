@@ -23,7 +23,8 @@
         :no-pagination="true"
       >
         <template #column-stock_code="{ row }">
-          <span class="text-mono tp-stock-code">{{ row.stock_code }}</span>
+          <!-- change stock-target-cell-unify: 抽 cells/StockTargetCell 全站统一 -->
+          <StockTargetCell :stock-code="row.stock_code" />
         </template>
         <template #column-time_range="{ row }">
           <span class="text-mono">
@@ -53,7 +54,10 @@
             编辑
           </el-button>
           <el-button size="small" link type="primary" :disabled="_rs(row).busy" @click.stop="onRun(row)">
-            {{ _rs(row).busy ? '补全中…' : '补全' }}
+            {{ _rs(row).busy ? '补全中…' : '逐日补全' }}
+          </el-button>
+          <el-button size="small" link type="success" :disabled="_rs(row).busy" @click.stop="onRunChunk(row)" title="按 sys_config.quote_sync_chunk_days 分批拉">
+            {{ _rs(row).busy ? '补全中…' : `N天批补` }}
           </el-button>
           <el-button size="small" link type="danger" :disabled="_rs(row).busy" @click.stop="onRemove(row)">
             删除
@@ -66,7 +70,10 @@
     <el-dialog v-model="addVisible" title="新增补全任务" width="460px" :close-on-click-modal="false">
       <el-form ref="addFormRef" :model="addForm" :rules="addRules" label-width="110px">
         <el-form-item label="证券代码" prop="stock_code">
-          <el-input v-model="addForm.stock_code" placeholder="例如 159992.SZ" maxlength="16" />
+          <!-- change stock-target-cell-unify: dialog 输入改用 StockCodePicker 统一,
+               与 OrderForm / T0TaskCreateDialog / AdminStockConfig 视觉与契约一致
+               (v-model 严格语义: 未从候选选中时, blur 自动清空非法 code) -->
+          <StockCodePicker v-model="addForm.stock_code" placeholder="输入代码 / 名称 / 首字母" />
         </el-form-item>
         <el-form-item label="开始日期" prop="start_date">
           <el-date-picker
@@ -140,6 +147,8 @@ import { computed, onMounted, onBeforeUnmount, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Refresh } from '@element-plus/icons-vue'
 import DataTableView from '../components/DataTableView.vue'
+import StockCodePicker from '../components/StockCodePicker.vue'  // 证券代码选择器
+import StockTargetCell from '../components/cells/StockTargetCell.vue'  // 标的通用 cell
 import { COL } from '../utils/tableColumns'
 import { useUiStore } from '../stores/ui'
 import { quoteSyncApi } from '../api/quote_sync'
@@ -159,11 +168,13 @@ let _queue = Promise.resolve()
 let _unmounted = false
 
 const columns = [
-  { key: 'stock_code', label: '证券代码', vBind: COL.STOCK_CODE },
+  // 全站统一: 标的列改用 COL.STOCK_TARGET (270 + show-overflow-tooltip),
+  // 与 T0Trade / CacheOrders / CacheTrades / HoldingsPanel / TodayOrdersPanel 保持一致
+  { key: 'stock_code', label: '标的', vBind: COL.STOCK_TARGET },
   { key: 'time_range', label: '时间区间', width: 210, sortable: false },
   { key: 'last_loaded_date', label: '当前已加载到的日期', width: 170, sortable: false },
   { key: 'auto_sync', label: '自动同步', width: 90, align: 'center', headerAlign: 'center', sortable: false },
-  { key: 'status', label: '状态', minWidth: 180, sortable: false },
+  { key: 'status', label: '状态', vBind: COL.STATUS },
   { key: 'action', label: '操作', width: 150, fixed: 'right', align: 'center', sortable: false },
 ]
 
@@ -240,8 +251,64 @@ async function runBackfill(stockCode) {
   }
 }
 
+// change 2026-09-04 quote-sync-chunk-days: 按 sysconfig 配置的 quote_sync_chunk_days
+// 一次查 N 天写库. 比逐日快很多 (broker 单次往返拉 N 天). 失败天跳过 (failed_day 标记),
+// 成功后 next_day 继续推进.
+async function runBackfillChunk(stockCode) {
+  if (_unmounted) return
+  const cfg = rows.value.find((r) => r.stock_code === stockCode)
+  if (!cfg) return
+  const rs = _rs(cfg)
+  const cap = cfg.end_date ? (cfg.end_date < _yesterday() ? cfg.end_date : _yesterday()) : _yesterday()
+  let day = _nextDay(cfg.last_loaded_date || cfg.start_date)
+  if (day > cap) {
+    // 已追平
+    rs.done = true
+    return
+  }
+  rs.busy = true
+  rs.fail = ''
+  rs.done = false
+  try {
+    // 一次拉到 cap (后端按 sysconfig quote_sync_chunk_days 分批内部串行拉)
+    const r = await quoteSyncApi.syncChunk(stockCode, day, cap, 0)
+    if (_unmounted) return
+    if (r && Number(r.code) === 0) {
+      cfg.last_loaded_date = r.last_loaded_date || cap
+      cfg.status = r.failed_day ? 'failed' : 'success'
+      cfg.error_msg = r.failed_day ? `部分失败: ${r.failed_day}` : ''
+      // 如果有 failed_day, 用户可再触发补全 (next_day 会跳过已同步的天)
+      rs.fail = cfg.error_msg
+    } else {
+      rs.fail = (r && r.msg) || '区间同步失败'
+      cfg.status = 'failed'
+      cfg.error_msg = rs.fail
+    }
+    if (!_unmounted) rs.done = true
+  } catch (e) {
+    rs.fail = e?.msg || e?.message || '同步失败'
+    cfg.status = 'failed'
+    cfg.error_msg = rs.fail
+  } finally {
+    rs.busy = false
+    rs.day = ''
+    loadRows().catch(() => {})
+  }
+}
+
 function onRun(row) {
   enqueueRun(row)
+}
+
+// 按 N 天/批补全 (change 2026-09-04): 走 /sync_chunk 接口, 后端按 sysconfig 切批
+function onRunChunk(row) {
+  enqueueRunChunk(row)
+}
+
+// ==================== N 天/批补全队列 (与逐日并行的独立队列) ====================
+let _chunkQueue = Promise.resolve()
+function enqueueRunChunk(row) {
+  _chunkQueue = _chunkQueue.then(() => runBackfillChunk(row.stock_code)).catch(() => {})
 }
 
 // ==================== 编辑时间区间 ====================
@@ -316,9 +383,18 @@ const addFormRef = ref(null)
 const addForm = reactive({ stock_code: '', start_date: '', end_date: '', auto_sync: true })
 
 const addRules = {
+  // change stock-target-cell-unify: StockCodePicker blur 时若未从候选选中会自动 emit(''),
+  // 原 pattern 规则对空字符串报警会一直显示错 → 改为 validator 验证, 非空才验 pattern
   stock_code: [
-    { required: true, message: '请输入证券代码', trigger: 'blur' },
-    { pattern: /^\d{6}\.(SH|SZ|BJ)$/, message: '格式 6位数字+.SH/.SZ/.BJ (例 159992.SZ)', trigger: 'blur' },
+    { required: true, message: '请从候选中选一只股票', trigger: 'change' },
+    {
+      validator: (rule, value, cb) => {
+        if (!value) return cb()  // 空 (或为 picker blur 未选) → 不验 pattern
+        if (/^\d{6}\.(SH|SZ|BJ)$/.test(value)) return cb()
+        cb(new Error('格式 6位数字+.SH/.SZ/.BJ (例 159992.SZ)'))
+      },
+      trigger: 'change',
+    },
   ],
   start_date: [{ required: true, message: '请选择开始日期', trigger: 'change' }],
 }
@@ -378,5 +454,4 @@ onBeforeUnmount(() => { _unmounted = true })
 .hint { color: #909399; font-size: 12px; }
 .table-wrap { flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; }
 .text-mono { font-family: var(--font-mono, 'Consolas', monospace); }
-.tp-stock-code { font-family: var(--font-mono); font-weight: 600; }
 </style>

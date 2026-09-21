@@ -72,10 +72,10 @@
               :empty-description="'暂无明细'"
             >
               <template #column-stock_code="{ row }">
-                <span class="detail-line">
-                  <span class="detail-code">{{ row.stock_code }}</span>
-                  <span class="detail-name" v-t0-badge="row.stock_code">{{ getStockName(row.stock_code) }}</span>
-                </span>
+                <!-- change stock-target-cell-unify: 抽 cells/StockTargetCell 全站统一
+                     StkPool detail 原本用自定义 .detail-line/.detail-code/.detail-name 三层结构,
+                     统一到 StockTargetCell, 单 span 内 (code + 名称 + T0 徽章), 与持仓/委托表格视觉一致 -->
+                <StockTargetCell :stock-code="row.stock_code" />
               </template>
               <template #column-action="{ row }">
                 <el-button size="small" type="danger" @click="onRemoveDetail(row.stock_code)">
@@ -213,6 +213,7 @@ import { stkpoolApi } from '../api/stkpool'
 import { useStocksStore } from '../stores/stocks'
 import { COL } from '../utils/tableColumns'
 import DataTableView from '../components/DataTableView.vue'
+import StockTargetCell from '../components/cells/StockTargetCell.vue'  // 标的通用 cell
 
 // ---- 列定义 (统一 DataTableView 模板) ----
 // 左栏池列表
@@ -300,9 +301,6 @@ const selectedPool = computed(() => pools.value.find(p => p.id === selectedPoolI
 
 // ---- store ----
 const stocksStore = useStocksStore()
-function getStockName(code) {
-  return stocksStore.stockName(code) || code
-}
 
 // 是否支持 T+0 (从 stocksStore.cache 读 is_t0_able) — 保留供批量弹窗用
 function isT0Able(code) {
@@ -700,22 +698,6 @@ async function onRemoveDetail(stockCode) {
   flex: 1;
   overflow: auto;
   padding: 0 16px 16px;
-}
-
-.detail-line {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.detail-code {
-  font-family: 'SF Mono', Consolas, Monaco, monospace;
-  font-weight: 600;
-  color: #303133;
-}
-
-.detail-name {
-  color: #606266;
 }
 
 @media (max-width: 900px) {

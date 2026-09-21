@@ -96,8 +96,8 @@
         <el-table :data="topPositions" :show-header="true" size="default">
           <el-table-column prop="stock_code" label="标的" show-overflow-tooltip v-bind="COL.STOCK_TARGET">
             <template #default="{ row }">
-              <span class="text-mono tp-stock-code">{{ row.stock_code }}</span>
-              <span class="text-secondary" style="margin-left: 6px" v-t0-badge="row.stock_code">{{ stockName(row.stock_code) || '—' }}</span>
+              <!-- change stock-target-cell-unify: 抽 cells/StockTargetCell 全站统一 -->
+              <StockTargetCell :stock-code="row.stock_code" />
             </template>
           </el-table-column>
           <el-table-column prop="vol" label="持仓量" align="right" width="100">
@@ -160,6 +160,7 @@ import { ArrowRight } from '@element-plus/icons-vue'
 import StatCard from '../components/StatCard.vue'
 import EChart from '../components/EChart.vue'
 import OrderStatusBadge from '../components/OrderStatusBadge.vue'
+import StockTargetCell from '../components/cells/StockTargetCell.vue'  // 标的通用 cell
 import { useAssetStore } from '../stores/asset'
 import { useOrderStore } from '../stores/order'
 import { usePositionStore } from '../stores/position'
@@ -168,7 +169,6 @@ import { useHoldingsStore } from '../stores/holdings'
 import { useUiStore } from '../stores/ui'
 import { formatMoney, formatNumber, STATUS_LABEL } from '../utils/format'
 import { formatPrice } from '../composables/usePricePrecision'
-import { stockName } from '../utils/stockNames'
 import { COL } from '../utils/tableColumns'
 
 const assetStore = useAssetStore()

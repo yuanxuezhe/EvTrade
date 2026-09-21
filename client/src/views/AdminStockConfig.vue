@@ -73,7 +73,9 @@
         :no-pagination="true"
       >
         <template #column-stock_code="{ row }">
-          <span class="text-mono tp-stock-code">{{ row.stock_code }}</span>
+          <!-- change stock-target-cell-unify: 抽 cells/StockTargetCell 全站统一
+               AdminStockConfig 行本身就是 stocks 表全量, name 来自 row.stock_name, show_name=false 保留纯代码 -->
+          <StockTargetCell :stock-code="row.stock_code" :show-name="false" />
         </template>
 
         <template #column-stock_name="{ row }">
@@ -205,6 +207,7 @@ import { Search, Refresh } from '@element-plus/icons-vue'
 import { useStocksStore } from '../stores/stocks'
 import { stocksApi } from '../api'
 import DataTableView from '../components/DataTableView.vue'
+import StockTargetCell from '../components/cells/StockTargetCell.vue'  // 标的通用 cell
 import { COL } from '../utils/tableColumns'
 import { useUiStore } from '../stores/ui'
 const uiStore = useUiStore()
@@ -424,5 +427,4 @@ onMounted(async () => {
 .table-wrap { flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; }
 .pagination-bar { display: flex; justify-content: flex-end; padding: var(--space-3) var(--space-4) var(--space-3); border-top: 1px solid var(--border-light, #ebeef5); flex-shrink: 0; }
 .text-mono { font-family: var(--font-mono, 'JetBrains Mono', 'Consolas', monospace); }
-.tp-stock-code { font-family: var(--font-mono); font-weight: 600; }
 </style>

@@ -2809,3 +2809,52 @@ The system SHALL 让 `client/src/components/trade/HoldingsPanel.vue` 的 4 个�
   - 有 sortFn 时优先用 sortFn 返回值
   - 缺 sortFn 时用 row[prop]
   - null 兜底：升序 `[5, null]` → `[5, null]`; 降序 `[5, null]` → `[null, 5]`（继承原行为）
+
+---
+
+## REQ-FE-547: 标的组件全站统一 — StockTargetCell（2026-09-21）
+
+The system SHALL 让前端所有"代码 + 名称 + T0 徽章"合并单元格走 `cells/StockTargetCell.vue` 统一组件，禁止再手写 `<span class="text-mono tp-stock-code">…</span> + <span v-t0-badge>…</span>` 双 span 模板。
+
+### Scenario: cells/StockTargetCell 组件契约
+
+- `stockCode` (String) 必填 — 要查的证券代码
+- `showName` (Boolean, default true) — `false` 时只显示代码（适用于 AdminStockConfig 表）
+- `size` (String, default 'default') — `'small'` 时缩到 12px 字体
+- 数据源：`useStocksStore.stockName(code)`（O(1) Map.get，已 cacheLoaded 自动响应）
+- T0 徽章：复用全局指令 `v-t0-badge`（directives/t0Badge.js），cache 未 loaded 不渲染但 watcher 兜底
+- ESM 导出契约：仅 module 顶层导出 setup 函数，无任何 closure 内的 named export，杜绝 v82.5 ESM 命名导出口子导致 SPA 整页崩溃
+
+### Scenario: CSS 归属
+
+- 全局样式 `.tp-stock-code` 定义在 `client/src/styles/trade-panel.css:63`
+- 禁止在 scoped 块重新定义 `.tp-stock-code { font-family / font-weight }`（冗余）
+
+### Scenario: 用法示例
+
+```vue
+<!-- 标准：代码 + 名称 + T0 徽章 -->
+<StockTargetCell :stock-code="row.stock_code" />
+
+<!-- 仅显示代码 (AdminStockConfig) -->
+<StockTargetCell :stock-code="row.stock_code" :show-name="false" />
+
+<!-- 密集表格 small -->
+<StockTargetCell :stock-code="row.stock_code" size="small" />
+```
+
+### Scenario: 已接入清单（2026-09-21 基线）
+
+HoldingsPanel / TodayOrdersPanel (×2) / T0Trade (×2) / CachePositions / CacheOrders / CacheTrades / Dashboard / PositionTable / StkPool (detail) / AdminStockConfig (`:show-name="false"`) / HistoryQuoteCompletion
+
+### Scenario: HistoryQuoteCompletion 配套要求
+
+- dialog 输入证券代码必须用 `<StockCodePicker>`（不用裸 `<el-input>`）
+- 表单规则 stock_code 用 `validator` 而非 `pattern`，picker 未选中 emit('') 时不应误报格式错
+- 与 OrderForm / T0TaskCreateDialog / AdminStockConfig 视觉与契约一致
+
+### Scenario: 双向 import 校验（REQ-FE-547 守护）
+
+- 任何使用 `<StockTargetCell>` / `<StockCodePicker>` 的 vue 文件 MUST 同步 import 该组件
+- 缺 import MUST 触发 vite 编译错（"Component is missing template" / "_ctx.StockTargetCell is not a function" 之一）
+- patch 后必跑：双向 grep 校验（`front-end-precision-and-unit-rounding` skill §10c 模板）
