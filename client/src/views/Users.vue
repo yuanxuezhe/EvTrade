@@ -74,9 +74,26 @@
           <span v-else class="text-placeholder">--</span>
         </template>
         <template #column-role="{ row }">
-          <span class="role-chip" :class="`role-${row.role}`">
-            {{ ROLE_LABEL[row.role] || row.role }}
-          </span>
+          <!-- rbac-roles-module: 优先用 row.roles (RBAC 多角色); fallback 到 row.role 字符串 -->
+          <div class="role-chips">
+            <el-tag
+              v-for="r in (row.roles || [])"
+              :key="r.id"
+              size="small"
+              :type="r.is_builtin ? 'warning' : 'info'"
+              effect="light"
+              class="role-chip"
+            >
+              {{ r.display_name }}
+            </el-tag>
+            <span
+              v-if="!(row.roles && row.roles.length)"
+              class="role-chip role-chip-empty"
+              :title="`未绑定 RBAC 角色 (legacy role='${row.role}')`"
+            >
+              {{ ROLE_LABEL[row.role] || row.role || '未分配' }}
+            </span>
+          </div>
         </template>
         <template #column-is_active="{ row }">
           <el-tag :type="row.is_active ? 'success' : 'danger'" size="small" effect="light">
@@ -156,9 +173,23 @@ const loading = ref(false)
 
 const filters = reactive({ keyword: '', role: '' })
 
+// rbac-roles-module: 头部 role 计数 (admin/trader/viewer) 优先按 RBAC role.name 派生
+// 用户拥有任一 admin 类角色 (super_admin/admin) → 计入 admin; 类比 trader/viewer
 const countByRole = computed(() => {
   const map = { admin: 0, trader: 0, viewer: 0 }
-  for (const u of users.value) if (map[u.role] !== undefined) map[u.role]++
+  for (const u of users.value) {
+    let bucket = null
+    if (Array.isArray(u.roles) && u.roles.length) {
+      // 任一 admin 类角色优先
+      if (u.roles.some(r => r.name === 'super_admin' || r.name === 'admin')) bucket = 'admin'
+      else if (u.roles.some(r => r.name === 'trader')) bucket = 'trader'
+      else bucket = 'viewer'  // 含 viewer 或纯自定义 role 都入 viewer 桶
+    } else {
+      // fallback 到 users.role 字符串 (兼容老 user 无 roles 字段)
+      bucket = map[u.role] !== undefined ? u.role : 'viewer'
+    }
+    if (map[bucket] !== undefined) map[bucket]++
+  }
   return map
 })
 

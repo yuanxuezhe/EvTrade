@@ -8,6 +8,7 @@
 import { reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { userApi } from '../api'
+import { rolesApi } from '../api/roles'
 
 
 export function useUserActions() {
@@ -24,7 +25,9 @@ export function useUserActions() {
     id: null,
     username: '',
     password: '',
+    // rbac-roles-module: 单 role 字符串保留 (向后兼容); 多角色用 role_names (整体覆盖)
     role: 'trader',
+    role_names: [],  // 选中 RBAC 角色 name 列表 (空数组 = 无)
     email: '',
     full_name: '',
     is_active: true,
@@ -59,6 +62,7 @@ export function useUserActions() {
       username: '',
       password: '',
       role: 'trader',
+      role_names: [],  // rbac-roles-module: 新建默认无 RBAC 角色 (等后端 seed 走完后 admin 再分配)
       email: '',
       full_name: '',
       is_active: true,
@@ -66,12 +70,14 @@ export function useUserActions() {
     editVisible.value = true
   }
 
-  function openEdit(row) {
+  async function openEdit(row) {
     Object.assign(editForm, {
       id: row.id,
       username: row.username,
       password: '',
       role: row.role,
+      // rbac-roles-module: 从 row.roles 同步 RBAC 多角色 (admin 用户)
+      role_names: Array.isArray(row.roles) ? row.roles.map(r => r.name) : [],
       email: row.email || '',
       full_name: row.full_name || '',
       is_active: row.is_active,
@@ -94,14 +100,17 @@ export function useUserActions() {
     editLoading.value = true
     try {
       if (editForm.id) {
+        // rbac-roles-module: 优先用 role_names (多角色) 覆盖; 老 role 字段保留
+        // 后端 PATCH /users/{id} 支持 role_names (整体覆盖) + role (单字段, deprecated)
         await userApi.update(editForm.id, {
-          role: editForm.role,
+          role_names: editForm.role_names,
           email: editForm.email,
           full_name: editForm.full_name,
           is_active: editForm.is_active,
         })
         ElMessage.success('已保存')
       } else {
+        // 新建: 后端 POST /users 仅支持 role 字符串 (rbac-roles-module 待 P6+ 改造)
         await userApi.create({
           username: editForm.username.trim(),
           password: editForm.password,

@@ -41,11 +41,13 @@ const allItems = [
   { path: '/trade', label: '交易', icon: TrendCharts },
   { path: '/t0-trade', label: '做T', icon: Coin },
   { path: '/orders', label: '历史', icon: List },
-  { path: '/system-config', label: '管理', icon: Setting, adminOnly: true },
+  // rbac-roles-module: adminOnly → pageKey + hasPageKey filter (RBAC 角色集合并集判定)
+  { path: '/system-config', label: '管理', icon: Setting, pageKey: 'system-config' },
 ]
 
 const visibleItems = computed(() =>
-  allItems.filter((item) => !item.adminOnly || authStore.isAdmin)
+  // rbac-roles-module: 走 hasPageKey (含老 admin 字符串 fallback, 见 stores/auth.js)
+  allItems.filter((item) => !item.pageKey || authStore.hasPageKey(item.pageKey))
 )
 
 function isActive(path) {

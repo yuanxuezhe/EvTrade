@@ -48,10 +48,33 @@ export const useAuthStore = defineStore('auth', () => {
     if (set.has('*')) return new Set(['*'])
     return set
   })
-  /** 单 page_key 判定; '*' 通配返回 true */
+  /**
+   * 单 page_key 判定; '*' 通配返回 true
+   * 向后兼容: 当 user.roles 不存在 (旧 store / fetchMe 未回) 时, fallback 到 isAdmin/isTrader:
+   *   - isAdmin=true → 全 page_key 通过 (兼容老 admin 字符串用户)
+   *   - isTrader=true → 仅 trader 类 page_key 通过 (dashboard/asset/trade/...)
+   *   - 其它 → 不通过 (viewer 默认)
+   */
   function hasPageKey(key) {
     const ks = pageKeys.value
-    return ks.has('*') || ks.has(key)
+    if (ks.size > 0) {
+      // RBAC 路径生效
+      if (ks.has('*')) return true
+      return ks.has(key)
+    }
+    // 向后兼容 fallback: 老 store / user 无 roles 字段
+    if (isAdmin.value) return true  // 老 admin 用户全通
+    if (isTrader.value) {
+      const TRADER_KEYS = ['dashboard', 'asset', 'trade', 't0-trade', 'strategy-order',
+        'script-dev', 'script-task', 'stkpool', 'stkpool-view',
+        'cache-asset', 'cache-positions', 'cache-orders', 'cache-trades', 'profile']
+      return TRADER_KEYS.includes(key)
+    }
+    if (isViewer.value) {
+      const VIEWER_KEYS = ['dashboard', 'asset', 'cache-orders', 'cache-trades', 'cache-positions', 'profile']
+      return VIEWER_KEYS.includes(key)
+    }
+    return false
   }
 
   /**
