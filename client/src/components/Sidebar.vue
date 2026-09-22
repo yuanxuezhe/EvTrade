@@ -66,7 +66,7 @@ import {
   Odometer, Wallet, Money, DataAnalysis, Tickets,
   Fold, Expand, TrendCharts, UserFilled, Files,
   Coin, Cpu, Setting, Operation, Box, Document, Refresh, DataBoard,
-  EditPen, DataLine, Collection, Star,
+  EditPen, DataLine, Collection, Star, Avatar,
 } from '@element-plus/icons-vue'
 import { useAuthStore } from '../stores/auth'
 
@@ -77,42 +77,33 @@ const authStore = useAuthStore()
 // 无 pendingCount badge (change trade-page-redesign-v2)
 //   badge 读本地 status 码 ('pending'/'partial' 不在 broker 字典, 有 bug)
 //   替代: AppHeader 已有总持仓 badge; ws push 实时反映 status 变化
+//
+// rbac-roles-module (2026-09-22): 菜单重构 — 用 PAGE_NAV_TREE 单一事实源
+//   - 与 Roles.vue 的"页面权限"树状结构 100% 对齐
+//   - filter 走 hasPageKey (RBAC role 集合并集判定; 老 admin 字符串 fallback 在 auth.js)
+//   - 6 个业务域: 工作台 / 交易 / 策略开发与运行 / 基础信息 / 交易查询 / 系统管理
+import { PAGE_NAV_TREE } from '../utils/pageNavTree'
+
 const menuItems = computed(() => {
-  const base = [
-    { path: '/', label: '仪表盘', icon: Odometer },
-    // stkpool-view-feature: 仪表盘和交易下单之间插入的只读证券池视图 (自选用)
-    { path: '/stkpool-view', label: '自选池', icon: Star },
-    { path: '/trade', label: '交易下单', icon: TrendCharts },
-    { divider: true, label: '策略交易' },
-    // Sidebar 入口: 真正指向 /t0-trade (T0Trade.vue)
-// 路由 /to-management 改 redirect 到 /t0-trade (兼容旧书签)
-    { path: '/t0-trade', label: '快速做T', icon: Coin },
-    // script-strategy change: 2 个新入口 (前端写脚本 + 跑任务)
-    { path: '/script-dev', label: '策略开发', icon: EditPen },
-    { path: '/script-task', label: '策略运行', icon: DataLine },
-    // 策略下单母单 (实盘下单入口)
-    { path: '/strategy-order', label: '策略下单', icon: DataAnalysis },
-    // change stock-info-crawler: 基础信息分类 (admin-trader 共享入口)
-    { divider: true, label: '基础信息' },
-    { path: '/admin/stock-config', label: '证券信息', icon: DataBoard },
-    // add-stkpool-module: 证券池 (与"证券信息"同级别顶级项, 紧跟其后, auth 通用鉴权)
-    { path: '/stkpool', label: '证券池', icon: Collection }
-  ]
-  if (authStore.isAdmin) {
-    base.push({ divider: true, label: '系统管理' })
-    base.push({ path: '/system-init', label: '系统初始化', icon: Setting })
-    base.push({ path: '/system-config', label: '系统配置', icon: Operation })
-    base.push({ path: '/users', label: '用户管理', icon: UserFilled })
-    base.push({ divider: true, label: '交易查询' })
-    base.push({ path: '/admin/cache/asset', label: '资金查询', icon: Wallet })
-    base.push({ path: '/admin/cache/positions', label: '持仓查询', icon: Box })
-    base.push({ path: '/admin/cache/orders', label: '委托查询', icon: Tickets })
-    base.push({ path: '/admin/cache/trades', label: '成交查询', icon: Document })
-    // his-quote-backfill: 数据补全
-    base.push({ divider: true, label: '数据补全' })
-    base.push({ path: '/data-completion/history-quote', label: '历史行情补全', icon: Refresh })
+  // PAGE_NAV_TREE 6 个 group; 每 group 渲染成 "divider + 子页"
+  const out = []
+  for (const group of PAGE_NAV_TREE) {
+    const visiblePages = (group.children || []).filter(
+      (p) => authStore.hasPageKey(p.pageKey)
+    )
+    // 空 group 不渲染 divider (避免空洞)
+    if (!visiblePages.length) continue
+    out.push({ divider: true, label: group.label })
+    for (const p of visiblePages) {
+      out.push({
+        path: p.path,
+        label: p.label,
+        icon: p.icon,
+        pageKey: p.pageKey,
+      })
+    }
   }
-  return base
+  return out
 })
 
 function isActive(path) {
