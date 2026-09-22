@@ -21,6 +21,13 @@ from server.tables.users import Users
 from server.tables import aggregate
 from server.auth.security import hash_password
 from server.auth.deps import require_admin
+from server.infra.db import db_session
+from server.services.rbac import (
+    set_user_roles,
+    get_user_full_roles,
+    derive_users_role_from_names,
+)
+from sqlalchemy import text
 
 router = APIRouter()
 
@@ -58,6 +65,17 @@ class UserResponse(BaseModel):
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
     last_login_at: Optional[str] = None
+    # rbac-roles-module: 用户绑定的角色 (含 page_keys) 给前端 RBAC 守卫用
+    roles: list = []  # [{id,name,display_name,is_builtin,page_keys}]
+
+
+class UserUpdateRequest(BaseModel):
+    role: Optional[str] = None
+    email: Optional[str] = None
+    full_name: Optional[str] = None
+    is_active: Optional[bool] = None
+    # rbac-roles-module: 整体覆盖用户绑定的角色 (任一非空则触发, 与 role 字段互斥优先)
+    role_names: Optional[List[str]] = None
 
 
 def _validate_username(name: str):
@@ -109,12 +127,19 @@ def list_users(
 
 
 def _format_row_dict(row) -> dict:
-    """Row.to_dict() 返回原始 datetime, UserResponse 期望 str — 复用 utils.time.format_db_dt."""
+    """Row.to_dict() 返回原始 datetime, UserResponse 期望 str — 复用 utils.time.format_db_dt.
+    rbac-roles-module: 加 roles 字段 (用户绑定的 RBAC 角色 + page_keys)."""
     from server.utils.time import format_db_dt
     d = row.to_dict()
     for f in ("created_at", "updated_at", "last_login_at"):
         if d.get(f) is not None:
             d[f] = format_db_dt(d[f])
+    # rbac-roles-module: 拉 RBAC 角色 (含 page_keys); 失败兜底 []
+    try:
+        with db_session() as db:
+            d["roles"] = get_user_full_roles(db, d.get("id"))
+    except Exception:
+        d["roles"] = []
     return d
 
 
@@ -166,7 +191,13 @@ def update_user(
 
     data: dict = {}
 
-    if payload.role is not None:
+    # rbac-roles-module: 整体覆盖用户绑定的角色 (优先级最高)
+    # 如 role_names 非 None (含 []) 则覆盖; users.role 字符串字段自动派生
+    if payload.role_names is not None:
+        with db_session() as rbac_db:
+            set_user_roles(rbac_db, user.id, payload.role_names)
+        data["role"] = derive_users_role_from_names(payload.role_names)
+    elif payload.role is not None:
         _validate_role(payload.role)
         # Prevent demoting the last admin
         if user.role == "admin" and payload.role != "admin":

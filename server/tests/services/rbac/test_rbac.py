@@ -235,3 +235,73 @@ def test_get_user_full_roles(db):
 def test_get_user_full_roles_empty(db):
     uid = _create_t_user(db, "t_rbac_full_empty")
     assert get_user_full_roles(db, uid) == []
+
+# ── P5 新增: set_user_roles + derive_users_role_from_names ───────────────
+
+def test_set_user_roles_overwrites(db):
+    """整体覆盖: 删除旧 binding, 加新 binding"""
+    uid = _create_t_user(db, "t_rbac_overwrite")
+    rid1 = _create_t_role(db, "t_rbac_a", "A")
+    rid2 = _create_t_role(db, "t_rbac_b", "B")
+    _grant(db, uid, rid1)
+    assert len(get_user_full_roles(db, uid)) == 1
+
+    from server.services.rbac import set_user_roles
+    set_user_roles(db, uid, ["t_rbac_b"])
+    full = get_user_full_roles(db, uid)
+    assert len(full) == 1
+    assert full[0]["name"] == "t_rbac_b"
+
+
+def test_set_user_roles_empty_clears(db):
+    """传空 list → 全部解绑"""
+    uid = _create_t_user(db, "t_rbac_clear")
+    rid1 = _create_t_role(db, "t_rbac_c", "C")
+    _grant(db, uid, rid1)
+    assert len(get_user_full_roles(db, uid)) == 1
+
+    from server.services.rbac import set_user_roles
+    set_user_roles(db, uid, [])
+    assert get_user_full_roles(db, uid) == []
+
+
+def test_set_user_roles_unknown_404(db):
+    """role_name 不存在 → 404"""
+    uid = _create_t_user(db, "t_rbac_unknown")
+    from fastapi import HTTPException
+    from server.services.rbac import set_user_roles
+    try:
+        set_user_roles(db, uid, ["t_rbac_does_not_exist"])
+        assert False, "should 404"
+    except HTTPException as e:
+        assert e.status_code == 404
+
+
+def test_derive_users_role_super_admin(db):
+    from server.services.rbac import derive_users_role_from_names
+    assert derive_users_role_from_names(["super_admin"]) == "admin"
+    assert derive_users_role_from_names(["super_admin", "viewer"]) == "admin"
+
+
+def test_derive_users_role_admin(db):
+    from server.services.rbac import derive_users_role_from_names
+    assert derive_users_role_from_names(["admin"]) == "admin"
+
+
+def test_derive_users_role_trader(db):
+    from server.services.rbac import derive_users_role_from_names
+    assert derive_users_role_from_names(["trader"]) == "trader"
+    assert derive_users_role_from_names(["trader", "viewer"]) == "trader"
+
+
+def test_derive_users_role_viewer(db):
+    from server.services.rbac import derive_users_role_from_names
+    assert derive_users_role_from_names(["viewer"]) == "viewer"
+    assert derive_users_role_from_names([]) == "viewer"  # 兜底
+    assert derive_users_role_from_names(["nonexistent"]) == "viewer"  # 兜底
+
+
+def test_derive_users_role_priority_super_wins(db):
+    """super_admin 与 viewer 同存 → super_admin 胜出 (派生 'admin')"""
+    from server.services.rbac import derive_users_role_from_names
+    assert derive_users_role_from_names(["viewer", "super_admin", "trader"]) == "admin"
