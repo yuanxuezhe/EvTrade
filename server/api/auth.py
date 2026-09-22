@@ -18,15 +18,17 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.concurrency import run_in_threadpool
 from fastapi.security import OAuth2PasswordRequestForm
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from server.tables.users import Users
 from server.utils.time import format_db_dt
+from server.services.rbac import get_user_full_roles  # rbac-roles-module (REQ-AUTH-012)
 from server.auth.security import (
     verify_password, hash_password, create_access_token, ACCESS_TOKEN_EXPIRE_MINUTES
 )
 from server.auth import session  # REQ-AUTH-IDLE-001: 登录注册到 token cache, logout 撤销
 from server.auth.deps import get_current_user, oauth2_scheme
+from server.infra.db import db_session
 
 router = APIRouter()
 
@@ -56,7 +58,21 @@ def _row_to_user_dict(row) -> dict:
         "created_at": format_db_dt(_g("created_at")) if _g("created_at") else None,
         "updated_at": format_db_dt(_g("updated_at")) if _g("updated_at") else None,
         "last_login_at": format_db_dt(_g("last_login_at")) if _g("last_login_at") else None,
+        # rbac-roles-module (REQ-AUTH-012): user.roles 给前端 store 做 page_key 守卫
+        "roles": _fetch_roles(_g("id")),
     }
+
+
+def _fetch_roles(user_id: int | None) -> list[dict]:
+    """取用户的 roles + page_keys (无 user_id 时返 []) — RBAC 配合"""
+    if not user_id:
+        return []
+    try:
+        with db_session() as db:
+            return get_user_full_roles(db, user_id)
+    except Exception:
+        # roles 是辅助字段, 失败兜底 [] 不影响主流程
+        return []
 
 
 class TokenResponse(BaseModel):
@@ -76,6 +92,8 @@ class UserInfoResponse(BaseModel):
     must_change_password: bool = False
     created_at: Optional[str] = None
     last_login_at: Optional[str] = None
+    # rbac-roles-module (REQ-AUTH-012): 角色 + page_keys 给前端 hasPageKey 守卫
+    roles: list = Field(default_factory=list)  # [{id,name,display_name,is_builtin,page_keys}]
 
 
 class ChangePasswordRequest(BaseModel):
