@@ -2858,3 +2858,90 @@ HoldingsPanel / TodayOrdersPanel (×2) / T0Trade (×2) / CachePositions / CacheO
 - 任何使用 `<StockTargetCell>` / `<StockCodePicker>` 的 vue 文件 MUST 同步 import 该组件
 - 缺 import MUST 触发 vite 编译错（"Component is missing template" / "_ctx.StockTargetCell is not a function" 之一）
 - patch 后必跑：双向 grep 校验（`front-end-precision-and-unit-rounding` skill §10c 模板）
+
+---
+
+
+## REQ-FE-548: router page_key 守卫 (rbac-roles-module 2026-09-21)
+
+每条路由加 `meta.pageKey` 字段 (与 RBAC role.page_key 对齐), router.beforeEach 守卫优先级:
+
+1. `meta.public` → return true (含 /login + /forbidden)
+2. 未登录 → 跳 `/login?redirect=原路径`
+3. `meta.pageKey` 存在 + `user.roles` 数组非空 (`hasRbac=true`) → `hasPageKey(pageKey)` 判定, 否则跳 `/forbidden`
+4. `meta.requiresAdmin` → `isAdmin` 否则跳 `/`
+5. `meta.requiresTrader` → `isTrader` 否则跳 `/`
+
+### 死循环防护
+
+- 严禁 `return { path: '/' }` —— vue-router 4 检测 from===to=/= 报 infinite redirect
+- 替代: 跳 `/forbidden` (name: 'Forbidden', meta.public=true)
+- 老 store 无 `user.roles` 字段 → `hasRbac=false` → 宽松 fallback 到老 requiresAdmin/Trader, 防新 user 升级过渡期死锁
+
+### hasPageKey 双层判定 (stores/auth.js)
+
+- 新 user (有 `roles` 字段): RBAC 角色集合并集, 任一 role 含 `'*'` 通配 → true
+- 老 user (fallback): `isAdmin` 全通; `isTrader` 命中 TRADER_KEYS; `isViewer` 命中 VIEWER_KEYS
+
+### 路由 pageKey 映射
+
+| 路由 | pageKey |
+|---|---|
+| `/` | `dashboard` |
+| `/stkpool-view` | `stkpool-view` |
+| `/trade` | `trade` |
+| `/asset` | `asset` |
+| `/profile` | `profile` |
+| `/t0-trade` | `t0-trade` |
+| `/system-config` | `system-config` |
+| `/system-init` | `system-init` |
+| `/users` | `users` |
+| `/roles` | `roles` |
+| `/admin/cache/asset` | `cache-asset` |
+| `/admin/cache/positions` | `cache-positions` |
+| `/admin/cache/orders` | `cache-orders` |
+| `/admin/cache/trades` | `cache-trades` |
+| `/admin/stock-config` | `admin-stock-config` |
+| `/data-completion/history-quote` | `data-completion-history-quote` |
+| `/stkpool` | `stkpool` |
+
+## REQ-FE-549: 用户管理 UI 加多角色编辑 (rbac-roles-module 2026-09-21)
+
+### 列表 / 列
+
+- 角色列从单 chip 改为多 `el-tag` (r.is_builtin=1 时 warning 黄)
+- 无 RBAC role (老 user) fallback 显示 `users.role` 字符串
+
+### 编辑 dialog (UserEditDialog.vue)
+
+- 新建: 单 radio-group (admin/trader/viewer) (向后兼容 POST /users)
+- 编辑: 多 `el-checkbox-group` 拉所有 role; super_admin 对当前 admin 用户禁勾 (防锁死)
+
+### 提交
+
+- `userApi.update(id, {role_names: [...]})` —— 后端整体覆盖 user_roles + 自动派生 users.role
+
+### countByRole 派生
+
+- 优先按 `row.roles` 内 role.name 分桶 (admin 类 → 'admin', 含 trader → 'trader', 否则 viewer)
+- fallback 到 `users.role` 字符串 (兼容老 user)
+
+## REQ-FE-550: PAGE_NAV_TREE 单一事实源 + 树状结构 (rbac-roles-module 2026-09-22)
+
+`client/src/utils/pageNavTree.js` — 6 业务域树状结构 (Sidebar 与 Roles.vue 共享):
+
+| 业务域 | 子页 |
+|---|---|
+| 工作台 | 仪表盘 / 账户资金 / 个人资料 |
+| 交易 | 交易下单 / 快速做T / 策略下单 |
+| 策略开发与运行 | 策略开发 / 策略运行 |
+| 基础信息 | 证券信息 / 证券池 / 自选池 (只读) |
+| 交易查询 | 资金查询 / 持仓查询 / 委托查询 / 成交查询 |
+| 系统管理 | 角色管理 / 用户管理 / 系统配置 / 系统初始化 / 历史行情补全 |
+
+### 单一事实源规则
+
+- Sidebar 渲染菜单走 PAGE_NAV_TREE, filter 走 hasPageKey
+- Roles.vue 的"页面权限" 多选用 el-tree (data 来自 asElTreeData(PAGE_NAV_TREE))
+- 路由 meta.pageKey 必须在 PAGE_NAV_TREE 中存在 (缺失会让 Sidebar / 权限树看不到)
+- 新增路由必须: router 加 meta.pageKey + pageNavTree.js 加到对应业务域
