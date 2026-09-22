@@ -34,6 +34,26 @@ export const useAuthStore = defineStore('auth', () => {
   const isTrader = computed(() => user.value?.role === 'admin' || user.value?.role === 'trader')
   const isViewer = computed(() => user.value?.role === 'viewer')
 
+  // ── RBAC (rbac-roles-module 2026-09-21) ────────────────────────────────────
+  // user.value.roles = [{id,name,display_name,is_builtin,page_keys}, ...]
+  // 由 /api/auth/me 返回; 保留旧 isAdmin/isTrader (向后兼容 Sidebar/BottomNav)
+  const userRoles = computed(() => user.value?.roles || [])
+  const roleNames = computed(() => userRoles.value.map((r) => r.name))
+  /** 用户所有 page_keys 的并集; 任一 role 含 '*' → {'*'} */
+  const pageKeys = computed(() => {
+    const set = new Set()
+    for (const r of userRoles.value) {
+      for (const k of r.page_keys || []) set.add(k)
+    }
+    if (set.has('*')) return new Set(['*'])
+    return set
+  })
+  /** 单 page_key 判定; '*' 通配返回 true */
+  function hasPageKey(key) {
+    const ks = pageKeys.value
+    return ks.has('*') || ks.has(key)
+  }
+
   /**
    * 启动屏障 — 从 IDB 恢复 session 到内存 + localStorage
    * 必须在 main.js 中 router 安装前 await 完成, 避免首轮守卫读不到 token 误跳 /login
@@ -131,6 +151,11 @@ export const useAuthStore = defineStore('auth', () => {
     isAdmin,
     isTrader,
     isViewer,
+    // RBAC
+    userRoles,
+    roleNames,
+    pageKeys,
+    hasPageKey,
     hydrate,
     login,
     logout,
