@@ -104,7 +104,7 @@
 
 <script setup>
 import { ref, onMounted, reactive, onUnmounted } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus/es'  // REQ-FE-553: 子路径避免整包 prebundle
 import { Setting } from '@element-plus/icons-vue'
 import { sysStatusApi, reconcileApi } from '../api/admin'
 // handleInit 成功后同步刷新 holdings/asset/position

@@ -99,7 +99,7 @@
 
 <script setup>
 import { ref, reactive, computed, onMounted } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus/es'  // REQ-FE-553: 子路径避免整包 prebundle
 import { Refresh, Plus, Warning } from '@element-plus/icons-vue'
 import DataTableView from '../components/DataTableView.vue'
 import { COL } from '../utils/tableColumns'

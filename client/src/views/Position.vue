@@ -72,7 +72,7 @@
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
+import { ElMessage } from 'element-plus/es'  // REQ-FE-553: 子路径避免整包 prebundle
 import { Search, Refresh, Setting } from '@element-plus/icons-vue'
 import PositionTable from '../components/PositionTable.vue'
 import PositionDetail from '../components/PositionDetail.vue'

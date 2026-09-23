@@ -103,7 +103,7 @@
 
 <script setup>
 import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage } from 'element-plus/es'  // REQ-FE-553: 子路径避免整包 prebundle
 import { Refresh } from '@element-plus/icons-vue'
 
 import { stkpoolApi } from '../api/stkpool'

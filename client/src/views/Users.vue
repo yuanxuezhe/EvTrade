@@ -150,7 +150,7 @@
 
 <script setup>
 import { computed, onMounted, reactive, ref } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage } from 'element-plus/es'  // REQ-FE-553: 子路径避免整包 prebundle
 import { Search, Refresh, Plus } from '@element-plus/icons-vue'
 import { userApi } from '../api'
 import { useAuthStore } from '../stores/auth'

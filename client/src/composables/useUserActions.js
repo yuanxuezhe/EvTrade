@@ -6,7 +6,7 @@
 // formRef 由各弹窗组件内部自管（dialog 通过 watch(visible) 清校验），
 // composable 调 dialog.validate() 走 dialog 暴露的方法。
 import { reactive, ref } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus/es'  // REQ-FE-553: 子路径避免整包 prebundle
 import { userApi } from '../api'
 import { rolesApi } from '../api/roles'
 

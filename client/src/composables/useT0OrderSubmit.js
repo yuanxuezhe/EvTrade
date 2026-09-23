@@ -20,7 +20,7 @@
  * 返回: { submitOrder(params) }
  *   params: { orderType: '23'|'24', volume: number, price: number }
  */
-import { ElMessage } from 'element-plus'
+import { ElMessage } from 'element-plus/es'  // REQ-FE-553: 子路径避免整包 prebundle
 // formatPrice 用 composables/usePricePrecision 的按 stockScale(code) 精度补 0 版本.
 //   配合 stockCode 传入才能正确显示 9.000 / 10.85 等.
 import { formatPrice } from '../composables/usePricePrecision'

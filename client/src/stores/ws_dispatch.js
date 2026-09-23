@@ -23,7 +23,7 @@
  *   - 弹窗颜色: 已报=蓝色, 成交=绿色, 废单=红色, 已撤/部成部撤=黑色
  *   - 成交弹窗: 显示委托状态 + 成交进度 (traded/volume) + 成交均价
  */
-import { ElNotification } from 'element-plus'
+import { ElNotification } from 'element-plus/es'  // REQ-FE-553: 子路径避免整包 prebundle
 import { useQuoteStore } from './quote'
 import { useHoldingsStore } from './holdings'
 import { useSyncStore } from './sync'  // stock-info-crawler

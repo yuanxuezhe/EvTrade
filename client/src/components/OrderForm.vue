@@ -109,7 +109,7 @@
 
 <script setup>
 import { computed, reactive, ref, watch } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus/es'  // REQ-FE-553: 子路径避免整包 prebundle
 import { Top, Bottom } from '@element-plus/icons-vue'
 import { formatMoney, formatPriceAuto } from '../utils/format'
 import { PriceType, priceTypeOptions, OrderType } from '../constants/priceType'

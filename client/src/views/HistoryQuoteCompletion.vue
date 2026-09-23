@@ -144,7 +144,7 @@
 
 <script setup>
 import { computed, onMounted, onBeforeUnmount, reactive, ref } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus/es'  // REQ-FE-553: 子路径避免整包 prebundle
 import { Plus, Refresh } from '@element-plus/icons-vue'
 import DataTableView from '../components/DataTableView.vue'
 import StockCodePicker from '../components/StockCodePicker.vue'  // 证券代码选择器

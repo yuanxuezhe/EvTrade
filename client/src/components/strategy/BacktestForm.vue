@@ -149,7 +149,7 @@
 
 <script setup>
 import { ref, computed, watch } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage } from 'element-plus/es'  // REQ-FE-553: 子路径避免整包 prebundle
 
 const props = defineProps({
   schema: { type: Array, default: () => [] },

@@ -80,7 +80,7 @@
 
 <script setup>
 import { reactive } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus/es'  // REQ-FE-553: 子路径避免整包 prebundle
 import { scriptStrategyApi } from '../../api/script_strategy'
 import StrategyOrderStatus from './StrategyOrderStatus.vue'
 

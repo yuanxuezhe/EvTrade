@@ -124,7 +124,7 @@
 
 <script setup>
 import { computed, onMounted, reactive, ref } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage } from 'element-plus/es'  // REQ-FE-553: 子路径避免整包 prebundle
 import { Search } from '@element-plus/icons-vue'
 import DataTableView from '../components/DataTableView.vue'
 import LivePriceCell from '../components/cells/LivePriceCell.vue'  // 最新价+涨跌幅通用 cell

@@ -47,7 +47,7 @@
 
 <script setup>
 import { computed, onMounted, ref } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage } from 'element-plus/es'  // REQ-FE-553: 子路径避免整包 prebundle
 import { scriptStrategyApi } from '../../api/script_strategy'
 import { useAuthStore } from '../../stores/auth'
 

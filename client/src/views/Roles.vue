@@ -168,7 +168,7 @@
 
 <script setup>
 import { computed, onMounted, reactive, ref, watch } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus/es'  // REQ-FE-553: 子路径避免整包 prebundle
 import { Plus, Refresh, Delete } from '@element-plus/icons-vue'
 import { rolesApi } from '../api/roles'
 import { PAGE_NAV_TREE, asElTreeData } from '../utils/pageNavTree'

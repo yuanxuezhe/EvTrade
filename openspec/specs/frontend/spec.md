@@ -3003,6 +3003,41 @@ plugins: [
 - 改后 `element-plus_es.js` deps bundle **88 KB / 5ms** (按 30+ 用到组件 + 图标实际加载)
 - **13.6×** 关键资源缩量
 
+## REQ-FE-553: 业务文件必须用 element-plus 子路径 (2026-09-23 bundle-shrink-round-3)
+
+`REQ-FE-551` + `REQ-FE-552` 已清掉 main.js + layout 4 文件 + Login 的整包, 但项目里
+**还有 27 个 view/composable/store 文件**仍写 `from 'element-plus'` 整包. vite dev 首次访问任一
+都会触发 deps prebundle 生成 88 KB `element-plus.js` bundle, 污染 lazy chunk.
+
+本阶段统一改 `'element-plus/es'` 子路径:
+
+- 7 个 components/: CacheTableView / ChangePasswordDialog / OrderForm / strategy/BacktestForm /
+  strategy-order/StrategyOrderCreatePanel / strategy-order/StrategyOrderList / trade/TodayOrdersPanel
+- 2 个 composables/: useT0OrderSubmit / useUserActions
+- 2 个 stores/: order (ElMessageBox) / ws_dispatch (ElNotification)
+- 16 个 views/: SystemConfig / ScriptTask / Profile / AdminStockConfig / StrategyOrder /
+  StkPoolView / T0Trade / HistoryQuoteCompletion / CachePositions / ScriptDev / Roles /
+  Position / SystemInit / Users / Trade / StkPool
+
+### 关键约束
+
+- **业务文件 100% 走 `'element-plus/es'` 子路径**, 禁止 `from 'element-plus'` 整包
+- API 范围: ElMessage / ElMessageBox / ElNotification (3 个, 都在 `element-plus/es` 命名导出里)
+- 改完子路径后, unplugin 不再插 disabled marker, 模板 el-* 重新按需自动注入
+
+### 验证 (grep 实测)
+
+```bash
+grep -rE "from 'element-plus'(?!.*es)" client/src/   # → 0 命中
+```
+
+| 资源 | 改前 | 改后 |
+|---|---|---|
+| `from 'element-plus'` 整包文件 | 30 | **0** |
+| vite dev 第一次访问新 view 触发 prebundle | 每次 | **无** |
+| unplugin disabled marker | 30 文件 | **0 文件** |
+| npm run build | 通过 | **20.50s 通过** |
+
 ## REQ-FE-552: 主图再瘦身 — layout 拆 lazy + 整包改子路径 (2026-09-23 bundle-shrink-round-2)
 
 `client/src/App.vue` 将 4 个 layout 组件 (Sidebar / AppHeader / OperationLog / BottomNav)

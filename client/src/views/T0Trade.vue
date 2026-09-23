@@ -319,7 +319,7 @@
 <script setup>
 import { ref, computed, watch, onMounted, nextTick } from 'vue'
 import { List, Document, Plus, InfoFilled } from '@element-plus/icons-vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus/es'  // REQ-FE-553: 子路径避免整包 prebundle
 import { storeToRefs } from 'pinia'
 import { useHoldingsStore } from '../stores/holdings'
 import { useQuoteStore } from '../stores/quote'

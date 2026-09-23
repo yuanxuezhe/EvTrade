@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
-import { ElMessageBox } from 'element-plus'
+import { ElMessageBox } from 'element-plus/es'  // REQ-FE-553: 子路径避免整包 prebundle
 import { api } from '../api'
 import { sysconfigApi } from '../api/sysconfig'
 import { useHoldingsStore } from './holdings'

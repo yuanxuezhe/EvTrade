@@ -52,7 +52,7 @@ import TodayOrdersPanel from '../components/trade/TodayOrdersPanel.vue'
 import HoldingsPanel from '../components/trade/HoldingsPanel.vue'
 import { useOrderStore } from '../stores/order'
 import { useUiStore } from '../stores/ui'
-import { ElMessage } from 'element-plus'
+import { ElMessage } from 'element-plus/es'  // REQ-FE-553: 子路径避免整包 prebundle
 
 const orderStore = useOrderStore()
 const uiStore = useUiStore()

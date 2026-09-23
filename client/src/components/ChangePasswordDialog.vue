@@ -41,7 +41,7 @@
 
 <script setup>
 import { reactive, ref, watch } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage } from 'element-plus/es'  // REQ-FE-553: 子路径避免整包 prebundle
 import { useAuthStore } from '../stores/auth'
 
 const props = defineProps({

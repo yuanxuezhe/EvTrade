@@ -106,7 +106,7 @@
 
 <script setup>
 import { computed, onMounted, reactive, ref, watch } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage } from 'element-plus/es'  // REQ-FE-553: 子路径避免整包 prebundle
 import { Lock, Check, View, TrendCharts, UserFilled } from '@element-plus/icons-vue'
 import { useAuthStore } from '../stores/auth'
 import ChangePasswordDialog from '../components/ChangePasswordDialog.vue'

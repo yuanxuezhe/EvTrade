@@ -228,7 +228,7 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus/es'  // REQ-FE-553: 子路径避免整包 prebundle
 import { Plus, Refresh, Delete, Document, DocumentChecked, VideoPlay, FullScreen, Aim } from '@element-plus/icons-vue'
 import { scriptStrategyApi } from '../api/script_strategy'
 import { useAuthStore } from '../stores/auth'

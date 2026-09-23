@@ -217,7 +217,7 @@
 
 <script setup>
 import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus/es'  // REQ-FE-553: 子路径避免整包 prebundle
 import { Plus, Refresh } from '@element-plus/icons-vue'
 import { scriptStrategyApi } from '../api/script_strategy'
 import { useWsStore } from '../stores/ws'

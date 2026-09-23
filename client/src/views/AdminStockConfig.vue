@@ -202,7 +202,7 @@
 
 <script setup>
 import { computed, onMounted, reactive, ref, watch } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage } from 'element-plus/es'  // REQ-FE-553: 子路径避免整包 prebundle
 import { Search, Refresh } from '@element-plus/icons-vue'
 import { useStocksStore } from '../stores/stocks'
 import { stocksApi } from '../api'

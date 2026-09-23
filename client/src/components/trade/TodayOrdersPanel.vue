@@ -140,7 +140,7 @@
 
 <script setup>
 import { computed, nextTick, ref, watch } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus/es'  // REQ-FE-553: 子路径避免整包 prebundle
 import DataTableView from '../DataTableView.vue'
 import StockTargetCell from '../cells/StockTargetCell.vue'  // 标的通用 cell
 import { formatMoney, formatNumber, priceTypeLabel } from '../../utils/format'
