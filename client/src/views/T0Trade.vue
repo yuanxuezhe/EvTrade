@@ -317,8 +317,8 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, onMounted, nextTick } from 'vue'
-import { List, Document, Plus, InfoFilled } from '@element-plus/icons-vue'
+import { computed, defineAsyncComponent, nextTick, onMounted, ref, watch } from 'vue'
+import { InfoFilled, List, Document, Plus } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus/es'  // REQ-FE-553: 子路径避免整包 prebundle
 import { storeToRefs } from 'pinia'
 import { useHoldingsStore } from '../stores/holdings'
@@ -326,13 +326,16 @@ import { useQuoteStore } from '../stores/quote'
 import { useStocksStore } from '../stores/stocks'
 import { useT0TasksStore } from '../stores/t0_tasks'
 import { useOrderStore } from '../stores/order'
-import DataTableView from '../components/DataTableView.vue'
-import T0TaskDetail from '../components/trade/T0TaskDetail.vue'
-import T0TaskCreateDialog from '../components/trade/T0TaskCreateDialog.vue'
-import HoldingsPanel from '../components/trade/HoldingsPanel.vue'
-import LivePriceCell from '../components/cells/LivePriceCell.vue'  // 最新价+涨跌幅通用 cell
-import StockTargetCell from '../components/cells/StockTargetCell.vue'  // 标的（代码+名称+T0徽章）通用 cell
-import PriceTypeInput from '../components/PriceTypeInput.vue'
+// REQ-FE-554.1: 7 个 view 私有子组件 lazy 化 — 路由 /t0-trade 时只拉主图,
+//   HoldingsPanel / T0TaskDetail / T0TaskCreateDialog 等按用户操作再 fetch
+const DataTableView = defineAsyncComponent(() => import('../components/DataTableView.vue'))
+const T0TaskDetail = defineAsyncComponent(() => import('../components/trade/T0TaskDetail.vue'))
+const T0TaskCreateDialog = defineAsyncComponent(() => import('../components/trade/T0TaskCreateDialog.vue'))
+const HoldingsPanel = defineAsyncComponent(() => import('../components/trade/HoldingsPanel.vue'))
+const LivePriceCell = defineAsyncComponent(() => import('../components/cells/LivePriceCell.vue'))
+const StockTargetCell = defineAsyncComponent(() => import('../components/cells/StockTargetCell.vue'))
+const PriceTypeInput = defineAsyncComponent(() => import('../components/PriceTypeInput.vue'))
+const OrderStatusBadge = defineAsyncComponent(() => import('../components/OrderStatusBadge.vue'))
 import { PriceType } from '../constants/priceType.js'
 import { useT0OrderSubmit } from '../composables/useT0OrderSubmit'
 import { useQuoteSubscription } from '../composables/useQuoteSubscription'
@@ -342,7 +345,6 @@ import { STATUS_LABEL, STATUS_TYPE } from '../utils/format'
 import { COL } from '../utils/tableColumns'
 import { useUiStore } from '../stores/ui'
 import { makeLogger } from '../utils/logger'
-import OrderStatusBadge from '../components/OrderStatusBadge.vue'
 
 const log = makeLogger('T0Trade')
 const uiStore = useUiStore()

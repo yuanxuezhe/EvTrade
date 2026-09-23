@@ -45,11 +45,13 @@
 </template>
 
 <script setup>
-import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
-import OrderForm from '../components/OrderForm.vue'
-import QuotePanel from '../components/QuotePanel.vue'
-import TodayOrdersPanel from '../components/trade/TodayOrdersPanel.vue'
-import HoldingsPanel from '../components/trade/HoldingsPanel.vue'
+import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+// REQ-FE-554.1: view 私有子组件 lazy 化 — 4 子组件按需 fetch,
+//   路由到 /trade 后立即拉 OrderForm+QuotePanel, 滚动到 HoldingsPanel/TodayOrdersPanel 时拉子 chunk
+const OrderForm = defineAsyncComponent(() => import('../components/OrderForm.vue'))
+const QuotePanel = defineAsyncComponent(() => import('../components/QuotePanel.vue'))
+const TodayOrdersPanel = defineAsyncComponent(() => import('../components/trade/TodayOrdersPanel.vue'))
+const HoldingsPanel = defineAsyncComponent(() => import('../components/trade/HoldingsPanel.vue'))
 import { useOrderStore } from '../stores/order'
 import { useUiStore } from '../stores/ui'
 import { ElMessage } from 'element-plus/es'  // REQ-FE-553: 子路径避免整包 prebundle

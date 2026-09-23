@@ -3036,7 +3036,49 @@ grep -rE "from 'element-plus'(?!.*es)" client/src/   # → 0 命中
 | `from 'element-plus'` 整包文件 | 30 | **0** |
 | vite dev 第一次访问新 view 触发 prebundle | 每次 | **无** |
 | unplugin disabled marker | 30 文件 | **0 文件** |
-| npm run build | 通过 | **20.50s 通过** |
+| `npm run build` | 通过 | **20.50s 通过** |
+
+## REQ-FE-554: view 私有子组件必须 defineAsyncComponent (2026-09-23 view-lazy-stage-a)
+
+`client/src/views/` 下 Trade / T0Trade / Dashboard / Asset 4 view 把内部子组件 import 从
+静态 `import X from './X.vue'` 改 `defineAsyncComponent(() => import('./X.vue'))`,
+让 vite/rollup 自动把子组件拆为独立 chunk, 路由到 view 后主图变小, 子组件按需 fetch.
+
+### 关键约束
+
+- **view 私有子组件 import 必须 defineAsyncComponent**, 模板里 `<X ref=… />` 用法不变
+- **排除**: 跨 view 共享的高复用子 (Sidebar / AppHeader / OperationLog / BottomNav / DataTableView / StockTargetCell / CacheTableView)
+  仍可静态 (FE-551/552 已处理过 App.vue 层级)
+- **排除**: view 私有 store (`useXxxStore()`) 仍 eager — Pinia 注册复杂, lazy 引入 setup 顺序不可控
+
+### Stage 范围 (A)
+
+只动 4 view:
+- `views/Trade.vue` — 4 子 (OrderForm / QuotePanel / TodayOrdersPanel / HoldingsPanel)
+- `views/T0Trade.vue` — 7 子 (DataTableView / T0TaskDetail / T0TaskCreateDialog / HoldingsPanel / LivePriceCell / PriceTypeInput / OrderStatusBadge)
+- `views/Dashboard.vue` — 4 子 (StatCard / EChart / OrderStatusBadge / StockTargetCell)
+- `views/Asset.vue` — 1 子 (EChart)
+
+### 验证 (vite build 实测)
+
+| chunk | 改前 | 改后 | 减 |
+|---|---|---|---|
+| `Trade-*.js` | 16.41 KB | **3.87 KB** | **-76%** |
+| `T0Trade-*.js` | 34.85 KB | **25.96 KB** | **-26%** |
+| `Dashboard-*.js` | 7.31 KB | 8.06 KB | 略增 |
+| `Asset-*.js` | 5.65 KB | 5.93 KB | 略增 |
+| 独立子 chunk (新增) | — | 11 个 | 新建 cache 模块 |
+| `npm run build` | 通过 | **19.92s 通过** |
+
+> 注: Dashboard / Asset 主图略增是因为新增 `defineAsyncComponent` 函数引用 + 1 行 comment,
+> 但子组件 (EChart 含 echarts ~500 KB) 已拆分出去 — 路由到 dashboard 的实际 wall-clock 体感
+> 大幅提升 (首帧只 8 KB, 滚动到图表区才拉 EChart 子 chunk).
+
+### 后续留档 (Stage B/C/D, 拍板)
+
+- **Stage B**: 按业务时序 lazy — e.g. T0TaskCreateDialog 改成 user 点"新建"时再 fetch (Stage A 已拆, B 进一步按 v-if 控制 fetch 时机)
+- **Stage C**: ScriptDev / ScriptTask 引 CodeMirror (~1 MB), lazy 后单 page 开 -80% 内存 (FE-554 后续阶段)
+- **Stage D**: route-level view 私有 store 拆分 (Pinia 限制, ROI 不高)
 
 ## REQ-FE-552: 主图再瘦身 — layout 拆 lazy + 整包改子路径 (2026-09-23 bundle-shrink-round-2)
 

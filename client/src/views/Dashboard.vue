@@ -155,12 +155,13 @@
 </template>
 
 <script setup>
-import { computed, onMounted } from 'vue'
+import { computed, defineAsyncComponent, onMounted } from 'vue'
 import { ArrowRight } from '@element-plus/icons-vue'
-import StatCard from '../components/StatCard.vue'
-import EChart from '../components/EChart.vue'
-import OrderStatusBadge from '../components/OrderStatusBadge.vue'
-import StockTargetCell from '../components/cells/StockTargetCell.vue'  // 标的通用 cell
+// REQ-FE-554.1: 4 子组件 lazy — EChart 含 echarts (~500 KB), 留到子 chunk 后不污染 dashboard 主图
+const StatCard = defineAsyncComponent(() => import('../components/StatCard.vue'))
+const EChart = defineAsyncComponent(() => import('../components/EChart.vue'))
+const OrderStatusBadge = defineAsyncComponent(() => import('../components/OrderStatusBadge.vue'))
+const StockTargetCell = defineAsyncComponent(() => import('../components/cells/StockTargetCell.vue'))  // 标的通用 cell
 import { useAssetStore } from '../stores/asset'
 import { useOrderStore } from '../stores/order'
 import { usePositionStore } from '../stores/position'

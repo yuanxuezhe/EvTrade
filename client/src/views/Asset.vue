@@ -129,9 +129,10 @@
 </template>
 
 <script setup>
-import { computed, onMounted } from 'vue'
+import { computed, defineAsyncComponent, onMounted } from 'vue'
 import { Money, Lock, DataAnalysis, Wallet } from '@element-plus/icons-vue'
-import EChart from '../components/EChart.vue'
+// REQ-FE-554.1: EChart 含 echarts (~500 KB), lazy 后不污染 /asset view 主图
+const EChart = defineAsyncComponent(() => import('../components/EChart.vue'))
 import { useAssetStore } from '../stores/asset'
 import { useUiStore } from '../stores/ui'
 import { formatMoney } from '../utils/format'
