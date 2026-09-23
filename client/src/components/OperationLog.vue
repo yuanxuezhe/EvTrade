@@ -102,7 +102,7 @@
 
 <script setup>
 import { ref, computed, watch } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus/es'  // REQ-FE-552.2: 子路径避免整包 deps, unplugin 重新按需注入 el-*
 import {
   Document, Delete, ArrowUp, ArrowDown, InfoFilled
 } from '@element-plus/icons-vue'

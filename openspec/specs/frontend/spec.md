@@ -3002,3 +3002,35 @@ plugins: [
 - 改前 `element-plus.js` deps bundle **1.2 MB / 665ms**
 - 改后 `element-plus_es.js` deps bundle **88 KB / 5ms** (按 30+ 用到组件 + 图标实际加载)
 - **13.6×** 关键资源缩量
+
+## REQ-FE-552: 主图再瘦身 — layout 拆 lazy + 整包改子路径 (2026-09-23 bundle-shrink-round-2)
+
+`client/src/App.vue` 将 4 个 layout 组件 (Sidebar / AppHeader / OperationLog / BottomNav)
+改用 `defineAsyncComponent(() => import('./components/X.vue'))` 包装, 业务首屏主图从 ~76 KB
+**→ 33 KB**. `AppHeader` 单独 6 KB gzipped chunk, 由 v-if 控制首次 fetch 时机.
+
+另: 业务文件 (Login/AppHeader/OperationLog) 若需 `ElMessage` / `ElMessageBox` API,
+**必须** `from 'element-plus/es'` 子路径, 禁止 `from 'element-plus'` 整包路径. 整包路径
+触发 vite deps prebundle 出 `element-plus.js` (88 KB) 并让 unplugin 在文件头插
+`/* unplugin-vue-components disabled */` marker, 使模板里 el-* 不按需注入.
+
+### 关键约束
+
+- **App.vue 顶层 4 layout 异步加载** — `const X = defineAsyncComponent(() => import('./components/X.vue'))`
+- **ElMessage 等 API 必须 `from 'element-plus/es'`** — `from 'element-plus'` 整包禁用
+- **业务 view 文件可暂保留 `from 'element-plus'` 整包** — 它们已经过路由 lazy, 不污染主图
+  (但 unplugin disabled marker 会让该文件模板 el-* 不按需注入, 后续 P5 阶段可统一子路径化)
+
+### 验证 (curl + build 实测)
+
+| 资源 | 改前 | 改后 |
+|---|---|---|
+| `App.vue` source | ~76 KB (含 4 layout 引) | **33 KB** |
+| `AppHeader` chunk | 含在主图 | **6 KB 独立 chunk** |
+| `npm run build` | 通过 | **19.93s 通过** |
+| Dashboard chunk | 7.07 KB | 7.31 KB (持平, 不受 layout 拆包影响) |
+
+### 已知后续项
+
+- 27 个 view 文件 `from 'element-plus'` 整包 import 待统一改子路径 (P5 后续, 不影响主图)
+- 路由懒加载已在 `router/index.js` 全部用 `() => import()`, 无需再动

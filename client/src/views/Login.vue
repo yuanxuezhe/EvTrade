@@ -116,7 +116,7 @@
 <script setup>
 import { onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
+import { ElMessage } from 'element-plus/es'  // REQ-FE-552.2: 子路径避免把 element-plus 整包拽进 deps
 import {
   User, Lock, TrendCharts, Check, Sunny, Moon
 } from '@element-plus/icons-vue'

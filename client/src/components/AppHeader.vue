@@ -90,7 +90,7 @@
 <script setup>
 import { computed, ref, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus/es'  // REQ-FE-552.2: 子路径避免把整包拽进 deps, unplugin 重新按需注入 el-*
 import {
   Refresh, Sunny, Moon, User, Lock, UserFilled,
   SwitchButton, ArrowDown, Menu
