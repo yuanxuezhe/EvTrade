@@ -1,5 +1,15 @@
 import { createApp } from 'vue'
 import { createPinia } from 'pinia'
+
+// rbac-roles-module 2026-09-23: 强制清旧 SW + cache (前端 build 时代注册的 SW
+//   缓存了旧 chunk-CN2NG2UE.js 引用, 必须 unregister 才不会拿到旧 HTML)
+//   仅 dev/preview 启用, 生产用版本化文件名 + content-hash 应不需要 SW
+if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator) {
+  navigator.serviceWorker.getRegistrations().then((regs) => {
+    for (const r of regs) r.unregister()
+  })
+}
+
 import ElementPlus from 'element-plus'
 import zhCn from 'element-plus/dist/locale/zh-cn.mjs'
 import * as ElementPlusIconsVue from '@element-plus/icons-vue'
