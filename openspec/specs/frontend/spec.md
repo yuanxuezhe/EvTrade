@@ -2945,3 +2945,60 @@ HoldingsPanel / TodayOrdersPanel (×2) / T0Trade (×2) / CachePositions / CacheO
 - Roles.vue 的"页面权限" 多选用 el-tree (data 来自 asElTreeData(PAGE_NAV_TREE))
 - 路由 meta.pageKey 必须在 PAGE_NAV_TREE 中存在 (缺失会让 Sidebar / 权限树看不到)
 - 新增路由必须: router 加 meta.pageKey + pageNavTree.js 加到对应业务域
+
+## REQ-FE-551: element-plus 必须按需引入 (2026-09-23 element-plus-auto-import)
+
+`client/vite.config.js` 配 `unplugin-vue-components` + `ElementPlusResolver`,
+业务 .vue 模板里的 `<el-button>` / `<el-icon><Edit /></el-icon>` 静态标签
+在 vite transform 时由 resolver 自动注入对应 `import { ElButton }` 与
+`import { Edit }` + 局部 register, 取代原 main.js 全量 `import ElementPlus`
+(1.2 MB bundle) + 280+ 个 `app.component(key, ...)` 图标注册循环.
+
+### 关键约束
+
+- **禁止 main.js 全量引入 element-plus / icons-vue** — 一旦写了 `import ElementPlus from 'element-plus'`
+  或 `import * as ElementPlusIconsVue from '@element-plus/icons-vue'`, 会强制全量加载
+- **图标必须用 PascalCase 静态标签** — resolver 在 transform 时只看静态标签,
+  `<component :is="dynName">` 形式不会触发按需 import, 会运行时报 component not registered.
+  动态图标必须在 setup scope 静态 `import { Wallet } from '@element-plus/icons-vue'` + Map 查表
+- **i18n locale: zh-cn** — ElementPlusResolver 接收 `locale: 'zh-cn'` 会自动按 el-* 用到的
+  组件插入 `element-plus/es/locale/lang/zh-cn/<comp>.mjs`. 不再需要 main.js 单独
+  `import zhCn from 'element-plus/dist/locale/zh-cn.mjs'` + `app.use(ElementPlus, { locale: zhCn })`
+- **CSS 仍整包 import** — `import 'element-plus/dist/index.css'` 保留 (gzip 后 ~30KB,
+  perf 不再是瓶颈; 改为 `importStyle: 'sass'` 需配 .scss loader, 复杂度不值)
+- **`importStyle: 'css'`** — ElementPlusResolver 会按 el-* 用到的组件插入
+  `element-plus/es/components/<comp>/style/css.mjs` 单 CSS chunk, css 按需自动
+
+### 业务规则
+
+- 如果业务文件需要 `ElMessage` / `ElMessageBox` / `ElNotification` 等**非模板组件的 API**:
+  import 路径必须用子路径如 `from 'element-plus/es'` 而不是 `'element-plus'`,
+  避免把整包 (1.2 MB) 拖回来
+- resolver 行为: 业务文件手写了 `import { ElMessage } from 'element-plus'` 时,
+  unplugin 会自动在文件头插 `/* unplugin-vue-components disabled */` marker —
+  这是预期行为, 提示该文件的 template 部分已被守门员跳过
+
+### vite.config.js 必备段落
+
+```js
+import Components from 'unplugin-vue-components/vite'
+import { ElementPlusResolver } from 'unplugin-vue-components/resolvers'
+
+plugins: [
+  vue(),
+  Components({
+    resolvers: [ElementPlusResolver({
+      locale: 'zh-cn',       // 自动按需注入中文 locale chunk
+      importStyle: 'css',    // 自动按需注入组件 css chunk
+      directives: true,
+    })],
+    include: [/\.vue$/],
+  }),
+]
+```
+
+### 验证 (curl 实测 50998)
+
+- 改前 `element-plus.js` deps bundle **1.2 MB / 665ms**
+- 改后 `element-plus_es.js` deps bundle **88 KB / 5ms** (按 30+ 用到组件 + 图标实际加载)
+- **13.6×** 关键资源缩量
