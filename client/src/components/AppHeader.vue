@@ -265,19 +265,9 @@ async function handleUserCmd(cmd) {
   }
 }
 .hamburger {
-  width: 36px;
-  height: 36px;
-  display: grid;
-  place-items: center;
-  background: transparent;
-  border: 1px solid var(--border-base);
-  border-radius: var(--radius-md);
-  color: var(--text-primary);
-  cursor: pointer;
-  margin-right: var(--space-2);
-}
-.hamburger:hover {
-  background: var(--bg-soft);
+  /* 已废止 — top-nav-overhaul 2026-10-18 删 hamburger 按钮 + toggle-sidebar emit
+     AppHeader mobile 改走 BottomNav,无 sidebar 抽屉
+     保留占位以防 hot reload 缓存 */
 }
 
 .page-title {
