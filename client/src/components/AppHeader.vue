@@ -1,15 +1,6 @@
 <template>
   <header class="app-header">
     <div class="header-left">
-      <button
-        v-if="uiStore.isMobile"
-        class="icon-btn hamburger"
-        @click="$emit('toggle-sidebar')"
-        aria-label="菜单"
-      >
-        <el-icon :size="20"><Menu /></el-icon>
-      </button>
-
       <div class="page-title" :class="{ 'mobile-only-title': uiStore.isMobile }">
         <span class="title-text">{{ pageTitle }}</span>
         <span v-if="!uiStore.isMobile" class="title-sub">{{ pageSubtitle }}</span>
@@ -93,7 +84,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus/es'  // REQ-FE-552.2: 子路径避免把整包拽进 deps, unplugin 重新按需注入 el-*
 import {
   Refresh, Sunny, Moon, User, Lock, UserFilled,
-  SwitchButton, ArrowDown, Menu
+  SwitchButton, ArrowDown
 } from '@element-plus/icons-vue'
 import { useUiStore } from '../stores/ui'
 import { useAssetStore } from '../stores/asset'
@@ -108,7 +99,7 @@ import { api } from '../api'
 
 const route = useRoute()
 const router = useRouter()
-defineEmits(['toggle-sidebar'])
+// top-nav-overhaul 2026-10-18: 移除 toggle-sidebar emit (sidebar 已废止, mobile 走 BottomNav)
 const uiStore = useUiStore()
 const assetStore = useAssetStore()
 const orderStore = useOrderStore()

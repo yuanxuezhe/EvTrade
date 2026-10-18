@@ -11,22 +11,16 @@
   <template v-else>
     <div
       class="app-layout"
-      :class="{
-        collapsed: !uiStore.isMobile && uiStore.sidebarCollapsed,
-        'is-mobile': uiStore.isMobile,
-        'sidebar-open': uiStore.mobileSidebarOpen
-      }"
+      :class="{ 'is-mobile': uiStore.isMobile }"
     >
-      <!-- 移动端遮罩 -->
-      <div v-if="uiStore.isMobile && uiStore.mobileSidebarOpen" class="sidebar-mask" @click="uiStore.toggleSidebar"></div>
+      <TopNav v-if="!uiStore.isMobile" />
 
-      <Sidebar v-if="!uiStore.isMobile || uiStore.mobileSidebarOpen" />
       <div class="app-main">
-        <AppHeader @toggle-sidebar="onToggleSidebar" />
+        <AppHeader />
         <main class="app-content">
-          <router-view v-slot="{ Component, route }">
+          <router-view v-slot="{ Component, route: r }">
             <transition name="page" mode="out-in">
-              <component :is="Component" :key="route.fullPath" />
+              <component :is="Component" :key="r.fullPath" />
             </transition>
           </router-view>
         </main>
@@ -52,7 +46,7 @@ import { useRoute } from 'vue-router'
 //   v-if 在 App.vue template 已有 (OperationLog/BottomNav 按 auth+ui 状态控制),
 //   Sidebar/AppHeader 大多路由都需, 但 setup-parse 仍走 async chunk 拉取,
 //   配合 setup 顶层 await / Pinia 屏障 hydrate 整体不阻塞首帧布局.
-const Sidebar = defineAsyncComponent(() => import('./components/Sidebar.vue'))
+const TopNav = defineAsyncComponent(() => import('./components/TopNav.vue'))
 const AppHeader = defineAsyncComponent(() => import('./components/AppHeader.vue'))
 const OperationLog = defineAsyncComponent(() => import('./components/OperationLog.vue'))
 const BottomNav = defineAsyncComponent(() => import('./components/BottomNav.vue'))
@@ -71,20 +65,9 @@ const stocksStore = useStocksStore()
 
 const isBlankLayout = computed(() => route.meta?.layout === 'blank')
 
-function onToggleSidebar() {
-  uiStore.toggleSidebar()
-}
-
-// 路由切换时关闭移动端抽屉
 // route 在 setup 阶段可能尚未初始化 (router.install 是异步),
 //   route.fullPath undefined → TypeError。可选链 + flush:post 兜底
-watch(
-  () => route?.fullPath,
-  () => {
-    if (uiStore.isMobile) uiStore.toggleSidebar()
-  },
-  { flush: 'post' }
-)
+// (top-nav-overhaul 2026-10-18: 已无 sidebar/抽屉,路由切换不再触发 uiStore.toggleSidebar)
 
 onMounted(async () => {
   // 启动屏障 — 从 IDB 恢复 token 到内存
@@ -163,63 +146,30 @@ watch(
 }
 
 .app-layout {
-  display: grid;
-  grid-template-columns: var(--sidebar-width) 1fr;
+  display: flex;
+  flex-direction: column;
   height: 100vh;
   width: 100vw;
   background: var(--bg-base);
-  transition: grid-template-columns var(--transition-base);
+  min-width: 0;
+  overflow: hidden;
 }
 
-.app-layout.collapsed {
-  grid-template-columns: var(--sidebar-collapsed-width) 1fr;
-}
-
-/* 移动端：单列 + Sidebar 抽屉 */
+/* 移动端: 单列,顶部 TopNav 隐藏,底部 BottomNav 顶上 */
 .app-layout.is-mobile {
-  grid-template-columns: 1fr;
-}
-.app-layout.is-mobile .sidebar {
-  position: fixed;
-  top: 0;
-  left: 0;
-  height: 100vh;
-  width: 80vw;
-  max-width: 280px;
-  z-index: 95;  /* 桌面侧栏 100 < 移动端 95 = header 110 之下；mask 90 之下 */
-  transform: translateX(-100%);
-  transition: transform 0.25s ease;
-  box-shadow: 0 0 0 transparent;
-}
-.app-layout.is-mobile.sidebar-open .sidebar {
-  transform: translateX(0);
-  box-shadow: 4px 0 20px rgba(0, 0, 0, 0.15);
-}
-.app-layout.is-mobile.sidebar-open {
-  grid-template-columns: 1fr; /* main 区不偏移 */
-}
-.app-layout.is-mobile .app-main {
-  width: 100vw;
+  flex-direction: column;
 }
 
-/* 移动端遮罩 */
-.sidebar-mask {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.4);
-  z-index: 90;
-  animation: maskIn 0.2s ease;
-}
-@keyframes maskIn {
-  from { opacity: 0; }
-  to   { opacity: 1; }
-}
-
+/* mobile 不再需要 sidebar 抽屉 CSS — sidebar 已废止
+   保留空规则占位以防 hot reload 缓存 (2026-10-18 top-nav-overhaul)
+*/
 .app-main {
   display: flex;
   flex-direction: column;
   min-width: 0;
   overflow: hidden;
+  flex: 1;
+  height: 100%;
 }
 
 .app-content {

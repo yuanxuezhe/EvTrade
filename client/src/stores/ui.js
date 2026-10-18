@@ -1,15 +1,10 @@
 import { defineStore } from 'pinia'
-import { ref, watch, onMounted, onBeforeUnmount } from 'vue'
+import { ref } from 'vue'
 
 export const useUiStore = defineStore('ui', () => {
-  const sidebarCollapsed = ref(localStorage.getItem('evtrade-sidebar') === '1')
-
   // 移动端断点
   const MOBILE_BP = 900
   const isMobile = ref(false)
-
-  // 移动端侧栏抽屉
-  const mobileSidebarOpen = ref(false)
 
   // 主题
   const theme = ref(localStorage.getItem('evtrade-theme') || 'light')
@@ -52,11 +47,7 @@ export const useUiStore = defineStore('ui', () => {
     // 调试覆盖：URL ?mobile=1 强制移动端（不依赖物理视口）
     const forced = new URLSearchParams(window.location.search).get('mobile') === '1'
     const w = window.innerWidth
-    const m = forced || w <= MOBILE_BP
-    const was = isMobile.value
-    isMobile.value = m
-    // 切回桌面时自动关闭抽屉
-    if (was && !m) mobileSidebarOpen.value = false
+    isMobile.value = forced || w <= MOBILE_BP
   }
 
   // 监听（SSR-safe）
@@ -65,33 +56,15 @@ export const useUiStore = defineStore('ui', () => {
     window.addEventListener('resize', _applyBreakpoint)
   }
 
-  function toggleSidebar() {
-    if (isMobile.value) {
-      mobileSidebarOpen.value = !mobileSidebarOpen.value
-    } else {
-      sidebarCollapsed.value = !sidebarCollapsed.value
-      localStorage.setItem('evtrade-sidebar', sidebarCollapsed.value ? '1' : '0')
-    }
-  }
-
-  // 路由切换时关闭抽屉
-  function onRouteChange() {
-    if (mobileSidebarOpen.value) mobileSidebarOpen.value = false
-  }
-
   return {
-    sidebarCollapsed,
     isMobile,
-    mobileSidebarOpen,
     theme,
     oplogExpanded,
     setOplogExpanded,
     toggleOplog,
-    toggleSidebar,
     toggleTheme,
     t0Keybindings,
     toggleT0Keybindings,
     setT0Keybindings,
-    onRouteChange,
   }
 })
