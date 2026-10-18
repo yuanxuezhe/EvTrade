@@ -61,11 +61,15 @@
 
 ### 关键设计约束
 
-1. **PAGE_NAV_TREE 是单一事实源**——本次重构后仍是。TopNav 直接消费同一棵树 + hasPageKey filter，保持与 Sidebar 同语义。
-2. **router meta.pageKey 守卫不动**——rbac-roles-module 已立。
-3. **AppHeader 内部 sheet 不动**——右侧工具区内容（RPC 状态/总资产/主题切换/用户下拉）原样留在 AppHeader；TopNav 只用 AppHeader 左侧的"页面标题 + pageSubtitle"区域（这部分仍由 AppHeader 维护）。
-4. **删 sidebarCollapsed 不会破坏 mobile**：AppHeader 里有 `uiStore.isMobile` 判断 hamburger，TopNav 走 desktop only 即可（mobile 还看 BottomNav）。
-5. **TopNav 不显示 hidden pageKey**：跟 Sidebar 一样，过滤后空组不渲染或渲 disabled 灰色（沿用 Sidebar 行为）。
+1. **PAGE_NAV_TREE 是 RBAC 角色管理 UI 的单一事实源**（Roles.vue 用其渲染「页面权限」多选）—— 本次不改。
+2. **TopNav 5 组是独立的信息架构**（仅菜单展示层），不复用 PAGE_NAV_TREE 的 6 业务域结构。
+   TopNav 自己定义 `pageKey → group` 映射（5 组），与 PAGE_NAV_TREE 共用同一套 pageKey 命名（数据维度一致）。
+   跟 OKX 顶部 nav 一样是独立的视觉聚合——同行业实践。
+3. **router meta.pageKey 守卫不动**——rbac-roles-module 已立。
+4. **AppHeader 内部逻辑不动**——右侧工具区内容（RPC 状态/总资产/主题切换/用户下拉）原样留在 AppHeader；
+   TopNav 在 AppHeader 之上，AppHeader 仍是右侧工具区唯一拥有者。
+5. **TopNav 不显示 hidden pageKey**：跟 Sidebar 一样，过滤后空组不渲染。
+6. **mobileSidebarOpen / 移动端 drawer 全部废弃**——重构后桌面用 TopNav、手机用 BottomNav，无需抽屉。
 
 ## 不做什么
 
