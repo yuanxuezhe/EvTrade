@@ -73,7 +73,7 @@
 | **位置** | `openspec/specs/auth/spec.md` REQ-AUTH-001 ~ REQ-AUTH-010 |
 | **问题** | 实际代码 `server/api/auth.py` 有 `@router.post("/grant")`（v92，永久 token，env `EVTRADE_ALLOW_GRANT_TOKEN=1` 控制）+ `@router.post("/heartbeat")`（v0，token touch 防过期），spec 完全没登记 |
 | **证据** | `server/api/auth.py:179, 237-244` |
-| **修复建议** | 新增 REQ-AUTH-011 (`/grant` 永久 token，env 控制) + REQ-AUTH-012 (`/heartbeat` token touch) |
+| **修复建议** | 新增 REQ-AUTH-011 (`/grant` 永久 token，env 控制) + REQ-AUTH-015 (`/heartbeat` token touch，原 REQ-AUTH-012 改号让位 RBAC) |
 
 ---
 

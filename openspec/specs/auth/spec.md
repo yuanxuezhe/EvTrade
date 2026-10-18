@@ -192,7 +192,31 @@ PUT    /api/roles/users/{user_id}/roles    整体覆盖用户角色
 
 `server/tests/services/rbac/test_rbac.py` — 23 case (helpers + 整体覆盖 + 派生)
 
-### REQ-AUTH-012: POST /heartbeat — Token 保活（idle 防过期）
+> **编号追溯注记（2026-10-18 fix-auth012-rebinding）**：
+> 本能力（RBAC 角色管理）立项时编号为 `REQ-AUTH-012`
+> （见 `archive/2026-09-21-roles-module/tasks.md`）。spec 合并
+> commit `fc49b15` 时因 `AUTH-014` 已被先前提交腾出（`81bbe0b` revert `a17937a`），
+> 故改号为 `REQ-AUTH-014`，但对应 8 个 RBAC 代码 commit 的
+> commit message 沿用 `(REQ-AUTH-012)`：
+>
+> | commit | 标题（含 `(REQ-AUTH-012)`） |
+> |---|---|
+> | `ceb566e` | feat(rbac): 角色管理 3 表 schema + 幂等 migration |
+> | `fcb2635` | feat(rbac): 后端 RBAC service + 9 端点 api + require_page_key guard |
+> | `1d817eb` | test(rbac): services/rbac 15 单测 + openspec change proposal/tasks 占位 |
+> | `2940ba4` | feat(rbac): /api/auth/me 注入 user.roles + page_keys 字段 |
+> | `c8a04f0` | feat(rbac): client/src/api/roles.js — 9 端点角色管理 API 客户端 |
+> | `1f7d2e7` | feat(rbac): stores/auth.js 加 userRoles / pageKeys / hasPageKey |
+> | `f200f1c` | feat(rbac): 用户编辑多角色 + Sidebar/BottomNav RBAC filter |
+> | `bf4e9ed` | feat(rbac): P5 前端 UI — 用户编辑多角色 checkbox + Sidebar/BottomNav hasPageKey filter + auth store fallback |
+>
+> 原 `REQ-AUTH-012` heartbeat 段已改号 `REQ-AUTH-015`
+> （见 change `2026-10-18-fix-auth012-rebinding`）。
+> 读者：spec 检索请走 `AUTH-014`；git log 检索请走 `(REQ-AUTH-012)`。
+
+### REQ-AUTH-015: POST /heartbeat — Token 保活（idle 防过期）
+
+> **编号追溯（2026-10-18 fix-auth012-rebinding）**：本段历史编号为 `REQ-AUTH-012`，因与 RBAC 8 个 commit message 引用的 `AUTH-012` 编号冲突，改号 `AUTH-015` 让出号段。RBAC 段真实归属见 `REQ-AUTH-014` 段尾部追溯注记。详见 change `2026-10-18-fix-auth012-rebinding`。
 
 **REQ-AUTH-IDLE-001**（2026-08-04 立）：idle 超 10min token 失效（session cache LRU + TTL）。
 
