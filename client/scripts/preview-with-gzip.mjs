@@ -4,15 +4,13 @@
  *
  * 替代 `vite preview`,理由:
  * - vite preview 默认不启用 gzip,而 client/dist/index-*.js 1.33 MB raw 浏览器下载慢
- * - nginx/openresty 中间层可能不带 gzip(gzip_types / gzip on) 配置
- * - 此脚本用纯 Node 标准库 (http + zlib + fs + path) 启 HTTP server,自动按 Accept-Encoding: gzip
- *   对 .js / .css / .html / .json / .svg 等文本类资源做流式 gzip 压缩
+ * - nginx/openresty 中间层可能不带 gzip 配置
+ * - 此脚本用纯 Node 标准库 (http + zlib + fs + path) 启 HTTP server,
+ *   自动按 Accept-Encoding: gzip 对 .js / .css / .html / .json / .svg 等文本资源做流式 gzip 压缩
  *   gzipped 后 ~67% 体积下降 (1.33 MB → 431 KB)
  *
  * 启动:
  *   node preview-with-gzip.mjs --port 50998 --host 0.0.0.0 --root ../dist
- *
- * 2026-10-18 实现,与 evctl.py 集成 (env EVTRADE_FRONTEND_MODE=prod 时启用)
  */
 import http from 'node:http'
 import { createReadStream, statSync } from 'node:fs'
@@ -30,7 +28,6 @@ function getArg(name, def) {
 const HOST = getArg('--host', '0.0.0.0')
 const PORT = parseInt(getArg('--port', '50998'), 10)
 const SCRIPT_DIR = fileURLToPath(new URL('.', import.meta.url))
-// 默认 dist 在脚本同目录上级: client/scripts/preview-with-gzip.mjs → client/dist/
 const ROOT = resolve(getArg('--root', join(SCRIPT_DIR, '..', 'dist')))
 
 const COMPRESSIBLE = new Set([
@@ -125,15 +122,12 @@ const server = http.createServer((req, res) => {
     ...noCacheHeaders(),
   }
 
-  // 不压缩 → 直接走 stream response (无 Transfer-Encoding)
   if (!compressType) {
     res.writeHead(200, baseHeaders)
     createReadStream(absPath).pipe(res)
     return
   }
 
-  // 压缩路径 — streaming compress + chunked transfer
-  // 不带 Content-Length (Chrome 会忽略),让 chunked 表达
   delete baseHeaders['Content-Length']
   const headers = {
     ...baseHeaders,
