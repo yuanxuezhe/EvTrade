@@ -155,10 +155,16 @@ onMounted(() => {
 
 async function handleLogin() {
   if (!formRef.value) return
+  // fix 2026-10-19 auth-bug-003 双重防护: loading 期间 click 早返回, 避免 6 次并发 login 请求
+  if (loading.value) return
   const valid = await formRef.value.validate().catch(() => false)
   if (!valid) return
 
   loading.value = true
+  // fix 2026-10-19 auth-bug-003: 守卫自 abort navigation 抛 NavigationFailure (Error instance, no .response)
+  //   6 次 click 触发 6 次 login API 200 OK, 但其中 5 次 router.replace 在 beforeEach 被 abort (前一次 nav 仍在 in-flight)
+  //   之前 catch 拿到 NavigationFailure, e.response undefined → msg 回落 '登录失败' 误导
+  //   修: 仅在 e.response 真存在 (axios http error) 时弹错; 其他 silent return 让 loading=false 兜底
   try {
     const user = await authStore.login(form.username.trim(), form.password)
     if (remember.value) {
@@ -175,8 +181,13 @@ async function handleLogin() {
       router.replace(redirect)
     }
   } catch (e) {
-    const msg = e.response?.data?.detail || '登录失败'
-    ElMessage.error(msg)
+    // 仅 axios http error (4xx/5xx) 才显示错误信息; vue-router NavigationFailure 静默忽略
+    if (e && e.response) {
+      const msg = e.response?.data?.detail || '登录失败'
+      ElMessage.error(msg)
+    } else {
+      console.debug('[Login.vue] non-axios error (likely NavigationFailure from duplicate click), ignored:', e?.message || e)
+    }
   } finally {
     loading.value = false
   }
