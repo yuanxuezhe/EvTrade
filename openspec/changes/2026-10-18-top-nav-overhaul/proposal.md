@@ -45,13 +45,15 @@
 
 | # | 内容 | 类型 |
 |---|---|---|
-| 1 | 删 `Sidebar.vue` | `chore(frontend): rm` |
-| 2 | 删孤儿 `NavBar.vue` | `chore(frontend): rm` |
-| 3 | 新建 `TopNav.vue`（5 组下拉、el-menu 横向 + el-sub-menu）| `refactor(frontend): add TopNav` |
-| 4 | `App.vue` 拆 Sidebar → TopNav + 删除 uiStore.sidebarCollapsed 引用 | `refactor(frontend): App.vue layout` |
-| 5 | `stores/ui.js` 删除 sidebarCollapsed 字段 + toggleSidebar action | `refactor(frontend): ui store cleanup` |
-| 6 | 跑 `npm run build` 验证通过 | 验证 |
-| 7 | 桌面 chrome 实测 5 组下拉 + RBAC filter 生效 | 验证 |
+| 1 | 删 `Sidebar.vue`（旧左导航 297 行） | `chore(frontend): rm` |
+| 2 | 删孤儿 `NavBar.vue`（10 行占位文件，无引用） | `chore(frontend): rm` |
+| 3 | 删 `AppHeader.vue`（蓝色整条工具区被 TopNavTools 取代） | `chore(frontend): rm` |
+| 4 | 新建 `TopNav.vue`（5 组下拉、el-menu 横向 + el-sub-menu，logo 包 router-link 跳 `/`，含 TopNavTools slot） | `refactor(frontend): add TopNav` |
+| 5 | 新建 `TopNavTools.vue`（原 AppHeader 第 10-77 行 6 件工具整体搬来：RPC 状态 / 行情状态 / 总资产 / 刷新按钮 / 主题切换 / 用户下拉） | `refactor(frontend): add TopNavTools` |
+| 6 | `App.vue` 拆 Sidebar → TopNav + 移除 `<AppHeader />` | `refactor(frontend): App.vue layout` |
+| 7 | `stores/ui.js` 删除 sidebarCollapsed 字段 + toggleSidebar action | `refactor(frontend): ui store cleanup` |
+| 8 | 跑 `npm run build` 验证通过 | 验证 |
+| 9 | 桌面 chrome 实测 5 组下拉 + RBAC filter 生效 + logo 点击跳 / + 顶部 6 件工具正常 | 验证 |
 
 ### 移动端
 
@@ -66,8 +68,8 @@
    TopNav 自己定义 `pageKey → group` 映射（5 组），与 PAGE_NAV_TREE 共用同一套 pageKey 命名（数据维度一致）。
    跟 OKX 顶部 nav 一样是独立的视觉聚合——同行业实践。
 3. **router meta.pageKey 守卫不动**——rbac-roles-module 已立。
-4. **AppHeader 内部逻辑不动**——右侧工具区内容（RPC 状态/总资产/主题切换/用户下拉）原样留在 AppHeader；
-   TopNav 在 AppHeader 之上，AppHeader 仍是右侧工具区唯一拥有者。
+4. **AppHeader 内部逻辑删除** — 蓝色整条工具区被移除；6 件工具整合到 `TopNavTools` 内的 `TopNav 右侧 slot`。
+   原 AppHeader 第 1-9 行的页面标题块已被砍（TopNav 取代导航职责，标题冗余）。
 5. **TopNav 不显示 hidden pageKey**：跟 Sidebar 一样，过滤后空组不渲染。
 6. **mobileSidebarOpen / 移动端 drawer 全部废弃**——重构后桌面用 TopNav、手机用 BottomNav，无需抽屉。
 

@@ -3148,16 +3148,18 @@ EvTrade 前端从「桌面左 Sidebar + 顶部 AppHeader + 手机 BottomNav 三�
 
 ### 组件生命周期
 
-- 新建 `client/src/components/TopNav.vue`
+- 新建 `client/src/components/TopNav.vue` — 桌面顶部 5 组下拉（含 logo / 5 组 el-sub-menu / 右侧 TopNavTools slot）
+- 新建 `client/src/components/TopNavTools.vue` — TopNav 右侧工具区（RPC 状态 / 行情状态 / 总资产 / 刷新按钮 / 主题切换 / 用户下拉），由原 AppHeader 第 10-77 行整体搬来
 - 删除 `client/src/components/Sidebar.vue`（旧左导航）
+- 删除 `client/src/components/AppHeader.vue`（工具区被 TopNavTools 接管，蓝色整条被移除）
 - 删除孤儿 `client/src/components/NavBar.vue`（10 行占位文件，无引用）
-- 保留 `client/src/components/AppHeader.vue` 不动内部逻辑，只删除 `sidebarCollapsed` 引用
 - 保留 `client/src/components/BottomNav.vue` 不动
 - `client/src/stores/ui.js` 删除 `sidebarCollapsed` state 与 `toggleSidebar` action
+- `App.vue` layout 重构：Sidebar → TopNav；移除 `<AppHeader />`；保留 `<OperationLog>` 与 `<BottomNav>` 不动
+- logo 包 `<router-link to="/">`，点击回到仪表盘（2026-10-18 review 增强）
 
 ### 不做什么
 
 - ❌ 不改 router / pageKey / RBAC 模型
 - ❌ 不改 12 个 view 的业务代码
 - ❌ 不动底部 BottomNav
-- ❌ 不动 AppHeader 的主要逻辑
