@@ -86,16 +86,31 @@ def _vite_cmd():
 
     模式:
     - 默认 dev (`vite` 子命令) — HMR + 动态 transform,适合开发
-    - EVTRADE_FRONTEND_MODE=prod → `vite preview` 子命令,跑 client/dist/ 静态构建产物
-      收益: gzip 自动 / browser cache 控制更精细 / 无 dev transform 卡顿
-      注意: 切 prod 前必须先 `npm run build` 生成 dist/
+    - EVTRADE_FRONTEND_MODE=prod → 跑 client/scripts/preview-with-gzip.mjs
+      (自启 HTTP server + gzip 自动压缩 client/dist/ 内容)
+      比 vite preview 更稳: gzip 自动 / 不依赖 nginx 上游配置
+      收益: 主图 1.33 MB → ~431 KB 到浏览器 (~67% 减小)
 
     2026-10-18 加 prod 模式 (frontend-initial-load-perf Phase 2): 用户实测 dev mode
-    登录后页面刷新 ~10s+,prod 路径 gzip + 预编译可显著降首屏耗时.
+    登录后页面刷新 ~10s+,prod + gzip 把 dist 内容预先压缩到浏览器。
     """
     node = _node_exe()
     if node is None:
         raise RuntimeError('node.exe not found in PATH')
+    script = os.path.join(PROJECT_ROOT, 'client', 'scripts', 'preview-with-gzip.mjs')
+    if not os.path.exists(script):
+        raise RuntimeError(
+            'preview-with-gzip.mjs not found at ' + script
+        )
+    if os.environ.get('EVTRADE_FRONTEND_MODE') == 'prod':
+        # Prod path: 走自启 node server with gzip
+        return [
+            node, script,
+            '--host', '0.0.0.0',
+            '--port', str(FRONTEND_PORT),
+            '--root', os.path.join(PROJECT_ROOT, 'client', 'dist'),
+        ]
+    # Dev path: 走 vite (HMR + transform-on-demand)
     vite_js = os.path.join(
         PROJECT_ROOT, 'client', 'node_modules', 'vite', 'bin', 'vite.js'
     )
@@ -103,9 +118,8 @@ def _vite_cmd():
         raise RuntimeError(
             'vite not installed at ' + vite_js + ' — run `npm install` in client/'
         )
-    subcmd = 'preview' if os.environ.get('EVTRADE_FRONTEND_MODE') == 'prod' else 'dev'
     return [
-        node, vite_js, subcmd,
+        node, vite_js,
         '--host', '0.0.0.0',
         '--port', str(FRONTEND_PORT),
         '--strictPort',
