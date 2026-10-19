@@ -3163,3 +3163,43 @@ EvTrade 前端从「桌面左 Sidebar + 顶部 AppHeader + 手机 BottomNav 三�
 - ❌ 不改 router / pageKey / RBAC 模型
 - ❌ 不改 12 个 view 的业务代码
 - ❌ 不动底部 BottomNav
+
+## REQ-FE-556: 前端首屏加载性能优化 (frontend-initial-load-perf 2026-10-18)
+
+用户实测浏览器刷新或重载时主图加载慢,需要先把主要元素(顶部 TopNav + 启动屏障骨架)立刻显示,token/IDB 读取等其他耗时操作后台进行,不阻塞首帧绘制。
+
+### 瓶颈 (P0 摸底)
+
+| Chunk | 大小 | Gzip | 备注 |
+|---|---|---|---|
+| `index-*.js` (主图) | 1.33 MB | 431 KB | vue-runtime + Pinia 全 store + element-plus 全集 |
+| `install-*.js` | 569 KB | 192 KB | element-plus install |
+| `ScriptTask` / `ScriptDev` | 476-518 KB | 160-171 KB | CodeMirror (路由 lazy 已分) |
+| 11 view | 5-13 KB | OK | 路由 lazy ✓ |
+| `TopNav` | 7.3 KB | 3.4 KB | 已分 chunk ✓ |
+
+主要阻塞:
+1. **App.vue setup 顶层 `await auth.hydrate()`** — 必须等 IDB 读 token 才能渲染
+2. **Pinia 8+ store 全 setup 同步加载** — useHoldings/useStocks/useWs 等大 store 阻塞主图
+
+### Phase 1 改动
+
+| # | 改动 | 文件 |
+|---|---|---|
+| 1 | App.vue 不再 await hydra(改 fire-and-forget(`auth.hydrate().catch(...)`)  | `client/src/App.vue` |
+| 2 | Auth store 加 `ensureReady()` 共享 promise | `client/src/stores/auth.js` |
+| 3 | Router guard `await auth.ensureReady()` 一次性等 | `client/src/router/index.js` |
+| 4 | Pinia 大 store (`useHoldingsStore` / `useStocksStore`) 延后到 `ready===true` 后调 | `client/src/App.vue` |
+
+### 行为约束
+
+- 首帧绘制不依赖 IDB; 启动屏障立即可见
+- 路由守卫确保 token 已读 后再判断权限 / RBAC
+- 不破坏现有 store API;仅在 App.vue 调用时机延后
+- 启动屏障 `v-if="!authStore.ready"` 保留作为 Token 缺失占位
+
+### 不做什么
+
+- ❌ 不拆主图 chunk (Phase 2)
+- ❌ 不改 view / router / RBAC
+- ❌ 不动后端 / hqserver / strategy_exec
