@@ -64,7 +64,11 @@ export async function loadSession() {
  * @param {{token: string, user?: object|null}} payload
  */
 export async function saveSession({ token, user }) {
-  if (!token) throw new Error('[auth_idb] saveSession: token is required')
+  // 守卫 (req-2026-10-19 auth-bug-001): 无 token 直接 swallow,避免上游
+  //   login/fetchMe/updateProfile 在 token 缺失时把 unhandled reject 推到 console
+  //   → 表现为「[auth] saveSession failed: token is required」
+  //   真实原因通常是后端 401 (response.detail 但无 access_token) 或 token 已被 clear()
+  if (!token) return
   const db = await initAuthIDB()
   await idbPut(db, STORE, KEY, {
     token,
