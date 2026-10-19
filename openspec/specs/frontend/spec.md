@@ -3186,7 +3186,7 @@ EvTrade 前端从「桌面左 Sidebar + 顶部 AppHeader + 手机 BottomNav 三�
 
 | # | 改动 | 文件 |
 |---|---|---|
-| 1 | App.vue 不再 await hydra(改 fire-and-forget(`auth.hydrate().catch(...)`)  | `client/src/App.vue` |
+| 1 | App.vue 不再 `await auth.hydrate()`,改 fire-and-forget (`auth.hydrate().catch(...)`) | `client/src/App.vue` |
 | 2 | Auth store 加 `ensureReady()` 共享 promise | `client/src/stores/auth.js` |
 | 3 | Router guard `await auth.ensureReady()` 一次性等 | `client/src/router/index.js` |
 | 4 | Pinia 大 store (`useHoldingsStore` / `useStocksStore`) 延后到 `ready===true` 后调 | `client/src/App.vue` |
