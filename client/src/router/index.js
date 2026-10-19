@@ -1,5 +1,6 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
+import { useWsStore } from '../stores/ws'
 import { setUnauthorizedHandler } from '../api/http'
 
 const Login = () => import('../views/Login.vue')
@@ -149,11 +150,30 @@ router.beforeEach(async (to) => {
 })
 
 // 全局 401 → 跳登录
+// fix 2026-10-19 auth-bug-002 (bug 反馈: "未登录会跳进系统 / 登录状态异常要直接跳 /login")
+// - 触发场景: 后端任意接口返 401 (token 过期/被 revoke/未携带) 或 WS 推送 channel=auth 401 type
+// - 行为: (a) auth.clear() 清 token + user + IDB session  (b) wsStore.disconnect() 关 ws 防止重连
+//        (c) ElMessage 提示用户 (d) router.replace('/login') 强制跳登录 — 不论当前在哪个 route
+// - 取消回调去重 (已经在 login 路径跳过): 防止递归
 setUnauthorizedHandler(() => {
   const auth = useAuthStore()
+  // 已在 /login 且没有 token → 什么也不做 (避免覆盖用户登录输入)
+  if (router.currentRoute.value.path === '/login' && !auth.token) return
   auth.clear()
+  try {
+    const wsStore = useWsStore()
+    wsStore.disconnect()
+  } catch (_) { /* wsStore 可能未初始化 (pinia order); catch */ }
+  // 提示
+  import('element-plus/es').then(({ ElMessage }) => {
+    ElMessage.warning('登录状态已失效，请重新登录')
+  }).catch(() => { /* swallow */ })
+  // 强制跳转
   if (router.currentRoute.value.path !== '/login') {
-    router.replace({ path: '/login', query: { redirect: router.currentRoute.value.fullPath } })
+    router.replace({
+      path: '/login',
+      query: { redirect: router.currentRoute.value.fullPath }
+    })
   }
 })
 
