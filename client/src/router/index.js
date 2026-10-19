@@ -100,6 +100,13 @@ router.beforeEach(async (to) => {
 
   const auth = useAuthStore()
 
+  // REQ-FE-556 (frontend-initial-load-perf 2026-10-18): 路由守卫首次 await hydrate,
+  // 保证 token 已从 IDB 读完再做权限 / RBAC 判定, 不再误跳 /login
+  // 已在 ready 状态时立即返 Promise.resolve(); 否则启动并等共享 promise。
+  try {
+    await auth.ensureReady()
+  } catch (_) { /* 静默 — ensureReady 内部 hydrate 已 swallow */ }
+
   // 已登录用户访问 /login 时直接回首页
   if (to.meta?.public) {
     if (auth.isAuthenticated && to.path === '/login') {
