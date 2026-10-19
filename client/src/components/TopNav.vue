@@ -11,8 +11,8 @@
 <template>
   <header class="top-nav" :class="{ 'is-mobile': uiStore.isMobile }">
     <div class="top-nav-inner">
-      <!-- 品牌 logo (复用旧 Sidebar 视觉) -->
-      <div class="brand">
+      <!-- 品牌 logo — 点击回到仪表盘 (top-nav-overhaul 2026-10-18 增强) -->
+      <router-link to="/" class="brand" aria-label="回到仪表盘">
         <div class="brand-logo" aria-hidden="true">
           <el-icon :size="22"><TrendCharts /></el-icon>
         </div>
@@ -20,7 +20,7 @@
           <div class="brand-title">EvTrade</div>
           <div class="brand-sub">智能交易终端</div>
         </div>
-      </div>
+      </router-link>
 
       <!-- 5 组下拉菜单 (RBAC filter 后) -->
       <el-menu
@@ -55,8 +55,8 @@
         </el-sub-menu>
       </el-menu>
 
-      <!-- 占位: 顶 nav 在桌面是 header 之上,AppHeader 工具区另挂在 App.vue 右侧 -->
-      <div class="top-nav-spacer" />
+      <!-- 右侧工具区 (由 TopNavTools 接管, 取代 AppHeader 蓝色整条, top-nav-overhaul 2026-10-18) -->
+      <TopNavTools class="top-nav-tools-slot" />
     </div>
   </header>
 </template>
@@ -66,23 +66,22 @@ import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useUiStore } from '../stores/ui'
 import { useAuthStore } from '../stores/auth'
+import TopNavTools from './TopNavTools.vue'
+// top-nav-overhaul 2026-10-18: TopNavTools.vue 接管了原 AppHeader 全部图标,
+// TopNav 自己只保留 5 组 + 子页用到的图标
 import {
-  TrendCharts,           // logo + 交易
-  Coin,                  // 资金
-  DataAnalysis,          // 策略
-  Setting,               // 管理
-  Operation,             // 系统
-  Star,                  // 自选池
-  Wallet,                // 账户资金
-  EditPen,               // 策略开发
-  DataLine,              // 策略运行
-  Money,                 // 策略下单母单
-  Collection,            // 证券池
-  UserFilled,            // 用户管理
-  Avatar,                // 角色管理
-  DataBoard,             // 证券信息设置
-  Refresh,               // 历史行情补全
-  Tickets,               // 快速做T
+  TrendCharts,           // logo + 「交易」组
+  Wallet,                // 「资金」组 + 账户资金页
+  EditPen,               // 「策略」组 + 策略开发页
+  DataLine,              // 策略运行页
+  Setting,               // 「管理」组
+  Operation,             // 「系统」组
+  DataBoard,             // 证券信息设置页
+  Refresh,               // 历史行情补全页 + 刷新按钮已在 TopNavTools
+  Tickets,               // 快速做T页
+  Star,                  // 自选池页
+  Avatar,                // 角色管理页
+  Collection,            // 证券池页
 } from '@element-plus/icons-vue'
 
 const route = useRoute()
@@ -107,7 +106,7 @@ const NAV_GROUPS = [
   {
     key: 'fund',
     label: '资金',
-    icon: Coin,
+    icon: Wallet,
     pages: [
       { pageKey: 'asset', label: '账户资金', path: '/asset', icon: Wallet },
     ],
@@ -115,11 +114,11 @@ const NAV_GROUPS = [
   {
     key: 'strategy',
     label: '策略',
-    icon: DataAnalysis,
+    icon: EditPen,
     pages: [
       { pageKey: 'script-dev', label: '策略开发', path: '/script-dev', icon: EditPen },
       { pageKey: 'script-task', label: '策略运行', path: '/script-task', icon: DataLine },
-      { pageKey: 'strategy-order', label: '策略下单母单', path: '/strategy-order', icon: Money },
+      { pageKey: 'strategy-order', label: '策略下单母单', path: '/strategy-order' },
     ],
   },
   {
@@ -127,7 +126,7 @@ const NAV_GROUPS = [
     label: '管理',
     icon: Setting,
     pages: [
-      { pageKey: 'users', label: '用户管理', path: '/users', icon: UserFilled },
+      { pageKey: 'users', label: '用户管理', path: '/users' },
       { pageKey: 'roles', label: '角色管理', path: '/roles', icon: Avatar },
       { pageKey: 'stkpool', label: '证券池', path: '/stkpool', icon: Collection },
     ],
@@ -243,6 +242,10 @@ function onSelect(path) {
 }
 
 .top-nav-spacer {
-  flex: 1;
+  /* 已废止 — top-nav-overhaul 2026-10-18: 右侧用 TopNavTools 取代,不再需要 spacer */
+}
+
+.top-nav-tools-slot {
+  margin-left: auto;
 }
 </style>

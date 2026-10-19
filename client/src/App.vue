@@ -16,7 +16,6 @@
       <TopNav v-if="!uiStore.isMobile" />
 
       <div class="app-main">
-        <AppHeader />
         <main class="app-content">
           <router-view v-slot="{ Component, route: r }">
             <transition name="page" mode="out-in">
@@ -42,12 +41,9 @@
 import { computed, defineAsyncComponent, onMounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
 // REQ-FE-552.1: layout 4 组件 (Sidebar/AppHeader/OperationLog/BottomNav) 改异步加载,
-//   首屏主图 (HTML+main+App.vue) 砍 ~50 KB, 组件 fetch 时机延后到 v-if=true 后.
-//   v-if 在 App.vue template 已有 (OperationLog/BottomNav 按 auth+ui 状态控制),
-//   Sidebar/AppHeader 大多路由都需, 但 setup-parse 仍走 async chunk 拉取,
-//   配合 setup 顶层 await / Pinia 屏障 hydrate 整体不阻塞首帧布局.
+// top-nav-overhaul 2026-10-18: Sidebar + AppHeader 已废止, 现仅 TopNav / OperationLog / BottomNav 3 组件.
+//   AppHeader 工具区整合进 TopNav 内的 TopNavTools.vue
 const TopNav = defineAsyncComponent(() => import('./components/TopNav.vue'))
-const AppHeader = defineAsyncComponent(() => import('./components/AppHeader.vue'))
 const OperationLog = defineAsyncComponent(() => import('./components/OperationLog.vue'))
 const BottomNav = defineAsyncComponent(() => import('./components/BottomNav.vue'))
 import { useUiStore } from './stores/ui'
