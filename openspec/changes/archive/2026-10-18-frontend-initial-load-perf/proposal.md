@@ -27,9 +27,15 @@
 | 改动 | 文件 | 收益 |
 |---|---|---|
 | App.vue 不再顶层 await auth.hydrate();改 fire-and-forget | `client/src/App.vue` | 不等 IDB 读 token,首屏立刻绘制 (顶 nav + 启动屏障) |
+| ~~Pinia stores 改动态 import~~ **(SKIPPED, 见下)** | `client/src/App.vue` | —— |
 | Auth store 加 `ensureReady()` 共享 promise | `client/src/stores/auth.js` | router beforeEach 可 await 一次,后续实例直接返 |
 | Router guard `await auth.ensureReady()` 第一次 | `client/src/router/index.js` | 路由判断与 hydrate 同步,但不阻塞首屏绘制 |
-| Pinia stores 改动态 import | `client/src/App.vue` | 大 store (holdings / stocks / quote / ws) 改按需 import,主图减重 |
+| ~~Pinia stores 延后到 ready==true 后调~~ **(SKIPPED)** | `client/src/App.vue` | watch(isAuthenticated) 重复触发风险,留给 Phase 2 |
+
+> C6 SKIPPED 理由 (2026-10-18):
+> - watch(`auth.isAuthenticated`) 与 onMounted 都触发 `holdingsStore.bootstrap()`,去重薄弱易踩雷
+> - 路由 lazy view 已覆盖大部分 store 使用,主图减重收益小
+> - C3 (fire-and-forget hydrate) 已覆盖首屏优化目标
 
 ### Phase 2 (后续, 不本次实施)
 

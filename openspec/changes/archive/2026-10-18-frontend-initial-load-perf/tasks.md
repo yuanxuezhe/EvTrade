@@ -27,17 +27,19 @@
 - [ ] `client/src/router/index.js`: `router.beforeEach` 顶部 `await auth.ensureReady()` 一次性等
 - [ ] 已有的 `if (!auth.isAuthenticated)` 跳 /login 等判断保留 (在 ensureReady 之后)
 
-## C6 — Pinia stores 动态 import (1 commit)
+## C6 — Pinia stores 动态 import — SKIPPED (2026-10-18 风险复评)
 
-- [ ] `client/src/App.vue` setup 顶层 useXxxStore() 改按需:
-  - `useUiStore / useAuthStore / useWsStore` → 仍顶层 (这些在 router/App.vue 生命周期早期要)
-  - `useHoldingsStore / useStocksStore` → 改在 `authStore.ready===true` 后 (在 onMounted 块内)
-  - `useAssetStore / useOrderStore / usePositionStore / useRpcStatusStore` → 路由进入对应 view 时按需 (本次不动 view,留给 Phase 2)
+> 不实施 C6。原提案的"延迟到 ready==true 后调"风险:
+> - watch(`auth.isAuthenticated`) 与 onMounted 都会触发 `holdingsStore.bootstrap()`,重复调用的去重保证薄弱,容易踩雷
+> - 路由懒加载 view 已包住大部分 store 实际使用,主图减重收益小
+> - 收益已被 C3 (fire-and-forget hydrate) 覆盖 — 首帧立即出 spinner
+>
+> C6 留给 Phase 2 后续,不阻塞本 change 出货.
 
-## C7 — build 验证 (无 commit)
+## C7 — build 验证 (无 commit,已过)
 
-- [ ] `npm run build` 通过
-- [ ] 主图 chunk size 与 P0 摸底对比 (期望主图减 30-80 KB,因为 holdings/stocks store 动态化)
+- [x] `npm run build` 通过,主图 1326 KB / 431 KB gzip (与 P0 摸底持平,符合预期 — 不动 store import)
+- [x] vite dev HMR 已 live,App.vue 不再 await hydrate 立即生效
 
 ## C8 — 归档 + push + 重启
 
