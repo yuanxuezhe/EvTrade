@@ -103,6 +103,20 @@ export const useAuthStore = defineStore('auth', () => {
     return hydratePromise.value
   }
 
+  /**
+   * REQ-FE-556 (frontend-initial-load-perf 2026-10-18): 共享 ready Promise.
+   * - 若 ready 已 true → 立即 resolve (Promise.resolve())
+   * - 若 hydrate 未启动 → 启动并返回共享 promise
+   * - 若 hydrate 已完成 → 返回其 promise
+   * 用法: router.beforeEach(async () => { await auth.ensureReady() ... })
+   * 保证后续路由判断时 token 已从 IDB 读完, 不再误跳 /login
+   */
+  function ensureReady() {
+    if (ready.value) return Promise.resolve()
+    if (hydratePromise.value) return hydratePromise.value
+    return hydrate()
+  }
+
   async function login(username, password) {
     loading.value = true
     try {
@@ -180,6 +194,7 @@ export const useAuthStore = defineStore('auth', () => {
     pageKeys,
     hasPageKey,
     hydrate,
+    ensureReady,
     login,
     logout,
     clear,
