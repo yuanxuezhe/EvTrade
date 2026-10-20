@@ -82,6 +82,10 @@ import {
   Star,                  // 自选池页
   Avatar,                // 角色管理页
   Collection,            // 证券池页
+  User,                  // 用户管理页 (req-2026-10-19 topnav-icon-completion)
+  List,                  // 策略下单母单页 — 母单/单据语义
+  Tools,                 // 系统配置页
+  Brush,                 // 系统初始化页 — 初始化/重置语义
 } from '@element-plus/icons-vue'
 
 const route = useRoute()
@@ -118,7 +122,7 @@ const NAV_GROUPS = [
     pages: [
       { pageKey: 'script-dev', label: '策略开发', path: '/script-dev', icon: EditPen },
       { pageKey: 'script-task', label: '策略运行', path: '/script-task', icon: DataLine },
-      { pageKey: 'strategy-order', label: '策略下单母单', path: '/strategy-order' },
+      { pageKey: 'strategy-order', label: '策略下单母单', path: '/strategy-order', icon: List },
     ],
   },
   {
@@ -126,7 +130,7 @@ const NAV_GROUPS = [
     label: '管理',
     icon: Setting,
     pages: [
-      { pageKey: 'users', label: '用户管理', path: '/users' },
+      { pageKey: 'users', label: '用户管理', path: '/users', icon: User },
       { pageKey: 'roles', label: '角色管理', path: '/roles', icon: Avatar },
       { pageKey: 'stkpool', label: '证券池', path: '/stkpool', icon: Collection },
     ],
@@ -136,8 +140,8 @@ const NAV_GROUPS = [
     label: '系统',
     icon: Operation,
     pages: [
-      { pageKey: 'system-init', label: '系统初始化', path: '/system-init' },
-      { pageKey: 'system-config', label: '系统配置', path: '/system-config' },
+      { pageKey: 'system-init', label: '系统初始化', path: '/system-init', icon: Brush },
+      { pageKey: 'system-config', label: '系统配置', path: '/system-config', icon: Tools },
       { pageKey: 'admin-stock-config', label: '证券信息设置', path: '/admin/stock-config', icon: DataBoard },
       { pageKey: 'data-completion-history-quote', label: '历史行情补全', path: '/data-completion/history-quote', icon: Refresh },
     ],
