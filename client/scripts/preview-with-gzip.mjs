@@ -16,7 +16,15 @@ import http from 'node:http'
 import { createReadStream, statSync } from 'node:fs'
 import { extname, join, normalize, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { request as httpRequest } from 'node:http'
 import zlib from 'node:zlib'
+
+// ---- 后端反代 (等价 vite dev 的 server.proxy 配置) ----
+// fix 2026-10-19: vite preview 没有 server.proxy, /api 全部走 SPA fallback 返回 index.html
+//   → axios 拿到 HTML 字符串 → res.access_token undefined → tokenStorage.set(undefined)
+//   → localStorage 存了字符串 "undefined" → ws URL ?token=undefined → 登录后不跳转
+// vite.config.js server.proxy: '/api' → http://localhost:8000, '/ws' → ws://localhost:8000
+const API_TARGET = { host: '127.0.0.1', port: 8000 }
 
 // ---- CLI ----
 const args = process.argv.slice(2)
@@ -84,7 +92,44 @@ function noCacheHeaders() {
 }
 
 const server = http.createServer((req, res) => {
-  let urlPath = req.url.split('?')[0]
+  const rawPath = req.url.split('?')[0]
+
+  // ---- 后端反代: /api/* → backend:8000 ----
+  // (vite preview 不带 server.proxy, 必须自建; 见文件头 fix 2026-10-19 注释)
+  if (rawPath === '/api' || rawPath.startsWith('/api/')) {
+    const proxyReq = httpRequest(
+      {
+        hostname: API_TARGET.host,
+        port: API_TARGET.port,
+        method: req.method,
+        path: req.url,
+        headers: { ...req.headers, host: `${API_TARGET.host}:${API_TARGET.port}` },
+      },
+      (proxyRes) => {
+        res.writeHead(proxyRes.statusCode || 502, proxyRes.headers)
+        proxyRes.pipe(res)
+      }
+    )
+    proxyReq.on('error', (err) => {
+      console.error('[preview-with-gzip] /api proxy error:', err.message)
+      if (!res.headersSent) {
+        res.writeHead(502, { 'Content-Type': 'application/json' })
+      }
+      res.end(JSON.stringify({ detail: 'backend unavailable: ' + err.message }))
+    })
+    req.pipe(proxyReq)
+    return
+  }
+
+  // ---- WebSocket 反代: /ws/* → backend:8000 (upgrade 在 server.on('upgrade') 处理) ----
+  // HTTP GET /ws/* (非 upgrade) 直接 426 Upgrade Required, 不进 SPA fallback
+  if (rawPath === '/ws' || rawPath.startsWith('/ws/')) {
+    res.writeHead(426, { 'Content-Type': 'application/json' })
+    res.end(JSON.stringify({ detail: 'WebSocket upgrade required' }))
+    return
+  }
+
+  let urlPath = rawPath
   if (urlPath === '/') urlPath = '/index.html'
 
   let absPath = safeResolve(urlPath)
@@ -157,6 +202,42 @@ const server = http.createServer((req, res) => {
 server.listen(PORT, HOST, () => {
   console.log(`[preview-with-gzip] serving ${ROOT}`)
   console.log(`[preview-with-gzip] listening http://${HOST}:${PORT}`)
+})
+
+// ---- WebSocket upgrade 反代: /ws/* → backend:8000 ----
+// fix 2026-10-19: vite preview 不代理 WS, 补上后 ws_heartbeat 的 5 个 channel 才能连通
+server.on('upgrade', (req, socket, head) => {
+  const rawPath = (req.url || '').split('?')[0]
+  if (rawPath !== '/ws' && !rawPath.startsWith('/ws/')) {
+    socket.destroy()
+    return
+  }
+  const upstream = httpRequest({
+    hostname: API_TARGET.host,
+    port: API_TARGET.port,
+    method: req.method,
+    path: req.url,
+    headers: { ...req.headers, host: `${API_TARGET.host}:${API_TARGET.port}` },
+  })
+  upstream.on('upgrade', (proxyRes, proxySocket, proxyHead) => {
+    const lines = Object.entries(proxyRes.headers).map(
+      ([k, v]) => `${k}: ${Array.isArray(v) ? v.join(', ') : v}`
+    )
+    socket.write(`HTTP/1.1 101 Switching Protocols\r\n${lines.join('\r\n')}\r\n\r\n`)
+    if (proxyHead && proxyHead.length) socket.unshift(proxyHead)
+    proxySocket.pipe(socket).pipe(proxySocket)
+  })
+  upstream.on('response', (proxyRes) => {
+    // 后端拒绝 upgrade (401/403) → 回 HTTP 状态给客户端
+    socket.write(`HTTP/1.1 ${proxyRes.statusCode} ${proxyRes.statusMessage}\r\n\r\n`)
+    socket.destroy()
+  })
+  upstream.on('error', (err) => {
+    console.error('[preview-with-gzip] /ws upgrade error:', err.message)
+    socket.destroy()
+  })
+  if (head && head.length) upstream.write(head)
+  upstream.end()
 })
 
 process.on('SIGTERM', () => server.close(() => process.exit(0)))
