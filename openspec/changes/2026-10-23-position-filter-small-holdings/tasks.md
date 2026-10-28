@@ -4,13 +4,13 @@
 
 - [x] proposal.md
 - [x] spec-deltas/frontend.md (REQ-FE-557 段)
-- [x] spec-deltas/configuration.md (REQ-SE-007 段)
+- [x] spec-deltas/configuration.md (REQ-SE-014 段)
 - [x] tasks.md (本文件)
 
 ## C2 — spec merge (1 commit)
 
 - [ ] `openspec/specs/frontend/spec.md` 追加 `## REQ-FE-557` 段
-- [ ] `openspec/specs/configuration/spec.md` 追加 `## REQ-SE-007` 段
+- [ ] `openspec/specs/configuration/spec.md` 追加 `## REQ-SE-014` 段
 
 ## C3 — 后端 sysconfig seed (1 commit)
 
@@ -19,18 +19,18 @@
 - [ ] 验证: 服务重启后 `sys_config` 表出现该行 (默认 user='0')
 - [ ] 验证: `GET /api/sysconfig/position_filter_min_vol` 返 200 + cfg_val='0'
 
-## C4 — 前端 CachePositions checkbox (1 commit)
+## C4 — 前端 HoldingsPanel checkbox (1 commit)
 
-- [ ] `client/src/views/CachePositions.vue`:
-  - [ ] import `sysconfigApi` from `../api/sysconfig`
-  - [ ] 新增 `filterSmall = ref(false)` (默认不勾选)
+- [ ] `client/src/components/trade/HoldingsPanel.vue`:
+  - [ ] import `sysconfigApi` from `../../api/sysconfig`
+  - [ ] 新增 `filterSmall = ref(true)` (默认勾上)
   - [ ] 新增 `minVolThreshold = ref(0)`
   - [ ] onMounted 读 `sysconfigApi.get('position_filter_min_vol')` → 写入 `minVolThreshold`
-  - [ ] `filteredResults` computed 增加小持仓过滤分支:
+  - [ ] `filteredPositions` computed 增加小持仓过滤分支:
         `filterSmall && vol <= minVolThreshold` → 剔除
-  - [ ] 工具栏 `filter-bar` 加 `el-checkbox` 「过滤小持仓」+ 阈值提示文字
-  - [ ] 读取失败 (403/404/网络) 时降级: 阈值 = 0 + console.warn, 不阻塞页面
-- [ ] 勾选状态不持久化 (每次进页面默认关闭 — 用户要求「取消勾选则全部显示」)
+  - [ ] 工具栏 `tp-header` 加 `el-checkbox` 「过滤小持仓」+ 阈值提示
+  - [ ] 读取失败 (403/404/网络) 时降级: 阈值 = 0 + console.warn, 不阻塞面板
+- [ ] 勾选状态不持久化 (每次进页面默认勾上 — 用户要求「取消勾选则全部显示」)
 
 ## C5 — 知识库同步 (1 commit)
 
