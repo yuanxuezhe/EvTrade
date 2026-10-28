@@ -12,6 +12,13 @@
       <span class="hp-count text-mono">
         {{ filteredPositions.length }} 只 / 持仓 {{ formatMoney(totalMv) }}
       </span>
+      <!-- REQ-FE-557 (position-filter-small-holdings 2026-10-23): 过滤小持仓 -->
+      <el-checkbox v-model="filterSmall" size="small" class="hp-filter-small">
+        过滤小持仓
+      </el-checkbox>
+      <span v-if="filterSmall" class="hp-threshold text-muted">
+        (显示大于{{ minVolThreshold }}股持仓)
+      </span>
       <el-input
         v-model="keyword"
         placeholder="代码过滤"
@@ -96,7 +103,7 @@
 </template>
 
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import DataTableView from '../DataTableView.vue'
 import LivePriceCell from '../cells/LivePriceCell.vue'  // 最新价+涨跌幅合并 cell
 import StockTargetCell from '../cells/StockTargetCell.vue'  // 标的通用 cell
@@ -106,6 +113,7 @@ import { stockName } from '../../utils/stockNames'
 import { COL } from '../../utils/tableColumns'
 import { useQuoteStore } from '../../stores/quote'
 import { useHoldingsStore } from '../../stores/holdings'
+import { sysconfigApi } from '../../api/sysconfig'
 
 const holdingsStore = useHoldingsStore()
 const quoteStore = useQuoteStore()
@@ -131,14 +139,40 @@ const idbSyncStatus = computed(() => holdingsStore.idbSyncStatus || {})
 
 // 关键字过滤
 const keyword = ref('')
+
+// REQ-FE-557 (position-filter-small-holdings 2026-10-23): 过滤小持仓
+// - filterSmall 默认 true = 勾上 (用户 2026-10-23 明确要求默认勾选)
+// - minVolThreshold 来自 sysconfig `position_filter_min_vol` (默认 0)
+// - 比较含等号: vol <= 阈值 的行隐藏
+const filterSmall = ref(true)
+const minVolThreshold = ref(0)
+
+onMounted(async () => {
+  try {
+    const cfg = await sysconfigApi.get('position_filter_min_vol')
+    const n = Number(cfg?.cfg_val)
+    if (Number.isFinite(n)) minVolThreshold.value = n
+  } catch (e) {
+    // 降级: 阈值 0 (只过滤 0 持仓行), 不阻塞面板渲染
+    console.warn('[HoldingsPanel] 读取 position_filter_min_vol 失败, 用默认 0:', e?.message || e)
+  }
+})
+
 const filteredPositions = computed(() => {
+  let rows = positions.value
   const kw = keyword.value.trim().toLowerCase()
-  if (!kw) return positions.value
-  return positions.value.filter((p) => {
-    const code = (p.stock_code || '').toLowerCase()
-    const name = (stockName(p.stock_code) || '').toLowerCase()
-    return code.includes(kw) || name.includes(kw)
-  })
+  if (kw) {
+    rows = rows.filter((p) => {
+      const code = (p.stock_code || '').toLowerCase()
+      const name = (stockName(p.stock_code) || '').toLowerCase()
+      return code.includes(kw) || name.includes(kw)
+    })
+  }
+  if (filterSmall.value) {
+    const t = minVolThreshold.value
+    rows = rows.filter((p) => Number(p.vol) > t)
+  }
+  return rows
 })
 
 // 总市值
@@ -314,6 +348,17 @@ const holdingsColumns = [
   width: 140px;
   margin-left: auto;
   flex-shrink: 0;
+}
+/* REQ-FE-557 (position-filter-small-holdings 2026-10-23): 过滤小持仓 checkbox */
+.hp-filter-small {
+  margin-left: var(--space-3, 8px);
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+.hp-threshold {
+  margin-left: var(--space-1, 4px);
+  font-size: 12px;
+  white-space: nowrap;
 }
 :deep(.hp-filter .el-input__wrapper) {
   padding: 1px 8px;
