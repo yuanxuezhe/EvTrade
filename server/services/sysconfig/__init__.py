@@ -37,6 +37,9 @@ DEFAULT_CONFIGS: list[dict] = [
     # 补全都按这个数分批拉。broker 单日 30s idle 超时风险 → 批量拉比逐日快)
     # change 2026-09-04 (quote-sync-chunk-days)
     {"cfg_key": "quote_sync_chunk_days", "cfg_val": "10", "desc": "历史行情同步单批天数 (1-30, 默认10); 启动补全/前端补全按这个数分批 chunk 拉取"},
+    # 持仓查询页过滤小持仓阈值 (股数) — 勾选「过滤小持仓」时 vol<=此值的行隐藏, 0=不过滤
+    # change 2026-10-23 (position-filter-small-holdings)
+    {"cfg_key": "position_filter_min_vol", "cfg_val": "0", "desc": "交易下单页持仓面板过滤小持仓阈值 (股数); 勾选「过滤小持仓」时 vol<=此值的行隐藏, 0=不过滤"},
 ]
 
 # user → {cfg_key → cfg_val}
